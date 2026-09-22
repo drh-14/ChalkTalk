@@ -5,12 +5,12 @@ Post authors in digest entries follow the shared [identity visibility policy](id
 <a id="getCourseDigest"></a>
 - **`GET /api/v1/courses/{courseId}/digest`**
   - Description: Retrieves the digest for a course. The digest combines automatically ranked entries with manual inclusions.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -33,7 +33,7 @@ Post authors in digest entries follow the shared [identity visibility policy](id
     ```bash
     curl --request GET '/api/v1/courses/course_123/digest' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -60,13 +60,14 @@ Post authors in digest entries follow the shared [identity visibility policy](id
 <a id="putCourseDigestEntry"></a>
 - **`PUT /api/v1/courses/{courseId}/digest/entries/{postId}`**
   - Description: Manually includes a post in a course digest. Idempotently marks the post as manually included. The returned digest carries the latest ETag.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor or TA.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
     - `postId` (string, required, 1–255 characters): Identifies the post resource.
@@ -90,7 +91,9 @@ Post authors in digest entries follow the shared [identity visibility policy](id
     ```bash
     curl --request PUT '/api/v1/courses/course_123/digest/entries/post_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token'
     ```
 
   - Example success response:
@@ -141,6 +144,7 @@ Post authors in digest entries follow the shared [identity visibility policy](id
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: A staff role is required.
     - `404 Not Found`:
       - `not_found`: The course or post is absent or hidden.
@@ -154,13 +158,14 @@ Post authors in digest entries follow the shared [identity visibility policy](id
 <a id="deleteCourseDigestEntry"></a>
 - **`DELETE /api/v1/courses/{courseId}/digest/entries/{postId}`**
   - Description: Removes a post’s manual inclusion in a course digest. Returns 204 whether or not the post is currently manually included. Automatic ranking may still include the post.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor or TA.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
     - `postId` (string, required, 1–255 characters): Identifies the post resource.
@@ -181,7 +186,9 @@ Post authors in digest entries follow the shared [identity visibility policy](id
     ```bash
     curl --request DELETE '/api/v1/courses/course_123/digest/entries/post_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token'
     ```
 
   - Example success response:
@@ -193,6 +200,7 @@ Post authors in digest entries follow the shared [identity visibility policy](id
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: A staff role is required.
     - `404 Not Found`:
       - `not_found`: The course or post is absent or hidden.

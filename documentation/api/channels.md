@@ -5,15 +5,16 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="createChannel"></a>
 - **`POST /api/v1/courses/{courseId}/channels`**
   - Description: Creates a channel in a course.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: TA or instructor.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -28,6 +29,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Channel details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -44,7 +46,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request POST '/api/v1/courses/course_123/channels' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"name":"Homework","description":"Discuss weekly assignments"}'
@@ -68,9 +72,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:
+      - `idempotency_key_reused`: The idempotency key was already used with a different request body.
       - `course_archived`: The course is archived.
     - `422 Unprocessable Content`:
       - `validation_failed`: The channel fields are invalid.
@@ -82,12 +89,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="listCourseChannels"></a>
 - **`GET /api/v1/courses/{courseId}/channels`**
   - Description: Lists the channels in a course.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -119,7 +126,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request GET '/api/v1/courses/course_123/channels' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -160,12 +167,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="getChannel"></a>
 - **`GET /api/v1/channels/{channelId}`**
   - Description: Retrieves a channel.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `channelId` (string, required, 1–255 characters): Identifies the channel resource.
   - Query parameters:
@@ -194,7 +201,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request GET '/api/v1/channels/channel_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -227,15 +234,16 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="updateChannel"></a>
 - **`PATCH /api/v1/channels/{channelId}`**
   - Description: Updates a channel’s name, description, or status.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: TA or instructor.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `channelId` (string, required, 1–255 characters): Identifies the channel resource.
   - Query parameters:
@@ -250,7 +258,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Channel details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -267,7 +275,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request PATCH '/api/v1/channels/channel_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"status":"archived"}'
@@ -291,6 +301,8 @@ Message authors, introductory-message authors, and subchannel creators follow th
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:
@@ -309,14 +321,15 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="deleteChannel"></a>
 - **`DELETE /api/v1/channels/{channelId}`**
   - Description: Deletes a channel. Descendants are deleted or tombstoned where retained conversation structure requires them.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: TA or instructor.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `channelId` (string, required, 1–255 characters): Identifies the channel resource.
   - Query parameters:
@@ -336,7 +349,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request DELETE '/api/v1/channels/channel_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"'
     ```
 
@@ -346,6 +361,8 @@ Message authors, introductory-message authors, and subchannel creators follow th
     204 No Content
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:
@@ -362,15 +379,16 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="createSubchannel"></a>
 - **`POST /api/v1/channels/{channelId}/subchannels`**
   - Description: Creates a subchannel in a channel.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `channelId` (string, required, 1–255 characters): Identifies the channel resource.
   - Query parameters:
@@ -387,6 +405,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Subchannel details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -404,7 +423,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request POST '/api/v1/channels/channel_123/subchannels' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"title":"Problem set 2","introductoryMessage":{"bodyMarkdown":"Where should we start?","anonymous":false}}'
@@ -449,9 +470,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:
+      - `idempotency_key_reused`: The idempotency key was already used with a different request body.
       - `parent_archived`: The channel or course is archived.
     - `422 Unprocessable Content`:
       - `validation_failed`: The title or introductory message is invalid.
@@ -463,12 +487,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="listChannelSubchannels"></a>
 - **`GET /api/v1/channels/{channelId}/subchannels`**
   - Description: Lists the subchannels in a channel.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `channelId` (string, required, 1–255 characters): Identifies the channel resource.
   - Query parameters:
@@ -500,7 +524,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request GET '/api/v1/channels/channel_123/subchannels' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -546,12 +570,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="getSubchannel"></a>
 - **`GET /api/v1/subchannels/{subchannelId}`**
   - Description: Retrieves a subchannel.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `subchannelId` (string, required, 1–255 characters): Identifies the subchannel resource.
   - Query parameters:
@@ -581,7 +605,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request GET '/api/v1/subchannels/subchannel_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -635,15 +659,16 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="updateSubchannel"></a>
 - **`PATCH /api/v1/subchannels/{subchannelId}`**
   - Description: Updates a subchannel’s title or status.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Creator or staff; only staff may archive.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `subchannelId` (string, required, 1–255 characters): Identifies the subchannel resource.
   - Query parameters:
@@ -657,7 +682,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Subchannel details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -675,7 +700,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request PATCH '/api/v1/subchannels/subchannel_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"title":"Problem set 2 help"}'
@@ -723,6 +750,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: The caller cannot change one or more fields.
     - `409 Conflict`:
       - `parent_archived`: The parent channel or course is archived.
@@ -740,14 +768,15 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="deleteSubchannel"></a>
 - **`DELETE /api/v1/subchannels/{subchannelId}`**
   - Description: Deletes a subchannel. Messages are deleted or retained as bodyless, authorless tombstones where conversation integrity requires them.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Creator or staff.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `subchannelId` (string, required, 1–255 characters): Identifies the subchannel resource.
   - Query parameters:
@@ -767,7 +796,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request DELETE '/api/v1/subchannels/subchannel_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"'
     ```
 
@@ -780,6 +811,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: The caller cannot delete this subchannel.
     - `409 Conflict`:
       - `parent_archived`: The parent channel or course is archived.
@@ -795,15 +827,16 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="createMessage"></a>
 - **`POST /api/v1/subchannels/{subchannelId}/messages`**
   - Description: Creates a message in a subchannel.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `subchannelId` (string, required, 1–255 characters): Identifies the subchannel resource.
   - Query parameters:
@@ -818,6 +851,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Message details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -834,7 +868,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request POST '/api/v1/subchannels/subchannel_123/messages' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"bodyMarkdown":"Rayleigh scattering favors shorter wavelengths.","anonymous":false}'
@@ -863,9 +899,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:
+      - `idempotency_key_reused`: The idempotency key was already used with a different request body.
       - `parent_archived`: The subchannel, channel, or course is archived.
     - `422 Unprocessable Content`:
       - `validation_failed`: The message is invalid.
@@ -877,12 +916,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="listSubchannelMessages"></a>
 - **`GET /api/v1/subchannels/{subchannelId}/messages`**
   - Description: Lists the messages in a subchannel. Messages are ordered oldest first.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `subchannelId` (string, required, 1–255 characters): Identifies the subchannel resource.
   - Query parameters:
@@ -913,7 +952,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request GET '/api/v1/subchannels/subchannel_123/messages' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -959,12 +998,12 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="getMessage"></a>
 - **`GET /api/v1/messages/{messageId}`**
   - Description: Retrieves a message.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `messageId` (string, required, 1–255 characters): Identifies the message resource.
   - Query parameters:
@@ -993,7 +1032,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request GET '/api/v1/messages/message_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -1031,15 +1070,16 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="updateMessage"></a>
 - **`PATCH /api/v1/messages/{messageId}`**
   - Description: Updates a message.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Author or staff.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `messageId` (string, required, 1–255 characters): Identifies the message resource.
   - Query parameters:
@@ -1053,7 +1093,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Message details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -1070,7 +1110,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request PATCH '/api/v1/messages/message_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"bodyMarkdown":"Start by identifying the recurrence."}'
@@ -1102,6 +1144,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: The caller cannot edit this message.
     - `409 Conflict`:
       - `parent_archived`: The subchannel, channel, or course is archived.
@@ -1119,14 +1162,15 @@ Message authors, introductory-message authors, and subchannel creators follow th
 <a id="deleteMessage"></a>
 - **`DELETE /api/v1/messages/{messageId}`**
   - Description: Deletes a message. A bodyless, authorless tombstone is retained when required for conversation integrity.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Author or staff.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `messageId` (string, required, 1–255 characters): Identifies the message resource.
   - Query parameters:
@@ -1146,7 +1190,9 @@ Message authors, introductory-message authors, and subchannel creators follow th
     ```bash
     curl --request DELETE '/api/v1/messages/message_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"'
     ```
 
@@ -1159,6 +1205,7 @@ Message authors, introductory-message authors, and subchannel creators follow th
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: The caller cannot delete this message.
     - `409 Conflict`:
       - `parent_archived`: The subchannel, channel, or course is archived.

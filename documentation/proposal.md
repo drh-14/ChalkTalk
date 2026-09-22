@@ -80,7 +80,7 @@ The data model is multi-tenant from the outset, with every course scoped to an o
 # **Functional Requirements**
 
 **Account Creation and Management**  
-Before creating an account, a user submits an email whose school domain is allowed by the deployment. The server sends a deployment-configured universal link containing a short-lived, single-use verification token. The verified token, a password, and a display name are required to create the account; clients cannot supply a redirect destination. Account creation atomically creates or finds the organization for the verified school domain and adds the user as a member. OAuth is also supported. Passwords must meet minimum length and complexity requirements.
+Before creating an account, a user submits an email whose school domain is allowed by the deployment. The server sends a deployment-configured HTTPS link to the web client containing a short-lived, single-use verification token. The verified token, a password, and a display name are required to create the account; clients cannot supply a redirect destination. Account creation atomically creates or finds the organization for the verified school domain and adds the user as a member. Passwords must meet minimum length and complexity requirements.
 
 Changing the account email follows the same verification flow: the user verifies the replacement address before the account and organization membership are updated.
 

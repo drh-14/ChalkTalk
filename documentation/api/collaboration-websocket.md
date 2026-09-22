@@ -1,6 +1,6 @@
 # Collaboration WebSocket protocol
 
-ChalkTalk collaboration protocol version `1` uses Yjs through Hocuspocus. The Hocuspocus provider and server must support the same major protocol version. REST endpoints create sessions, issue connection tickets, and expose text snapshots; WebSocket frames use the standard Yjs/Hocuspocus protocol and are not described by OpenAPI.
+ChalkTalk collaboration uses Yjs through Hocuspocus. The client and server must use compatible Hocuspocus versions. REST endpoints create sessions, issue connection tickets, and expose text snapshots; WebSocket frames use the standard Yjs/Hocuspocus protocol and are not described by OpenAPI.
 
 ## Connecting
 
@@ -8,8 +8,7 @@ The client first creates a one-use connection ticket with `POST /api/v1/collabor
 
 - the credential-free `webSocketUrl` returned by the endpoint;
 - `name` set to the returned `documentId`;
-- `token` set to the returned `ticket`; and
-- protocol version `1`.
+- `token` set to the returned `ticket`.
 
 The server authenticates the ticket in Hocuspocus `onAuthenticate` before sending document state. A ticket is an opaque secret, expires five minutes after issuance, and is atomically consumed on the first authentication attempt. Ticket state binds its ticket ID, user ID, REST authentication session ID, collaboration session and document, course ID, effective permission, issue time, and expiry time. Invalid, expired, or replayed tickets fail authentication.
 
@@ -37,7 +36,7 @@ If the final flush fails, the REST end request returns `503 Service Unavailable`
 
 ## Origin and transport policy
 
-Production connections use `wss`. Plain `ws` is allowed only for local development. Browser connections must send an `Origin` from the deployment's allowlist of HTTPS frontend origins. A missing `Origin` is accepted only from a native client presenting a valid ticket. The URL must not contain the ticket, session cookie, bearer token, user identifier, or other credential.
+Production connections use `wss`. Plain `ws` is allowed only for local development. Browser connections must send an `Origin` that exactly matches the deployment's allowlist of HTTPS frontend origins; missing, null, and disallowed origins are rejected before ticket authentication. The URL must not contain the ticket, session cookie, user identifier, or other credential.
 
 ## Connection closure
 
@@ -50,7 +49,6 @@ The server uses these stable WebSocket close codes:
 - `4401`: authentication failed because the ticket is invalid, expired, or replayed.
 - `4403`: permission or course membership was lost.
 - `4404`: the collaboration session ended or the document is missing.
-- `4406`: the protocol version is unsupported.
 - `4429`: the connection or ticket attempt was rate limited.
 
 Application close reasons are safe for display as diagnostic text and must not reveal whether a hidden course, session, or document exists.

@@ -3,15 +3,16 @@
 <a id="joinCourse"></a>
 - **`POST /api/v1/courses/{courseId}/members`**
   - Description: Adds the authenticated user to a course. Join links and QR codes contain both courseId and joinCode. New members always enter as students.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Signed-in user.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -25,6 +26,7 @@
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Course membership details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -39,7 +41,9 @@
     ```bash
     curl --request POST '/api/v1/courses/course_123/members' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"joinCode":"CS101F26"}'
@@ -64,9 +68,12 @@
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:
+      - `idempotency_key_reused`: The idempotency key was already used with a different request body.
       - `already_member`: The user is already a member.
       - `course_archived`: The course does not accept joins.
     - `422 Unprocessable Content`:
@@ -79,12 +86,12 @@
 <a id="listCourseMembers"></a>
 - **`GET /api/v1/courses/{courseId}/members`**
   - Description: Lists the members of a course.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -114,7 +121,7 @@
     ```bash
     curl --request GET '/api/v1/courses/course_123/members' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -156,12 +163,12 @@
 <a id="getCourseMember"></a>
 - **`GET /api/v1/courses/{courseId}/members/{userId}`**
   - Description: Retrieves a course member. The ETag protects later role changes or removal.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
     - `userId` (string, required, 1–255 characters): Identifies the user resource.
@@ -189,7 +196,7 @@
     ```bash
     curl --request GET '/api/v1/courses/course_123/members/user_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -223,15 +230,16 @@
 <a id="updateCourseMember"></a>
 - **`PATCH /api/v1/courses/{courseId}/members/{userId}`**
   - Description: Updates a course member’s role.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
     - `userId` (string, required, 1–255 characters): Identifies the user resource.
@@ -245,7 +253,7 @@
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Course membership details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -260,7 +268,9 @@
     ```bash
     curl --request PATCH '/api/v1/courses/course_123/members/user_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"role":"ta"}'
@@ -285,6 +295,8 @@
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `404 Not Found`:
@@ -305,14 +317,15 @@
 <a id="deleteCourseMember"></a>
 - **`DELETE /api/v1/courses/{courseId}/members/{userId}`**
   - Description: Removes a member from a course.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
     - `userId` (string, required, 1–255 characters): Identifies the user resource.
@@ -333,7 +346,9 @@
     ```bash
     curl --request DELETE '/api/v1/courses/course_123/members/user_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"'
     ```
 
@@ -343,6 +358,8 @@
     204 No Content
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `404 Not Found`:
@@ -361,13 +378,14 @@
 <a id="leaveCourse"></a>
 - **`DELETE /api/v1/courses/{courseId}/members/me`**
   - Description: Removes the authenticated user from a course.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -387,7 +405,9 @@
     ```bash
     curl --request DELETE '/api/v1/courses/course_123/members/me' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token'
     ```
 
   - Example success response:
@@ -396,6 +416,8 @@
     204 No Content
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `404 Not Found`:

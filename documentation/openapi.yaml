@@ -5,7 +5,14 @@ info:
   title: ChalkTalk API
   version: 1.0.0
   summary: HTTP contract for ChalkTalk clients.
-  description: ChalkTalk course discussion, content, collaboration, and administration API.
+  description: >-
+    ChalkTalk course discussion, content, collaboration, and administration API.
+    Browser requests use the `__Host-chalktalk_session` cookie. Credentialed CORS
+    responses echo only an exact deployment-configured HTTPS frontend origin,
+    include `Vary: Origin` and `Access-Control-Allow-Credentials: true`, and never
+    use a wildcard origin. Every unsafe request validates `Origin`; authenticated
+    unsafe requests also validate the session-bound `X-CSRF-Token`. Expiring or
+    revoking a session invalidates its CSRF token and unused WebSocket tickets.
   license:
     name: MIT
     identifier: MIT
@@ -40,10 +47,33 @@ paths:
       tags:
       - Authentication
       summary: Request account email verification
-      description: Request account email verification. The server enforces the deployment's allowed school-domain policy and returns the same response for every allowed-domain request. If delivery is appropriate, it sends a deployment-configured universal link containing a 30-minute, single-use opaque token; clients cannot supply a redirect destination. Tokens are stored only as hashes, and the latest request invalidates earlier unused tokens for the same normalized email. Rate limits default to five requests per normalized email per hour and 100 requests per source IP per hour; deployments may configure both limits.
+      description: Request account email verification before account creation or a same-school
+        email change. The server enforces the deployment's allowed school-domain policy
+        and returns the same response for every allowed-domain request. If delivery
+        is appropriate, it sends a deployment-configured HTTPS link to the web client
+        containing a 30-minute, single-use opaque token; clients cannot supply a redirect
+        destination. Tokens are stored only as hashes, and the latest request invalidates
+        earlier unused tokens for the same normalized email. Rate limits default to
+        five requests per normalized email per hour and 100 requests per source IP
+        per hour; deployments may configure both limits.
       operationId: createAccountVerificationRequest
       security: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                origin_not_allowed:
+                  summary: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                  value:
+                    error:
+                      code: origin_not_allowed
+                      message: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                      requestId: req_createAccountVerificationRequest
+                      details: []
         '202':
           description: The request was accepted. This response does not reveal whether the address is registered or whether mail will be delivered.
         '409':
@@ -125,6 +155,7 @@ paths:
                       requestId: req_createAccountVerificationRequest
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -143,11 +174,28 @@ paths:
       operationId: createAccount
       security: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                origin_not_allowed:
+                  summary: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                  value:
+                    error:
+                      code: origin_not_allowed
+                      message: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                      requestId: req_createAccount
+                      details: []
         '201':
           description: The account, organization association, and membership were created and the verification proof was consumed atomically.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -253,6 +301,7 @@ paths:
                       requestId: req_createAccount
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -269,52 +318,48 @@ paths:
       tags:
       - Authentication
       summary: Sign in
-      description: Sign in. Cookie transport sets `chalktalk_session` as a Secure, HttpOnly, SameSite=Lax cookie and returns an opaque CSRF token bound to that session for use in `X-CSRF-Token`. Bearer transport returns the opaque access token once and returns csrfToken as null. Sessions expire after 30 days.
+      description: Sign in and create a 30-day browser session. Success always sets `__Host-chalktalk_session` with Path=/, Max-Age=2592000, Secure, HttpOnly, and SameSite=Lax, without a Domain attribute. It returns a non-null opaque CSRF token that remains stable for the session lifetime. The response is not stored.
       operationId: createSession
       security: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                origin_not_allowed:
+                  summary: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                  value:
+                    error:
+                      code: origin_not_allowed
+                      message: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                      requestId: req_createSession
+                      details: []
         '201':
-          description: Cookie transport sets `chalktalk_session` and returns an opaque CSRF token bound to that session. Bearer transport returns the opaque access token once and does not use a CSRF token. Both accessToken and csrfToken are always present and nullable according to the selected transport. Sessions expire after 30 days.
+          description: Creates a cookie-authenticated browser session and returns its stable CSRF token.
           headers:
             Set-Cookie:
-              "$ref": "#/components/headers/SetCookie"
+              "$ref": "#/components/headers/SetSessionCookie"
+            Cache-Control:
+              "$ref": "#/components/headers/CacheControlNoStore"
           content:
             application/json:
               schema:
                 "$ref": "#/components/schemas/SessionResponse"
-              examples:
-                cookie:
-                  summary: Cookie transport
-                  value:
-                    data:
-                      id: session_123
-                      user:
-                        id: user_123
-                        email: ada@example.edu
-                        displayName: Ada Lovelace
-                        createdAt: '2026-09-20T14:30:00Z'
-                        updatedAt: '2026-09-20T14:30:00Z'
-                        version: 3
-                      credentialTransport: cookie
-                      expiresAt: '2026-10-20T14:30:00Z'
-                      accessToken: null
-                      csrfToken: opaque_csrf_token
-                bearer:
-                  summary: Bearer transport
-                  value:
-                    data:
-                      id: session_123
-                      user:
-                        id: user_123
-                        email: ada@example.edu
-                        displayName: Ada Lovelace
-                        createdAt: '2026-09-20T14:30:00Z'
-                        updatedAt: '2026-09-20T14:30:00Z'
-                        version: 3
-                      credentialTransport: bearer
-                      expiresAt: '2026-10-20T14:30:00Z'
-                      accessToken: opaque_access_token
-                      csrfToken: null
+              example:
+                data:
+                  id: session_123
+                  user:
+                    id: user_123
+                    email: ada@example.edu
+                    displayName: Ada Lovelace
+                    createdAt: '2026-09-20T14:30:00Z'
+                    updatedAt: '2026-09-20T14:30:00Z'
+                    version: 3
+                  expiresAt: '2026-10-20T14:30:00Z'
+                  csrfToken: opaque_csrf_token
         '401':
           description: Unauthorized
           content:
@@ -338,11 +383,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 validation_failed:
-                  summary: The credential transport is invalid.
+                  summary: The email or password field is malformed.
                   value:
                     error:
                       code: validation_failed
-                      message: The credential transport is invalid.
+                      message: The email or password field is malformed.
                       requestId: req_createSession
                       details: []
         '429':
@@ -390,6 +435,8 @@ paths:
                       message: A required service is temporarily unavailable.
                       requestId: req_createSession
                       details: []
+      parameters:
+      - "$ref": "#/components/parameters/Origin"
       requestBody:
         required: true
         content:
@@ -399,20 +446,111 @@ paths:
             example:
               email: ada@example.edu
               password: correct horse battery staple
-              credentialTransport: bearer
   "/sessions/current":
+    get:
+      tags:
+      - Authentication
+      summary: Retrieve current session
+      description: Retrieve the current browser session after a page load or reload. Returns the same stable CSRF token issued at sign-in without rotating it or extending the session expiry. The response is not stored.
+      operationId: getCurrentSession
+      security:
+      - session_cookie: []
+      responses:
+        '200':
+          description: The current authenticated session and its stable CSRF token.
+          headers:
+            Cache-Control:
+              "$ref": "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SessionResponse"
+              example:
+                data:
+                  id: session_123
+                  user:
+                    id: user_123
+                    email: ada@example.edu
+                    displayName: Ada Lovelace
+                    createdAt: '2026-09-20T14:30:00Z'
+                    updatedAt: '2026-09-20T14:30:00Z'
+                    version: 3
+                  expiresAt: '2026-10-20T14:30:00Z'
+                  csrfToken: opaque_csrf_token
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: The session is missing, expired, or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: The session is missing, expired, or invalid.
+                      requestId: req_getCurrentSession
+                      details: []
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                internal_error:
+                  summary: The server could not complete the request.
+                  value:
+                    error:
+                      code: internal_error
+                      message: The server could not complete the request.
+                      requestId: req_getCurrentSession
+                      details: []
+        '503':
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                service_unavailable:
+                  summary: A required service is temporarily unavailable.
+                  value:
+                    error:
+                      code: service_unavailable
+                      message: A required service is temporarily unavailable.
+                      requestId: req_getCurrentSession
+                      details: []
     delete:
       tags:
       - Authentication
       summary: Sign out
-      description: Sign out. Revokes only the credential used for this request.
+      description: Sign out. Revokes the current session, its CSRF token, and its unused WebSocket connection tickets, then expires the browser cookie.
       operationId: deleteCurrentSession
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteCurrentSession
+                      details: []
         '204':
-          description: Revokes only the credential used for this request.
+          description: The session was revoked and the browser cookie was expired.
+          headers:
+            Set-Cookie:
+              "$ref": "#/components/headers/ClearSessionCookie"
         '401':
           description: Unauthorized
           content:
@@ -459,6 +597,7 @@ paths:
                       requestId: req_deleteCurrentSession
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CsrfToken"
   "/users/me":
     get:
@@ -468,8 +607,7 @@ paths:
       description: Retrieve account profile.
       operationId: getCurrentUser
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve account profile completed successfully.
@@ -537,17 +675,35 @@ paths:
       tags:
       - Authentication
       summary: Update account profile
-      description: Update account profile. A replacement email requires a valid pre-account email-verification token. At least one field is required.
+      description: Update account profile. A replacement email requires a valid email-verification
+        token and must have the same canonical school domain as the account's current
+        email. Organization and course memberships do not change. At least one field
+        is required.
       operationId: updateCurrentUser
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateCurrentUser
+                      details: []
         '200':
-          description: The profile was updated. When an email-verification token is supplied, the account, school-domain organization membership, and verification proof are updated atomically.
+          description: The profile was updated. When an email-verification token is supplied,
+            the account and verification proof are updated atomically.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -555,7 +711,7 @@ paths:
               example:
                 data:
                   id: user_123
-                  email: ada@newschool.edu
+                  email: ada.byron@example.edu
                   displayName: Ada Byron
                   createdAt: '2026-09-20T14:30:00Z'
                   updatedAt: '2026-09-20T14:40:00Z'
@@ -620,6 +776,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                email_domain_not_allowed:
+                  summary: The replacement email does not use the account's current canonical school domain.
+                  value:
+                    error:
+                      code: email_domain_not_allowed
+                      message: The replacement email does not use the account's current canonical school domain.
+                      requestId: req_updateCurrentUser
+                      details: []
                 validation_failed:
                   summary: No valid editable field was supplied.
                   value:
@@ -682,6 +846,7 @@ paths:
                       requestId: req_updateCurrentUser
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
       requestBody:
@@ -697,14 +862,28 @@ paths:
       tags:
       - Authentication
       summary: Delete account
-      description: Delete account. Retained contributions are pseudonymized and all sessions are revoked. The reauthenticationProof field is conditional on deployment policy.
+      description: Delete account. Retained contributions are pseudonymized, and all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked. The reauthenticationProof field is conditional on deployment policy.
       operationId: deleteCurrentUser
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteCurrentUser
+                      details: []
         '204':
-          description: Retained contributions are pseudonymized and all sessions are revoked. The reauthenticationProof field is conditional on deployment policy.
+          description: Retained contributions are pseudonymized, and all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked. The reauthenticationProof field is conditional on deployment policy.
         '401':
           description: Unauthorized
           content:
@@ -766,6 +945,7 @@ paths:
                       requestId: req_deleteCurrentUser
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CsrfToken"
       requestBody:
         required: false
@@ -780,14 +960,28 @@ paths:
       tags:
       - Authentication
       summary: Change password
-      description: Change password. Successfully changing the password revokes the user’s other sessions.
+      description: Change password. Success revokes the user’s other sessions together with their CSRF tokens and unused WebSocket connection tickets; the current session remains valid.
       operationId: changeCurrentUserPassword
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_changeCurrentUserPassword
+                      details: []
         '204':
-          description: Successfully changing the password revokes the user’s other sessions.
+          description: Success revokes the user’s other sessions together with their CSRF tokens and unused WebSocket connection tickets; the current session remains valid.
         '401':
           description: Unauthorized
           content:
@@ -879,6 +1073,7 @@ paths:
                       requestId: req_changeCurrentUserPassword
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
       requestBody:
@@ -899,6 +1094,21 @@ paths:
       operationId: createPasswordResetRequest
       security: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                origin_not_allowed:
+                  summary: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                  value:
+                    error:
+                      code: origin_not_allowed
+                      message: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                      requestId: req_createPasswordResetRequest
+                      details: []
         '202':
           description: Returns the same response whether or not the email exists, preventing account discovery.
         '400':
@@ -961,6 +1171,8 @@ paths:
                       message: A required service is temporarily unavailable.
                       requestId: req_createPasswordResetRequest
                       details: []
+      parameters:
+      - "$ref": "#/components/parameters/Origin"
       requestBody:
         required: true
         content:
@@ -974,12 +1186,27 @@ paths:
       tags:
       - Authentication
       summary: Reset password using token
-      description: Reset password using token. Success consumes the token and revokes every existing session for the account.
+      description: Reset password using token. Success consumes the token and revokes every existing session for the account together with its CSRF token and unused WebSocket connection tickets.
       operationId: resetPassword
       security: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                origin_not_allowed:
+                  summary: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                  value:
+                    error:
+                      code: origin_not_allowed
+                      message: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
+                      requestId: req_resetPassword
+                      details: []
         '204':
-          description: Success consumes the token and revokes every existing session for the account.
+          description: Success consumes the token and revokes every existing session for the account together with its CSRF token and unused WebSocket connection tickets.
         '409':
           description: Conflict
           content:
@@ -1040,6 +1267,8 @@ paths:
                       message: A required service is temporarily unavailable.
                       requestId: req_resetPassword
                       details: []
+      parameters:
+      - "$ref": "#/components/parameters/Origin"
       requestBody:
         required: true
         content:
@@ -1057,8 +1286,7 @@ paths:
       description: List current user's organizations.
       operationId: listOrganizations
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List current user's organizations completed successfully.
@@ -1144,17 +1372,20 @@ paths:
       tags:
       - Courses
       summary: Create course for organization
-      description: Create course for organization. The creator becomes an instructor. joinCode is returned because the caller is an instructor.
+      description: Create a course in an organization. Any authenticated member of
+        the organization may create a course. The creator becomes the course's initial
+        instructor, so joinCode is included in the response.
       operationId: createCourse
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '201':
-          description: The creator becomes an instructor. joinCode is returned because the caller is an instructor.
+          description: The course was created and the creator became its initial instructor.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -1167,12 +1398,12 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
-                permission_denied:
-                  summary: Course creation is forbidden.
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
                   value:
                     error:
-                      code: permission_denied
-                      message: Course creation is forbidden.
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
                       requestId: req_createCourse
                       details: []
         '404':
@@ -1188,6 +1419,21 @@ paths:
                     error:
                       code: not_found
                       message: The organization is absent or hidden.
+                      requestId: req_createCourse
+                      details: []
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createCourse
                       details: []
         '422':
@@ -1251,6 +1497,7 @@ paths:
                       requestId: req_createCourse
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/OrganizationId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -1269,8 +1516,7 @@ paths:
       description: List courses for organization.
       operationId: listOrganizationCourses
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List courses for organization completed successfully.
@@ -1387,8 +1633,7 @@ paths:
       description: List current user's courses.
       operationId: listCourses
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List current user's courses completed successfully.
@@ -1489,8 +1734,7 @@ paths:
       description: Retrieve course. joinCode is non-null only for instructors. A deleting course remains retrievable until background deletion finishes, after which this operation returns not_found.
       operationId: getCourse
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: joinCode is non-null only for instructors. A deleting course remains retrievable until background deletion finishes, after which this operation returns not_found.
@@ -1580,14 +1824,28 @@ paths:
       description: Update course name or status. At least one field is required.
       operationId: updateCourse
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateCourse
+                      details: []
         '200':
           description: At least one field is required.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -1699,6 +1957,7 @@ paths:
                       requestId: req_updateCourse
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -1717,9 +1976,23 @@ paths:
       description: Delete course. Returns a course with status deleting. Location identifies the same course for polling; it eventually returns not_found after posts, collaboration data, search records, and stored files are removed.
       operationId: deleteCourse
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteCourse
+                      details: []
         '202':
           description: Returns a course with status deleting. Location identifies the same course for polling; it eventually returns not_found after posts, collaboration data, search records, and stored files are removed.
           headers:
@@ -1821,6 +2094,7 @@ paths:
                       requestId: req_deleteCourse
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -1832,14 +2106,30 @@ paths:
       description: Join course. Join links and QR codes contain both courseId and joinCode. New members always enter as students.
       operationId: joinCourse
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_joinCourse
+                      details: []
         '201':
           description: Join links and QR codes contain both courseId and joinCode. New members always enter as students.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -1866,6 +2156,14 @@ paths:
                     error:
                       code: course_archived
                       message: The course does not accept joins.
+                      requestId: req_joinCourse
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_joinCourse
                       details: []
         '422':
@@ -1929,6 +2227,7 @@ paths:
                       requestId: req_joinCourse
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -1947,8 +2246,7 @@ paths:
       description: List course members.
       operationId: listCourseMembers
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List course members completed successfully.
@@ -2067,8 +2365,7 @@ paths:
       description: Retrieve course member. The ETag protects later role changes or removal.
       operationId: getCourseMember
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: The ETag protects later role changes or removal.
@@ -2160,14 +2457,28 @@ paths:
       description: Update course member role.
       operationId: updateCourseMember
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateCourseMember
+                      details: []
         '200':
           description: Update course member role completed successfully.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -2294,6 +2605,7 @@ paths:
                       requestId: req_updateCourseMember
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/UserId"
       - "$ref": "#/components/parameters/IfMatch"
@@ -2313,9 +2625,23 @@ paths:
       description: Remove course member.
       operationId: deleteCourseMember
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteCourseMember
+                      details: []
         '204':
           description: Remove course member completed successfully.
         '404':
@@ -2424,6 +2750,7 @@ paths:
                       requestId: req_deleteCourseMember
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/UserId"
       - "$ref": "#/components/parameters/IfMatch"
@@ -2436,9 +2763,23 @@ paths:
       description: Leave course.
       operationId: leaveCourse
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_leaveCourse
+                      details: []
         '204':
           description: Leave course completed successfully.
         '404':
@@ -2525,6 +2866,7 @@ paths:
                       requestId: req_leaveCourse
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/CsrfToken"
   "/courses/{courseId}/posts":
@@ -2535,14 +2877,15 @@ paths:
       description: Create post in course.
       operationId: createPost
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '201':
           description: Create post in course completed successfully.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -2555,6 +2898,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createPost
+                      details: []
                 permission_denied:
                   summary: Only staff may create polls.
                   value:
@@ -2576,6 +2927,14 @@ paths:
                     error:
                       code: course_archived
                       message: The course is archived.
+                      requestId: req_createPost
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createPost
                       details: []
         '413':
@@ -2669,6 +3028,7 @@ paths:
                       requestId: req_createPost
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -2712,8 +3072,7 @@ paths:
       description: List or search posts in course. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
       operationId: listCoursePosts
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
@@ -2915,8 +3274,7 @@ paths:
       description: Retrieve post.
       operationId: getPost
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve post completed successfully.
@@ -3020,14 +3378,13 @@ paths:
       description: Update post. Members may suggest duplicates. Staff may confirm duplicates and change pinned. At least one metadata field or attachment addition is required.
       operationId: updatePost
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Members may suggest duplicates. Staff may confirm duplicates and change pinned. At least one metadata field or attachment addition is required.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -3040,6 +3397,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updatePost
+                      details: []
                 permission_denied:
                   summary: The caller cannot change one or more fields.
                   value:
@@ -3184,6 +3549,7 @@ paths:
                       requestId: req_updatePost
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/PostId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -3224,8 +3590,7 @@ paths:
       description: Delete post. A bodyless, authorless tombstone is retained when nested content requires it.
       operationId: deletePost
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '204':
           description: A bodyless, authorless tombstone is retained when nested content requires it.
@@ -3236,6 +3601,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deletePost
+                      details: []
                 permission_denied:
                   summary: Deletion is forbidden.
                   value:
@@ -3335,6 +3708,7 @@ paths:
                       requestId: req_deletePost
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/PostId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -3346,9 +3720,23 @@ paths:
       description: Cast or change vote on poll. Each user has one selected option; another PUT changes the vote.
       operationId: putPostVote
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_putPostVote
+                      details: []
         '200':
           description: Each user has one selected option; another PUT changes the vote.
           content:
@@ -3452,6 +3840,7 @@ paths:
                       requestId: req_putPostVote
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/PostId"
       - "$ref": "#/components/parameters/CsrfToken"
       requestBody:
@@ -3469,9 +3858,23 @@ paths:
       description: Retract vote from poll. Returns 204 even when the caller has no vote.
       operationId: deletePostVote
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deletePostVote
+                      details: []
         '204':
           description: Returns 204 even when the caller has no vote.
         '409':
@@ -3550,6 +3953,7 @@ paths:
                       requestId: req_deletePostVote
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/PostId"
       - "$ref": "#/components/parameters/CsrfToken"
   "/posts/{postId}/answers":
@@ -3560,14 +3964,30 @@ paths:
       description: Create answer to question post. The server derives kind as student or staff from the caller’s role. Each question has at most one student answer and one staff answer.
       operationId: createAnswer
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createAnswer
+                      details: []
         '201':
           description: The server derives kind as student or staff from the caller’s role. Each question has at most one student answer and one staff answer.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -3602,6 +4022,14 @@ paths:
                     error:
                       code: not_a_question
                       message: The post is not a question.
+                      requestId: req_createAnswer
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createAnswer
                       details: []
         '413':
@@ -3695,6 +4123,7 @@ paths:
                       requestId: req_createAnswer
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/PostId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -3734,8 +4163,7 @@ paths:
       description: List answers for question post. The data array contains at most one student answer and one staff answer.
       operationId: listPostAnswers
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: The data array contains at most one student answer and one staff answer.
@@ -3844,8 +4272,7 @@ paths:
       description: Retrieve answer.
       operationId: getAnswer
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve answer completed successfully.
@@ -3941,14 +4368,13 @@ paths:
       description: Update answer.
       operationId: updateAnswer
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Update answer completed successfully.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -3961,6 +4387,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateAnswer
+                      details: []
                 permission_denied:
                   summary: The caller cannot edit this shared answer.
                   value:
@@ -4113,6 +4547,7 @@ paths:
                       requestId: req_updateAnswer
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/AnswerId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -4153,8 +4588,7 @@ paths:
       description: Delete answer. A tombstone is retained when needed to preserve followups.
       operationId: deleteAnswer
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '204':
           description: A tombstone is retained when needed to preserve followups.
@@ -4165,6 +4599,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteAnswer
+                      details: []
                 permission_denied:
                   summary: A staff role is required.
                   value:
@@ -4272,6 +4714,7 @@ paths:
                       requestId: req_deleteAnswer
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/AnswerId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -4283,14 +4726,28 @@ paths:
       description: Endorse answer. Repeating a successful endorsement is idempotent when If-Match identifies the current endorsed revision. Endorsement makes the answer immutable.
       operationId: endorseAnswer
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_endorseAnswer
+                      details: []
         '200':
           description: Repeating a successful endorsement is idempotent when If-Match identifies the current endorsed revision. Endorsement makes the answer immutable.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -4402,6 +4859,7 @@ paths:
                       requestId: req_endorseAnswer
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/AnswerId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -4413,14 +4871,30 @@ paths:
       description: Create followup to answer.
       operationId: createAnswerFollowup
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createAnswerFollowup
+                      details: []
         '201':
           description: Create followup to answer completed successfully.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -4439,6 +4913,14 @@ paths:
                     error:
                       code: parent_archived
                       message: The answer or course is archived.
+                      requestId: req_createAnswerFollowup
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createAnswerFollowup
                       details: []
         '413':
@@ -4532,6 +5014,7 @@ paths:
                       requestId: req_createAnswerFollowup
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/AnswerId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -4571,8 +5054,7 @@ paths:
       description: List followups for answer. Returns direct followups only. Nested followups are addressed through their parent.
       operationId: listAnswerFollowups
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Returns direct followups only. Nested followups are addressed through their parent.
@@ -4686,14 +5168,30 @@ paths:
       description: Create followup to followup.
       operationId: createNestedFollowup
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createNestedFollowup
+                      details: []
         '201':
           description: Create followup to followup completed successfully.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -4712,6 +5210,14 @@ paths:
                     error:
                       code: parent_archived
                       message: The parent content or course is archived.
+                      requestId: req_createNestedFollowup
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createNestedFollowup
                       details: []
         '413':
@@ -4805,6 +5311,7 @@ paths:
                       requestId: req_createNestedFollowup
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/FollowupId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -4844,8 +5351,7 @@ paths:
       description: List nested followups. Returns direct children of the specified followup only. Deeper descendants are addressed through their parent followup.
       operationId: listNestedFollowups
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Returns direct children of the specified followup only. Deeper descendants are addressed through their parent followup.
@@ -4959,8 +5465,7 @@ paths:
       description: Retrieve followup.
       operationId: getFollowup
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve followup completed successfully.
@@ -5056,14 +5561,13 @@ paths:
       description: Update followup.
       operationId: updateFollowup
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Update followup completed successfully.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -5076,6 +5580,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateFollowup
+                      details: []
                 permission_denied:
                   summary: The caller cannot edit this followup.
                   value:
@@ -5220,6 +5732,7 @@ paths:
                       requestId: req_updateFollowup
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/FollowupId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -5260,8 +5773,7 @@ paths:
       description: Delete followup. A bodyless, authorless tombstone is retained when it has child followups.
       operationId: deleteFollowup
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '204':
           description: A bodyless, authorless tombstone is retained when it has child followups.
@@ -5272,6 +5784,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteFollowup
+                      details: []
                 permission_denied:
                   summary: The caller cannot delete this followup.
                   value:
@@ -5371,6 +5891,7 @@ paths:
                       requestId: req_deleteFollowup
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/FollowupId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -5379,11 +5900,14 @@ paths:
       tags:
       - Statistics
       summary: Retrieve course statistics
-      description: Retrieve course statistics.
+      description: Retrieve daily activity, post views, and endorsed-answer response
+        times for a course. Daily activity is grouped by UTC calendar date. Average
+        response time includes questions that first received an endorsed answer during
+        the selected period and measures the elapsed time from question creation to
+        endorsement.
       operationId: getCourseStatistics
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve course statistics completed successfully.
@@ -5395,10 +5919,17 @@ paths:
                 data:
                   courseId: course_123
                   period: 30d
-                  postsCreated: 42
-                  questionsAnswered: 31
-                  activeStudents: 84
-                  pollVotes: 120
+                  dailyActivity:
+                  - date: '2026-09-19'
+                    questionsCreated: 5
+                    answersCreated: 4
+                    postsViewed: 86
+                  - date: '2026-09-20'
+                    questionsCreated: 3
+                    answersCreated: 6
+                    postsViewed: 104
+                  postsViewed: 190
+                  averageResponseTimeSeconds: 1320.5
                   generatedAt: '2026-09-20T14:30:00Z'
         '403':
           description: Forbidden
@@ -5493,11 +6024,12 @@ paths:
       tags:
       - Statistics
       summary: List student statistics in course
-      description: List student statistics in course.
+      description: List each student's question, answer, and post-view activity during
+        the selected period. An answer contribution counts once per distinct answer
+        the student created or edited, regardless of the number of edits.
       operationId: listStudentStatistics
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List student statistics in course completed successfully.
@@ -5510,10 +6042,9 @@ paths:
                 - user:
                     id: user_123
                     displayName: Ada Lovelace
-                  postsCreated: 4
+                  questionsCreated: 4
                   answersContributed: 3
-                  messagesCreated: 12
-                  engagementScore: 19.5
+                  postsViewed: 38
                 page:
                   nextCursor: 
                   hasMore: false
@@ -5630,8 +6161,7 @@ paths:
       description: Retrieve course digest. The digest combines automatically ranked entries with manual inclusions.
       operationId: getCourseDigest
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: The digest combines automatically ranked entries with manual inclusions.
@@ -5717,8 +6247,7 @@ paths:
       description: Manually include post in course digest. Idempotently marks the post as manually included. The returned digest carries the latest ETag.
       operationId: putCourseDigestEntry
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Idempotently marks the post as manually included. The returned digest carries the latest ETag.
@@ -5737,6 +6266,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_putCourseDigestEntry
+                      details: []
                 permission_denied:
                   summary: A staff role is required.
                   value:
@@ -5821,6 +6358,7 @@ paths:
                       requestId: req_putCourseDigestEntry
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/PostId"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -5831,8 +6369,7 @@ paths:
       description: Remove manual inclusion of post from course digest. Returns 204 whether or not the post is currently manually included. Automatic ranking may still include the post.
       operationId: deleteCourseDigestEntry
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '204':
           description: Returns 204 whether or not the post is currently manually included. Automatic ranking may still include the post.
@@ -5843,6 +6380,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteCourseDigestEntry
+                      details: []
                 permission_denied:
                   summary: A staff role is required.
                   value:
@@ -5927,6 +6472,7 @@ paths:
                       requestId: req_deleteCourseDigestEntry
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/PostId"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -5938,14 +6484,15 @@ paths:
       description: Create resource in course. Use application/json for a link resource or multipart/form-data for an upload resource. kind is immutable; convert kinds by deleting and creating a resource.
       operationId: createResource
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '201':
           description: Use application/json for a link resource or multipart/form-data for an upload resource. kind is immutable; convert kinds by deleting and creating a resource.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -5958,6 +6505,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createResource
+                      details: []
                 permission_denied:
                   summary: An instructor role is required.
                   value:
@@ -5979,6 +6534,14 @@ paths:
                     error:
                       code: course_archived
                       message: The course is archived.
+                      requestId: req_createResource
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createResource
                       details: []
         '413':
@@ -6072,6 +6635,7 @@ paths:
                       requestId: req_createResource
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -6111,8 +6675,7 @@ paths:
       description: List resources in course.
       operationId: listCourseResources
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List resources in course completed successfully.
@@ -6241,8 +6804,7 @@ paths:
       description: Retrieve resource. For a ready upload, downloadUrl is accompanied by expiresAt. For links, url is non-null.
       operationId: getResource
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: For a ready upload, downloadUrl is accompanied by expiresAt. For links, url is non-null.
@@ -6338,14 +6900,13 @@ paths:
       description: Update resource. Use JSON to update a link resource. Use multipart to update an upload resource. kind cannot change. Replacing an upload restarts processing.
       operationId: updateResource
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Use JSON to update a link resource. Use multipart to update an upload resource. kind cannot change. Replacing an upload restarts processing.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -6358,6 +6919,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateResource
+                      details: []
                 permission_denied:
                   summary: An instructor role is required.
                   value:
@@ -6502,6 +7071,7 @@ paths:
                       requestId: req_updateResource
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/ResourceId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -6537,8 +7107,7 @@ paths:
       description: 'Delete resource. Logical deletion completes before the response: subsequent retrieval returns not_found. Stored bytes, OCR data, regions, and search records are cleaned asynchronously and never resurface.'
       operationId: deleteResource
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '204':
           description: 'Logical deletion completes before the response: subsequent retrieval returns not_found. Stored bytes, OCR data, regions, and search records are cleaned asynchronously and never resurface.'
@@ -6549,6 +7118,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteResource
+                      details: []
                 permission_denied:
                   summary: An instructor role is required.
                   value:
@@ -6648,6 +7225,7 @@ paths:
                       requestId: req_deleteResource
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/ResourceId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -6659,14 +7237,15 @@ paths:
       description: Create region in resource.
       operationId: createResourceRegion
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '201':
           description: Create region in resource completed successfully.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -6679,6 +7258,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createResourceRegion
+                      details: []
                 permission_denied:
                   summary: An instructor role is required.
                   value:
@@ -6708,6 +7295,14 @@ paths:
                     error:
                       code: resource_not_ready
                       message: The resource is not ready for region creation.
+                      requestId: req_createResourceRegion
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createResourceRegion
                       details: []
         '422':
@@ -6771,6 +7366,7 @@ paths:
                       requestId: req_createResourceRegion
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/ResourceId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -6795,8 +7391,7 @@ paths:
       description: List regions in resource.
       operationId: listResourceRegions
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List regions in resource completed successfully.
@@ -6919,8 +7514,7 @@ paths:
       description: Search resource regions in course. Results are ordered by relevance. Only indexed ready regions are returned.
       operationId: searchCourseResourceRegions
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Results are ordered by relevance. Only indexed ready regions are returned.
@@ -7041,8 +7635,7 @@ paths:
       description: Retrieve resource region.
       operationId: getResourceRegion
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve resource region completed successfully.
@@ -7138,14 +7731,13 @@ paths:
       description: Update resource region. Changing page or bounds restarts OCR and indexing.
       operationId: updateResourceRegion
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Changing page or bounds restarts OCR and indexing.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -7158,6 +7750,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateResourceRegion
+                      details: []
                 permission_denied:
                   summary: An instructor role is required.
                   value:
@@ -7272,6 +7872,7 @@ paths:
                       requestId: req_updateResourceRegion
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/ResourceRegionId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -7290,8 +7891,7 @@ paths:
       description: Delete resource region. Logical deletion completes before the response; subsequent retrieval returns not_found. Search cleanup is asynchronous and the region never resurfaces.
       operationId: deleteResourceRegion
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '204':
           description: Logical deletion completes before the response; subsequent retrieval returns not_found. Search cleanup is asynchronous and the region never resurfaces.
@@ -7302,6 +7902,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteResourceRegion
+                      details: []
                 permission_denied:
                   summary: An instructor role is required.
                   value:
@@ -7401,6 +8009,7 @@ paths:
                       requestId: req_deleteResourceRegion
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/ResourceRegionId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -7412,14 +8021,30 @@ paths:
       description: Create channel in course.
       operationId: createChannel
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createChannel
+                      details: []
         '201':
           description: Create channel in course completed successfully.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -7438,6 +8063,14 @@ paths:
                     error:
                       code: course_archived
                       message: The course is archived.
+                      requestId: req_createChannel
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createChannel
                       details: []
         '422':
@@ -7501,6 +8134,7 @@ paths:
                       requestId: req_createChannel
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -7520,8 +8154,7 @@ paths:
       description: List channels in course.
       operationId: listCourseChannels
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List channels in course completed successfully.
@@ -7639,8 +8272,7 @@ paths:
       description: Retrieve channel.
       operationId: getChannel
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve channel completed successfully.
@@ -7731,14 +8363,28 @@ paths:
       description: Update channel name, description, or status.
       operationId: updateChannel
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateChannel
+                      details: []
         '200':
           description: Update channel name, description, or status completed successfully.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -7850,6 +8496,7 @@ paths:
                       requestId: req_updateChannel
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/ChannelId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -7868,9 +8515,23 @@ paths:
       description: Delete channel. Descendants are deleted or tombstoned where retained conversation structure requires them.
       operationId: deleteChannel
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteChannel
+                      details: []
         '204':
           description: Descendants are deleted or tombstoned where retained conversation structure requires them.
         '409':
@@ -7964,6 +8625,7 @@ paths:
                       requestId: req_deleteChannel
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/ChannelId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -7975,14 +8637,30 @@ paths:
       description: Create subchannel in channel.
       operationId: createSubchannel
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createSubchannel
+                      details: []
         '201':
           description: Create subchannel in channel completed successfully.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -8001,6 +8679,14 @@ paths:
                     error:
                       code: parent_archived
                       message: The channel or course is archived.
+                      requestId: req_createSubchannel
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createSubchannel
                       details: []
         '422':
@@ -8064,6 +8750,7 @@ paths:
                       requestId: req_createSubchannel
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/ChannelId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -8085,8 +8772,7 @@ paths:
       description: List subchannels in channel.
       operationId: listChannelSubchannels
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: List subchannels in channel completed successfully.
@@ -8208,8 +8894,7 @@ paths:
       description: Retrieve subchannel.
       operationId: getSubchannel
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve subchannel completed successfully.
@@ -8318,14 +9003,13 @@ paths:
       description: Update subchannel title or status.
       operationId: updateSubchannel
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Update subchannel title or status completed successfully.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -8338,6 +9022,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateSubchannel
+                      details: []
                 permission_denied:
                   summary: The caller cannot change one or more fields.
                   value:
@@ -8452,6 +9144,7 @@ paths:
                       requestId: req_updateSubchannel
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/SubchannelId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -8470,8 +9163,7 @@ paths:
       description: Delete subchannel. Messages are deleted or retained as bodyless, authorless tombstones where conversation integrity requires them.
       operationId: deleteSubchannel
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '204':
           description: Messages are deleted or retained as bodyless, authorless tombstones where conversation integrity requires them.
@@ -8482,6 +9174,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteSubchannel
+                      details: []
                 permission_denied:
                   summary: The caller cannot delete this subchannel.
                   value:
@@ -8581,6 +9281,7 @@ paths:
                       requestId: req_deleteSubchannel
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/SubchannelId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -8592,14 +9293,30 @@ paths:
       description: Create message in subchannel.
       operationId: createMessage
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createMessage
+                      details: []
         '201':
           description: Create message in subchannel completed successfully.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -8618,6 +9335,14 @@ paths:
                     error:
                       code: parent_archived
                       message: The subchannel, channel, or course is archived.
+                      requestId: req_createMessage
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createMessage
                       details: []
         '422':
@@ -8681,6 +9406,7 @@ paths:
                       requestId: req_createMessage
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/SubchannelId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -8700,8 +9426,7 @@ paths:
       description: List messages in subchannel. Messages are ordered oldest first.
       operationId: listSubchannelMessages
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Messages are ordered oldest first.
@@ -8814,8 +9539,7 @@ paths:
       description: Retrieve message.
       operationId: getMessage
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Retrieve message completed successfully.
@@ -8910,14 +9634,13 @@ paths:
       description: Update message.
       operationId: updateMessage
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Update message completed successfully.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -8930,6 +9653,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateMessage
+                      details: []
                 permission_denied:
                   summary: The caller cannot edit this message.
                   value:
@@ -9044,6 +9775,7 @@ paths:
                       requestId: req_updateMessage
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/MessageId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -9062,8 +9794,7 @@ paths:
       description: Delete message. A bodyless, authorless tombstone is retained when required for conversation integrity.
       operationId: deleteMessage
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '204':
           description: A bodyless, authorless tombstone is retained when required for conversation integrity.
@@ -9074,6 +9805,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteMessage
+                      details: []
                 permission_denied:
                   summary: The caller cannot delete this message.
                   value:
@@ -9173,6 +9912,7 @@ paths:
                       requestId: req_deleteMessage
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/MessageId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -9184,14 +9924,30 @@ paths:
       description: Create a collaboration session in a course. Provide exactly one postId or subchannelId. Create a separate one-use connection ticket before opening the collaboration WebSocket.
       operationId: createCollaborationSession
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createCollaborationSession
+                      details: []
         '201':
           description: The collaboration session was created.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -9221,6 +9977,14 @@ paths:
                     error:
                       code: course_archived
                       message: The course is archived.
+                      requestId: req_createCollaborationSession
+                      details: []
+                idempotency_key_reused:
+                  summary: The idempotency key was already used with a different request body.
+                  value:
+                    error:
+                      code: idempotency_key_reused
+                      message: The idempotency key was already used with a different request body.
                       requestId: req_createCollaborationSession
                       details: []
         '422':
@@ -9284,6 +10048,7 @@ paths:
                       requestId: req_createCollaborationSession
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CourseId"
       - "$ref": "#/components/parameters/IdempotencyKey"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -9303,8 +10068,7 @@ paths:
       description: Lists collaboration-session summaries in a course.
       operationId: listCourseCollaborationSessions
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: Collaboration-session summaries in the course.
@@ -9440,8 +10204,7 @@ paths:
       description: Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session.
       operationId: getCollaborationSession
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: The collaboration session.
@@ -9533,14 +10296,13 @@ paths:
       description: Ends a collaboration session after draining accepted edits and successfully persisting the final Yjs state. Ended sessions retain their final snapshot.
       operationId: endCollaborationSession
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: The ended collaboration session.
           headers:
             ETag:
-              "$ref": "#/components/headers/ETagV4"
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -9553,6 +10315,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_endCollaborationSession
+                      details: []
                 permission_denied:
                   summary: The caller cannot end this session.
                   value:
@@ -9675,6 +10445,7 @@ paths:
                       requestId: req_endCollaborationSession
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CollaborationSessionId"
       - "$ref": "#/components/parameters/IfMatch"
       - "$ref": "#/components/parameters/CsrfToken"
@@ -9694,9 +10465,23 @@ paths:
       description: Creates a five-minute, one-use WebSocket ticket bound to the authenticated REST session, user, course, collaboration session, document, and effective permission. The server atomically consumes it during Hocuspocus authentication.
       operationId: createCollaborationConnectionTicket
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createCollaborationConnectionTicket
+                      details: []
         '201':
           description: The one-use connection ticket was created.
           headers:
@@ -9710,8 +10495,7 @@ paths:
                 data:
                   ticket: opaque_one_use_ticket
                   webSocketUrl: wss://api.example.edu/collaboration
-                  documentId: post_123
-                  protocolVersion: '1'
+                  documentId: collab_123
                   expiresAt: '2026-09-20T14:35:00Z'
         '401':
           description: Unauthorized
@@ -9815,6 +10599,7 @@ paths:
                       requestId: req_createCollaborationConnectionTicket
                       details: []
       parameters:
+      - "$ref": "#/components/parameters/Origin"
       - "$ref": "#/components/parameters/CollaborationSessionId"
       - "$ref": "#/components/parameters/CsrfToken"
   "/collaboration-sessions/{collaborationSessionId}/snapshot":
@@ -9825,8 +10610,7 @@ paths:
       description: Retrieves the latest persisted text projection. An active snapshot may lag accepted edits by approximately two seconds; an ended snapshot is the final successfully flushed state.
       operationId: getCollaborationSessionSnapshot
       security:
-      - chalktalk_session: []
-      - bearer_auth: []
+      - session_cookie: []
       responses:
         '200':
           description: The latest persisted collaboration snapshot.
@@ -9840,7 +10624,7 @@ paths:
               example:
                 data:
                   collaborationSessionId: collab_123
-                  documentId: post_123
+                  documentId: collab_123
                   sessionStatus: active
                   content: Shared explanation in progress.
                   persistedAt: '2026-09-20T14:31:58Z'
@@ -9909,15 +10693,11 @@ paths:
       - "$ref": "#/components/parameters/CollaborationSessionId"
 components:
   securitySchemes:
-    chalktalk_session:
+    session_cookie:
       type: apiKey
       in: cookie
-      name: chalktalk_session
-      description: Opaque 30-day web session stored in a Secure, HttpOnly, SameSite=Lax cookie.
-    bearer_auth:
-      type: http
-      scheme: bearer
-      description: Opaque 30-day native-client credential stored in Keychain or Keystore.
+      name: __Host-chalktalk_session
+      description: Opaque 30-day browser session stored with Path=/, Secure, HttpOnly, and SameSite=Lax and without a Domain attribute.
   parameters:
     Cursor:
       name: cursor
@@ -9955,11 +10735,19 @@ components:
         type: string
         minLength: 1
         maxLength: 255
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      description: Browser origin. It must exactly match a deployment-configured HTTPS frontend origin.
+      schema:
+        type: string
+        format: uri
     CsrfToken:
       name: X-CSRF-Token
       in: header
-      required: false
-      description: Required for cookie-authenticated POST, PUT, PATCH, and DELETE requests; omit for bearer authentication.
+      required: true
+      description: Stable opaque token bound to the authenticated session. Required with every authenticated POST, PUT, PATCH, and DELETE request.
       schema:
         type: string
         minLength: 1
@@ -10074,15 +10862,10 @@ components:
         maxLength: 255
   headers:
     ETag:
-      description: Opaque revision token for a later If-Match request.
+      description: Opaque revision token representing the returned resource state. Clients must return it unchanged in a later If-Match request.
       schema:
         type: string
-      example: '"v3"'
-    ETagV4:
-      description: Opaque revision token for the returned fourth revision.
-      schema:
-        type: string
-      example: '"v4"'
+      example: '"opaque-revision-token"'
     CacheControlNoStore:
       description: Prevents clients and intermediaries from storing the sensitive response.
       schema:
@@ -10094,11 +10877,16 @@ components:
       schema:
         type: string
       example: "/api/v1/courses/course_123"
-    SetCookie:
-      description: Secure HTTP-only session cookie when cookie transport is selected.
+    SetSessionCookie:
+      description: Secure HTTP-only host-prefixed 30-day browser session cookie. It never includes a Domain attribute.
       schema:
         type: string
-      example: chalktalk_session=opaque; Path=/; Secure; HttpOnly; SameSite=Lax
+        example: __Host-chalktalk_session=opaque; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax
+    ClearSessionCookie:
+      description: Expires the secure HTTP-only browser session cookie. It never includes a Domain attribute.
+      schema:
+        type: string
+        example: __Host-chalktalk_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax
     RetryAfter:
       description: Time the client must wait before retrying, expressed as seconds or an HTTP date.
       schema:
@@ -10149,6 +10937,8 @@ components:
               - validation_failed
               - authentication_required
               - invalid_credentials
+              - origin_not_allowed
+              - csrf_validation_failed
               - permission_denied
               - not_found
               - version_conflict
@@ -11233,21 +12023,23 @@ components:
           - 7d
           - 30d
           - course_to_date
-        postsCreated:
+        dailyActivity:
+          type: array
+          description: Activity totals for each UTC calendar date in the selected period,
+            including dates with no activity.
+          items:
+            "$ref": "#/components/schemas/DailyCourseActivity"
+        postsViewed:
           type: integer
-          description: Posts created during the period.
+          description: Recorded post views during the period.
           minimum: 0
-        questionsAnswered:
-          type: integer
-          description: Questions answered during the period.
-          minimum: 0
-        activeStudents:
-          type: integer
-          description: Distinct participating students.
-          minimum: 0
-        pollVotes:
-          type: integer
-          description: Votes cast during the period.
+        averageResponseTimeSeconds:
+          type:
+          - number
+          - 'null'
+          description: Mean elapsed seconds from question creation to first endorsement
+            for questions that first received an endorsed answer during the period;
+            null when no question qualifies.
           minimum: 0
         generatedAt:
           type: string
@@ -11259,39 +12051,60 @@ components:
       required:
       - courseId
       - period
-      - postsCreated
-      - questionsAnswered
-      - activeStudents
-      - pollVotes
+      - dailyActivity
+      - postsViewed
+      - averageResponseTimeSeconds
       - generatedAt
+    DailyCourseActivity:
+      type: object
+      properties:
+        date:
+          type: string
+          description: UTC calendar date.
+          format: date
+          examples:
+          - '2026-09-20'
+        questionsCreated:
+          type: integer
+          description: Questions created on the date.
+          minimum: 0
+        answersCreated:
+          type: integer
+          description: Answers created on the date.
+          minimum: 0
+        postsViewed:
+          type: integer
+          description: Recorded post views on the date.
+          minimum: 0
+      additionalProperties: false
+      required:
+      - date
+      - questionsCreated
+      - answersCreated
+      - postsViewed
     StudentStatistics:
       type: object
       properties:
         user:
           "$ref": "#/components/schemas/UserSummary"
-        postsCreated:
+        questionsCreated:
           type: integer
-          description: Posts created by the student.
+          description: Questions created by the student during the period.
           minimum: 0
         answersContributed:
           type: integer
-          description: Shared answers edited by the student.
+          description: Distinct answers the student created or edited during the period.
           minimum: 0
-        messagesCreated:
+        postsViewed:
           type: integer
-          description: Messages created by the student.
-          minimum: 0
-        engagementScore:
-          type: number
-          description: Course-defined engagement score.
+          description: Recorded post views by the student during the period.
           minimum: 0
       additionalProperties: false
       required:
       - user
-      - postsCreated
+      - questionsCreated
       - answersContributed
-      - messagesCreated
-      - engagementScore
+      - postsViewed
     DigestEntry:
       type: object
       properties:
@@ -12248,10 +13061,6 @@ components:
           description: Document identifier derived by the server from the collaboration session.
           minLength: 1
           maxLength: 255
-        protocolVersion:
-          type: string
-          description: ChalkTalk collaboration protocol version.
-          const: '1'
         expiresAt:
           type: string
           description: UTC expiry timestamp, five minutes after ticket issuance.
@@ -12261,7 +13070,6 @@ components:
       - ticket
       - webSocketUrl
       - documentId
-      - protocolVersion
       - expiresAt
     CollaborationSnapshot:
       type: object
@@ -12648,7 +13456,7 @@ components:
       properties:
         email:
           type: string
-          description: Email address to verify before account creation or an account email change.
+          description: Email address to verify before account creation or a same-school account email change.
           format: email
       additionalProperties: false
       required:
@@ -12690,17 +13498,10 @@ components:
           minLength: 1
           maxLength: 128
           format: password
-        credentialTransport:
-          type: string
-          description: Select secure cookie for web or opaque bearer credential for native.
-          enum:
-          - cookie
-          - bearer
       additionalProperties: false
       required:
       - email
       - password
-      - credentialTransport
     Session:
       type: object
       properties:
@@ -12713,35 +13514,22 @@ components:
           - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
         user:
           "$ref": "#/components/schemas/User"
-        credentialTransport:
-          type: string
-          description: Issued credential transport.
-          enum:
-          - cookie
-          - bearer
         expiresAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
           format: date-time
           examples:
           - '2026-09-20T14:30:00Z'
-        accessToken:
-          type:
-          - string
-          - 'null'
-          description: Opaque bearer credential returned once for bearer transport; null for cookie transport.
         csrfToken:
-          type:
-          - string
-          - 'null'
-          description: Opaque token bound to the cookie session and sent in X-CSRF-Token for cookie-authenticated mutations; null for bearer transport.
+          type: string
+          description: Stable opaque token bound to the session and sent in X-CSRF-Token for authenticated unsafe requests.
+          minLength: 1
+          maxLength: 4096
       additionalProperties: false
       required:
       - id
       - user
-      - credentialTransport
       - expiresAt
-      - accessToken
       - csrfToken
     SessionResponse:
       type: object
@@ -12761,7 +13549,7 @@ components:
           maxLength: 100
         emailVerificationToken:
           type: string
-          description: Single-use opaque token proving control of the replacement email address.
+          description: Single-use opaque token proving control of a replacement email address in the account's current school domain.
           minLength: 1
           maxLength: 4096
       additionalProperties: false

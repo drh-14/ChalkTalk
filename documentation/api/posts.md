@@ -5,15 +5,16 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 <a id="createPost"></a>
 - **`POST /api/v1/courses/{courseId}/posts`**
   - Description: Creates a post in a course.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member; creating a poll requires TA or instructor.
   - Request media: `application/json`, `multipart/form-data`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -67,14 +68,40 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Post details.
+      - `data.id` (string, required): Opaque stable post identifier.
+      - `data.courseId` (string, required): Opaque identifier of the course containing the post.
+      - `data.type` (enum: question, note, poll, required): Post type and discriminator for the conditional fields below.
+      - `data.title` (string, required): Human-readable title.
+      - `data.bodyMarkdown` (string, required): Markdown content.
+      - `data.author` (object, required): Author identity visible to the authenticated viewer under the shared identity visibility policy.
+      - `data.anonymous` (boolean, required): Whether the post was authored anonymously.
+      - `data.tags` (list of strings, required): Course-defined post tags.
+      - `data.attachments` (list of objects, required): Files attached to the post.
+      - `data.pinned` (boolean, required): Whether staff pinned the post.
+      - `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
+      - `data.duplicateStatus` (enum: none, suggested, confirmed, required): Duplicate-review state.
+      - `data.lastActivityAt` (string, required): UTC timestamp of the post's latest activity in ISO 8601 date-time format.
+      - `data.createdAt` (string, required): UTC creation timestamp in ISO 8601 date-time format.
+      - `data.updatedAt` (string, required): UTC timestamp of the latest post update in ISO 8601 date-time format.
+      - `data.version` (integer, required): Revision number used to construct the resource ETag.
+      - `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+      - `data.options` (list of objects, required when `type` is `poll`): Poll choices.
+        - `data.options[].id` (string, required): Opaque stable poll-option identifier.
+        - `data.options[].label` (string, required): Visible choice label.
+        - `data.options[].voteCount` (integer, required): Votes currently cast for the option.
+        - `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
+      - `data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
   - Example request:
 
     ```bash
     curl --request POST '/api/v1/courses/course_123/posts' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"type":"question","title":"Why is the sky blue?","bodyMarkdown":"How does scattering work?","anonymous":false,"tags":["physics"]}'
@@ -116,8 +143,10 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: Only staff may create polls.
     - `409 Conflict`:
+      - `idempotency_key_reused`: The idempotency key was already used with a different request body.
       - `course_archived`: The course is archived.
     - `413 Content Too Large`:
       - `payload_too_large`: An attachment exceeds 25 MiB or the five-file limit.
@@ -133,12 +162,12 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 <a id="listCoursePosts"></a>
 - **`GET /api/v1/courses/{courseId}/posts`**
   - Description: Lists or searches the posts in a course. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -162,14 +191,37 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
   - Response headers:
     - None specific to this operation.
   - Response body:
-    - `data` (list of objects, required): Posts returned by this request.
+    - `data` (list of objects, required): Every returned post contains the fields below.
+      - `data[].id` (string, required): Opaque stable post identifier.
+      - `data[].courseId` (string, required): Opaque identifier of the course containing the post.
+      - `data[].type` (enum: question, note, poll, required): Post type and discriminator for the conditional fields below.
+      - `data[].title` (string, required): Human-readable title.
+      - `data[].bodyMarkdown` (string, required): Markdown content.
+      - `data[].author` (object, required): Author identity visible to the authenticated viewer under the shared identity visibility policy.
+      - `data[].anonymous` (boolean, required): Whether the post was authored anonymously.
+      - `data[].tags` (list of strings, required): Course-defined post tags.
+      - `data[].attachments` (list of objects, required): Files attached to the post.
+      - `data[].pinned` (boolean, required): Whether staff pinned the post.
+      - `data[].duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
+      - `data[].duplicateStatus` (enum: none, suggested, confirmed, required): Duplicate-review state.
+      - `data[].lastActivityAt` (string, required): UTC timestamp of the post's latest activity in ISO 8601 date-time format.
+      - `data[].createdAt` (string, required): UTC creation timestamp in ISO 8601 date-time format.
+      - `data[].updatedAt` (string, required): UTC timestamp of the latest post update in ISO 8601 date-time format.
+      - `data[].version` (integer, required): Revision number used to construct the resource ETag.
+      - `data[].answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+      - `data[].options` (list of objects, required when `type` is `poll`): Poll choices.
+        - `data[].options[].id` (string, required): Opaque stable poll-option identifier.
+        - `data[].options[].label` (string, required): Visible choice label.
+        - `data[].options[].voteCount` (integer, required): Votes currently cast for the option.
+        - `data[].options[].selected` (boolean, required): Whether the authenticated user selected the option.
+      - `data[].totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
     - `page` (object, required): Pagination details for the current result set.
   - Example request:
 
     ```bash
     curl --request GET '/api/v1/courses/course_123/posts' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -225,12 +277,12 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 <a id="getPost"></a>
 - **`GET /api/v1/posts/{postId}`**
   - Description: Retrieves a post.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `postId` (string, required, 1–255 characters): Identifies the post resource.
   - Query parameters:
@@ -245,12 +297,35 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     - `ETag` (string): Opaque revision token for a later `If-Match` request.
   - Response body:
     - `data` (object, required): Post details.
+      - `data.id` (string, required): Opaque stable post identifier.
+      - `data.courseId` (string, required): Opaque identifier of the course containing the post.
+      - `data.type` (enum: question, note, poll, required): Post type and discriminator for the conditional fields below.
+      - `data.title` (string, required): Human-readable title.
+      - `data.bodyMarkdown` (string, required): Markdown content.
+      - `data.author` (object, required): Author identity visible to the authenticated viewer under the shared identity visibility policy.
+      - `data.anonymous` (boolean, required): Whether the post was authored anonymously.
+      - `data.tags` (list of strings, required): Course-defined post tags.
+      - `data.attachments` (list of objects, required): Files attached to the post.
+      - `data.pinned` (boolean, required): Whether staff pinned the post.
+      - `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
+      - `data.duplicateStatus` (enum: none, suggested, confirmed, required): Duplicate-review state.
+      - `data.lastActivityAt` (string, required): UTC timestamp of the post's latest activity in ISO 8601 date-time format.
+      - `data.createdAt` (string, required): UTC creation timestamp in ISO 8601 date-time format.
+      - `data.updatedAt` (string, required): UTC timestamp of the latest post update in ISO 8601 date-time format.
+      - `data.version` (integer, required): Revision number used to construct the resource ETag.
+      - `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+      - `data.options` (list of objects, required when `type` is `poll`): Poll choices.
+        - `data.options[].id` (string, required): Opaque stable poll-option identifier.
+        - `data.options[].label` (string, required): Visible choice label.
+        - `data.options[].voteCount` (integer, required): Votes currently cast for the option.
+        - `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
+      - `data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
   - Example request:
 
     ```bash
     curl --request GET '/api/v1/posts/post_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -298,15 +373,16 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 <a id="updatePost"></a>
 - **`PATCH /api/v1/posts/{postId}`**
   - Description: Updates a post. Members may suggest duplicates. Staff may confirm duplicates and change pinned. At least one metadata field or attachment addition is required.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Author or staff, subject to field permissions.
   - Request media: `application/json`, `multipart/form-data`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `postId` (string, required, 1–255 characters): Identifies the post resource.
   - Query parameters:
@@ -335,15 +411,40 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Post details.
+      - `data.id` (string, required): Opaque stable post identifier.
+      - `data.courseId` (string, required): Opaque identifier of the course containing the post.
+      - `data.type` (enum: question, note, poll, required): Post type and discriminator for the conditional fields below.
+      - `data.title` (string, required): Human-readable title.
+      - `data.bodyMarkdown` (string, required): Markdown content.
+      - `data.author` (object, required): Author identity visible to the authenticated viewer under the shared identity visibility policy.
+      - `data.anonymous` (boolean, required): Whether the post was authored anonymously.
+      - `data.tags` (list of strings, required): Course-defined post tags.
+      - `data.attachments` (list of objects, required): Files attached to the post.
+      - `data.pinned` (boolean, required): Whether staff pinned the post.
+      - `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
+      - `data.duplicateStatus` (enum: none, suggested, confirmed, required): Duplicate-review state.
+      - `data.lastActivityAt` (string, required): UTC timestamp of the post's latest activity in ISO 8601 date-time format.
+      - `data.createdAt` (string, required): UTC creation timestamp in ISO 8601 date-time format.
+      - `data.updatedAt` (string, required): UTC timestamp of the latest post update in ISO 8601 date-time format.
+      - `data.version` (integer, required): Revision number used to construct the resource ETag.
+      - `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+      - `data.options` (list of objects, required when `type` is `poll`): Poll choices.
+        - `data.options[].id` (string, required): Opaque stable poll-option identifier.
+        - `data.options[].label` (string, required): Visible choice label.
+        - `data.options[].voteCount` (integer, required): Votes currently cast for the option.
+        - `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
+      - `data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
   - Example request:
 
     ```bash
     curl --request PATCH '/api/v1/posts/post_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"title":"Why does the daytime sky look blue?","removeAttachmentIds":["attachment_old"]}'
@@ -385,6 +486,7 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: The caller cannot change one or more fields.
     - `409 Conflict`:
       - `course_archived`: The course is archived.
@@ -406,14 +508,15 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 <a id="deletePost"></a>
 - **`DELETE /api/v1/posts/{postId}`**
   - Description: Deletes a post. A bodyless, authorless tombstone is retained when nested content requires it.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Author or staff.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `postId` (string, required, 1–255 characters): Identifies the post resource.
   - Query parameters:
@@ -433,7 +536,9 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     ```bash
     curl --request DELETE '/api/v1/posts/post_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"'
     ```
 
@@ -446,6 +551,7 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: Deletion is forbidden.
     - `409 Conflict`:
       - `course_archived`: The course is archived.
@@ -461,14 +567,15 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 <a id="putPostVote"></a>
 - **`PUT /api/v1/posts/{postId}/vote`**
   - Description: Casts or changes the authenticated user’s vote on a poll. Each user has one selected option; another PUT changes the vote.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `postId` (string, required, 1–255 characters): Identifies the post resource.
   - Query parameters:
@@ -492,7 +599,9 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     ```bash
     curl --request PUT '/api/v1/posts/post_123/vote' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Content-Type: application/json' \
         --data '{"optionId":"option_1"}'
     ```
@@ -522,6 +631,8 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:
@@ -537,13 +648,14 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 <a id="deletePostVote"></a>
 - **`DELETE /api/v1/posts/{postId}/vote`**
   - Description: Retracts the authenticated user’s vote from a poll. Returns 204 even when the caller has no vote.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `postId` (string, required, 1–255 characters): Identifies the post resource.
   - Query parameters:
@@ -563,7 +675,9 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     ```bash
     curl --request DELETE '/api/v1/posts/post_123/vote' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token'
     ```
 
   - Example success response:
@@ -572,6 +686,8 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
     204 No Content
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:

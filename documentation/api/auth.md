@@ -1,13 +1,16 @@
 ## Authentication
 
+All browser requests originate from a deployment-configured HTTPS frontend origin. The API returns credentialed CORS headers only for an exact allowlist match, echoes that origin rather than `*`, sends `Vary: Origin`, and permits credentials. Every `POST`, `PUT`, `PATCH`, and `DELETE` request includes `Origin`; public account and session bootstrap operations validate the origin without requiring a session or CSRF token. Authenticated unsafe requests additionally send the session-bound `X-CSRF-Token`. A missing, null, or disallowed origin fails before request processing. Expiring or revoking a session also invalidates its CSRF token and every unused WebSocket connection ticket issued through it.
+
 <a id="createAccountVerificationRequest"></a>
 - **`POST /api/v1/account-verification-requests`**
-  - Description: Requests verification of an account email before account creation or an email change. The server normalizes the email and enforces the deployment's allowed school-domain policy. For every request with an allowed domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured universal link; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits default to five requests per normalized email per hour and 100 requests per source IP per hour; deployments may configure both limits. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+  - Description: Requests verification of an account email before account creation or a same-school email change. The server normalizes the email and enforces the deployment's allowed school-domain policy. For every request with an allowed domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits default to five requests per normalized email per hour and 100 requests per source IP per hour; deployments may configure both limits. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
   - Authentication: None.
   - Access: Public.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours. Reusing a key with a different request body fails.
   - Path parameters:
@@ -16,7 +19,7 @@
     - None.
   - Request body:
     - Schema: `AccountVerificationRequest` (required).
-    - `email` (string, required): Email address to verify before account creation or an account email change.
+    - `email` (string, required): Email address to verify before account creation or a same-school account email change.
   - Multipart parts:
     - None.
   - Success: `202 Accepted`.
@@ -30,6 +33,7 @@
     ```bash
     curl --request POST '/api/v1/account-verification-requests' \
         --header 'Accept: application/json' \
+        --header 'Origin: https://app.example.edu' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"email":"ada@example.edu"}'
@@ -41,6 +45,8 @@
     202 Accepted
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `origin_not_allowed`: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
     - `409 Conflict`:
       - `idempotency_key_reused`: The idempotency key was already used with a different request body.
     - `422 Unprocessable Content`:
@@ -60,6 +66,7 @@
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours. Reusing a key with a different request body fails.
   - Path parameters:
@@ -77,6 +84,7 @@
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): User profile details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -90,6 +98,7 @@
     ```bash
     curl --request POST '/api/v1/users' \
         --header 'Accept: application/json' \
+        --header 'Origin: https://app.example.edu' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"verificationToken":"opaque_email_verification_token","password":"correct horse battery staple","displayName":"Ada Lovelace"}'
@@ -110,6 +119,8 @@
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `origin_not_allowed`: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
     - `409 Conflict`:
       - `email_in_use`: The email already belongs to an account.
       - `idempotency_key_reused`: The idempotency key was already used with a different request body.
@@ -126,12 +137,13 @@
 
 <a id="createSession"></a>
 - **`POST /api/v1/sessions`**
-  - Description: Authenticates a user and creates a session. Cookie transport sets `chalktalk_session` as a Secure, HttpOnly, SameSite=Lax cookie and returns an opaque CSRF token bound to that session. The client sends the CSRF token in `X-CSRF-Token` for cookie-authenticated mutations. Bearer transport returns the opaque access token once and does not use a CSRF token. Sessions expire after 30 days.
+  - Description: Authenticates a user and creates a 30-day browser session. Success always sets `__Host-chalktalk_session` with `Path=/`, `Max-Age=2592000`, `Secure`, `HttpOnly`, and `SameSite=Lax`, without a `Domain` attribute. It also returns a non-null opaque CSRF token that remains stable for the session lifetime and is sent in `X-CSRF-Token` on authenticated unsafe requests. The response is never stored by clients or intermediaries.
   - Authentication: None.
   - Access: Public.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
   - Path parameters:
     - None.
@@ -141,31 +153,30 @@
     - Schema: `CreateSessionRequest` (required).
     - `email` (string, required): Account email.
     - `password` (string, required): Account password.
-    - `credentialTransport` (enum: cookie, bearer, required): Select secure cookie for web or opaque bearer credential for native.
   - Multipart parts:
     - None.
   - Success: `201 Created`.
   - Response media: `application/json`.
   - Response headers:
-    - `Set-Cookie` (conditional): Secure HTTP-only `chalktalk_session` cookie for cookie transport.
+    - `Set-Cookie` (required): `__Host-chalktalk_session=<opaque-session>; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax`. The cookie has no `Domain` attribute.
+    - `Cache-Control: no-store` (required): Prevents storage of the session and CSRF token response.
   - Response body:
     - `data` (object, required): Authenticated session details.
       - `data.id` (string, required): Opaque stable identifier.
       - `data.user` (object, required): User profile details.
-      - `data.credentialTransport` (enum: cookie, bearer, required): Issued credential transport.
       - `data.expiresAt` (string, required): UTC timestamp in ISO 8601 date-time format.
-      - `data.accessToken` (string or null, required): Opaque bearer credential returned once for bearer transport; null for cookie transport.
-      - `data.csrfToken` (string or null, required): Opaque token bound to the cookie session and sent in `X-CSRF-Token` for cookie-authenticated mutations; null for bearer transport.
+      - `data.csrfToken` (string, required): Stable opaque token bound to the session and sent in `X-CSRF-Token` for authenticated unsafe requests.
   - Example request:
 
     ```bash
     curl --request POST '/api/v1/sessions' \
         --header 'Accept: application/json' \
+        --header 'Origin: https://app.example.edu' \
         --header 'Content-Type: application/json' \
-        --data '{"email":"ada@example.edu","password":"correct horse battery staple","credentialTransport":"bearer"}'
+        --data '{"email":"ada@example.edu","password":"correct horse battery staple"}'
     ```
 
-  - Example cookie-transport success response:
+  - Example success response:
 
     ```json
     {
@@ -179,39 +190,18 @@
           "updatedAt": "2026-09-20T14:30:00Z",
           "version": 3
         },
-        "credentialTransport": "cookie",
         "expiresAt": "2026-10-20T14:30:00Z",
-        "accessToken": null,
         "csrfToken": "opaque_csrf_token"
       }
     }
     ```
-  - Example bearer-transport success response:
-
-    ```json
-    {
-      "data": {
-        "id": "session_123",
-        "user": {
-          "id": "user_123",
-          "email": "ada@example.edu",
-          "displayName": "Ada Lovelace",
-          "createdAt": "2026-09-20T14:30:00Z",
-          "updatedAt": "2026-09-20T14:30:00Z",
-          "version": 3
-        },
-        "credentialTransport": "bearer",
-        "expiresAt": "2026-10-20T14:30:00Z",
-        "accessToken": "opaque_access_token",
-        "csrfToken": null
-      }
-    }
-    ```
   - Errors:
+    - `403 Forbidden`:
+      - `origin_not_allowed`: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
     - `401 Unauthorized`:
       - `invalid_credentials`: The email or password is invalid.
     - `422 Unprocessable Content`:
-      - `validation_failed`: The credential transport is invalid.
+      - `validation_failed`: The email or password field is malformed.
     - `429 Too Many Requests`:
       - `rate_limited`: Too many sign-in attempts.
     - `500 Internal Server Error`:
@@ -219,16 +209,79 @@
     - `503 Service Unavailable`:
       - `service_unavailable`: A required service is temporarily unavailable.
 
-<a id="deleteCurrentSession"></a>
-- **`DELETE /api/v1/sessions/current`**
-  - Description: Ends the current authenticated session. Revokes only the credential used for this request.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+<a id="getCurrentSession"></a>
+- **`GET /api/v1/sessions/current`**
+  - Description: Retrieves the current browser session after a page load or reload. It returns the same stable CSRF token issued when the session was created; retrieval does not rotate the token or extend the session expiry. The response is never stored by clients or intermediaries.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Signed-in user.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+  - Path parameters:
+    - None.
+  - Query parameters:
+    - None.
+  - Request body:
+    - None.
+  - Multipart parts:
+    - None.
+  - Success: `200 OK`.
+  - Response media: `application/json`.
+  - Response headers:
+    - `Cache-Control: no-store` (required): Prevents storage of the session and CSRF token response.
+  - Response body:
+    - `data` (object, required): Current authenticated session details.
+      - `data.id` (string, required): Opaque stable identifier.
+      - `data.user` (object, required): User profile details.
+      - `data.expiresAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+      - `data.csrfToken` (string, required): Stable opaque token bound to the session and sent in `X-CSRF-Token` for authenticated unsafe requests.
+  - Example request:
+
+    ```bash
+    curl --request GET '/api/v1/sessions/current' \
+        --header 'Accept: application/json' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
+    ```
+
+  - Example success response:
+
+    ```json
+    {
+      "data": {
+        "id": "session_123",
+        "user": {
+          "id": "user_123",
+          "email": "ada@example.edu",
+          "displayName": "Ada Lovelace",
+          "createdAt": "2026-09-20T14:30:00Z",
+          "updatedAt": "2026-09-20T14:30:00Z",
+          "version": 3
+        },
+        "expiresAt": "2026-10-20T14:30:00Z",
+        "csrfToken": "opaque_csrf_token"
+      }
+    }
+    ```
+  - Errors:
+    - `401 Unauthorized`:
+      - `authentication_required`: The session is missing, expired, or invalid.
+    - `500 Internal Server Error`:
+      - `internal_error`: The server could not complete the request.
+    - `503 Service Unavailable`:
+      - `service_unavailable`: A required service is temporarily unavailable.
+
+<a id="deleteCurrentSession"></a>
+- **`DELETE /api/v1/sessions/current`**
+  - Description: Ends the current authenticated session and invalidates its CSRF token and every unused WebSocket connection ticket issued through it. Success expires the browser cookie. Repeating the request after success receives `401 Unauthorized` and still leaves the expired cookie client-side.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
+  - Access: Signed-in user.
+  - Request media: None.
+  - Request headers:
+    - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - None.
   - Query parameters:
@@ -240,7 +293,7 @@
   - Success: `204 No Content`.
   - Response media: None.
   - Response headers:
-    - None specific to this operation.
+    - `Set-Cookie` (required): `__Host-chalktalk_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax`. The clearing cookie has no `Domain` attribute.
   - Response body:
     - None.
   - Example request:
@@ -248,7 +301,9 @@
     ```bash
     curl --request DELETE '/api/v1/sessions/current' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token'
     ```
 
   - Example success response:
@@ -257,6 +312,8 @@
     204 No Content
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: The session is missing or invalid.
     - `500 Internal Server Error`:
@@ -267,12 +324,12 @@
 <a id="getCurrentUser"></a>
 - **`GET /api/v1/users/me`**
   - Description: Retrieves the authenticated user’s account profile.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Signed-in user.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - None.
   - Query parameters:
@@ -298,7 +355,7 @@
     ```bash
     curl --request GET '/api/v1/users/me' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -325,16 +382,17 @@
 
 <a id="updateCurrentUser"></a>
 - **`PATCH /api/v1/users/me`**
-  - Description: Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof, derives the replacement email from that proof, finds or creates the organization for its canonical school domain, updates the organization membership, updates the account, and consumes the proof atomically. A failed transaction consumes nothing.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Description: Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have the same canonical school domain as the account's current email. The server updates the account and consumes the proof atomically; organization and course memberships do not change. A failed transaction consumes nothing.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Signed-in user.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - None.
   - Query parameters:
@@ -342,13 +400,13 @@
   - Request body:
     - Schema: `UpdateUserRequest` (required).
     - `displayName` (string, optional): Replacement visible name.
-    - `emailVerificationToken` (string, optional): Single-use token proving control of the replacement email address.
+    - `emailVerificationToken` (string, optional): Single-use token proving control of a replacement email address in the account's current school domain.
   - Multipart parts:
     - None.
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): User profile details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -362,7 +420,9 @@
     ```bash
     curl --request PATCH '/api/v1/users/me' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"displayName":"Ada Byron","emailVerificationToken":"opaque_email_verification_token"}'
@@ -374,7 +434,7 @@
     {
       "data": {
         "id": "user_123",
-        "email": "ada@newschool.edu",
+        "email": "ada.byron@example.edu",
         "displayName": "Ada Byron",
         "createdAt": "2026-09-20T14:30:00Z",
         "updatedAt": "2026-09-20T14:40:00Z",
@@ -383,6 +443,8 @@
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is required.
     - `409 Conflict`:
@@ -391,6 +453,7 @@
     - `412 Precondition Failed`:
       - `version_conflict`: The supplied ETag is stale.
     - `422 Unprocessable Content`:
+      - `email_domain_not_allowed`: The replacement email does not use the account's current canonical school domain.
       - `validation_failed`: No valid editable field was supplied.
       - `verification_token_invalid`: The email verification token is invalid, expired, or superseded by a later request.
     - `428 Precondition Required`:
@@ -402,16 +465,17 @@
 
 <a id="changeCurrentUserPassword"></a>
 - **`PATCH /api/v1/users/me/password`**
-  - Description: Changes the authenticated user’s password. Successfully changing the password revokes the user’s other sessions.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Description: Changes the authenticated user’s password. Success revokes the user’s other sessions together with their CSRF tokens and unused WebSocket connection tickets; the current session remains valid.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Signed-in user.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - None.
   - Query parameters:
@@ -433,7 +497,9 @@
     ```bash
     curl --request PATCH '/api/v1/users/me/password' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"currentPassword":"correct horse battery staple","newPassword":"a newer secure passphrase"}'
@@ -445,6 +511,8 @@
     204 No Content
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `invalid_credentials`: The current password is invalid.
     - `412 Precondition Failed`:
@@ -466,6 +534,7 @@
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
   - Path parameters:
     - None.
@@ -487,6 +556,7 @@
     ```bash
     curl --request POST '/api/v1/password-reset-requests' \
         --header 'Accept: application/json' \
+        --header 'Origin: https://app.example.edu' \
         --header 'Content-Type: application/json' \
         --data '{"email":"ada@example.edu"}'
     ```
@@ -497,6 +567,8 @@
     202 Accepted
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `origin_not_allowed`: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
     - `400 Bad Request`:
       - `invalid_request`: The request is malformed.
     - `429 Too Many Requests`:
@@ -508,12 +580,13 @@
 
 <a id="resetPassword"></a>
 - **`POST /api/v1/password-resets`**
-  - Description: Resets an account password using a password-reset token. Success consumes the token and revokes every existing session for the account.
+  - Description: Resets an account password using a password-reset token. Success consumes the token and revokes every existing session for the account together with their CSRF tokens and unused WebSocket connection tickets.
   - Authentication: None.
   - Access: Public.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
   - Path parameters:
     - None.
@@ -536,6 +609,7 @@
     ```bash
     curl --request POST '/api/v1/password-resets' \
         --header 'Accept: application/json' \
+        --header 'Origin: https://app.example.edu' \
         --header 'Content-Type: application/json' \
         --data '{"token":"reset_token_value","newPassword":"a newer secure passphrase"}'
     ```
@@ -546,6 +620,8 @@
     204 No Content
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `origin_not_allowed`: The Origin header is missing, null, or not an allowed HTTPS frontend origin.
     - `409 Conflict`:
       - `reset_token_used`: The one-time token was already consumed.
     - `422 Unprocessable Content`:
@@ -557,15 +633,16 @@
 
 <a id="deleteCurrentUser"></a>
 - **`DELETE /api/v1/users/me`**
-  - Description: Deletes the authenticated user’s account. Retained contributions are pseudonymized and all sessions are revoked. The reauthenticationProof field is conditional on deployment policy.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Description: Deletes the authenticated user’s account. Retained contributions are pseudonymized, and all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked. The reauthenticationProof field is conditional on deployment policy.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Signed-in user.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - None.
   - Query parameters:
@@ -586,7 +663,9 @@
     ```bash
     curl --request DELETE '/api/v1/users/me' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Content-Type: application/json' \
         --data '{"reauthenticationProof":"recent_auth_proof"}'
     ```
@@ -597,6 +676,8 @@
     204 No Content
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `invalid_credentials`: Recent authentication proof is invalid.
     - `409 Conflict`:

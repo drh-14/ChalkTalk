@@ -3,12 +3,12 @@
 <a id="listOrganizations"></a>
 - **`GET /api/v1/organizations`**
   - Description: Lists the organizations that contain the authenticated user.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Signed-in user; returns only organizations available to the caller.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - None.
   - Query parameters:
@@ -35,7 +35,7 @@
     ```bash
     curl --request GET '/api/v1/organizations' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:

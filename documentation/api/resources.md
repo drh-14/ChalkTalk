@@ -3,15 +3,16 @@
 <a id="createResource"></a>
 - **`POST /api/v1/courses/{courseId}/resources`**
   - Description: Creates a resource in a course. Use application/json for a link resource or multipart/form-data for an upload resource. kind is immutable; convert kinds by deleting and creating a resource.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor.
   - Request media: `application/json`, `multipart/form-data`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -32,6 +33,7 @@
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Resource details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -53,7 +55,9 @@
     ```bash
     curl --request POST '/api/v1/courses/course_123/resources' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"kind":"link","title":"Reference","description":"External reading","url":"https://example.edu/reading"}'
@@ -85,8 +89,10 @@
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: An instructor role is required.
     - `409 Conflict`:
+      - `idempotency_key_reused`: The idempotency key was already used with a different request body.
       - `course_archived`: The course is archived.
     - `413 Content Too Large`:
       - `payload_too_large`: The uploaded file exceeds 100 MiB.
@@ -102,12 +108,12 @@
 <a id="listCourseResources"></a>
 - **`GET /api/v1/courses/{courseId}/resources`**
   - Description: Lists the resources in a course.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -141,7 +147,7 @@
     ```bash
     curl --request GET '/api/v1/courses/course_123/resources' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -183,12 +189,12 @@
 <a id="getResource"></a>
 - **`GET /api/v1/resources/{resourceId}`**
   - Description: Retrieves a resource. For a ready upload, downloadUrl is accompanied by expiresAt. For links, url is non-null.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `resourceId` (string, required, 1–255 characters): Identifies the resource resource.
   - Query parameters:
@@ -222,7 +228,7 @@
     ```bash
     curl --request GET '/api/v1/resources/resource_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -260,15 +266,16 @@
 <a id="updateResource"></a>
 - **`PATCH /api/v1/resources/{resourceId}`**
   - Description: Updates a resource. Use JSON to update a link resource. Use multipart to update an upload resource. kind cannot change. Replacing an upload restarts processing.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor.
   - Request media: `application/json`, `multipart/form-data`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `resourceId` (string, required, 1–255 characters): Identifies the resource resource.
   - Query parameters:
@@ -286,7 +293,7 @@
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Resource details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -308,7 +315,9 @@
     ```bash
     curl --request PATCH '/api/v1/resources/resource_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"url":"https://example.edu/revised-reading"}'
@@ -340,6 +349,7 @@
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: An instructor role is required.
     - `409 Conflict`:
       - `course_archived`: The course is archived.
@@ -361,14 +371,15 @@
 <a id="deleteResource"></a>
 - **`DELETE /api/v1/resources/{resourceId}`**
   - Description: Deletes a resource. Logical deletion completes before the response: subsequent retrieval returns not_found. Stored bytes, OCR data, regions, and search records are cleaned asynchronously and never resurface.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `resourceId` (string, required, 1–255 characters): Identifies the resource resource.
   - Query parameters:
@@ -388,7 +399,9 @@
     ```bash
     curl --request DELETE '/api/v1/resources/resource_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"'
     ```
 
@@ -401,6 +414,7 @@
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: An instructor role is required.
     - `409 Conflict`:
       - `course_archived`: The course is archived.
@@ -416,15 +430,16 @@
 <a id="createResourceRegion"></a>
 - **`POST /api/v1/resources/{resourceId}/regions`**
   - Description: Creates a searchable region in a resource.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `resourceId` (string, required, 1–255 characters): Identifies the resource resource.
   - Query parameters:
@@ -444,6 +459,7 @@
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Resource region details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -461,7 +477,9 @@
     ```bash
     curl --request POST '/api/v1/resources/resource_123/regions' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"page":12,"bounds":{"x":120,"y":250,"width":600,"height":400},"title":"Recursion diagram"}'
@@ -494,8 +512,10 @@
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: An instructor role is required.
     - `409 Conflict`:
+      - `idempotency_key_reused`: The idempotency key was already used with a different request body.
       - `course_archived`: The course is archived.
       - `resource_not_ready`: The resource is not ready for region creation.
     - `422 Unprocessable Content`:
@@ -508,12 +528,12 @@
 <a id="listResourceRegions"></a>
 - **`GET /api/v1/resources/{resourceId}/regions`**
   - Description: Lists the regions in a resource.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `resourceId` (string, required, 1–255 characters): Identifies the resource resource.
   - Query parameters:
@@ -545,7 +565,7 @@
     ```bash
     curl --request GET '/api/v1/resources/resource_123/regions' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -591,12 +611,12 @@
 <a id="searchCourseResourceRegions"></a>
 - **`GET /api/v1/courses/{courseId}/resource-regions`**
   - Description: Searches resource regions in a course. Results are ordered by relevance. Only indexed ready regions are returned.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -628,7 +648,7 @@
     ```bash
     curl --request GET '/api/v1/courses/course_123/resource-regions?q=recursion' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -674,12 +694,12 @@
 <a id="getResourceRegion"></a>
 - **`GET /api/v1/resource-regions/{resourceRegionId}`**
   - Description: Retrieves a resource region.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `resourceRegionId` (string, required, 1–255 characters): Identifies the resourceRegion resource.
   - Query parameters:
@@ -709,7 +729,7 @@
     ```bash
     curl --request GET '/api/v1/resource-regions/region_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -748,15 +768,16 @@
 <a id="updateResourceRegion"></a>
 - **`PATCH /api/v1/resource-regions/{resourceRegionId}`**
   - Description: Updates a resource region. Changing page or bounds restarts OCR and indexing.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `resourceRegionId` (string, required, 1–255 characters): Identifies the resourceRegion resource.
   - Query parameters:
@@ -775,7 +796,7 @@
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Resource region details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -793,7 +814,9 @@
     ```bash
     curl --request PATCH '/api/v1/resource-regions/region_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"title":"Recursive-call diagram"}'
@@ -826,6 +849,7 @@
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: An instructor role is required.
     - `409 Conflict`:
       - `course_archived`: The course is archived.
@@ -843,14 +867,15 @@
 <a id="deleteResourceRegion"></a>
 - **`DELETE /api/v1/resource-regions/{resourceRegionId}`**
   - Description: Deletes a resource region. Logical deletion completes before the response; subsequent retrieval returns not_found. Search cleanup is asynchronous and the region never resurfaces.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Instructor.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `resourceRegionId` (string, required, 1–255 characters): Identifies the resourceRegion resource.
   - Query parameters:
@@ -870,7 +895,9 @@
     ```bash
     curl --request DELETE '/api/v1/resource-regions/region_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"'
     ```
 
@@ -883,6 +910,7 @@
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: An instructor role is required.
     - `409 Conflict`:
       - `course_archived`: The course is archived.

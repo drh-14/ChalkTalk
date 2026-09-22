@@ -3,15 +3,16 @@
 <a id="createCollaborationSession"></a>
 - **`POST /api/v1/courses/{courseId}/collaboration-sessions`**
   - Description: Creates a collaboration session in a course. Provide exactly one postId or subchannelId. Create a separate one-use connection ticket before opening the collaboration WebSocket.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -25,6 +26,7 @@
   - Response media: `application/json`.
   - Response headers:
     - `Location` (string): Relative URL of the created resource or deletion status resource.
+    - `ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Collaboration session details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -41,7 +43,9 @@
     ```bash
     curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
         --header 'Content-Type: application/json' \
         --data '{"anchor":{"postId":"post_123"}}'
@@ -67,9 +71,12 @@
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `409 Conflict`:
+      - `idempotency_key_reused`: The idempotency key was already used with a different request body.
       - `course_archived`: The course is archived.
     - `422 Unprocessable Content`:
       - `cross_course_anchor`: The anchor is invalid or belongs to another course.
@@ -81,12 +88,12 @@
 <a id="listCourseCollaborationSessions"></a>
 - **`GET /api/v1/courses/{courseId}/collaboration-sessions`**
   - Description: Lists collaboration-session summaries in a course.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `courseId` (string, required, 1–255 characters): Identifies the course resource.
   - Query parameters:
@@ -120,7 +127,7 @@
     ```bash
     curl --request GET '/api/v1/courses/course_123/collaboration-sessions' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -163,12 +170,12 @@
 <a id="getCollaborationSession"></a>
 - **`GET /api/v1/collaboration-sessions/{collaborationSessionId}`**
   - Description: Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `collaborationSessionId` (string, required, 1–255 characters): Identifies the collaborationSession resource.
   - Query parameters:
@@ -197,7 +204,7 @@
     ```bash
     curl --request GET '/api/v1/collaboration-sessions/collab_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -232,15 +239,16 @@
 <a id="endCollaborationSession"></a>
 - **`PATCH /api/v1/collaboration-sessions/{collaborationSessionId}`**
   - Description: Ends a collaboration session after draining accepted edits and successfully persisting the final Yjs state. Ended sessions retain their final snapshot.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Session creator or staff.
   - Request media: `application/json`
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
     - `Content-Type` (required): Selects one documented request media type.
     - `If-Match` (required, string): Supplies the ETag from the latest retrieval.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `collaborationSessionId` (string, required, 1–255 characters): Identifies the collaborationSession resource.
   - Query parameters:
@@ -253,7 +261,7 @@
   - Success: `200 OK`.
   - Response media: `application/json`.
   - Response headers:
-    - `ETag` (string): `"v4"`, the opaque revision token for the returned fourth revision.
+    - `ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
   - Response body:
     - `data` (object, required): Collaboration session details.
       - `data.id` (string, required): Opaque stable identifier.
@@ -270,7 +278,9 @@
     ```bash
     curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token' \
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token' \
         --header 'If-Match: "v3"' \
         --header 'Content-Type: application/json' \
         --data '{"status":"ended"}'
@@ -299,6 +309,7 @@
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
       - `permission_denied`: The caller cannot end this session.
     - `409 Conflict`:
       - `session_ended`: The session has already ended.
@@ -317,13 +328,14 @@
 <a id="createCollaborationConnectionTicket"></a>
 - **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/connection-tickets`**
   - Description: Creates a short-lived, one-use ticket for an active collaboration session. The ticket is bound to the authenticated REST session, user, course, collaboration session, document, and effective permission. See [Collaboration WebSocket protocol](collaboration-websocket.md).
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Current course member while the course and collaboration session are active.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
-    - `X-CSRF-Token` (conditional, string): Required with cookie authentication; omitted with bearer authentication.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+    - `Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+    - `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
   - Path parameters:
     - `collaborationSessionId` (string, required, 1–255 characters): Identifies the collaboration session.
   - Query parameters:
@@ -341,14 +353,15 @@
       - `data.ticket` (string, required): Opaque secret consumed by the first WebSocket authentication attempt.
       - `data.webSocketUrl` (string, required): Credential-free WebSocket URL.
       - `data.documentId` (string, required): Document identifier derived by the server from the collaboration session.
-      - `data.protocolVersion` (literal `1`, required): ChalkTalk collaboration protocol version.
       - `data.expiresAt` (string, required): UTC expiry timestamp, five minutes after issuance.
   - Example request:
 
     ```bash
     curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-tickets' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Origin: https://app.example.edu' \
+        --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+        --header 'X-CSRF-Token: opaque_csrf_token'
     ```
 
   - Example success response:
@@ -358,13 +371,14 @@
       "data": {
         "ticket": "opaque_one_use_ticket",
         "webSocketUrl": "wss://api.example.edu/collaboration",
-        "documentId": "post_123",
-        "protocolVersion": "1",
+        "documentId": "collab_123",
         "expiresAt": "2026-09-20T14:35:00Z"
       }
     }
     ```
   - Errors:
+    - `403 Forbidden`:
+      - `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
     - `401 Unauthorized`:
       - `authentication_required`: Authentication is missing or invalid.
     - `404 Not Found`:
@@ -382,12 +396,12 @@
 <a id="getCollaborationSessionSnapshot"></a>
 - **`GET /api/v1/collaboration-sessions/{collaborationSessionId}/snapshot`**
   - Description: Retrieves the latest persisted plain-text snapshot of an active or ended collaboration session. An active snapshot may lag accepted edits by approximately two seconds; an ended snapshot is the final successfully flushed state.
-  - Authentication: Either `Cookie: chalktalk_session=<opaque-session>` or `Authorization: Bearer <opaque-token>`.
+  - Authentication: `Cookie: __Host-chalktalk_session=<opaque-session>`.
   - Access: Current course member.
   - Request media: None.
   - Request headers:
     - `Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
-    - `Cookie` or `Authorization` (required alternative): Supplies exactly one supported authentication credential.
+    - `Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
   - Path parameters:
     - `collaborationSessionId` (string, required, 1–255 characters): Identifies the collaboration session.
   - Query parameters:
@@ -413,7 +427,7 @@
     ```bash
     curl --request GET '/api/v1/collaboration-sessions/collab_123/snapshot' \
         --header 'Accept: application/json' \
-        --header 'Authorization: Bearer opaque_access_token'
+        --header 'Cookie: __Host-chalktalk_session=opaque_session'
     ```
 
   - Example success response:
@@ -422,7 +436,7 @@
     {
       "data": {
         "collaborationSessionId": "collab_123",
-        "documentId": "post_123",
+        "documentId": "collab_123",
         "sessionStatus": "active",
         "content": "Shared explanation in progress.",
         "persistedAt": "2026-09-20T14:31:58Z",
