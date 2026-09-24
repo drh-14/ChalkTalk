@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="597.024" height="356" viewBox="0 0 597.024 356" style="--bg:#000000;--fg:#FFFFFF;--line:#FFFFFF;--accent:#000000;--surface:#000000;--border:#FFFFFF;--font:Inter;background:#000000">
+<style>
+  text { font-family: var(--font, 'Inter'), system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          #FFFFFF;
+    --_text-sec:      #c7c7c7;
+    --_text-muted:    #a8a8a8;
+    --_text-faint:    #8a8a8a;
+    --_line:          #FFFFFF;
+    --_arrow:         #000000;
+    --_node-fill:     #000000;
+    --_node-stroke:   #FFFFFF;
+    --_group-fill:    #000000;
+    --_group-hdr:     #0d0d0d;
+    --_inner-stroke:  #1f1f1f;
+    --_key-badge:     #1a1a1a;
+  }
+</style>
+<defs>
+  <marker id="seq-arrow" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <polygon points="0 0, 8 2.5, 0 5" fill="#5a5a5a" />
+  </marker>
+  <marker id="seq-arrow-open" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#5a5a5a" stroke-width="1" />
+  </marker>
+  <marker id="seq-arrow-cross" markerWidth="8" markerHeight="5" refX="4" refY="2.5" orient="auto">
+    <path d="M1 1 L7 4 M1 4 L7 1" fill="none" stroke="#5a5a5a" stroke-width="1.5" />
+  </marker>
+  <marker id="seq-arrow-half-top" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <path d="M0 0 L8 2.5" fill="none" stroke="#5a5a5a" stroke-width="1" />
+  </marker>
+  <marker id="seq-arrow-half-bottom" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <path d="M0 5 L8 2.5" fill="none" stroke="#5a5a5a" stroke-width="1" />
+  </marker>
+</defs>
+<line class="lifeline" data-actor="WebServer" x1="107.737" y1="70" x2="107.737" y2="326" stroke="#FFFFFF" stroke-width="0.75" stroke-dasharray="6 4" data-relationship="lifeline" data-direction="undirected" />
+<line class="lifeline" data-actor="Worker" x1="313.585" y1="70" x2="313.585" y2="326" stroke="#FFFFFF" stroke-width="0.75" stroke-dasharray="6 4" data-relationship="lifeline" data-direction="undirected" />
+<line class="lifeline" data-actor="Database" x1="512.999" y1="70" x2="512.999" y2="326" stroke="#FFFFFF" stroke-width="0.75" stroke-dasharray="6 4" data-relationship="lifeline" data-direction="undirected" />
+<g class="message" data-label="1. Insert job with queued status" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:WebServer-&gt;Database#0" data-role="message">
+  <line x1="107.737" y1="96" x2="512.999" y2="96" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:WebServer-&gt;Database#0:line" data-role="message" data-from="WebServer" data-to="Database" role="graphics-symbol" aria-roledescription="relation" aria-label="WebServer to Database: 1. Insert job with queued status" />
+  <text x="310.368" y="86" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="138.864" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">1. Insert job with queued status</text>
+</g>
+<g class="message" data-label="2. Atomically claim job and load payload" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:Worker-&gt;Database#0" data-role="message">
+  <line x1="313.585" y1="136" x2="512.999" y2="136" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:Worker-&gt;Database#0:line" data-role="message" data-from="Worker" data-to="Database" role="graphics-symbol" aria-roledescription="relation" aria-label="Worker to Database: 2. Atomically claim job and load payload" />
+  <text x="413.29200000000003" y="126" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="182.226" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">2. Atomically claim job and load payload</text>
+</g>
+<g class="message" data-label="3. Perform background work" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="true" data-id="message:Worker-&gt;Worker#0" data-role="message">
+  <polyline points="313.585,176 343.585,176 343.585,196 313.585,196" fill="none" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="self" data-id="message:Worker-&gt;Worker#0:line" data-role="message" data-from="Worker" data-to="Worker" role="graphics-symbol" aria-roledescription="relation" aria-label="Worker to Worker: 3. Perform background work" />
+  <text x="351.585" y="186" font-size="11" text-anchor="start" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="135.3" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">3. Perform background work</text>
+</g>
+<g class="message" data-label="4. Store result and mark job succeeded" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:Worker-&gt;Database#1" data-role="message">
+  <line x1="313.585" y1="246" x2="512.999" y2="246" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:Worker-&gt;Database#1:line" data-role="message" data-from="Worker" data-to="Database" role="graphics-symbol" aria-roledescription="relation" aria-label="Worker to Database: 4. Store result and mark job succeeded" />
+  <text x="413.29200000000003" y="236" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="183.414" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">4. Store result and mark job succeeded</text>
+</g>
+<g class="message" data-label="5. Record completion" data-line-style="dashed" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:Database-&gt;Worker#0" data-role="message">
+  <line x1="512.999" y1="286" x2="313.585" y2="286" stroke="#FFFFFF" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:Database-&gt;Worker#0:line" data-role="message" data-from="Database" data-to="Worker" role="graphics-symbol" aria-roledescription="relation" aria-label="Database to Worker: 5. Record completion" />
+  <text x="413.29200000000003" y="276" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="99.066" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">5. Record completion</text>
+</g>
+<g class="actor" data-id="WebServer" data-label="Express web server" data-type="participant" data-role="actor">
+  <rect x="30" y="30" width="155.474" height="40" rx="4" ry="4" fill="#000000" stroke="#FFFFFF" stroke-width="1" data-id="actor:WebServer:box" data-role="actor" />
+  <text x="107.737" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="#FFFFFF" dy="4.55" textLength="123.474" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">Express web server</text>
+</g>
+<g class="actor" data-id="Worker" data-label="Node.js worker process" data-type="participant" data-role="actor">
+  <rect x="225.474" y="30" width="176.22199999999998" height="40" rx="4" ry="4" fill="#000000" stroke="#FFFFFF" stroke-width="1" data-id="actor:Worker:box" data-role="actor" />
+  <text x="313.585" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="#FFFFFF" dy="4.55" textLength="144.222" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">Node.js worker process</text>
+</g>
+<g class="actor" data-id="Database" data-label="PostgreSQL" data-type="participant" data-role="actor">
+  <rect x="458.97400000000005" y="30" width="108.04999999999998" height="40" rx="4" ry="4" fill="#000000" stroke="#FFFFFF" stroke-width="1" data-id="actor:Database:box" data-role="actor" />
+  <text x="512.999" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="#FFFFFF" dy="4.55" textLength="76.05" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">PostgreSQL</text>
+</g>
+</svg>

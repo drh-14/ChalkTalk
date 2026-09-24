@@ -1,0 +1,23 @@
+%%{init: {"theme": "base", "themeVariables": {"background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "lineColor": "#FFFFFF", "actorBkg": "#000000", "actorBorder": "#FFFFFF", "actorTextColor": "#FFFFFF", "actorLineColor": "#FFFFFF", "signalColor": "#FFFFFF", "signalTextColor": "#FFFFFF", "labelBoxBkgColor": "#000000", "labelBoxBorderColor": "#FFFFFF", "labelTextColor": "#FFFFFF", "loopTextColor": "#FFFFFF", "noteBkgColor": "#000000", "noteBorderColor": "#FFFFFF", "noteTextColor": "#FFFFFF", "activationBkgColor": "#111111", "activationBorderColor": "#FFFFFF", "sequenceNumberColor": "#000000", "fontSize": "14px"}}}%%
+sequenceDiagram
+    autonumber
+    title ChalkTalk login flow
+
+    actor User
+    participant Frontend as React frontend
+    participant WebServer as Express web server
+    participant Database as PostgreSQL
+
+    User->>Frontend: Submit email and password
+    Frontend->>WebServer: POST /api/v1/sessions
+    WebServer->>WebServer: Validate request and rate limit
+    WebServer->>Database: Find active user by normalized email
+    Database-->>WebServer: User record
+    WebServer->>WebServer: Verify password
+    WebServer->>WebServer: Generate session and CSRF secrets
+    WebServer->>Database: Insert 30-day session
+    Database-->>WebServer: Session created
+    WebServer-->>Frontend: 201 Created
+    Note over Frontend,WebServer: Set secure, HttpOnly session cookie<br/>Return session details and CSRF token<br/>Cache-Control: no-store
+    Frontend->>Frontend: Browser stores cookie; app stores CSRF
+    Frontend-->>User: Show authenticated application

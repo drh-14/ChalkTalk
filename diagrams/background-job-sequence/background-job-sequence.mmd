@@ -1,0 +1,14 @@
+%%{init: {"theme": "base", "themeVariables": {"background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "lineColor": "#FFFFFF", "actorBkg": "#000000", "actorBorder": "#FFFFFF", "actorTextColor": "#FFFFFF", "actorLineColor": "#FFFFFF", "signalColor": "#FFFFFF", "signalTextColor": "#FFFFFF", "labelBoxBkgColor": "#000000", "labelBoxBorderColor": "#FFFFFF", "labelTextColor": "#FFFFFF", "loopTextColor": "#FFFFFF", "noteBkgColor": "#000000", "noteBorderColor": "#FFFFFF", "noteTextColor": "#FFFFFF", "activationBkgColor": "#111111", "activationBorderColor": "#FFFFFF", "sequenceNumberColor": "#000000", "fontSize": "14px"}}}%%
+sequenceDiagram
+    autonumber
+    title ChalkTalk background job flow
+
+    participant WebServer as Express web server
+    participant Worker as Node.js worker process
+    participant Database as PostgreSQL
+
+    WebServer->>Database: Insert job with queued status
+    Worker->>Database: Atomically claim job and load payload
+    Worker->>Worker: Perform background work
+    Worker->>Database: Store result and mark job succeeded
+    Database-->>Worker: Record completion

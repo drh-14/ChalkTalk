@@ -1,0 +1,41 @@
+{
+  "name": "chalktalk",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=@chalktalk/web && npm run build --workspace=@chalktalk/api",
+    "dev": "concurrently -n web,api -c cyan,green \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:web": "npm run dev --workspace=@chalktalk/web",
+    "dev:api": "npm run dev --workspace=@chalktalk/api",
+    "db:migrate": "npm run migrate --workspace=@chalktalk/api",
+    "format": "prettier --write \"apps/**/*.{css,html,json,ts,tsx}\" \"openspec/changes/establish-core-project-structure/**/*.md\" \"*.{js,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"apps/**/*.{css,html,json,ts,tsx}\" \"openspec/changes/establish-core-project-structure/**/*.md\" \"*.{js,json,md,yml,yaml}\"",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p apps/web/tsconfig.app.json && tsc --noEmit -p apps/api/tsconfig.json"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.6.1",
+    "@types/pg": "^8.15.5",
+    "@types/supertest": "^6.0.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.3.0",
+    "prettier": "^3.6.2",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.1",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4"
+  }
+}
