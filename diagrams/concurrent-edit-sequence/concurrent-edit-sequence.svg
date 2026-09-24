@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="731.581" height="466" viewBox="0 0 731.581 466" style="--bg:#000000;--fg:#FFFFFF;--line:#FFFFFF;--accent:#000000;--surface:#000000;--border:#FFFFFF;--font:Inter;background:#000000">
+<style>
+  text { font-family: var(--font, 'Inter'), system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          #FFFFFF;
+    --_text-sec:      #c7c7c7;
+    --_text-muted:    #a8a8a8;
+    --_text-faint:    #8a8a8a;
+    --_line:          #FFFFFF;
+    --_arrow:         #000000;
+    --_node-fill:     #000000;
+    --_node-stroke:   #FFFFFF;
+    --_group-fill:    #000000;
+    --_group-hdr:     #0d0d0d;
+    --_inner-stroke:  #1f1f1f;
+    --_key-badge:     #1a1a1a;
+  }
+</style>
+<defs>
+  <marker id="seq-arrow" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <polygon points="0 0, 8 2.5, 0 5" fill="#5a5a5a" />
+  </marker>
+  <marker id="seq-arrow-open" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#5a5a5a" stroke-width="1" />
+  </marker>
+  <marker id="seq-arrow-cross" markerWidth="8" markerHeight="5" refX="4" refY="2.5" orient="auto">
+    <path d="M1 1 L7 4 M1 4 L7 1" fill="none" stroke="#5a5a5a" stroke-width="1.5" />
+  </marker>
+  <marker id="seq-arrow-half-top" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <path d="M0 0 L8 2.5" fill="none" stroke="#5a5a5a" stroke-width="1" />
+  </marker>
+  <marker id="seq-arrow-half-bottom" markerWidth="8" markerHeight="5" refX="8" refY="2.5" orient="auto-start-reverse">
+    <path d="M0 5 L8 2.5" fill="none" stroke="#5a5a5a" stroke-width="1" />
+  </marker>
+</defs>
+<line class="lifeline" data-actor="Editor" x1="95.14000000000001" y1="70" x2="95.14000000000001" y2="436" stroke="#FFFFFF" stroke-width="0.75" stroke-dasharray="6 4" data-relationship="lifeline" data-direction="undirected" />
+<line class="lifeline" data-actor="Hocuspocus" x1="376.9055000000001" y1="70" x2="376.9055000000001" y2="436" stroke="#FFFFFF" stroke-width="0.75" stroke-dasharray="6 4" data-relationship="lifeline" data-direction="undirected" />
+<line class="lifeline" data-actor="Database" x1="647.556" y1="70" x2="647.556" y2="436" stroke="#FFFFFF" stroke-width="0.75" stroke-dasharray="6 4" data-relationship="lifeline" data-direction="undirected" />
+<g class="message" data-label="1. Connect with one-use ticket" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:Editor-&gt;Hocuspocus#0" data-role="message">
+  <line x1="95.14000000000001" y1="96" x2="376.9055000000001" y2="96" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:Editor-&gt;Hocuspocus#0:line" data-role="message" data-from="Editor" data-to="Hocuspocus" role="graphics-symbol" aria-roledescription="relation" aria-label="Editor to Hocuspocus: 1. Connect with one-use ticket" />
+  <text x="236.02275000000003" y="86" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="134.112" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">1. Connect with one-use ticket</text>
+</g>
+<g class="message" data-label="2. Fetch Yjs state" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:Hocuspocus-&gt;Database#0" data-role="message">
+  <line x1="376.9055000000001" y1="136" x2="647.556" y2="136" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:Hocuspocus-&gt;Database#0:line" data-role="message" data-from="Hocuspocus" data-to="Database" role="graphics-symbol" aria-roledescription="relation" aria-label="Hocuspocus to Database: 2. Fetch Yjs state" />
+  <text x="512.2307500000001" y="126" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="80.652" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">2. Fetch Yjs state</text>
+</g>
+<g class="message" data-label="3. Synchronize missing updates" data-line-style="dashed" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:Hocuspocus-&gt;Editor#0" data-role="message">
+  <line x1="376.9055000000001" y1="176" x2="95.14000000000001" y2="176" stroke="#FFFFFF" stroke-width="1" stroke-dasharray="6 4" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:Hocuspocus-&gt;Editor#0:line" data-role="message" data-from="Hocuspocus" data-to="Editor" role="graphics-symbol" aria-roledescription="relation" aria-label="Hocuspocus to Editor: 3. Synchronize missing updates" />
+  <text x="236.02275000000003" y="166" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="150.744" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">3. Synchronize missing updates</text>
+</g>
+<g class="message" data-label="4. Apply edit to Y.Text content" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="true" data-id="message:Editor-&gt;Editor#0" data-role="message">
+  <polyline points="95.14000000000001,216 125.14000000000001,216 125.14000000000001,236 95.14000000000001,236" fill="none" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="self" data-id="message:Editor-&gt;Editor#0:line" data-role="message" data-from="Editor" data-to="Editor" role="graphics-symbol" aria-roledescription="relation" aria-label="Editor to Editor: 4. Apply edit to Y.Text content" />
+  <text x="133.14000000000001" y="226" font-size="11" text-anchor="start" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="136.488" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">4. Apply edit to Y.Text content</text>
+</g>
+<g class="message" data-label="5. Send Yjs update" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:Editor-&gt;Hocuspocus#1" data-role="message">
+  <line x1="95.14000000000001" y1="286" x2="376.9055000000001" y2="286" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:Editor-&gt;Hocuspocus#1:line" data-role="message" data-from="Editor" data-to="Hocuspocus" role="graphics-symbol" aria-roledescription="relation" aria-label="Editor to Hocuspocus: 5. Send Yjs update" />
+  <text x="236.02275000000003" y="276" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="87.78" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">5. Send Yjs update</text>
+</g>
+<g class="message" data-label="6. Merge update into shared Y.Doc" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="true" data-id="message:Hocuspocus-&gt;Hocuspocus#0" data-role="message">
+  <polyline points="376.9055000000001,326 406.9055000000001,326 406.9055000000001,346 376.9055000000001,346" fill="none" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="self" data-id="message:Hocuspocus-&gt;Hocuspocus#0:line" data-role="message" data-from="Hocuspocus" data-to="Hocuspocus" role="graphics-symbol" aria-roledescription="relation" aria-label="Hocuspocus to Hocuspocus: 6. Merge update into shared Y.Doc" />
+  <text x="414.9055000000001" y="336" font-size="11" text-anchor="start" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="162.03" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">6. Merge update into shared Y.Doc</text>
+</g>
+<g class="message" data-label="7. Upload document state" data-line-style="solid" data-start-head="none" data-end-head="filled" data-central-start="false" data-central-end="false" data-self="false" data-id="message:Hocuspocus-&gt;Database#1" data-role="message">
+  <line x1="376.9055000000001" y1="396" x2="647.556" y2="396" stroke="#FFFFFF" stroke-width="1" marker-end="url(#seq-arrow)" data-relationship="sequence-message" data-direction="forward" data-id="message:Hocuspocus-&gt;Database#1:line" data-role="message" data-from="Hocuspocus" data-to="Database" role="graphics-symbol" aria-roledescription="relation" aria-label="Hocuspocus to Database: 7. Upload document state" />
+  <text x="512.2307500000001" y="386" font-size="11" text-anchor="middle" font-weight="400" fill="#a8a8a8" dy="3.8499999999999996" textLength="116.292" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">7. Upload document state</text>
+</g>
+<g class="actor" data-id="Editor" data-label="Editor / Yjs client" data-type="participant" data-role="actor">
+  <rect x="30" y="30" width="130.28000000000003" height="40" rx="4" ry="4" fill="#000000" stroke="#FFFFFF" stroke-width="1" data-id="actor:Editor:box" data-role="actor" />
+  <text x="95.14000000000001" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="#FFFFFF" dy="4.55" textLength="98.28" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">Editor / Yjs client</text>
+</g>
+<g class="actor" data-id="Hocuspocus" data-label="Hocuspocus server" data-type="participant" data-role="actor">
+  <rect x="300.2800000000001" y="30" width="153.251" height="40" rx="4" ry="4" fill="#000000" stroke="#FFFFFF" stroke-width="1" data-id="actor:Hocuspocus:box" data-role="actor" />
+  <text x="376.9055000000001" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="#FFFFFF" dy="4.55" textLength="121.251" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">Hocuspocus server</text>
+</g>
+<g class="actor" data-id="Database" data-label="PostgreSQL" data-type="participant" data-role="actor">
+  <rect x="593.5310000000001" y="30" width="108.04999999999998" height="40" rx="4" ry="4" fill="#000000" stroke="#FFFFFF" stroke-width="1" data-id="actor:Database:box" data-role="actor" />
+  <text x="647.556" y="50" font-size="13" text-anchor="middle" font-weight="500" fill="#FFFFFF" dy="4.55" textLength="76.05" lengthAdjust="spacingAndGlyphs" data-font-metrics="deterministic-fit">PostgreSQL</text>
+</g>
+</svg>

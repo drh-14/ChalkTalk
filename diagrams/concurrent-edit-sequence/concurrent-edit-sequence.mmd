@@ -1,0 +1,16 @@
+%%{init: {"theme": "base", "sequence": {"actorMargin": 140}, "themeVariables": {"background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "lineColor": "#FFFFFF", "actorBkg": "#000000", "actorBorder": "#FFFFFF", "actorTextColor": "#FFFFFF", "actorLineColor": "#FFFFFF", "signalColor": "#FFFFFF", "signalTextColor": "#FFFFFF", "labelBoxBkgColor": "#000000", "labelBoxBorderColor": "#FFFFFF", "labelTextColor": "#FFFFFF", "loopTextColor": "#FFFFFF", "noteBkgColor": "#000000", "noteBorderColor": "#FFFFFF", "noteTextColor": "#FFFFFF", "activationBkgColor": "#111111", "activationBorderColor": "#FFFFFF", "sequenceNumberColor": "#000000", "fontSize": "14px"}}}%%
+sequenceDiagram
+    autonumber
+    title ChalkTalk collaborative editing flow
+
+    participant Editor as Editor / Yjs client
+    participant Hocuspocus as Hocuspocus server
+    participant Database as PostgreSQL
+
+    Editor->>Hocuspocus: Connect with one-use ticket
+    Hocuspocus->>Database: Fetch Yjs state
+    Hocuspocus-->>Editor: Synchronize missing updates
+    Editor->>Editor: Apply edit to Y.Text content
+    Editor->>Hocuspocus: Send Yjs update
+    Hocuspocus->>Hocuspocus: Merge update into shared Y.Doc
+    Hocuspocus->>Database: Upload document state

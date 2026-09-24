@@ -38,3 +38,37 @@ ChalkTalk's goal is to turn a semester's discussion history into a searchable an
 ## Documentation
 
 Detailed project requirements, user stories, scope, and architecture are available in the project documentation.
+
+## Local development
+
+Prerequisites: Node.js 22 or later, npm, and Docker with Docker Compose.
+
+1. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+2. Create your local environment file and start PostgreSQL:
+
+   ```bash
+   cp .env.example .env
+   docker compose up -d postgres
+   ```
+
+3. Apply database migrations:
+
+   ```bash
+   set -a && source .env && set +a
+   npm run db:migrate
+   ```
+
+4. Start the web application and API:
+
+   ```bash
+   npm run dev
+   ```
+
+The React client runs at `http://localhost:5173`. Its `/api` requests are forwarded to the Express API at `http://localhost:3000`, so `http://localhost:5173/api/health` returns the API health status.
+
+Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before submitting changes.
