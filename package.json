@@ -12,8 +12,8 @@
     "dev:web": "npm run dev --workspace=@chalktalk/web",
     "dev:api": "npm run dev --workspace=@chalktalk/api",
     "db:migrate": "npm run migrate --workspace=@chalktalk/api",
-    "format": "prettier --write \"apps/**/*.{css,html,json,ts,tsx}\" \"openspec/changes/establish-core-project-structure/**/*.md\" \"*.{js,json,md,yml,yaml}\"",
-    "format:check": "prettier --check \"apps/**/*.{css,html,json,ts,tsx}\" \"openspec/changes/establish-core-project-structure/**/*.md\" \"*.{js,json,md,yml,yaml}\"",
+    "format": "prettier --write \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p apps/web/tsconfig.app.json && tsc --noEmit -p apps/api/tsconfig.json"

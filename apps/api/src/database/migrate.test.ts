@@ -1,9 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "./migrate.js";
+import { getMigrationDirectory, runMigrations } from "./migrate.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integrationTest = testDatabaseUrl ? describe : describe.skip;
@@ -11,6 +11,14 @@ const migrationName = `migration_test_${Date.now()}`;
 const markerTable = `migration_marker_${Date.now()}`;
 let pool: Pool;
 let migrationDirectory: string;
+
+describe("getMigrationDirectory", () => {
+  it("resolves the repository migration directory independently of the process directory", () => {
+    return expect(
+      access(join(getMigrationDirectory(), "001_create_migration_ledger.sql")),
+    ).resolves.toBeUndefined();
+  });
+});
 
 integrationTest("runMigrations", () => {
   beforeAll(async () => {
