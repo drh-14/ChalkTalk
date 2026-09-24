@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Pool } from "pg";
 import { loadEnvironment, requireDatabaseUrl } from "../config/environment.js";
 import { createPool } from "./pool.js";
@@ -7,6 +8,13 @@ import { createPool } from "./pool.js";
 interface Migration {
   name: string;
   sql: string;
+}
+
+export function getMigrationDirectory(): string {
+  return resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "../../../../database/migrations",
+  );
 }
 
 async function readMigrations(directory: string): Promise<Migration[]> {
@@ -71,7 +79,7 @@ async function main() {
   const pool = createPool(requireDatabaseUrl(environment));
 
   try {
-    await runMigrations(pool, resolve(process.cwd(), "database/migrations"));
+    await runMigrations(pool, getMigrationDirectory());
   } finally {
     await pool.end();
   }
