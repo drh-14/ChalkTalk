@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: chalktalk
+          POSTGRES_USER: chalktalk
+          POSTGRES_PASSWORD: chalktalk
+        options: >-
+          --health-cmd "pg_isready -U chalktalk -d chalktalk"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+      TEST_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Apply migrations
+        run: npm run db:migrate
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
