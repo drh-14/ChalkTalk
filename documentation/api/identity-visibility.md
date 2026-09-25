@@ -6,10 +6,13 @@ Identity-bearing API fields are projections for the authenticated viewer. Client
 
 `Author` is used for posts, digest and search results, direct and nested followups, messages, introductory messages, and subchannel creators.
 
-- Nonanonymous content returns the author's real `userId` and `displayName`, with `anonymous: false` and `deleted: false`.
-- Anonymous content viewed by an instructor, TA, or its own author returns the real `userId` and `displayName`, with `anonymous: true` and `deleted: false`.
-- Anonymous content viewed by another student returns `userId: null`, `displayName: "Anonymous"`, `anonymous: true`, and `deleted: false`.
-- Deleted authors return `userId: null`, `displayName: "Deleted user"`, and `deleted: true`. The `anonymous` value retains the content's original anonymity setting.
+Nonanonymous content returns the author's real `userId` and `displayName`, with `anonymous: false` and `deleted: false`.
+
+Anonymous content viewed by an instructor, TA, or its own author returns the real `userId` and `displayName`, with `anonymous: true` and `deleted: false`.
+
+Anonymous content viewed by another student returns `userId: null`, `displayName: "Anonymous"`, `anonymous: true`, and `deleted: false`.
+
+Deleted authors return `userId: null`, `displayName: "Deleted user"`, and `deleted: true`. The `anonymous` value retains the content's original anonymity setting.
 
 Anonymous messages remain supported. Live collaboration presence is intentionally named and follows the separate [collaboration WebSocket contract](collaboration-websocket.md).
 
