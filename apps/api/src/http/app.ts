@@ -13,10 +13,12 @@ import {
   userEtag,
 } from "../auth/service.js";
 import type { Environment } from "../config/environment.js";
+import { CourseService, courseEtag } from "../courses/service.js";
 
 export interface AppDependencies {
   environment: Environment;
   authService?: AuthService;
+  courseService?: CourseService;
 }
 type AuthContext = {
   credential: string;
@@ -114,6 +116,8 @@ function safeReadOrigin(environment: Environment) {
 }
 
 type JsonObject = Record<string, unknown>;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function validationError(message = "Request body is invalid"): AuthError {
   return new AuthError(422, "validation_failed", message);
@@ -235,10 +239,86 @@ function accountDeletionBody(input: unknown): JsonObject {
   return body;
 }
 
+function listQuery(
+  query: Request["query"],
+  filter?: { key: "status" | "role"; values: readonly string[] },
+) {
+  const rawLimit = query.limit;
+  const limit =
+    rawLimit === undefined
+      ? 25
+      : typeof rawLimit === "string"
+        ? Number(rawLimit)
+        : Number.NaN;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+    throw new AuthError(400, "invalid_request", "Pagination is invalid");
+  if (
+    query.cursor !== undefined &&
+    (typeof query.cursor !== "string" ||
+      query.cursor.length < 1 ||
+      query.cursor.length > 2048)
+  )
+    throw new AuthError(400, "invalid_request", "Pagination is invalid");
+  const rawFilter = filter ? query[filter.key] : undefined;
+  if (
+    filter &&
+    rawFilter !== undefined &&
+    (typeof rawFilter !== "string" || !filter.values.includes(rawFilter))
+  )
+    throw new AuthError(400, "invalid_request", "Filter is invalid");
+  return {
+    limit,
+    cursor: query.cursor as string | undefined,
+    filter: typeof rawFilter === "string" ? rawFilter : undefined,
+  };
+}
+function courseCreateBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["name"], ["name"]);
+  stringWithin(body.name, "Course name", 1, 200);
+  return body;
+}
+function joinCourseBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["joinCode"], ["joinCode"]);
+  if (typeof body.joinCode !== "string" || !/^[A-Z0-9]{8}$/.test(body.joinCode))
+    throw new AuthError(422, "invalid_join_code", "Join code is invalid");
+  return body;
+}
+function courseUpdateBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["name", "status"]);
+  if (body.name === undefined && body.status === undefined)
+    throw validationError();
+  if (body.name !== undefined) stringWithin(body.name, "Course name", 1, 200);
+  if (
+    body.status !== undefined &&
+    body.status !== "active" &&
+    body.status !== "archived"
+  )
+    throw validationError();
+  return body;
+}
+function memberUpdateBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["role"], ["role"]);
+  if (
+    body.role !== "student" &&
+    body.role !== "ta" &&
+    body.role !== "instructor"
+  )
+    throw validationError("Role is invalid");
+  return body;
+}
+function requireJsonRequest(request: Request): void {
+  if (!request.is("application/json"))
+    throw new AuthError(
+      422,
+      "validation_failed",
+      "Content-Type must be application/json",
+    );
+}
+
 export function createApp(
   dependencies: AppDependencies = { environment: testEnvironment() },
 ) {
-  const { environment, authService } = dependencies;
+  const { environment, authService, courseService } = dependencies;
   const app = express();
   app.disable("x-powered-by");
   app.use((_request, response, next) => {
@@ -313,6 +393,32 @@ export function createApp(
     },
   ];
   const auth = (response: Response) => response.locals.auth as AuthContext;
+  const param = (value: string | string[], join = false) => {
+    const candidate = Array.isArray(value) ? value[0]! : value;
+    if (
+      candidate.length >= 1 &&
+      candidate.length <= 255 &&
+      UUID_PATTERN.test(candidate)
+    )
+      return candidate;
+    if (join)
+      throw new AuthError(422, "invalid_join_code", "Join code is invalid");
+    throw new AuthError(404, "not_found", "Resource is not found");
+  };
+  const courseSummary = <T extends { joinCode: unknown }>(value: T) => {
+    const copy = { ...value };
+    delete copy.joinCode;
+    return copy;
+  };
+  const courses = (): CourseService => {
+    if (!courseService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Course service is unavailable",
+      );
+    return courseService;
+  };
   app.post(
     "/api/v1/account-verification-requests",
     publicOrigin,
@@ -488,6 +594,296 @@ export function createApp(
           body.currentPassword,
         );
         response.status(204).set("Set-Cookie", sessionCookie("", 0)).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/organizations",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const options = listQuery(request.query);
+        if (options.cursor)
+          throw new AuthError(
+            400,
+            "invalid_request",
+            "Pagination cursor is invalid",
+          );
+        const organizations = await courses().organizations(
+          current.session.user.id,
+        );
+        response.json({
+          data: organizations.slice(0, options.limit),
+          page: {
+            nextCursor: null,
+            hasMore: organizations.length > options.limit,
+          },
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const options = listQuery(request.query, {
+          key: "status",
+          values: ["active", "archived", "deleting"],
+        });
+        const result = await courses().listPage(
+          current.session.user.id,
+          options.filter,
+          options.limit,
+          options.cursor,
+        );
+        response.json({
+          data: result.data.map(courseSummary),
+          page: result.page,
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/organizations/:organizationId/courses",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = courseCreateBody(request.body);
+        const key = request.header("idempotency-key");
+        const result = await courses().createIdempotently(
+          param(request.params.organizationId),
+          auth(response).session.user.id,
+          body.name,
+          key,
+          body,
+        );
+        const { value } = result;
+        response
+          .status(result.status)
+          .set({
+            Location: `/api/v1/courses/${value.id}`,
+            ETag: courseEtag(value),
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/organizations/:organizationId/courses",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const options = listQuery(request.query, {
+          key: "status",
+          values: ["active", "archived", "deleting"],
+        });
+        const result = await courses().listOrganizationPage(
+          param(request.params.organizationId),
+          current.session.user.id,
+          options.filter,
+          options.limit,
+          options.cursor,
+        );
+        response.json({
+          data: result.data.map(courseSummary),
+          page: result.page,
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await courses().get(
+          param(request.params.courseId),
+          current.session.user.id,
+        );
+        response.set("ETag", courseEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = courseUpdateBody(request.body);
+        const value = await courses().update(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body,
+        );
+        response.set("ETag", courseEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const value = await courses().delete(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response
+          .status(202)
+          .set({
+            Location: `/api/v1/courses/${value.id}`,
+            ETag: courseEtag(value),
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/members",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = joinCourseBody(request.body);
+        const key = request.header("idempotency-key");
+        const result = await courses().joinIdempotently(
+          param(request.params.courseId, true),
+          auth(response).session.user.id,
+          body.joinCode,
+          key,
+          body,
+        );
+        const { value } = result;
+        response
+          .status(result.status)
+          .set({
+            Location: `/api/v1/courses/${value.courseId}/members/${value.user.id}`,
+            ETag: courseEtag(value),
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/members",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const options = listQuery(request.query, {
+          key: "role",
+          values: ["student", "ta", "instructor"],
+        });
+        const result = await courses().membersPage(
+          param(request.params.courseId),
+          current.session.user.id,
+          options.filter,
+          options.limit,
+          options.cursor,
+        );
+        response.json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/members/:userId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await courses().getMember(
+          param(request.params.courseId),
+          current.session.user.id,
+          param(request.params.userId),
+        );
+        response.set("ETag", courseEtag(data)).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/members/:userId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = memberUpdateBody(request.body);
+        const data = await courses().updateMember(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.userId),
+          request.header("if-match"),
+          body.role,
+        );
+        response.set("ETag", courseEtag(data)).json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/members/me",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await courses().removeMember(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          auth(response).session.user.id,
+          undefined,
+          true,
+        );
+        response.sendStatus(204);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/members/:userId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const requestedUserId = param(request.params.userId);
+        const isSelfLeave = requestedUserId === "me";
+        await courses().removeMember(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          isSelfLeave ? auth(response).session.user.id : requestedUserId,
+          isSelfLeave ? undefined : request.header("if-match"),
+          isSelfLeave,
+        );
+        response.sendStatus(204);
       } catch (error) {
         next(error);
       }

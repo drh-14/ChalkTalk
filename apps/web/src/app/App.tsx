@@ -16,6 +16,7 @@ import {
   resetPassword,
   type Session,
 } from "../auth/client.js";
+import { CourseDetail, CourseHome } from "../courses/views.js";
 import {
   initializeRoute,
   navigate,
@@ -467,9 +468,11 @@ function ResetPassword({
 function Home({
   session,
   onSignOut,
+  onOpenCourse,
 }: {
   session: Session;
   onSignOut: () => Promise<void>;
+  onOpenCourse: (courseId: string) => void;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -512,28 +515,7 @@ function Home({
         </p>
       )}
       <section className="home-grid">
-        <article className="courses-card">
-          <div className="section-title">
-            <h2>Your courses</h2>
-            <span>2 active</span>
-          </div>
-          <div className="course-row">
-            <span className="course-icon amber">LA</span>
-            <div>
-              <h3>Linear Algebra II</h3>
-              <p>MATH 241 · 12 new posts</p>
-            </div>
-            <span>→</span>
-          </div>
-          <div className="course-row">
-            <span className="course-icon blue">DS</span>
-            <div>
-              <h3>Data Structures</h3>
-              <p>CS 220 · 4 new posts</p>
-            </div>
-            <span>→</span>
-          </div>
-        </article>
+        <CourseHome csrfToken={session.csrfToken} onOpenCourse={onOpenCourse} />
         <article className="posts-card">
           <div className="section-title">
             <h2>In the discussion</h2>
@@ -601,7 +583,7 @@ export function App() {
         if (route.name === "landing") move("/home");
       })
       .catch(() => {
-        if (route.name === "home") move("/");
+        if (route.name === "home" || route.name === "course") move("/");
       })
       .finally(() => setReady(true));
     // This intentionally restores browser session once, rather than on navigation.
@@ -619,7 +601,22 @@ export function App() {
       </main>
     );
   if (route.name === "home" && session)
-    return <Home session={session} onSignOut={signOut} />;
+    return (
+      <Home
+        session={session}
+        onOpenCourse={(courseId) => move(`/courses/${courseId}`)}
+        onSignOut={signOut}
+      />
+    );
+  if (route.name === "course" && route.courseId && session)
+    return (
+      <CourseDetail
+        courseId={route.courseId}
+        csrfToken={session.csrfToken}
+        onBack={() => move("/home")}
+        userId={session.user.id}
+      />
+    );
   if (route.name === "verify-email")
     return <CreateAccount token={route.token} onSession={startSession} />;
   if (route.name === "reset-password")

@@ -205,6 +205,38 @@ integrationTest("AuthService PostgreSQL integration", () => {
     await adminPool?.end();
   });
 
+  it("replaces an expired shared idempotency response without changing its composite identity", async () => {
+    const scope = "auth-contract-expiry";
+    const key = "reuse-after-day";
+    await service.saveIdempotentResponse(scope, key, { value: "old" }, 201, {
+      value: "old",
+    });
+    await expect(
+      service.getIdempotentResponse(scope, key, { value: "old" }),
+    ).resolves.toEqual({
+      status: 201,
+      body: { value: "old" },
+    });
+    await pool.query(
+      "UPDATE idempotency_records SET expires_at=now()-interval '1 second' WHERE scope=$1 AND key=$2",
+      [scope, key],
+    );
+    await service.saveIdempotentResponse(scope, key, { value: "new" }, 202, {
+      value: "new",
+    });
+    await expect(
+      service.getIdempotentResponse(scope, key, { value: "new" }),
+    ).resolves.toEqual({
+      status: 202,
+      body: { value: "new" },
+    });
+    const records = await pool.query(
+      "SELECT 1 FROM idempotency_records WHERE scope=$1 AND key=$2",
+      [scope, key],
+    );
+    expect(records.rowCount).toBe(1);
+  });
+
   it("replays verification idempotently, consumes tokens once, and directly links users to organizations", async () => {
     const app = createApp({ environment, authService: service });
     const requestBody = { email: "ada@example.edu" };
@@ -745,8 +777,14 @@ integrationTest("AuthService PostgreSQL integration", () => {
       [instructor.id],
     );
     await pool.query(
-      "INSERT INTO courses (id, organization_id, name) VALUES ($1, $2, $3)",
-      [courseId, organization.rows[0]!.organization_id, "Compilers"],
+      "INSERT INTO courses (id, organization_id, created_by_user_id, name, join_code) VALUES ($1, $2, $3, $4, $5)",
+      [
+        courseId,
+        organization.rows[0]!.organization_id,
+        instructor.id,
+        "Compilers",
+        "ABCDEFGH",
+      ],
     );
     await pool.query(
       "INSERT INTO course_memberships (course_id, user_id, role) VALUES ($1, $2, 'instructor')",

@@ -184,8 +184,8 @@ export class AuthService {
     key: string | undefined,
     body: unknown,
   ): Promise<{ status: number; body: unknown } | undefined> {
-    if (!key) return undefined;
-    if (key.length > 255)
+    if (key === undefined) return undefined;
+    if (key.length < 1 || key.length > 255)
       throw new AuthError(
         422,
         "validation_failed",
@@ -194,10 +194,10 @@ export class AuthService {
     const requestHash = this.hash(JSON.stringify(body));
     const result = await this.pool.query<{
       request_hash: Buffer;
-      status_code: number;
+      response_status: number;
       response_body: unknown;
     }>(
-      "SELECT request_hash, status_code, response_body FROM idempotency_records WHERE scope = $1 AND key = $2 AND expires_at > now()",
+      "SELECT request_hash, response_status, response_body FROM idempotency_records WHERE scope = $1 AND key = $2 AND expires_at > now()",
       [scope, key],
     );
     const existing = result.rows[0];
@@ -209,7 +209,7 @@ export class AuthService {
         "Idempotency key was used with a different request",
       );
     }
-    return { status: existing.status_code, body: existing.response_body };
+    return { status: existing.response_status, body: existing.response_body };
   }
 
   async saveIdempotentResponse(
@@ -219,17 +219,21 @@ export class AuthService {
     status: number,
     responseBody: unknown,
   ): Promise<void> {
-    if (!key) return;
+    if (key === undefined) return;
+    if (key.length < 1 || key.length > 255)
+      throw new AuthError(
+        422,
+        "validation_failed",
+        "Idempotency-Key is invalid",
+      );
     await this.pool.query(
-      "INSERT INTO idempotency_records (id, scope, key, request_hash, status_code, response_body, expires_at) VALUES ($1, $2, $3, $4, $5, $6, now() + interval '24 hours') ON CONFLICT (scope, key) DO NOTHING",
-      [
-        uuidv7(),
-        scope,
-        key,
-        this.hash(JSON.stringify(body)),
-        status,
-        responseBody,
-      ],
+      `INSERT INTO idempotency_records (scope, key, request_hash, response_status, response_body, expires_at)
+       VALUES ($1, $2, $3, $4, $5, now() + interval '24 hours')
+       ON CONFLICT (scope, key) DO UPDATE SET request_hash=EXCLUDED.request_hash,
+         response_status=EXCLUDED.response_status,response_body=EXCLUDED.response_body,
+         state='completed',response_headers=NULL,updated_at=now(),expires_at=EXCLUDED.expires_at
+       WHERE idempotency_records.expires_at <= now()`,
+      [scope, key, this.hash(JSON.stringify(body)), status, responseBody],
     );
   }
 
@@ -298,12 +302,12 @@ export class AuthService {
         "email_domain_not_allowed",
         "Email domain is not allowed",
       );
-    if (!key) {
+    if (key === undefined) {
       await this.checkLimit(normalizedEmail, ip, "verification");
       await this.requestVerificationForEmail(normalizedEmail);
       return;
     }
-    if (key.length > 255)
+    if (key.length < 1 || key.length > 255)
       throw new AuthError(
         422,
         "validation_failed",
@@ -331,11 +335,15 @@ export class AuthService {
           );
         return;
       }
+      await client.query(
+        "DELETE FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at<=now()",
+        ["verification", key],
+      );
       await this.checkLimit(normalizedEmail, ip, "verification", client);
       await this.requestVerificationForEmail(normalizedEmail, client);
       await client.query(
-        "INSERT INTO idempotency_records (id, scope, key, request_hash, status_code, response_body, expires_at) VALUES ($1, $2, $3, $4, $5, $6, now() + interval '24 hours')",
-        [uuidv7(), "verification", key, requestHash, 202, null],
+        "INSERT INTO idempotency_records (scope, key, request_hash, response_status, response_body, expires_at) VALUES ($1, $2, $3, $4, $5, now() + interval '24 hours')",
+        ["verification", key, requestHash, 202, null],
       );
     });
   }
@@ -459,11 +467,11 @@ export class AuthService {
     requestBody: unknown,
     ip: string,
   ): Promise<{ user: UserProfile; status: number }> {
-    if (!key) {
+    if (key === undefined) {
       await this.checkLimit(undefined, ip, "signup");
       return { user: await this.createUser(input), status: 201 };
     }
-    if (key.length > 255)
+    if (key.length < 1 || key.length > 255)
       throw new AuthError(
         422,
         "validation_failed",
@@ -477,10 +485,10 @@ export class AuthService {
       );
       const existing = await client.query<{
         request_hash: Buffer;
-        status_code: number;
+        response_status: number;
         response_body: UserProfile;
       }>(
-        "SELECT request_hash, status_code, response_body FROM idempotency_records WHERE scope = $1 AND key = $2 AND expires_at > now()",
+        "SELECT request_hash, response_status, response_body FROM idempotency_records WHERE scope = $1 AND key = $2 AND expires_at > now()",
         ["user", key],
       );
       const record = existing.rows[0];
@@ -491,16 +499,20 @@ export class AuthService {
             "idempotency_key_reused",
             "Idempotency key was used with a different request",
           );
-        return { user: record.response_body, status: record.status_code };
+        return { user: record.response_body, status: record.response_status };
       }
+      await client.query(
+        "DELETE FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at<=now()",
+        ["user", key],
+      );
       await this.checkLimit(undefined, ip, "signup", client);
       const user = await this.createUserInTransaction(
         client,
         await this.prepareUserCreation(input),
       );
       await client.query(
-        "INSERT INTO idempotency_records (id, scope, key, request_hash, status_code, response_body, expires_at) VALUES ($1, $2, $3, $4, $5, $6, now() + interval '24 hours')",
-        [uuidv7(), "user", key, requestHash, 201, user],
+        "INSERT INTO idempotency_records (scope, key, request_hash, response_status, response_body, expires_at) VALUES ($1, $2, $3, $4, $5, now() + interval '24 hours')",
+        ["user", key, requestHash, 201, user],
       );
       return { user, status: 201 };
     });

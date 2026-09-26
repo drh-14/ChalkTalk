@@ -18,10 +18,21 @@ const session = {
   csrfToken: "csrf_token",
 };
 
-function jsonResponse(body: unknown, status = 200) {
+const course = {
+  id: "course_123",
+  organizationId: "organization_123",
+  name: "Linear Algebra II",
+  status: "active" as const,
+  joinCode: null,
+  createdAt: "2026-09-20T14:30:00Z",
+  updatedAt: "2026-09-20T14:30:00Z",
+  version: 1,
+};
+
+function jsonResponse(body: unknown, status = 200, headers: HeadersInit = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
   });
 }
 
@@ -68,11 +79,17 @@ describe("ChalkTalk auth entry", () => {
     expect(document.activeElement).toBe(screen.getByLabelText("Email address"));
   });
 
-  it("signs in, redirects to static home, and signs out with the session CSRF token", async () => {
+  it("signs in, renders live courses, and signs out with the session CSRF token", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(unauthenticatedResponse())
       .mockResolvedValueOnce(jsonResponse({ data: session }, 201))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [course],
+          page: { nextCursor: null, hasMore: false },
+        }),
+      )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -90,6 +107,7 @@ describe("ChalkTalk auth entry", () => {
 
     await screen.findByRole("heading", { name: "Welcome back, Ada" });
     expect(screen.getByText("Linear Algebra II")).toBeTruthy();
+    expect(screen.queryByText("Data Structures")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Sign out" }));
 
     await screen.findByRole("heading", {
@@ -100,6 +118,156 @@ describe("ChalkTalk auth entry", () => {
       expect.objectContaining({
         method: "DELETE",
         headers: { Accept: "application/json", "X-CSRF-Token": "csrf_token" },
+      }),
+    );
+  });
+
+  it("shows an empty course state and creates a course in the signed-in organization", async () => {
+    const instructorCourse = { ...course, joinCode: "ABCDEFGH" };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ data: session }))
+      .mockResolvedValueOnce(
+        jsonResponse({ data: [], page: { nextCursor: null, hasMore: false } }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [
+            {
+              id: course.organizationId,
+              name: "Example University",
+              createdAt: course.createdAt,
+              updatedAt: course.updatedAt,
+              version: 1,
+            },
+          ],
+          page: { nextCursor: null, hasMore: false },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ data: instructorCourse }, 201, { ETag: '"v1"' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ data: instructorCourse }, 200, { ETag: '"v1"' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            data: {
+              id: "membership_123",
+              courseId: course.id,
+              user: {
+                id: session.user.id,
+                displayName: session.user.displayName,
+              },
+              role: "instructor",
+              createdAt: course.createdAt,
+              updatedAt: course.updatedAt,
+              version: 1,
+            },
+          },
+          200,
+          { ETag: '"v1"' },
+        ),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [
+            {
+              id: "membership_123",
+              courseId: course.id,
+              user: {
+                id: session.user.id,
+                displayName: session.user.displayName,
+              },
+              role: "instructor",
+              createdAt: course.createdAt,
+              updatedAt: course.updatedAt,
+              version: 1,
+            },
+          ],
+          page: { nextCursor: null, hasMore: false },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByText("You have not joined a course yet.");
+    await user.click(screen.getByRole("button", { name: "Create course" }));
+    await user.type(screen.getByLabelText("Course name"), "Linear Algebra II");
+    await user.click(
+      screen.getAllByRole("button", { name: "Create course" })[1]!,
+    );
+
+    await screen.findByRole("heading", { name: "Linear Algebra II" });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      `/api/v1/organizations/${course.organizationId}/courses`,
+      expect.objectContaining({
+        body: JSON.stringify({ name: "Linear Algebra II" }),
+        headers: expect.objectContaining({
+          "X-CSRF-Token": session.csrfToken,
+          "Idempotency-Key": expect.any(String),
+        }),
+      }),
+    );
+  });
+
+  it("shows instructor controls and sends the detail ETag when deleting a course", async () => {
+    setPath(`/courses/${course.id}`);
+    const instructorCourse = { ...course, joinCode: "ABCDEFGH" };
+    const member = {
+      id: "membership_123",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: session.user.displayName },
+      role: "instructor",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ data: session }))
+      .mockResolvedValueOnce(
+        jsonResponse({ data: instructorCourse }, 200, { ETag: '"v4"' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ data: member }, 200, { ETag: '"v1"' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: [member],
+          page: { nextCursor: null, hasMore: false },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { data: { ...instructorCourse, status: "deleting" } },
+          202,
+          { ETag: '"v5"' },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("button", { name: "Delete course" });
+    await user.click(screen.getByRole("button", { name: "Delete course" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "being deleted",
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      `/api/v1/courses/${course.id}`,
+      expect.objectContaining({
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+          "X-CSRF-Token": session.csrfToken,
+          "If-Match": '"v4"',
+        },
       }),
     );
   });
