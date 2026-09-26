@@ -49,11 +49,13 @@ Prerequisites: Node.js 22 or later, npm, and Docker with Docker Compose.
    npm install
    ```
 
-2. Create your local environment file and start PostgreSQL:
+2. Create a trusted development certificate, configure your local environment, and start PostgreSQL plus Mailpit:
 
    ```bash
+   mkdir -p .cert
+   mkcert -key-file .cert/localhost-key.pem -cert-file .cert/localhost.pem localhost
    cp .env.example .env
-   docker compose up -d postgres
+   docker compose up -d postgres mailpit
    ```
 
 3. Apply database migrations:
@@ -69,6 +71,6 @@ Prerequisites: Node.js 22 or later, npm, and Docker with Docker Compose.
    npm run dev
    ```
 
-The React client runs at `http://localhost:5173`. Its `/api` requests are forwarded to the Express API at `http://localhost:3000`, so `http://localhost:5173/api/health` returns the API health status.
+The React client runs at `https://localhost:5173`. Its `/api` requests are forwarded unchanged to the Express API at `http://localhost:3000`; use `https://localhost:5173/api/v1/...` for browser auth requests. Mailpit receives local SMTP mail at `localhost:1025` and displays it at [http://localhost:8025](http://localhost:8025). Keep `.cert/` private and configure a random `AUTH_TOKEN_SECRET` plus your real allowed school domains before deployment.
 
 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before submitting changes.

@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-25
+goal: Implement the documented authentication backend and its required database
+  schema.

@@ -173,7 +173,7 @@ paths:
       tags:
         - Authentication
       summary: Create account
-      description: Create account using a valid pre-account email-verification token. The server derives the verified email from the token and atomically creates the account, finds or creates the school-domain organization, creates its membership, and consumes the proof. The password is accepted only at this boundary and is never returned.
+      description: Create account using a valid pre-account email-verification token. The server derives the verified email from the token and atomically creates the account, finds or creates the school-domain organization, assigns it directly through users.organization_id, and consumes the proof. ChalkTalk has no organization-membership table. The password is accepted only at this boundary and is never returned.
       operationId: createAccount
       security: []
       responses:
@@ -193,7 +193,7 @@ paths:
                       requestId: req_createAccount
                       details: []
         "201":
-          description: The account, organization association, and membership were created and the verification proof was consumed atomically.
+          description: The account and its direct organization association were created and the verification proof was consumed atomically.
           headers:
             Location:
               "$ref": "#/components/headers/Location"
@@ -692,7 +692,7 @@ paths:
       description:
         Update account profile. A replacement email requires a valid email-verification
         token and must have the same canonical school domain as the account's current
-        email. Organization and course memberships do not change. At least one field
+        email. Its direct organization association and course memberships do not change. At least one field
         is required.
       operationId: updateCurrentUser
       security:
@@ -898,6 +898,18 @@ paths:
                       message: The request origin or CSRF token is missing, invalid, or does not match the session.
                       requestId: req_deleteCurrentUser
                       details: []
+        "412":
+          description: Precondition Failed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "428":
+          description: Precondition Required
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
         "204":
           description: Retained contributions are pseudonymized; all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked; and the current browser session cookie is expired.
           headers:
@@ -965,6 +977,7 @@ paths:
                       details: []
       parameters:
         - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
       requestBody:
         required: true
@@ -1109,7 +1122,7 @@ paths:
       tags:
         - Authentication
       summary: Request password reset email
-      description: Request password reset email. Returns the same response whether or not the email exists, preventing account discovery.
+      description: Request password reset email. For syntactically valid requests, returns 202 no sooner than one second after processing begins whether or not the email exists or SMTP delivery succeeds, preventing account discovery through status or timing. Existing-account SMTP delivery is attempted for at most 750 milliseconds; delivery failures and timeouts are intentionally not reported to the caller.
       operationId: createPasswordResetRequest
       security: []
       responses:
@@ -1129,7 +1142,7 @@ paths:
                       requestId: req_createPasswordResetRequest
                       details: []
         "202":
-          description: Returns the same response whether or not the email exists, preventing account discovery.
+          description: Returns the same response no sooner than one second after processing begins whether or not the email exists or SMTP delivery succeeds, preventing account discovery through status or timing.
         "400":
           description: Bad Request
           content:
@@ -1173,21 +1186,6 @@ paths:
                     error:
                       code: internal_error
                       message: The server could not complete the request.
-                      requestId: req_createPasswordResetRequest
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
                       requestId: req_createPasswordResetRequest
                       details: []
       parameters:

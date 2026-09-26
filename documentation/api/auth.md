@@ -1,6 +1,6 @@
 ## Authentication
 
-All browser requests originate from a deployment-configured HTTPS frontend origin. The frontend and API use same-site custom domains, such as `app.example.edu` and `api.example.edu`, so browser sessions retain `SameSite=Lax`. The API returns credentialed CORS headers only for an exact allowlist match, echoes that origin rather than `*`, sends `Vary: Origin`, and permits credentials. Every `POST`, `PUT`, `PATCH`, and `DELETE` request includes `Origin`; public account and session bootstrap operations validate the origin without requiring a session or CSRF token. Authenticated unsafe requests additionally send the session-bound `X-CSRF-Token`. A missing, null, or disallowed origin fails before request processing. Expiring or revoking a session also invalidates its CSRF token and every unused WebSocket connection ticket issued through it.
+All browser requests originate from a deployment-configured HTTPS frontend origin. The frontend and API use same-site custom domains, such as `app.example.edu` and `api.example.edu`, so browser sessions retain `SameSite=Lax`. When an authenticated safe read includes an exact allowlisted `Origin`, the API returns credentialed CORS headers, echoes that origin rather than `*`, sends `Vary: Origin`, and permits credentials; an `Origin` header is optional for those safe reads. Every `POST`, `PUT`, `PATCH`, and `DELETE` request includes `Origin`; public account and session bootstrap operations validate the origin without requiring a session or CSRF token. Authenticated unsafe requests additionally send the session-bound `X-CSRF-Token`. A missing, null, or disallowed origin fails before unsafe request processing; an allowed origin with a missing or invalid CSRF token fails with `csrf_validation_failed`. Expiring or revoking a session also invalidates its CSRF token and every unused WebSocket connection ticket issued through it.
 
 <a id="createAccountVerificationRequest"></a>
 
@@ -103,7 +103,7 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 ### **`POST /api/v1/users`**
 
-Creates an account from a verified email token. The server hashes the supplied opaque token to locate a valid, unexpired proof, derives the normalized verified email from that proof, and never accepts an email separately. It atomically creates the account, finds or creates the organization for the canonical school domain, creates the organization membership, and consumes the single-use proof. A failed transaction consumes nothing. The password is accepted only at this boundary and is never returned. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+Creates an account from a verified email token. The server hashes the supplied opaque token to locate a valid, unexpired proof, derives the normalized verified email from that proof, and never accepts an email separately. It atomically creates the account, finds or creates the organization for the canonical school domain, assigns it directly through `users.organization_id`, and consumes the single-use proof. ChalkTalk has no organization-membership table. A failed transaction consumes nothing. The password is accepted only at this boundary and is never returned. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
 
 **Authentication:** None.
 
@@ -518,7 +518,7 @@ Set-Cookie: __Host-chalktalk_session=; Path=/; Max-Age=0; Secure; HttpOnly; Same
 
 ##### `403 Forbidden`
 
-`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+`csrf_validation_failed`: The allowed request origin supplied a missing or invalid CSRF token.
 
 ##### `401 Unauthorized`
 
@@ -635,7 +635,7 @@ curl --request GET '/api/v1/users/me' \
 
 ### **`PATCH /api/v1/users/me`**
 
-Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have the same canonical school domain as the account's current email. The server updates the account and consumes the proof atomically; organization and course memberships do not change. A failed transaction consumes nothing.
+Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have the same canonical school domain as the account's current email. The server updates the account and consumes the proof atomically; its direct organization association and course memberships do not change. A failed transaction consumes nothing.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -733,7 +733,7 @@ curl --request PATCH '/api/v1/users/me' \
 
 ##### `403 Forbidden`
 
-`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+`csrf_validation_failed`: The allowed request origin supplied a missing or invalid CSRF token.
 
 ##### `401 Unauthorized`
 
@@ -852,7 +852,7 @@ curl --request PATCH '/api/v1/users/me/password' \
 
 ##### `403 Forbidden`
 
-`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+`csrf_validation_failed`: The allowed request origin supplied a missing or invalid CSRF token.
 
 ##### `401 Unauthorized`
 
@@ -884,7 +884,7 @@ curl --request PATCH '/api/v1/users/me/password' \
 
 ### **`POST /api/v1/password-reset-requests`**
 
-Requests a password-reset email. Returns the same response whether or not the email exists, preventing account discovery.
+Requests a password-reset email. For a syntactically valid request, the server returns `202 Accepted` no sooner than one second after processing begins, whether or not the email exists or SMTP delivery succeeds, preventing account discovery through either status or timing. For an existing account, SMTP delivery is attempted for at most 750 milliseconds; a delivery failure or timeout is intentionally not reported to the caller.
 
 **Authentication:** None.
 
@@ -963,10 +963,6 @@ curl --request POST '/api/v1/password-reset-requests' \
 ##### `500 Internal Server Error`
 
 `internal_error`: The server could not complete the request.
-
-##### `503 Service Unavailable`
-
-`service_unavailable`: A required service is temporarily unavailable.
 
 ---
 
@@ -1084,6 +1080,8 @@ Deletes the authenticated user’s account after validating `currentPassword` ag
 
 `Content-Type` (required): Selects one documented request media type.
 
+`If-Match` (required, string): Supplies the ETag from the latest retrieval.
+
 `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
 
 #### Path parameters
@@ -1124,6 +1122,7 @@ curl --request DELETE '/api/v1/users/me' \
     --header 'Origin: https://app.example.edu' \
     --header 'Cookie: __Host-chalktalk_session=opaque_session' \
     --header 'X-CSRF-Token: opaque_csrf_token' \
+    --header 'If-Match: "v3"' \
     --header 'Content-Type: application/json' \
     --data '{"currentPassword":"correct horse battery staple"}'
 ```
@@ -1138,7 +1137,7 @@ curl --request DELETE '/api/v1/users/me' \
 
 ##### `403 Forbidden`
 
-`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+`csrf_validation_failed`: The allowed request origin supplied a missing or invalid CSRF token.
 
 ##### `401 Unauthorized`
 
@@ -1147,6 +1146,14 @@ curl --request DELETE '/api/v1/users/me' \
 ##### `409 Conflict`
 
 `last_instructor`: Deletion would remove the final instructor from a course; the account and current session remain intact.
+
+##### `412 Precondition Failed`
+
+`version_conflict`: The supplied ETag is stale.
+
+##### `428 Precondition Required`
+
+`precondition_required`: If-Match is required.
 
 ##### `500 Internal Server Error`
 
