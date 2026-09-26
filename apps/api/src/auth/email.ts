@@ -12,9 +12,15 @@ export function createEmailSender(environment: Environment): EmailSender {
       : undefined,
   });
   return {
-    send: async (message) =>
-      transport
-        .sendMail({ from: environment.smtp.from, ...message })
-        .then(() => undefined),
+    send: async (message, { signal } = {}) => {
+      if (signal?.aborted) throw new Error("Email delivery was aborted");
+      const abort = () => transport.close();
+      signal?.addEventListener("abort", abort, { once: true });
+      try {
+        await transport.sendMail({ from: environment.smtp.from, ...message });
+      } finally {
+        signal?.removeEventListener("abort", abort);
+      }
+    },
   };
 }

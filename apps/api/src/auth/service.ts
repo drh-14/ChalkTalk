@@ -11,8 +11,22 @@ import {
 import { AuthError } from "./errors.js";
 
 export interface EmailSender {
-  send(message: { to: string; subject: string; text: string }): Promise<void>;
+  send(
+    message: { to: string; subject: string; text: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
 }
+
+export interface PasswordResetTiming {
+  now(): number;
+  sleep(milliseconds: number): Promise<void>;
+}
+
+const systemPasswordResetTiming: PasswordResetTiming = {
+  now: () => Date.now(),
+  sleep: (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
+};
 
 export interface UserProfile {
   id: string;
@@ -44,6 +58,18 @@ interface SessionRow extends UserRow {
   session_id: string;
   expires_at: Date;
   csrf_token_hash: Buffer;
+}
+
+interface CreateUserInput {
+  verificationToken: unknown;
+  password: unknown;
+  displayName: unknown;
+}
+
+interface PreparedUserCreation {
+  verificationToken: string;
+  passwordHash: string;
+  displayName: string;
 }
 
 export function normalizeEmail(value: unknown): string {
@@ -80,6 +106,7 @@ export class AuthService {
     private readonly pool: Pool,
     private readonly environment: Environment,
     private readonly emailSender: EmailSender,
+    private readonly passwordResetTiming: PasswordResetTiming = systemPasswordResetTiming,
   ) {}
 
   private hash(token: string): Buffer {
@@ -94,6 +121,7 @@ export class AuthService {
   }
 
   private async limit(
+    queryable: Pool | PoolClient,
     action: string,
     subject: string,
     limit: number,
@@ -103,7 +131,7 @@ export class AuthService {
       Math.floor(Date.now() / (windowSeconds * 1000)) * windowSeconds * 1000,
     );
     const key = `${action}:${this.hash(subject).toString("base64url")}:${windowStartedAt.toISOString()}`;
-    const result = await this.pool.query<{ request_count: number }>(
+    const result = await queryable.query<{ request_count: number }>(
       `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, request_count)
        VALUES ($1, $2, 1)
        ON CONFLICT (bucket_key) DO UPDATE SET request_count = rate_limit_buckets.request_count + 1, updated_at = now()
@@ -125,10 +153,10 @@ export class AuthService {
   }
 
   async checkLimit(
-    action: string,
     email: string | undefined,
     ip: string,
     kind: "verification" | "login" | "reset" | "signup",
+    queryable: Pool | PoolClient = this.pool,
   ): Promise<void> {
     const limits = this.environment.rateLimits;
     const emailLimit =
@@ -147,8 +175,8 @@ export class AuthService {
             : limits.signupPerIp;
     const duration = kind === "login" ? 15 * 60 : 60 * 60;
     if (email && kind !== "signup")
-      await this.limit(`${kind}:email`, email, emailLimit, duration);
-    await this.limit(`${kind}:ip`, ip, ipLimit, duration);
+      await this.limit(queryable, `${kind}:email`, email, emailLimit, duration);
+    await this.limit(queryable, `${kind}:ip`, ip, ipLimit, duration);
   }
 
   async getIdempotentResponse(
@@ -222,6 +250,31 @@ export class AuthService {
     }
   }
 
+  private async requestVerificationForEmail(
+    email: string,
+    client?: PoolClient,
+  ): Promise<void> {
+    const token = newOpaqueToken();
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    const persist = async (transactionClient: PoolClient) => {
+      await transactionClient.query(
+        "UPDATE email_verification_tokens SET superseded_at = now() WHERE email = $1 AND consumed_at IS NULL AND superseded_at IS NULL",
+        [email],
+      );
+      await transactionClient.query(
+        "INSERT INTO email_verification_tokens (id, email, token_hash, expires_at) VALUES ($1, $2, $3, $4)",
+        [uuidv7(), email, this.hash(token), expiresAt],
+      );
+    };
+    if (client) await persist(client);
+    else await this.transaction(persist);
+    await this.emailSender.send({
+      to: email,
+      subject: "Verify your ChalkTalk email",
+      text: `Verify your account at ${this.environment.frontendBaseUrl}/verify-email?token=${encodeURIComponent(token)}`,
+    });
+  }
+
   async requestVerification(emailInput: unknown): Promise<void> {
     const email = normalizeEmail(emailInput);
     if (!this.environment.allowedSchoolDomains.has(domainFor(email)))
@@ -230,30 +283,66 @@ export class AuthService {
         "email_domain_not_allowed",
         "Email domain is not allowed",
       );
-    const token = newOpaqueToken();
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await this.requestVerificationForEmail(email);
+  }
+
+  async requestVerificationIdempotently(
+    key: string | undefined,
+    requestBody: unknown,
+    normalizedEmail: string,
+    ip: string,
+  ): Promise<void> {
+    if (!this.environment.allowedSchoolDomains.has(domainFor(normalizedEmail)))
+      throw new AuthError(
+        422,
+        "email_domain_not_allowed",
+        "Email domain is not allowed",
+      );
+    if (!key) {
+      await this.checkLimit(normalizedEmail, ip, "verification");
+      await this.requestVerificationForEmail(normalizedEmail);
+      return;
+    }
+    if (key.length > 255)
+      throw new AuthError(
+        422,
+        "validation_failed",
+        "Idempotency-Key is too long",
+      );
+    const requestHash = this.hash(JSON.stringify(requestBody));
     await this.transaction(async (client) => {
       await client.query(
-        "UPDATE email_verification_tokens SET superseded_at = now() WHERE email = $1 AND consumed_at IS NULL AND superseded_at IS NULL",
-        [email],
+        "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+        ["verification", key],
       );
+      const existing = await client.query<{
+        request_hash: Buffer;
+      }>(
+        "SELECT request_hash FROM idempotency_records WHERE scope = $1 AND key = $2 AND expires_at > now()",
+        ["verification", key],
+      );
+      const record = existing.rows[0];
+      if (record) {
+        if (!record.request_hash.equals(requestHash))
+          throw new AuthError(
+            409,
+            "idempotency_key_reused",
+            "Idempotency key was used with a different request",
+          );
+        return;
+      }
+      await this.checkLimit(normalizedEmail, ip, "verification", client);
+      await this.requestVerificationForEmail(normalizedEmail, client);
       await client.query(
-        "INSERT INTO email_verification_tokens (id, email, token_hash, expires_at) VALUES ($1, $2, $3, $4)",
-        [uuidv7(), email, this.hash(token), expiresAt],
+        "INSERT INTO idempotency_records (id, scope, key, request_hash, status_code, response_body, expires_at) VALUES ($1, $2, $3, $4, $5, $6, now() + interval '24 hours')",
+        [uuidv7(), "verification", key, requestHash, 202, null],
       );
-    });
-    await this.emailSender.send({
-      to: email,
-      subject: "Verify your ChalkTalk email",
-      text: `Verify your account at ${this.environment.frontendBaseUrl}/verify-email?token=${encodeURIComponent(token)}`,
     });
   }
 
-  async createUser(input: {
-    verificationToken: unknown;
-    password: unknown;
-    displayName: unknown;
-  }): Promise<UserProfile> {
+  private async prepareUserCreation(
+    input: CreateUserInput,
+  ): Promise<PreparedUserCreation> {
     if (typeof input.verificationToken !== "string")
       throw new AuthError(
         422,
@@ -269,7 +358,7 @@ export class AuthService {
     if (
       typeof input.displayName !== "string" ||
       !input.displayName.trim() ||
-      input.displayName.trim().length > 120
+      input.displayName.trim().length > 100
     ) {
       throw new AuthError(422, "validation_failed", "Display name is required");
     }
@@ -278,59 +367,142 @@ export class AuthService {
     const passwordHash = await argon2.hash(input.password, {
       type: argon2.argon2id,
     });
-    return this.transaction(async (client) => {
-      const verification = await client.query<{ email: string }>(
-        `SELECT email FROM email_verification_tokens
-          WHERE token_hash = $1 AND consumed_at IS NULL AND superseded_at IS NULL AND expires_at > now()
+    return { verificationToken, passwordHash, displayName };
+  }
+
+  private async createUserInTransaction(
+    client: PoolClient,
+    input: PreparedUserCreation,
+  ): Promise<UserProfile> {
+    const { verificationToken, passwordHash, displayName } = input;
+    const verification = await client.query<{
+      email: string;
+      consumed_at: Date | null;
+      superseded_at: Date | null;
+      expires_at: Date;
+    }>(
+      `SELECT email, consumed_at, superseded_at, expires_at FROM email_verification_tokens
+          WHERE token_hash = $1
           FOR UPDATE`,
-        [this.hash(verificationToken)],
+      [this.hash(verificationToken)],
+    );
+    const proof = verification.rows[0];
+    if (!proof)
+      throw new AuthError(
+        422,
+        "verification_token_invalid",
+        "Verification token is invalid",
       );
-      const proof = verification.rows[0];
-      if (!proof)
-        throw new AuthError(
-          422,
-          "verification_token_invalid",
-          "Verification token is invalid",
-        );
-      const domain = domainFor(proof.email);
-      const organization = await client.query<{ id: string }>(
-        `INSERT INTO organizations (id, domain, name) VALUES ($1, $2, $2)
+    if (proof.consumed_at)
+      throw new AuthError(
+        409,
+        "verification_token_used",
+        "Verification token has already been consumed",
+      );
+    if (proof.superseded_at || proof.expires_at <= new Date())
+      throw new AuthError(
+        422,
+        "verification_token_invalid",
+        "Verification token is invalid",
+      );
+    const domain = domainFor(proof.email);
+    const organization = await client.query<{ id: string }>(
+      `INSERT INTO organizations (id, domain, name) VALUES ($1, $2, $2)
          ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain RETURNING id`,
-        [uuidv7(), domain],
-      );
-      try {
-        const userResult = await client.query<UserRow>(
-          `INSERT INTO users (id, organization_id, email, display_name, password_hash)
+      [uuidv7(), domain],
+    );
+    try {
+      const userResult = await client.query<UserRow>(
+        `INSERT INTO users (id, organization_id, email, display_name, password_hash)
            VALUES ($1, $2, $3, $4, $5)
            RETURNING id, email, display_name, password_hash, created_at, updated_at, version`,
-          [
-            uuidv7(),
-            organization.rows[0]!.id,
-            proof.email,
-            displayName,
-            passwordHash,
-          ],
+        [
+          uuidv7(),
+          organization.rows[0]!.id,
+          proof.email,
+          displayName,
+          passwordHash,
+        ],
+      );
+      await client.query(
+        "UPDATE email_verification_tokens SET consumed_at = now() WHERE token_hash = $1",
+        [this.hash(verificationToken)],
+      );
+      return mapUser(userResult.rows[0]!);
+    } catch (error: unknown) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "23505"
+      ) {
+        throw new AuthError(
+          409,
+          "email_in_use",
+          "Email already belongs to an account",
         );
-        await client.query(
-          "UPDATE email_verification_tokens SET consumed_at = now() WHERE token_hash = $1",
-          [this.hash(verificationToken)],
-        );
-        return mapUser(userResult.rows[0]!);
-      } catch (error: unknown) {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code === "23505"
-        ) {
+      }
+      throw error;
+    }
+  }
+
+  async createUser(input: CreateUserInput): Promise<UserProfile> {
+    const prepared = await this.prepareUserCreation(input);
+    return this.transaction((client) =>
+      this.createUserInTransaction(client, prepared),
+    );
+  }
+
+  async createUserIdempotently(
+    input: CreateUserInput,
+    key: string | undefined,
+    requestBody: unknown,
+    ip: string,
+  ): Promise<{ user: UserProfile; status: number }> {
+    if (!key) {
+      await this.checkLimit(undefined, ip, "signup");
+      return { user: await this.createUser(input), status: 201 };
+    }
+    if (key.length > 255)
+      throw new AuthError(
+        422,
+        "validation_failed",
+        "Idempotency-Key is too long",
+      );
+    const requestHash = this.hash(JSON.stringify(requestBody));
+    return this.transaction(async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+        ["user", key],
+      );
+      const existing = await client.query<{
+        request_hash: Buffer;
+        status_code: number;
+        response_body: UserProfile;
+      }>(
+        "SELECT request_hash, status_code, response_body FROM idempotency_records WHERE scope = $1 AND key = $2 AND expires_at > now()",
+        ["user", key],
+      );
+      const record = existing.rows[0];
+      if (record) {
+        if (!record.request_hash.equals(requestHash))
           throw new AuthError(
             409,
-            "email_in_use",
-            "Email already belongs to an account",
+            "idempotency_key_reused",
+            "Idempotency key was used with a different request",
           );
-        }
-        throw error;
+        return { user: record.response_body, status: record.status_code };
       }
+      await this.checkLimit(undefined, ip, "signup", client);
+      const user = await this.createUserInTransaction(
+        client,
+        await this.prepareUserCreation(input),
+      );
+      await client.query(
+        "INSERT INTO idempotency_records (id, scope, key, request_hash, status_code, response_body, expires_at) VALUES ($1, $2, $3, $4, $5, $6, now() + interval '24 hours')",
+        [uuidv7(), "user", key, requestHash, 201, user],
+      );
+      return { user, status: 201 };
     });
   }
 
@@ -464,12 +636,29 @@ export class AuthService {
             "verification_token_invalid",
             "Verification token is invalid",
           );
-        const verification = await client.query<{ email: string }>(
-          "SELECT email FROM email_verification_tokens WHERE token_hash = $1 AND consumed_at IS NULL AND superseded_at IS NULL AND expires_at > now() FOR UPDATE",
+        const verification = await client.query<{
+          email: string;
+          consumed_at: Date | null;
+          superseded_at: Date | null;
+          expires_at: Date;
+        }>(
+          "SELECT email, consumed_at, superseded_at, expires_at FROM email_verification_tokens WHERE token_hash = $1 FOR UPDATE",
           [this.hash(input.emailVerificationToken)],
         );
         const proof = verification.rows[0];
         if (!proof)
+          throw new AuthError(
+            422,
+            "verification_token_invalid",
+            "Verification token is invalid",
+          );
+        if (proof.consumed_at)
+          throw new AuthError(
+            409,
+            "verification_token_used",
+            "Verification token has already been consumed",
+          );
+        if (proof.superseded_at || proof.expires_at <= new Date())
           throw new AuthError(
             422,
             "verification_token_invalid",
@@ -525,7 +714,13 @@ export class AuthService {
       throw new AuthError(428, "precondition_required", "If-Match is required");
     if (ifMatch !== userEtag(session.user))
       throw new AuthError(412, "version_conflict", "Profile has changed");
-    if (typeof currentPassword !== "string" || !isValidPassword(newPassword))
+    if (typeof currentPassword !== "string")
+      throw new AuthError(
+        401,
+        "invalid_credentials",
+        "Current password is invalid",
+      );
+    if (!isValidPassword(newPassword))
       throw new AuthError(422, "weak_password", "Password is invalid");
     const stored = await this.pool.query<{ password_hash: string }>(
       "SELECT password_hash FROM users WHERE id = $1",
@@ -544,10 +739,12 @@ export class AuthService {
       type: argon2.argon2id,
     });
     await this.transaction(async (client) => {
-      await client.query(
-        "UPDATE users SET password_hash = $1, version = version + 1, updated_at = now() WHERE id = $2",
-        [passwordHash, session.user.id],
+      const updated = await client.query(
+        "UPDATE users SET password_hash = $1, version = version + 1, updated_at = now() WHERE id = $2 AND version = $3 RETURNING id",
+        [passwordHash, session.user.id, session.user.version],
       );
+      if (!updated.rows[0])
+        throw new AuthError(412, "version_conflict", "Profile has changed");
       await client.query(
         "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
         [session.user.id, session.id],
@@ -556,29 +753,45 @@ export class AuthService {
   }
 
   async requestPasswordReset(emailInput: unknown): Promise<void> {
+    const startedAt = this.passwordResetTiming.now();
     const email = normalizeEmail(emailInput);
     const found = await this.pool.query<{ id: string }>(
       "SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL",
       [email],
     );
     const user = found.rows[0];
-    if (!user) return;
-    const token = newOpaqueToken();
-    await this.transaction(async (client) => {
-      await client.query(
-        "UPDATE password_reset_tokens SET consumed_at = now() WHERE user_id = $1 AND consumed_at IS NULL",
-        [user.id],
-      );
-      await client.query(
-        "INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, now() + interval '30 minutes')",
-        [uuidv7(), user.id, this.hash(token)],
-      );
-    });
-    await this.emailSender.send({
-      to: email,
-      subject: "Reset your ChalkTalk password",
-      text: `Reset your password at ${this.environment.frontendBaseUrl}/reset-password?token=${encodeURIComponent(token)}`,
-    });
+    if (user) {
+      const token = newOpaqueToken();
+      await this.transaction(async (client) => {
+        await client.query(
+          "UPDATE password_reset_tokens SET consumed_at = now() WHERE user_id = $1 AND consumed_at IS NULL",
+          [user.id],
+        );
+        await client.query(
+          "INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, now() + interval '30 minutes')",
+          [uuidv7(), user.id, this.hash(token)],
+        );
+      });
+      const abortController = new AbortController();
+      let deliveryFinished = false;
+      const delivery = this.emailSender
+        .send(
+          {
+            to: email,
+            subject: "Reset your ChalkTalk password",
+            text: `Reset your password at ${this.environment.frontendBaseUrl}/reset-password?token=${encodeURIComponent(token)}`,
+          },
+          { signal: abortController.signal },
+        )
+        .catch(() => undefined)
+        .finally(() => {
+          deliveryFinished = true;
+        });
+      await Promise.race([delivery, this.passwordResetTiming.sleep(750)]);
+      if (!deliveryFinished) abortController.abort();
+    }
+    const remaining = 1000 - (this.passwordResetTiming.now() - startedAt);
+    if (remaining > 0) await this.passwordResetTiming.sleep(remaining);
   }
 
   async resetPassword(token: unknown, newPassword: unknown): Promise<void> {
@@ -592,12 +805,28 @@ export class AuthService {
       type: argon2.argon2id,
     });
     await this.transaction(async (client) => {
-      const reset = await client.query<{ user_id: string }>(
-        "SELECT user_id FROM password_reset_tokens WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now() FOR UPDATE",
+      const reset = await client.query<{
+        user_id: string;
+        consumed_at: Date | null;
+        expires_at: Date;
+      }>(
+        "SELECT user_id, consumed_at, expires_at FROM password_reset_tokens WHERE token_hash = $1 FOR UPDATE",
         [this.hash(token)],
       );
       const record = reset.rows[0];
       if (!record)
+        throw new AuthError(
+          422,
+          "reset_token_invalid",
+          "Reset token is invalid",
+        );
+      if (record.consumed_at)
+        throw new AuthError(
+          409,
+          "reset_token_used",
+          "Reset token has already been consumed",
+        );
+      if (record.expires_at <= new Date())
         throw new AuthError(
           422,
           "reset_token_invalid",
@@ -636,13 +865,12 @@ export class AuthService {
       );
     await this.transaction(async (client) => {
       const user = await client.query<{ password_hash: string }>(
-        "SELECT password_hash FROM users WHERE id = $1 FOR UPDATE",
-        [session.user.id],
+        "SELECT password_hash FROM users WHERE id = $1 AND version = $2 FOR UPDATE",
+        [session.user.id, session.user.version],
       );
-      if (
-        !user.rows[0] ||
-        !(await argon2.verify(user.rows[0].password_hash, currentPassword))
-      )
+      if (!user.rows[0])
+        throw new AuthError(412, "version_conflict", "Profile has changed");
+      if (!(await argon2.verify(user.rows[0].password_hash, currentPassword)))
         throw new AuthError(
           401,
           "invalid_credentials",
@@ -656,7 +884,14 @@ export class AuthService {
       const finalInstructor = await client.query(
         `SELECT 1 FROM course_memberships mine
          WHERE mine.user_id = $1 AND mine.role = 'instructor'
-           AND NOT EXISTS (SELECT 1 FROM course_memberships other WHERE other.course_id = mine.course_id AND other.role = 'instructor' AND other.user_id <> $1)
+           AND NOT EXISTS (
+             SELECT 1 FROM course_memberships other
+             JOIN users other_user ON other_user.id = other.user_id
+             WHERE other.course_id = mine.course_id
+               AND other.role = 'instructor'
+               AND other.user_id <> $1
+               AND other_user.deleted_at IS NULL
+           )
          LIMIT 1`,
         [session.user.id],
       );
@@ -666,10 +901,15 @@ export class AuthService {
           "last_instructor",
           "Account is the final instructor for a course",
         );
-      await client.query(
-        "UPDATE users SET deleted_at = now(), email = concat('deleted+', id, '@invalid.local'), display_name = 'Deleted user', password_hash = '' WHERE id = $1",
-        [session.user.id],
+      const deleted = await client.query(
+        "UPDATE users SET deleted_at = now(), email = concat('deleted+', id, '@invalid.local'), display_name = 'Deleted user', password_hash = '', version = version + 1, updated_at = now() WHERE id = $1 AND version = $2 RETURNING id",
+        [session.user.id, session.user.version],
       );
+      if (!deleted.rows[0])
+        throw new AuthError(412, "version_conflict", "Profile has changed");
+      await client.query("DELETE FROM course_memberships WHERE user_id = $1", [
+        session.user.id,
+      ]);
       await client.query(
         "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
         [session.user.id],

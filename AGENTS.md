@@ -11,3 +11,7 @@ Documentation wording, formatting, examples, schema parity, and mechanical cross
 For direct work, inspect the affected files, make the change, run focused validation, and report the result. For large work, create an OpenSpec change before implementation. Complete and validate its proposal, specs, design, and tasks with the user involved in architecture and planning decisions; then hand the approved plan to implementation without requesting redundant approval. Archive the OpenSpec change after implementation and verification are complete.
 
 An explicit user request to skip or use delegation overrides the default threshold.
+
+## Specification-driven tests
+
+When changing API or database behavior, derive tests from the applicable API and database references: `documentation/api/`, `documentation/openapi.yaml`, and `documentation/database.md`. At the appropriate public seam, cover the documented success response, headers, error cases, authentication and validation rules, lifecycle behavior, and persistence constraints affected by the change.

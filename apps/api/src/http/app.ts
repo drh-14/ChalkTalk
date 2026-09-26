@@ -6,7 +6,12 @@ import express, {
 } from "express";
 import { SESSION_COOKIE_NAME, sessionCookie } from "../auth/crypto.js";
 import { AuthError } from "../auth/errors.js";
-import { AuthService, type UserProfile, userEtag } from "../auth/service.js";
+import {
+  AuthService,
+  normalizeEmail,
+  type UserProfile,
+  userEtag,
+} from "../auth/service.js";
 import type { Environment } from "../config/environment.js";
 
 export interface AppDependencies {
@@ -90,18 +95,158 @@ function originGuard(environment: Environment) {
   };
 }
 
+function safeReadOrigin(environment: Environment) {
+  return (request: Request, response: Response, next: NextFunction) => {
+    const origin = request.header("origin");
+    if (
+      !origin ||
+      origin === "null" ||
+      !environment.frontendOrigins.has(origin)
+    )
+      return next();
+    response.set({
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
+      Vary: "Origin",
+    });
+    return next();
+  };
+}
+
+type JsonObject = Record<string, unknown>;
+
+function validationError(message = "Request body is invalid"): AuthError {
+  return new AuthError(422, "validation_failed", message);
+}
+
+function strictBody(
+  input: unknown,
+  allowed: readonly string[],
+  required: readonly string[] = [],
+): JsonObject {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw validationError();
+  const body = input as JsonObject;
+  if (Object.keys(body).some((key) => !allowed.includes(key)))
+    throw validationError("Request body has an unknown property");
+  if (required.some((key) => body[key] === undefined))
+    throw validationError("Request body is missing a required property");
+  return body;
+}
+
+function stringWithin(
+  value: unknown,
+  field: string,
+  minimum: number,
+  maximum: number,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.length < minimum ||
+    value.length > maximum
+  )
+    throw validationError(`${field} is invalid`);
+  return value;
+}
+
+function verificationRequestBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["email"], ["email"]);
+  stringWithin(body.email, "Email", 1, 255);
+  return body;
+}
+
+function accountCreationBody(input: unknown): JsonObject & {
+  verificationToken: unknown;
+  password: unknown;
+  displayName: unknown;
+} {
+  const body = strictBody(
+    input,
+    ["verificationToken", "password", "displayName"],
+    ["verificationToken", "password", "displayName"],
+  );
+  stringWithin(body.verificationToken, "Verification token", 1, 4096);
+  stringWithin(body.password, "Password", 0, 128);
+  stringWithin(body.displayName, "Display name", 1, 100);
+  return body as JsonObject & {
+    verificationToken: unknown;
+    password: unknown;
+    displayName: unknown;
+  };
+}
+
+function sessionCreationBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["email", "password"], ["email", "password"]);
+  stringWithin(body.email, "Email", 1, 255);
+  stringWithin(body.password, "Password", 1, 128);
+  return body;
+}
+
+function profileUpdateBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["displayName", "emailVerificationToken"]);
+  if (
+    body.displayName === undefined &&
+    body.emailVerificationToken === undefined
+  )
+    throw validationError("A profile field is required");
+  if (body.displayName !== undefined)
+    stringWithin(body.displayName, "Display name", 1, 100);
+  if (body.emailVerificationToken !== undefined)
+    stringWithin(body.emailVerificationToken, "Verification token", 1, 4096);
+  return body;
+}
+
+function passwordChangeBody(input: unknown): JsonObject {
+  const body = strictBody(
+    input,
+    ["currentPassword", "newPassword"],
+    ["currentPassword", "newPassword"],
+  );
+  stringWithin(body.currentPassword, "Current password", 1, 128);
+  stringWithin(body.newPassword, "New password", 0, 128);
+  return body;
+}
+
+function passwordResetRequestBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["email"], ["email"]);
+  try {
+    stringWithin(body.email, "Email", 1, 255);
+    normalizeEmail(body.email);
+  } catch {
+    throw new AuthError(400, "invalid_request", "Request body is invalid");
+  }
+  return body;
+}
+
+function passwordResetBody(input: unknown): JsonObject {
+  const body = strictBody(
+    input,
+    ["token", "newPassword"],
+    ["token", "newPassword"],
+  );
+  stringWithin(body.token, "Reset token", 1, 2048);
+  stringWithin(body.newPassword, "New password", 0, 128);
+  return body;
+}
+
+function accountDeletionBody(input: unknown): JsonObject {
+  const body = strictBody(input, ["currentPassword"], ["currentPassword"]);
+  stringWithin(body.currentPassword, "Current password", 1, 128);
+  return body;
+}
+
 export function createApp(
   dependencies: AppDependencies = { environment: testEnvironment() },
 ) {
   const { environment, authService } = dependencies;
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "32kb" }));
   app.use((_request, response, next) => {
     response.locals.requestId = randomUUID();
     response.set("X-Request-Id", response.locals.requestId);
     next();
   });
+  app.use(express.json({ limit: "32kb" }));
   app.get("/health", (_request, response) =>
     response.status(200).json({ status: "ok" }),
   );
@@ -121,6 +266,7 @@ export function createApp(
       .sendStatus(204);
   });
   const publicOrigin = originGuard(environment);
+  const optionalReadOrigin = safeReadOrigin(environment);
   const service = (): AuthService => {
     if (!authService)
       throw new AuthError(
@@ -143,12 +289,16 @@ export function createApp(
         "authentication_required",
         "Authentication is required",
       );
+    const csrfToken = csrf ? request.header("x-csrf-token") : undefined;
+    if (csrf && !csrfToken)
+      throw new AuthError(
+        403,
+        "csrf_validation_failed",
+        "CSRF token is invalid",
+      );
     return {
       credential,
-      session: await service().session(
-        credential,
-        csrf ? request.header("x-csrf-token") : undefined,
-      ),
+      session: await service().session(credential, csrfToken),
     };
   };
   const authenticatedUnsafe = [
@@ -168,33 +318,14 @@ export function createApp(
     publicOrigin,
     async (request, response, next) => {
       try {
+        const body = verificationRequestBody(request.body);
         const key = request.header("idempotency-key");
-        const replay = await service().getIdempotentResponse(
-          "verification",
+        const email = normalizeEmail(body.email);
+        await service().requestVerificationIdempotently(
           key,
-          request.body,
-        );
-        if (replay) {
-          response.sendStatus(replay.status);
-          return;
-        }
-        const email =
-          typeof request.body?.email === "string"
-            ? request.body.email.trim().toLowerCase()
-            : undefined;
-        await service().checkLimit(
-          "verification",
+          body,
           email,
           sourceIp(request),
-          "verification",
-        );
-        await service().requestVerification(request.body?.email);
-        await service().saveIdempotentResponse(
-          "verification",
-          key,
-          request.body,
-          202,
-          null,
         );
         response.sendStatus(202);
       } catch (error) {
@@ -204,35 +335,19 @@ export function createApp(
   );
   app.post("/api/v1/users", publicOrigin, async (request, response, next) => {
     try {
+      const body = accountCreationBody(request.body);
       const key = request.header("idempotency-key");
-      const replay = await service().getIdempotentResponse(
-        "user",
+      const result = await service().createUserIdempotently(
+        body,
         key,
-        request.body,
-      );
-      if (replay) {
-        profileResponse(
-          response.set("Location", "/api/v1/users/me"),
-          replay.body as UserProfile,
-          replay.status,
-        );
-        return;
-      }
-      await service().checkLimit(
-        "signup",
-        undefined,
+        body,
         sourceIp(request),
-        "signup",
       );
-      const user = await service().createUser(request.body ?? {});
-      await service().saveIdempotentResponse(
-        "user",
-        key,
-        request.body,
-        201,
-        user,
+      profileResponse(
+        response.set("Location", "/api/v1/users/me"),
+        result.user,
+        result.status,
       );
-      profileResponse(response.set("Location", "/api/v1/users/me"), user, 201);
     } catch (error) {
       next(error);
     }
@@ -242,15 +357,10 @@ export function createApp(
     publicOrigin,
     async (request, response, next) => {
       try {
-        const email =
-          typeof request.body?.email === "string"
-            ? request.body.email.trim().toLowerCase()
-            : undefined;
-        await service().checkLimit("login", email, sourceIp(request), "login");
-        const result = await service().login(
-          request.body?.email,
-          request.body?.password,
-        );
+        const body = sessionCreationBody(request.body);
+        const email = normalizeEmail(body.email);
+        await service().checkLimit(email, sourceIp(request), "login");
+        const result = await service().login(body.email, body.password);
         response
           .status(201)
           .set({
@@ -263,14 +373,20 @@ export function createApp(
       }
     },
   );
-  app.get("/api/v1/sessions/current", async (request, response, next) => {
-    try {
-      const current = await requireSession(request);
-      response.set("Cache-Control", "no-store").json({ data: current.session });
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.get(
+    "/api/v1/sessions/current",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response
+          .set("Cache-Control", "no-store")
+          .json({ data: current.session });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.delete(
     "/api/v1/sessions/current",
     ...authenticatedUnsafe,
@@ -283,25 +399,30 @@ export function createApp(
       }
     },
   );
-  app.get("/api/v1/users/me", async (request, response, next) => {
-    try {
-      const current = await requireSession(request);
-      profileResponse(response, await service().profile(current.credential));
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.get(
+    "/api/v1/users/me",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        profileResponse(response, await service().profile(current.credential));
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.patch(
     "/api/v1/users/me",
     ...authenticatedUnsafe,
     async (request, response, next) => {
       try {
+        const body = profileUpdateBody(request.body);
         profileResponse(
           response,
           await service().updateProfile(
             auth(response).credential,
             request.header("if-match"),
-            request.body ?? {},
+            body,
           ),
         );
       } catch (error) {
@@ -314,11 +435,12 @@ export function createApp(
     ...authenticatedUnsafe,
     async (request, response, next) => {
       try {
+        const body = passwordChangeBody(request.body);
         await service().changePassword(
           auth(response).credential,
           request.header("if-match"),
-          request.body?.currentPassword,
-          request.body?.newPassword,
+          body.currentPassword,
+          body.newPassword,
         );
         response.sendStatus(204);
       } catch (error) {
@@ -331,12 +453,10 @@ export function createApp(
     publicOrigin,
     async (request, response, next) => {
       try {
-        const email =
-          typeof request.body?.email === "string"
-            ? request.body.email.trim().toLowerCase()
-            : undefined;
-        await service().checkLimit("reset", email, sourceIp(request), "reset");
-        await service().requestPasswordReset(request.body?.email);
+        const body = passwordResetRequestBody(request.body);
+        const email = normalizeEmail(body.email);
+        await service().checkLimit(email, sourceIp(request), "reset");
+        await service().requestPasswordReset(body.email);
         response.sendStatus(202);
       } catch (error) {
         next(error);
@@ -348,10 +468,8 @@ export function createApp(
     publicOrigin,
     async (request, response, next) => {
       try {
-        await service().resetPassword(
-          request.body?.token,
-          request.body?.newPassword,
-        );
+        const body = passwordResetBody(request.body);
+        await service().resetPassword(body.token, body.newPassword);
         response.sendStatus(204);
       } catch (error) {
         next(error);
@@ -363,10 +481,11 @@ export function createApp(
     ...authenticatedUnsafe,
     async (request, response, next) => {
       try {
+        const body = accountDeletionBody(request.body);
         await service().deleteAccount(
           auth(response).credential,
           request.header("if-match"),
-          request.body?.currentPassword,
+          body.currentPassword,
         );
         response.status(204).set("Set-Cookie", sessionCookie("", 0)).send();
       } catch (error) {
@@ -385,11 +504,16 @@ export function createApp(
       const authError =
         error instanceof AuthError
           ? error
-          : new AuthError(
-              503,
-              "service_unavailable",
-              "A required service is temporarily unavailable",
-            );
+          : error instanceof SyntaxError &&
+              typeof error === "object" &&
+              "type" in error &&
+              error.type === "entity.parse.failed"
+            ? new AuthError(400, "invalid_request", "Request body is invalid")
+            : new AuthError(
+                500,
+                "internal_error",
+                "An unexpected error occurred",
+              );
       if ("retryAfter" in authError)
         response.set(
           "Retry-After",

@@ -19,3 +19,8 @@
 
 - [x] 4.1 Run formatting, linting, type checking, tests, and production builds; verify every applicable command succeeds.
 - [x] 4.2 Start the local stack and request the proxied health endpoint; verify the browser development server returns the API health response.
+
+## Validation evidence
+
+- 2026-09-25: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` passed locally. `openspec validate establish-core-project-structure --strict` passed.
+- PostgreSQL integration execution and Docker Compose validation cannot run in this environment because neither `TEST_DATABASE_URL` nor Docker is available. CI provisions PostgreSQL and its successful verification run is https://github.com/drh-14/ChalkTalk/actions/runs/36210344713.
