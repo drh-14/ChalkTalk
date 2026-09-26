@@ -1,4 +1,4 @@
-%%{init: {"theme": "base", "er": {"fontSize": 18, "useMaxWidth": false}, "themeCSS": "g.node rect, g.node path, g.node polygon, .entityBox, .attributeBoxOdd, .attributeBoxEven, .row-rect-odd path, .row-rect-even path { fill: #000000 !important; stroke: #FFFFFF !important; } .divider path { stroke: #FFFFFF !important; } .nodeLabel, .nodeLabel p, .nodeLabel span, .label, .label div, .label span, text, .entityLabel { color: #FFFFFF !important; fill: #FFFFFF !important; } .relationshipLine, .edgePath path, path.relation, .relationshipLine path { stroke: #FFFFFF !important; } marker path, marker circle { stroke: #FFFFFF !important; fill: #000000 !important; } .relationshipLabelBox, .labelBkg, .edgeLabel, .edgeLabel rect, .edgeLabel p, .edgeLabel span, .edgeLabel div { fill: #000000 !important; background-color: #000000 !important; color: #FFFFFF !important; opacity: 1 !important; }", "themeVariables": {"darkMode": true, "fontSize": "18px", "background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "secondaryColor": "#000000", "tertiaryColor": "#000000", "mainBkg": "#000000", "lineColor": "#FFFFFF", "textColor": "#FFFFFF", "nodeTextColor": "#FFFFFF", "nodeBorder": "#FFFFFF", "attributeBackgroundColorOdd": "#000000", "attributeBackgroundColorEven": "#000000", "relationColor": "#FFFFFF", "relationLabelBackground": "#000000", "relationLabelColor": "#FFFFFF", "edgeLabelBackground": "#000000"}}}%%
+%%{init: {"theme": "base", "er": {"fontSize": 18, "useMaxWidth": false}, "themeCSS": "g.node rect, g.node path, g.node polygon, .entityBox, .attributeBoxOdd, .attributeBoxEven, .row-rect-odd path, .row-rect-even path { fill: #000000 !important; stroke: #FFFFFF !important; } .divider path { stroke: #FFFFFF !important; } .nodeLabel, .nodeLabel p, .nodeLabel span, .label, .label div, .label span, text, .entityLabel { color: #FFFFFF !important; fill: #FFFFFF !important; } .relationshipLine, .edgePath path, path.relation, .relationshipLine path { stroke: #FFFFFF !important; } marker path, marker circle { stroke: #FFFFFF !important; fill: #000000 !important; } .relationshipLabelBox, .labelBkg, .edgeLabel, .edgeLabel rect, .edgeLabel p, .edgeLabel span, .edgeLabel div { fill: #000000 !important; background-color: #000000 !important; color: #FFFFFF !important; opacity: 1 !important; }", "themeVariables": {"darkMode": true, "fontSize": "18px", "background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "secondaryColor": "#000000", "tertiaryColor": "#000000", "mainBkg": "#000000", "lineColor": "#FFFFFF", "textColor": "#FFFFFF", "nodeTextColor": "#FFFFFF", "nodeBorder": "#FFFFFF", "attributeBackgroundColorOdd": "#000000", "attributeBackgroundColorEven": "#000000", "relationColor": "#FFFFFF", "relationLabelBackground": "#000000", "relationLabelColor": "#FFFFFF", "edgeLabelBackground": "#000000"}, "layout": "elk", "elk": {"mergeEdges": false, "nodePlacementStrategy": "BRANDES_KOEPF"}}}%%
 erDiagram
   courses ||--o{ posts : "contains"
   courses ||--o{ tags : "defines"
@@ -15,6 +15,10 @@ erDiagram
   answers ||--o{ followups : "has"
   followups |o--o{ followups : "replies to"
   courses ||--o{ attachments : "stores"
+  posts |o--o{ attachments : "has"
+  answers |o--o{ attachments : "has"
+  followups |o--o{ attachments : "has"
+  messages |o--o{ attachments : "has"
 
   courses {
     uuid id PK
@@ -65,6 +69,11 @@ erDiagram
   attachments {
     uuid id PK
     uuid course_id FK
-    text parent_type
-    uuid parent_id
+    uuid post_id FK
+    uuid answer_id FK
+    uuid followup_id FK
+    uuid message_id FK
+  }
+  messages {
+    uuid id PK
   }
