@@ -1,32 +1,26 @@
-%%{init: {"theme": "base", "block": {"padding": 20}, "themeCSS": ".centeredLabel foreignObject div { width: 100% !important; text-align: center !important; } .frontend .label-container { x: -115px; y: -51.5px; width: 230px; height: 103px; } .collab foreignObject, .collab foreignObject div, .collab .nodeLabel { overflow: visible !important; } .collab .nodeLabel { display: block; position: relative; } .backend-heading { position: absolute; left: 50%; top: -39px; transform: translateX(-50%); z-index: 1; padding: 0 8px; background-color: #000000; color: #FFFFFF; font-size: 16px; font-weight: 600; line-height: 18px; white-space: nowrap; } .primary-edge-label { font-size: 14px !important; font-weight: 500 !important; } .edgeLabel, .edgeLabel .label, .edgeLabel .labelBkg, .edgeLabel .label div, .edgeLabel .label span { background-color: #000000 !important; color: #FFFFFF !important; } .edgeLabel .label, .edgeLabel .label div, .edgeLabel .label span { font-size: 11px !important; font-weight: 400 !important; } .edgeLabel .labelBkg { line-height: 1.15 !important; max-width: 145px !important; padding: 1px 3px !important; } .edgeLabel p { line-height: 1.15 !important; margin: 0 !important; }", "themeVariables": {"background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "lineColor": "#FFFFFF", "edgeLabelBackground": "#000000", "clusterBkg": "#000000", "clusterBorder": "#FFFFFF", "fontSize": "14px"}}}%%
-block-beta
-    columns 3
+%%{init: {"theme": "base", "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 70, "padding": 18}, "themeCSS": ".nodeLabel, .nodeLabel p, .edgeLabel, .edgeLabel p, .cluster-label, .cluster-label span { font-family: Liberation Sans, Arial, sans-serif !important; } .cluster-label span, .cluster-label p { font-weight: 600 !important; font-size: 16px !important; color: #FFFFFF !important; } .edgeLabel, .edgeLabel p, .labelBkg { background-color: #000000 !important; color: #FFFFFF !important; font-size: 12px !important; } .cluster rect { fill: #000000 !important; stroke: #FFFFFF !important; }", "themeVariables": {"background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "lineColor": "#FFFFFF", "edgeLabelBackground": "#000000", "clusterBkg": "#000000", "clusterBorder": "#FFFFFF", "titleColor": "#FFFFFF", "fontSize": "15px", "fontFamily": "Liberation Sans, Arial, sans-serif"}}}%%
+flowchart TB
+    Frontend["Frontend (Docker / Vercel)<br/>React + Vite"]
 
-    space Frontend["Frontend(Docker / Vercel)<br/>React"] space
-
-    block:BackendBox:3
-        columns 3
+    subgraph Backend["Backend (Docker / AWS ECS)"]
+        direction LR
+        CollaborationEngine["Collaboration engine<br/>Yjs + Hocuspocus"]
         WebServer["Web server<br/>Express.js HTTP API"]
-        CollaborationEngine["<span class='backend-heading'>Backend(Docker / AWS ECS)</span>Collaboration engine<br/>Yjs + Hocuspocus"]
         Worker["Worker<br/>Node.js process"]
     end
 
-    space:3
-
     ApplicationDatabase["Application Database<br/>PostgreSQL / AWS RDS"]
-    ObjectStore["Object Store<br/>SeaweedFS/AWS S3"]
+    ObjectStore["Object Store<br/>SeaweedFS / AWS S3"]
     EmailProvider["Email Provider<br/>SMTP Server / AWS SES"]
 
-    Frontend -- "<span class='primary-edge-label'>HTTPS / WebSocket</span>" --> BackendBox
-    WebServer -- "fetch and upload<br/>user data and posts" --> ApplicationDatabase
-    WebServer -- "fetch and upload<br/>images and documents" --> ObjectStore
-    CollaborationEngine -- "send message<br/>edits" --> ApplicationDatabase
-    Worker -- "claim jobs and<br/>update data" --> ApplicationDatabase
+    Frontend -- "WebSocket" --> CollaborationEngine
+    Frontend -- "HTTPS (REST)" --> WebServer
+    CollaborationEngine -- "load/save Yjs documents" --> ApplicationDatabase
+    WebServer -- "read/write data, queue jobs" --> ApplicationDatabase
+    WebServer -- "upload/fetch files" --> ObjectStore
+    Worker -- "claim jobs, update data" --> ApplicationDatabase
+    Worker -- "read files for OCR" --> ObjectStore
     Worker -- "send emails" --> EmailProvider
 
-    classDef component fill:#000000,stroke:#FFFFFF,color:#FFFFFF
+    classDef component fill:#000000,stroke:#FFFFFF,color:#FFFFFF,stroke-width:1px
     class Frontend,WebServer,CollaborationEngine,Worker,ApplicationDatabase,ObjectStore,EmailProvider component
-    class Frontend frontend
-    class ObjectStore centeredLabel
-    class CollaborationEngine collab
-    style BackendBox fill:#000000,stroke:#FFFFFF,color:transparent

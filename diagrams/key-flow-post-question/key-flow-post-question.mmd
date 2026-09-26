@@ -1,0 +1,30 @@
+%%{init: {"theme": "base", "sequence": {"useMaxWidth": false, "mirrorActors": false, "messageFontSize": 14, "actorFontSize": 15, "noteFontSize": 13, "boxMargin": 12, "messageMargin": 42, "bottomMarginAdj": 20, "actorMargin": 90, "messageFontFamily": "Liberation Sans, Arial, sans-serif", "noteFontFamily": "Liberation Sans, Arial, sans-serif", "actorFontFamily": "Liberation Sans, Arial, sans-serif", "noteMargin": 14}, "themeCSS": "text, tspan { font-family: Liberation Sans, Arial, sans-serif !important; } .actor-line { stroke: #FFFFFF !important; stroke-dasharray: 4 4 !important; stroke-width: 1px !important; } rect.actor { fill: #000000 !important; stroke: #FFFFFF !important; rx: 4; ry: 4; } text.actor, text.actor > tspan { fill: #FFFFFF !important; } .messageText { fill: #FFFFFF !important; stroke: none !important; } .messageLine0, .messageLine1 { stroke: #FFFFFF !important; stroke-width: 1px !important; } #arrowhead path, #crosshead path, #filled-head path { fill: #FFFFFF !important; stroke: #FFFFFF !important; } .note { fill: #000000 !important; stroke: #FFFFFF !important; } .noteText, .noteText > tspan { fill: #FFFFFF !important; } .loopLine { stroke: #FFFFFF !important; } .labelBox { fill: #000000 !important; stroke: #FFFFFF !important; } .labelText, .labelText > tspan, .loopText, .loopText > tspan { fill: #FFFFFF !important; }", "themeVariables": {"background": "#000000", "fontSize": "14px", "actorBkg": "#000000", "actorBorder": "#FFFFFF", "actorTextColor": "#FFFFFF", "actorLineColor": "#FFFFFF", "signalColor": "#FFFFFF", "signalTextColor": "#FFFFFF", "labelBoxBkgColor": "#000000", "labelBoxBorderColor": "#FFFFFF", "labelTextColor": "#FFFFFF", "loopTextColor": "#FFFFFF", "noteBkgColor": "#000000", "noteBorderColor": "#FFFFFF", "noteTextColor": "#FFFFFF", "lineColor": "#FFFFFF", "textColor": "#FFFFFF", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "fontFamily": "Liberation Sans, Arial, sans-serif"}}}%%
+sequenceDiagram
+    participant Student
+    participant FE as React frontend
+    participant API as Express web server
+    participant DB as PostgreSQL
+
+    loop While the student is drafting
+        Student->>FE: 1. Type question title and body
+        Note right of FE: #160;2. Wait for typing pause#160;
+        FE->>API: 3. GET /api/v1/courses/{id}/posts?q=draft
+        Note right of API: #160;4. Validate session and membership#160;
+        API->>DB: 5. Ranked full-text search in course
+        DB-->>API: 6. Matching posts
+        API-->>FE: 7. 200 OK with related posts
+        FE-->>Student: 8. Show related questions
+    end
+
+    alt Existing post answers the question
+        Student->>FE: 9. Open related post
+        Note over Student,FE: #160;No new post is created#160;
+    else Student still needs to ask
+        Student->>FE: 10. Submit question
+        FE->>API: 11. POST /api/v1/courses/{id}/posts
+        Note right of API: #160;12. Validate session, CSRF,#160;<br/>#160;role, course not archived#160;
+        API->>DB: 13. Insert post and search vector (one transaction)
+        DB-->>API: 14. New post row
+        API-->>FE: 15. 201 Created
+        FE-->>Student: 16. Show new question
+    end

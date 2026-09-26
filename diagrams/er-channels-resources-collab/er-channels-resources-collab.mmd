@@ -1,0 +1,60 @@
+%%{init: {"theme": "base", "er": {"fontSize": 18, "useMaxWidth": false}, "themeCSS": "g.node rect, g.node path, g.node polygon, .entityBox, .attributeBoxOdd, .attributeBoxEven, .row-rect-odd path, .row-rect-even path { fill: #000000 !important; stroke: #FFFFFF !important; } .divider path { stroke: #FFFFFF !important; } .nodeLabel, .nodeLabel p, .nodeLabel span, .label, .label div, .label span, text, .entityLabel { color: #FFFFFF !important; fill: #FFFFFF !important; } .relationshipLine, .edgePath path, path.relation, .relationshipLine path { stroke: #FFFFFF !important; } marker path, marker circle { stroke: #FFFFFF !important; fill: #000000 !important; } .relationshipLabelBox, .labelBkg, .edgeLabel, .edgeLabel rect, .edgeLabel p, .edgeLabel span, .edgeLabel div { fill: #000000 !important; background-color: #000000 !important; color: #FFFFFF !important; opacity: 1 !important; }", "themeVariables": {"darkMode": true, "fontSize": "18px", "background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "secondaryColor": "#000000", "tertiaryColor": "#000000", "mainBkg": "#000000", "lineColor": "#FFFFFF", "textColor": "#FFFFFF", "nodeTextColor": "#FFFFFF", "nodeBorder": "#FFFFFF", "attributeBackgroundColorOdd": "#000000", "attributeBackgroundColorEven": "#000000", "relationColor": "#FFFFFF", "relationLabelBackground": "#000000", "relationLabelColor": "#FFFFFF", "edgeLabelBackground": "#000000"}}}%%
+erDiagram
+  courses ||--o{ channels : "contains"
+  channels ||--o{ subchannels : "contains"
+  subchannels ||--o{ messages : "contains"
+  courses ||--o{ resources : "has"
+  resources ||--o{ resource_regions : "divided into"
+  courses ||--o{ collaboration_sessions : "hosts"
+  collaboration_sessions ||--|| collaboration_documents : "edits"
+  collaboration_sessions ||--o{ collaboration_tickets : "issues"
+  sessions ||--o{ collaboration_tickets : "binds"
+
+  courses {
+    uuid id PK
+  }
+  sessions {
+    uuid id PK
+  }
+  channels {
+    uuid id PK
+    uuid course_id FK
+  }
+  subchannels {
+    uuid id PK
+    uuid course_id FK
+    uuid channel_id FK
+  }
+  messages {
+    uuid id PK
+    uuid course_id FK
+    uuid subchannel_id FK
+  }
+  resources {
+    uuid id PK
+    uuid course_id FK
+  }
+  resource_regions {
+    uuid id PK
+    uuid course_id FK
+    uuid resource_id FK
+  }
+  collaboration_sessions {
+    uuid id PK
+    uuid course_id FK
+    uuid post_id FK
+    uuid subchannel_id FK
+  }
+  collaboration_documents {
+    uuid id PK
+    uuid session_id FK
+  }
+  collaboration_tickets {
+    uuid id PK
+    uuid session_id FK
+    uuid auth_session_id FK
+  }
+  jobs {
+    uuid id PK
+    text status
+  }
