@@ -1,0 +1,47 @@
+%%{init: {"theme": "base", "er": {"fontSize": 18, "useMaxWidth": false}, "themeCSS": "g.node rect, g.node path, g.node polygon, .entityBox, .attributeBoxOdd, .attributeBoxEven, .row-rect-odd path, .row-rect-even path { fill: #000000 !important; stroke: #FFFFFF !important; } .divider path { stroke: #FFFFFF !important; } .nodeLabel, .nodeLabel p, .nodeLabel span, .label, .label div, .label span, text, .entityLabel { color: #FFFFFF !important; fill: #FFFFFF !important; } .relationshipLine, .edgePath path, path.relation, .relationshipLine path { stroke: #FFFFFF !important; } marker path, marker circle { stroke: #FFFFFF !important; fill: #000000 !important; } .relationshipLabelBox, .labelBkg, .edgeLabel, .edgeLabel rect, .edgeLabel p, .edgeLabel span, .edgeLabel div { fill: #000000 !important; background-color: #000000 !important; color: #FFFFFF !important; opacity: 1 !important; }", "themeVariables": {"darkMode": true, "fontSize": "18px", "background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "secondaryColor": "#000000", "tertiaryColor": "#000000", "mainBkg": "#000000", "lineColor": "#FFFFFF", "textColor": "#FFFFFF", "nodeTextColor": "#FFFFFF", "nodeBorder": "#FFFFFF", "attributeBackgroundColorOdd": "#000000", "attributeBackgroundColorEven": "#000000", "relationColor": "#FFFFFF", "relationLabelBackground": "#000000", "relationLabelColor": "#FFFFFF", "edgeLabelBackground": "#000000"}}}%%
+erDiagram
+  organizations ||--o{ users : "has"
+  organizations ||--o{ courses : "owns"
+  users ||--o{ sessions : "logs in with"
+  users ||--o{ password_reset_tokens : "resets with"
+  users ||--o{ course_memberships : "holds"
+  courses ||--o{ course_memberships : "has"
+
+  organizations {
+    uuid id PK
+    text domain UK
+  }
+  users {
+    uuid id PK
+    uuid organization_id FK
+    text email UK
+  }
+  email_verification_tokens {
+    uuid id PK
+    text email
+  }
+  password_reset_tokens {
+    uuid id PK
+    uuid user_id FK
+  }
+  sessions {
+    uuid id PK
+    uuid user_id FK
+  }
+  courses {
+    uuid id PK
+    uuid organization_id FK
+  }
+  course_memberships {
+    uuid course_id PK,FK
+    uuid user_id PK,FK
+    text role
+  }
+  idempotency_records {
+    uuid id PK
+    text scope
+    text key
+  }
+  rate_limit_buckets {
+    text bucket_key PK
+  }
