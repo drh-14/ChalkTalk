@@ -67,3 +67,58 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  compose-smoke:
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Prepare Compose environment
+        run: |
+          git ls-files --error-unmatch .env.example
+          git check-ignore -q .env
+          ! git check-ignore -q .env.example
+          cp .env.example .env
+          mkdir -p .cert
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout .cert/localhost-key.pem \
+            -out .cert/localhost.pem \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost"
+
+      - name: Validate Compose configuration
+        run: docker compose --profile app config --quiet
+
+      - name: Start full Compose profile
+        env:
+          WEB_PORT: 5174
+        run: docker compose --profile app up --build --wait --wait-timeout 120
+
+      - name: Verify HTTPS API proxy and migrations
+        env:
+          WEB_PORT: 5174
+        run: |
+          curl --fail --insecure --retry 20 --retry-connrefused https://localhost:${WEB_PORT}/api/health
+          docker compose exec -T postgres psql -U chalktalk -d chalktalk -tAc "SELECT count(*) FROM schema_migrations" | grep -qx "2"
+
+      - name: Verify stale application dependencies self-repair
+        env:
+          WEB_PORT: 5174
+        run: |
+          docker compose exec -T web sh -c "rm -rf /app/node_modules/jsdom && printf '%s\\n' stale > /app/node_modules/.chalktalk-dependency-fingerprint"
+          docker compose --profile app restart web
+          docker compose --profile app up --wait --no-deps web
+          curl --fail --insecure --retry 20 --retry-connrefused https://localhost:${WEB_PORT}/api/health
+          docker compose exec -T web node -e "require.resolve('jsdom')"
+          docker compose exec -T web sh -c "! grep -qx stale /app/node_modules/.chalktalk-dependency-fingerprint"
+          docker compose exec -T postgres psql -U chalktalk -d chalktalk -tAc "SELECT count(*) FROM schema_migrations" | grep -qx "2"
+
+      - name: Collect Compose logs
+        if: always()
+        run: docker compose --profile app logs --no-color
+
+      - name: Stop Compose profile
+        if: always()
+        run: docker compose --profile app down --volumes --remove-orphans

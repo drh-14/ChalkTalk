@@ -43,19 +43,23 @@ Detailed project requirements, user stories, scope, and architecture are availab
 
 Prerequisites: Node.js 22 or later, npm, and Docker with Docker Compose.
 
+### Direct application development
+
+Use this workflow for the fastest edit loop: Docker runs PostgreSQL and Mailpit, while the API and Vite development server run directly on your machine.
+
 1. Install dependencies:
 
    ```bash
    npm install
    ```
 
-2. Create a trusted development certificate, configure your local environment, and start PostgreSQL plus Mailpit:
+2. Create a trusted development certificate, configure your local environment, and start PostgreSQL plus Mailpit. The tracked `.env.example` is a safe local template; the copied `.env` and `.cert/` remain private to your checkout. Install [`mkcert`](https://github.com/FiloSottile/mkcert#installation) and run `mkcert -install` once before generating the certificate:
 
    ```bash
    mkdir -p .cert
    mkcert -key-file .cert/localhost-key.pem -cert-file .cert/localhost.pem localhost
    cp .env.example .env
-   docker compose up -d postgres mailpit
+   docker compose up -d
    ```
 
 3. Apply database migrations:
@@ -72,5 +76,24 @@ Prerequisites: Node.js 22 or later, npm, and Docker with Docker Compose.
    ```
 
 The React client runs at `https://localhost:5173`. Its `/api` requests are forwarded unchanged to the Express API at `http://localhost:3000`; use `https://localhost:5173/api/v1/...` for browser auth requests. Mailpit receives local SMTP mail at `localhost:1025` and displays it at [http://localhost:8025](http://localhost:8025). Keep `.cert/` private and configure a random `AUTH_TOKEN_SECRET` plus your real allowed school domains before deployment.
+
+### Full-stack Docker development
+
+After completing the certificate and `.env` setup above, start the hot-reloading web application, API, migrations, PostgreSQL, and Mailpit together:
+
+```bash
+docker compose --profile app up --build
+```
+
+The browser application is available at `https://localhost:5173`; its `/api` requests are proxied to the API inside the Compose network. The API intentionally has no host port. The `migrate` service waits for PostgreSQL health and completes before the API starts; rerunning it is safe because migrations are tracked. Compose automatically refreshes each container's named dependency volume when `package-lock.json` or the Node runtime changes; it never removes the PostgreSQL data volume.
+
+If migration startup fails, inspect its logs, correct the underlying issue, then rerun it before starting the stack again:
+
+```bash
+docker compose --profile app logs migrate
+docker compose --profile app run --rm migrate
+```
+
+Stop the full stack with `docker compose --profile app down`. The default `docker compose up -d` continues to start only PostgreSQL and Mailpit.
 
 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before submitting changes.
