@@ -7,7 +7,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 ### `organizations`
 
 - `id`: `uuid_v7`; primary key.
-- `canonical_domain`: `varchar(253)`; unique normalized school domain.
+- `domain`: `varchar(253)`; unique school domain, stored normalized (trimmed and lowercased).
 - `name`: `varchar(200)`.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
@@ -16,7 +16,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 
 - `id`: `uuid_v7`; primary key.
 - `organization_id`: `uuid_v7`; foreign key to `organizations.id`.
-- `email_normalized`: `varchar(320)`; unique while active.
+- `email`: `varchar(320)`; unique while active and stored normalized (trimmed and lowercased).
 - `display_name`: `varchar(100)`.
 - `password_hash`: `text`.
 - `deleted_at`: `timestamptz`, nullable.
@@ -26,7 +26,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 ### `email_verification_tokens`
 
 - `id`: `uuid_v7`; primary key.
-- `email_normalized`: `varchar(320)`.
+- `email`: `varchar(320)`; stored normalized (trimmed and lowercased).
 - `token_hash`: `bytea`; unique.
 - `expires_at`, `consumed_at`, `superseded_at`: `timestamptz`; the latter two are nullable.
 - `consumed_by_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
@@ -45,14 +45,14 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `user_id`: `uuid_v7`; foreign key to `users.id`.
 - `cookie_credential_hash`: `bytea`; unique.
 - `csrf_token_hash`: `bytea`; HMAC digest of the session-bound opaque CSRF credential.
+- `(id, user_id)`: unique key used by session-bound ticket foreign keys.
 - `authenticated_at`, `expires_at`, `revoked_at`, `created_at`: `timestamptz`; `revoked_at` is nullable.
 
 ### `idempotency_records`
 
-- `id`: `uuid_v7`; primary key.
-- `scope`: `text`.
-- `operation`, `idempotency_key`: `varchar(255)`.
-- `(scope, operation, idempotency_key)`: unique key.
+- `scope`: `text`; includes the operation and its authorization context.
+- `key`: `varchar(255)`; client-supplied idempotency key.
+- `(scope, key)`: composite primary key.
 - `request_hash`: `bytea`.
 - `state`: `text`; `processing` or `completed`.
 - `response_status`: `integer`, nullable.
@@ -61,9 +61,10 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 
 ### `rate_limit_buckets`
 
-- `action`: `varchar(100)`; part of the primary key.
-- `subject_hash`: `bytea`; part of the primary key.
-- `window_start`: `timestamptz`; part of the primary key.
+- `action`: `varchar(100)`; rate-limited operation.
+- `subject_hash`: `bytea`; hashed identity being limited.
+- `window_start`: `timestamptz`; start of the rate-limit window.
+- `(action, subject_hash, window_start)`: composite primary key.
 - `request_count`: `integer`.
 - `expires_at`: `timestamptz`.
 
@@ -95,10 +96,9 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 
 ### `course_memberships`
 
-- `id`: `uuid_v7`; primary key.
 - `course_id`: `uuid_v7`; foreign key to `courses.id`.
 - `user_id`: `uuid_v7`; foreign key to `users.id`.
-- `(course_id, user_id)`: unique key.
+- `(course_id, user_id)`: composite primary key.
 - `role`: `text`; `student`, `ta`, or `instructor`.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
@@ -117,33 +117,53 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `title`: `varchar(200)`, nullable.
 - `body_markdown`: `text`, nullable.
 - `anonymous`, `pinned`: `boolean`.
-- `tags`: `text[]`.
 - `duplicate_of_post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
 - `duplicate_status`: `text`; `none`, `suggested`, or `confirmed`.
 - `last_activity_at`, `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
 - `search_vector`: generated `tsvector`, nullable.
 
+### `tags`
+
+- `id`: `uuid_v7`; primary key.
+- `course_id`: `uuid_v7`; foreign key to `courses.id`.
+- `name`: `varchar(100)`; stored normalized (trimmed and lowercased).
+- `(course_id, name)`: unique key.
+- `created_at`, `updated_at`: `timestamptz`.
+- `version`: `bigint`.
+
+### `post_tags`
+
+- `post_id`: `uuid_v7`; foreign key to `posts.id`.
+- `tag_id`: `uuid_v7`; foreign key to `tags.id`.
+- `(post_id, tag_id)`: composite primary key.
+
+The application must verify that a post and tag belong to the same course before creating a `post_tags` row.
+
 ### `poll_options`
 
 - `id`: `uuid_v7`; primary key.
-- `post_id`: `uuid_v7`; foreign key to `posts.id`.
-- `(post_id, id)`: unique key for poll-vote validation.
+- `course_id`: `uuid_v7`.
+- `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`.
+- `(course_id, id)`: unique key.
+- `(course_id, post_id, id)`: unique key for poll-vote validation.
 - `position`: `smallint`; unique with `post_id`.
 - `label`: `varchar(200)`.
 
 ### `poll_votes`
 
-- `post_id`: `uuid_v7`; foreign key to `posts.id`; part of the primary key.
+- `course_id`: `uuid_v7`.
+- `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`; part of the primary key.
 - `user_id`: `uuid_v7`; foreign key to `users.id`; part of the primary key.
-- `option_id`: `uuid_v7`; with `post_id`, foreign key to `poll_options(post_id, id)`.
+- `option_id`: `uuid_v7`; with `course_id` and `post_id`, foreign key to `poll_options(course_id, post_id, id)`.
 - `created_at`, `updated_at`: `timestamptz`.
 
 ### `answers`
 
 - `id`: `uuid_v7`; primary key.
-- `post_id`: `uuid_v7`; foreign key to `posts.id`.
-- `(post_id, id)`: unique key used by answer-specific relationships.
+- `course_id`: `uuid_v7`.
+- `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`.
+- `(course_id, id)`: unique key used by same-course foreign keys.
 - `kind`: `text`; `student` or `staff`.
 - `body_markdown`: `text`, nullable.
 - `anonymous`: `boolean`.
@@ -151,6 +171,12 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `endorsed_by_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
 - `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
+
+### `answer_contributors`
+
+- `answer_id`: `uuid_v7`; foreign key to `answers.id`.
+- `user_id`: `uuid_v7`; foreign key to `users.id`.
+- `(answer_id, user_id)`: composite primary key; records the distinct set of editors for an answer.
 
 ### `answer_collaboration_documents`
 
@@ -160,20 +186,13 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `persisted_at`: `timestamptz`.
 - `persistence_revision`: `bigint`.
 
-### `answer_contribution_events`
-
-- `id`: `uuid_v7`; primary key.
-- `answer_id`: `uuid_v7`; foreign key to `answers.id`.
-- `user_id`: `uuid_v7`; foreign key to `users.id`.
-- `event_kind`: `text`; `created` or `edited`.
-- `contributed_at`: `timestamptz`.
-
 ### `followups`
 
 - `id`: `uuid_v7`; primary key.
-- `answer_id`: `uuid_v7`; foreign key to `answers.id`.
-- `(answer_id, id)`: unique key used by parent validation.
-- `parent_followup_id`: `uuid_v7`, nullable; with `answer_id`, foreign key to `followups(answer_id, id)`.
+- `course_id`: `uuid_v7`.
+- `answer_id`: `uuid_v7`; with `course_id`, foreign key to `answers(course_id, id)`.
+- `(course_id, id)`: unique key used by parent validation.
+- `parent_followup_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `followups(course_id, id)`.
 - `body_markdown`: `text`, nullable.
 - `author_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
 - `anonymous`: `boolean`.
@@ -183,10 +202,11 @@ Account deletion locks each affected `courses` row before testing instructor car
 ### `attachments`
 
 - `id`: `uuid_v7`; primary key.
-- `post_id`: `uuid_v7`, nullable; foreign key to `posts.id`.
-- `answer_id`: `uuid_v7`, nullable; foreign key to `answers.id`.
-- `followup_id`: `uuid_v7`, nullable; foreign key to `followups.id`.
-- Exactly one parent foreign key is present.
+- `course_id`: `uuid_v7`.
+- `post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
+- `answer_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `answers(course_id, id)`.
+- `followup_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `followups(course_id, id)`.
+- A `CHECK` constraint requires exactly one parent foreign key to be present.
 - `object_key`: `text`, nullable and unique when present.
 - `original_filename`: `varchar(255)`.
 - `media_type`, `status`: `text`.
@@ -230,6 +250,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 
 - `id`: `uuid_v7`; primary key.
 - `course_id`: `uuid_v7`; foreign key to `courses.id`.
+- `(course_id, id)`: unique key used by same-course foreign keys.
 - `kind`: `text`; `upload` or `link`.
 - `title`: `varchar(200)`.
 - `description`: `varchar(2000)`.
@@ -243,7 +264,8 @@ Account deletion locks each affected `courses` row before testing instructor car
 ### `resource_regions`
 
 - `id`: `uuid_v7`; primary key.
-- `resource_id`: `uuid_v7`; foreign key to `resources.id`.
+- `course_id`: `uuid_v7`.
+- `resource_id`: `uuid_v7`; with `course_id`, foreign key to `resources(course_id, id)`.
 - `page`: `integer`.
 - `bounds_x`, `bounds_y`, `bounds_width`, `bounds_height`: `double precision`.
 - `title`: `varchar(200)`.
@@ -281,7 +303,8 @@ Account deletion locks each affected `courses` row before testing instructor car
 ### `messages`
 
 - `id`: `uuid_v7`; primary key.
-- `subchannel_id`: `uuid_v7`; foreign key to `subchannels.id`.
+- `course_id`: `uuid_v7`.
+- `subchannel_id`: `uuid_v7`; with `course_id`, foreign key to `subchannels(course_id, id)`.
 - `body_markdown`: `text`, nullable.
 - `author_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
 - `anonymous`, `is_introductory`: `boolean`.
