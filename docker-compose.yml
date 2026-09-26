@@ -9,11 +9,106 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chalktalk -d chalktalk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
   mailpit:
     image: axllent/mailpit:v1.27
     ports:
       - "1025:1025"
       - "8025:8025"
 
+  migrate:
+    profiles: ["app"]
+    build: &development-build
+      context: .
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment: &api-environment
+      DATABASE_URL: postgresql://chalktalk:chalktalk@postgres:5432/chalktalk
+      PORT: "3000"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+    command: npm run db:migrate
+    volumes:
+      - .:/app
+      - api-node-modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    profiles: ["app"]
+    build: *development-build
+    working_dir: /app
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment: *api-environment
+    command: npm run dev --workspace=@chalktalk/api
+    volumes:
+      - .:/app
+      - api-node-modules:/app/node_modules
+    expose:
+      - "3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  web:
+    profiles: ["app"]
+    build: *development-build
+    working_dir: /app
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment:
+      VITE_API_PROXY_TARGET: http://api:3000
+      VITE_TLS_KEY_PATH: /certificates/localhost-key.pem
+      VITE_TLS_CERT_PATH: /certificates/localhost.pem
+      VITE_USE_POLLING: "true"
+    command: npm run dev --workspace=@chalktalk/web -- --host 0.0.0.0
+    volumes:
+      - .:/app
+      - web-node-modules:/app/node_modules
+      - ./.cert:/certificates:ro
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      # The CI certificate is intentionally self-signed. Limit TLS verification
+      # bypassing to this internal readiness probe; browser traffic still uses
+      # the mounted mkcert certificate.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const https = require('node:https'); const request = https.get('https://localhost:5173/api/health', { rejectUnauthorized: false }, (response) => { response.resume(); response.on('end', () => process.exit(response.statusCode === 200 ? 0 : 1)); }); request.on('error', () => process.exit(1));",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
 volumes:
   postgres-data:
+  api-node-modules:
+  web-node-modules:

@@ -1,0 +1,9 @@
+.cert
+.env
+.git
+.agents
+node_modules
+apps/*/node_modules
+apps/*/dist
+coverage
+*.log

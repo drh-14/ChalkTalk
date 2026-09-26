@@ -142,6 +142,9 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
+# Keep local runtime configuration private while retaining the safe template
+# required by fresh checkouts and the Compose CI smoke job.
 .env*
+!.env.example
 .agents
 .cert/
