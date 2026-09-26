@@ -103,7 +103,7 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 ### **`POST /api/v1/users`**
 
-Creates an account from a verified email token. The server hashes the supplied opaque token to locate a valid, unexpired proof, derives the normalized verified email from that proof, and never accepts an email separately. It atomically creates the account, finds or creates the organization for the canonical school domain, creates the organization membership, and consumes the single-use proof. A failed transaction consumes nothing. The password is accepted only at this boundary and is never returned. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+Creates an account from a verified email token. The server hashes the supplied opaque token to locate a valid, unexpired proof, derives the normalized verified email from that proof, and never accepts an email separately. It atomically creates the account, finds or creates the organization for the canonical school domain, assigns it directly through `users.organization_id`, and consumes the single-use proof. ChalkTalk has no organization-membership table. A failed transaction consumes nothing. The password is accepted only at this boundary and is never returned. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
 
 **Authentication:** None.
 
@@ -1084,6 +1084,8 @@ Deletes the authenticated user’s account after validating `currentPassword` ag
 
 `Content-Type` (required): Selects one documented request media type.
 
+`If-Match` (required, string): Supplies the ETag from the latest retrieval.
+
 `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
 
 #### Path parameters
@@ -1124,6 +1126,7 @@ curl --request DELETE '/api/v1/users/me' \
     --header 'Origin: https://app.example.edu' \
     --header 'Cookie: __Host-chalktalk_session=opaque_session' \
     --header 'X-CSRF-Token: opaque_csrf_token' \
+    --header 'If-Match: "v3"' \
     --header 'Content-Type: application/json' \
     --data '{"currentPassword":"correct horse battery staple"}'
 ```
@@ -1147,6 +1150,14 @@ curl --request DELETE '/api/v1/users/me' \
 ##### `409 Conflict`
 
 `last_instructor`: Deletion would remove the final instructor from a course; the account and current session remain intact.
+
+##### `412 Precondition Failed`
+
+`version_conflict`: The supplied ETag is stale.
+
+##### `428 Precondition Required`
+
+`precondition_required`: If-Match is required.
 
 ##### `500 Internal Server Error`
 

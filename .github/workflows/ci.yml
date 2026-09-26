@@ -35,6 +35,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
       TEST_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+      AUTH_TOKEN_SECRET: ci-only-auth-token-secret-at-least-32-characters
 
     steps:
       - name: Check out repository

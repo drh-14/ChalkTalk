@@ -898,6 +898,18 @@ paths:
                       message: The request origin or CSRF token is missing, invalid, or does not match the session.
                       requestId: req_deleteCurrentUser
                       details: []
+        "412":
+          description: Precondition Failed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "428":
+          description: Precondition Required
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
         "204":
           description: Retained contributions are pseudonymized; all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked; and the current browser session cookie is expired.
           headers:
@@ -965,6 +977,7 @@ paths:
                       details: []
       parameters:
         - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
       requestBody:
         required: true
