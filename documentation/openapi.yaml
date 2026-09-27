@@ -15,6 +15,12 @@ info:
     use a wildcard origin. Every unsafe request validates `Origin`; authenticated
     unsafe requests also validate the session-bound `X-CSRF-Token`. Expiring or
     revoking a session invalidates its CSRF token and unused WebSocket tickets.
+    Implementation status: the posts API currently supports JSON questions and notes
+    through create, list/search, get, update, and delete. Polls, voting, multipart,
+    attachments, download refresh, and view events remain future target definitions,
+    not live routes or media types. Text posts expose an empty attachments list and
+    unanswered questions. Course lists omit deleted posts; direct member GET by ID
+    returns a minimal tombstone. PATCH or DELETE of a tombstone returns 404 not_found.
   license:
     name: MIT
     identifier: MIT
@@ -2957,7 +2963,8 @@ paths:
       tags:
         - Posts
       summary: Create post in course
-      description: Create post in course.
+      description: Create post in course. Currently JSON question/note only; poll and multipart definitions are future targets.
+      x-implementation-status: text-posts-live
       operationId: createPost
       security:
         - session_cookie: []
@@ -3181,7 +3188,8 @@ paths:
       tags:
         - Posts
       summary: List or search posts in course
-      description: List or search posts in course. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+      description: List or search active question/note posts in course. Deleted posts are excluded. Poll filtering is future-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+      x-implementation-status: text-posts-live
       operationId: listCoursePosts
       security:
         - session_cookie: []
@@ -3384,7 +3392,8 @@ paths:
       tags:
         - Posts
       summary: Retrieve post
-      description: Retrieve post.
+      description: Retrieve a post for a current course member, including a minimal tombstone by ID after deletion. Poll details are future-only.
+      x-implementation-status: text-posts-live
       operationId: getPost
       security:
         - session_cookie: []
@@ -3489,7 +3498,8 @@ paths:
       tags:
         - Posts
       summary: Update post
-      description: Update post. Members may suggest duplicates. Staff may confirm duplicates and change pinned. At least one metadata field or attachment addition is required.
+      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm duplicates and change pinned. Multipart and attachment changes are future-only. A tombstone returns 404 not_found.
+      x-implementation-status: text-posts-live
       operationId: updatePost
       security:
         - session_cookie: []
@@ -3734,7 +3744,8 @@ paths:
       tags:
         - Posts
       summary: Delete post
-      description: Delete post. A bodyless, authorless tombstone is retained when nested content requires it.
+      description: Delete post, retaining a minimal tombstone for direct member GET. A repeated delete returns 404 not_found.
+      x-implementation-status: text-posts-live
       operationId: deletePost
       security:
         - session_cookie: []
@@ -3864,6 +3875,7 @@ paths:
       tags:
         - Posts
       summary: Cast or change vote on poll
+      x-implementation-status: future
       description: Cast or change vote on poll. Each user has one selected option; another PUT changes the vote.
       operationId: putPostVote
       security:
@@ -4002,6 +4014,7 @@ paths:
       tags:
         - Posts
       summary: Retract vote from poll
+      x-implementation-status: future
       description: Retract vote from poll. Returns 204 even when the caller has no vote.
       operationId: deletePostVote
       security:

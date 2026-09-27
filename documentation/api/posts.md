@@ -1,10 +1,12 @@
 ## Posts
 
+**Implementation status (text-post phase):** JSON question and note creation, listing/search, retrieval, update, and deletion are implemented. Active text posts return `attachments: []`; questions return `answered: false` until answers are implemented. Poll creation, poll voting, multipart requests, attachments, download refresh, and view events below describe the future target contract and are not live. During this phase, poll creation and multipart create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
+
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
 
 ## Retained deleted posts
 
-Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false` and includes the content fields documented below. A tombstone sets it to `true` and contains only `id`, `courseId`, `type`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and update responses always contain an active post.
+Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false` and includes the content fields documented below. A tombstone sets it to `true` and contains only `id`, `courseId`, `type`, `deleted`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and update responses always contain an active post.
 
 #### Tombstone example
 
@@ -13,7 +15,6 @@ Post read responses can contain either an active post or a retained tombstone. `
   "id": "post_123",
   "courseId": "course_123",
   "type": "question",
-  "deleted": false,
   "deleted": true,
   "createdAt": "2026-09-20T13:00:00Z",
   "updatedAt": "2026-09-20T15:00:00Z",
@@ -340,7 +341,7 @@ Lists or searches the posts in a course. Without q, results default to recent_ac
 
 `tag` (list of string, optional): Filter by one or more tags; repeated query parameters use OR semantics.
 
-`authorId` (string, optional; minimum length 1, maximum length 255): Filter by author identifier. Staff may match all content; students may match nonanonymous content and their own anonymous content. Items whose identity is hidden from the viewer are removed before ranking, pagination, `hasMore`, and counts; no visible matches return an empty `200 OK` collection.
+`authorId` (string, optional; minimum length 1, maximum length 255): Filter by author identifier. Staff may match all content; students may match nonanonymous content and their own anonymous content, except that a deleted author's content never matches a student `authorId` filter. Items whose identity is hidden from the viewer are removed before ranking, pagination, `hasMore`, and counts; no visible matches return an empty `200 OK` collection.
 
 `createdAfter` (string, optional): Return posts created at or after this timestamp.
 
@@ -686,7 +687,7 @@ Updates a post. Members may suggest duplicates. Staff may confirm duplicates and
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Author or staff, subject to field permissions.
+**Access:** Author or staff for ordinary content edits; any course member may suggest a duplicate; only staff may confirm or clear duplicate review and change pinning. A nonmember receives `404 not_found`.
 
 **Request media:** `application/json`, `multipart/form-data`
 
@@ -885,6 +886,10 @@ curl --request PATCH '/api/v1/posts/post_123' \
 
 `permission_denied`: The caller cannot change one or more fields.
 
+##### `404 Not Found`
+
+`not_found`: The post does not exist, is outside the caller's current course memberships, or is already deleted.
+
 ##### `409 Conflict`
 
 `course_archived`: The course is archived.
@@ -999,6 +1004,10 @@ curl --request DELETE '/api/v1/posts/post_123' \
 `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
 
 `permission_denied`: Deletion is forbidden.
+
+##### `404 Not Found`
+
+`not_found`: The post does not exist, is outside the caller's current course memberships, or is already deleted.
 
 ##### `409 Conflict`
 

@@ -14,11 +14,19 @@ import {
 } from "../auth/service.js";
 import type { Environment } from "../config/environment.js";
 import { CourseService, courseEtag } from "../courses/service.js";
+import {
+  PostService,
+  postEtag,
+  type CreatePost,
+  type ListPosts,
+  type UpdatePost,
+} from "../posts/service.js";
 
 export interface AppDependencies {
   environment: Environment;
   authService?: AuthService;
   courseService?: CourseService;
+  postService?: PostService;
 }
 type AuthContext = {
   credential: string;
@@ -315,10 +323,176 @@ function requireJsonRequest(request: Request): void {
     );
 }
 
+function postTags(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 10)
+    throw validationError("Tags are invalid");
+  const names = value.map((item) => {
+    if (typeof item !== "string") throw validationError("Tags are invalid");
+    const name = item.trim().toLowerCase();
+    if (!name || name.length > 40) throw validationError("Tags are invalid");
+    return name;
+  });
+  if (new Set(names).size !== names.length)
+    throw validationError("Tags are invalid");
+  return names;
+}
+function postCreateBody(value: unknown): CreatePost {
+  const body = strictBody(
+    value,
+    ["type", "title", "bodyMarkdown", "anonymous", "tags"],
+    ["type", "title", "bodyMarkdown"],
+  );
+  if (body.type !== "question" && body.type !== "note")
+    throw validationError("Post type is invalid");
+  const title = stringWithin(body.title, "Title", 1, 200);
+  const bodyMarkdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
+  if (body.anonymous !== undefined && typeof body.anonymous !== "boolean")
+    throw validationError("Anonymous is invalid");
+  return {
+    type: body.type,
+    title,
+    bodyMarkdown,
+    anonymous: body.anonymous as boolean | undefined,
+    tags: postTags(body.tags),
+  };
+}
+function postListQuery(query: Request["query"]): ListPosts {
+  const allowed = new Set([
+    "q",
+    "type",
+    "tag",
+    "authorId",
+    "createdAfter",
+    "createdBefore",
+    "answered",
+    "duplicateStatus",
+    "sort",
+    "cursor",
+    "limit",
+  ]);
+  if (Object.keys(query).some((key) => !allowed.has(key)))
+    throw new AuthError(400, "invalid_request", "Filter is invalid");
+  const one = (key: string): string | undefined => {
+    const value = query[key];
+    if (value === undefined) return undefined;
+    if (typeof value !== "string")
+      throw new AuthError(400, "invalid_request", "Filter is invalid");
+    return value;
+  };
+  const q = one("q")?.trim();
+  if (q !== undefined && (q.length < 1 || q.length > 500))
+    throw new AuthError(400, "invalid_request", "Search query is invalid");
+  const type = one("type");
+  if (type !== undefined && type !== "question" && type !== "note")
+    throw new AuthError(400, "invalid_request", "Type is invalid");
+  const rawTags =
+    query.tag === undefined
+      ? []
+      : Array.isArray(query.tag)
+        ? query.tag
+        : [query.tag];
+  if (
+    rawTags.some(
+      (tag) => typeof tag !== "string" || !tag.trim() || tag.trim().length > 40,
+    )
+  )
+    throw new AuthError(400, "invalid_request", "Tag is invalid");
+  const tags = [
+    ...new Set((rawTags as string[]).map((tag) => tag.trim().toLowerCase())),
+  ];
+  const authorId = one("authorId");
+  if (authorId !== undefined && !UUID_PATTERN.test(authorId))
+    throw new AuthError(400, "invalid_request", "Author is invalid");
+  const createdAfter = one("createdAfter");
+  const createdBefore = one("createdBefore");
+  for (const date of [createdAfter, createdBefore])
+    if (date !== undefined && (!date || Number.isNaN(Date.parse(date))))
+      throw new AuthError(400, "invalid_request", "Date is invalid");
+  if (
+    createdAfter &&
+    createdBefore &&
+    Date.parse(createdAfter) > Date.parse(createdBefore)
+  )
+    throw new AuthError(400, "invalid_request", "Date range is invalid");
+  const rawAnswered = one("answered");
+  if (
+    rawAnswered !== undefined &&
+    rawAnswered !== "true" &&
+    rawAnswered !== "false"
+  )
+    throw new AuthError(400, "invalid_request", "Answered is invalid");
+  const duplicateStatus = one("duplicateStatus");
+  if (
+    duplicateStatus !== undefined &&
+    !["none", "suggested", "confirmed"].includes(duplicateStatus)
+  )
+    throw new AuthError(400, "invalid_request", "Duplicate status is invalid");
+  const sort = one("sort") ?? (q ? "relevance" : "recent_activity");
+  if (
+    !["relevance", "newest", "recent_activity"].includes(sort) ||
+    (sort === "relevance" && !q)
+  )
+    throw new AuthError(400, "invalid_request", "Sort is invalid");
+  const rawLimit = one("limit");
+  const limit = rawLimit === undefined ? 25 : Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+    throw new AuthError(400, "invalid_request", "Pagination is invalid");
+  const cursor = one("cursor");
+  if (cursor !== undefined && (cursor.length < 1 || cursor.length > 2048))
+    throw new AuthError(400, "invalid_request", "Pagination cursor is invalid");
+  return {
+    q,
+    type: type as ListPosts["type"],
+    tags,
+    authorId,
+    createdAfter,
+    createdBefore,
+    answered: rawAnswered === undefined ? undefined : rawAnswered === "true",
+    duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
+    sort: sort as ListPosts["sort"],
+    limit,
+    cursor,
+  };
+}
+function postUpdateBody(value: unknown): UpdatePost {
+  const body = strictBody(value, [
+    "title",
+    "bodyMarkdown",
+    "anonymous",
+    "tags",
+    "pinned",
+    "duplicateOfPostId",
+    "duplicateStatus",
+  ]);
+  if (Object.keys(body).length === 0)
+    throw validationError("An update field is required");
+  if (body.title !== undefined) stringWithin(body.title, "Title", 1, 200);
+  if (body.bodyMarkdown !== undefined)
+    stringWithin(body.bodyMarkdown, "Body", 1, 100000);
+  if (body.anonymous !== undefined && typeof body.anonymous !== "boolean")
+    throw validationError("Anonymous is invalid");
+  if (body.pinned !== undefined && typeof body.pinned !== "boolean")
+    throw validationError("Pinned is invalid");
+  if (
+    body.duplicateOfPostId !== undefined &&
+    body.duplicateOfPostId !== null &&
+    (typeof body.duplicateOfPostId !== "string" ||
+      !UUID_PATTERN.test(body.duplicateOfPostId))
+  )
+    throw validationError("Duplicate target is invalid");
+  if (
+    body.duplicateStatus !== undefined &&
+    !["none", "suggested", "confirmed"].includes(body.duplicateStatus as string)
+  )
+    throw validationError("Duplicate status is invalid");
+  return { ...body, tags: postTags(body.tags) } as UpdatePost;
+}
+
 export function createApp(
   dependencies: AppDependencies = { environment: testEnvironment() },
 ) {
-  const { environment, authService, courseService } = dependencies;
+  const { environment, authService, courseService, postService } = dependencies;
   const app = express();
   app.disable("x-powered-by");
   app.use((_request, response, next) => {
@@ -326,7 +500,7 @@ export function createApp(
     response.set("X-Request-Id", response.locals.requestId);
     next();
   });
-  app.use(express.json({ limit: "32kb" }));
+  app.use(express.json({ limit: "128kb" }));
   app.get("/health", (_request, response) =>
     response.status(200).json({ status: "ok" }),
   );
@@ -418,6 +592,15 @@ export function createApp(
         "Course service is unavailable",
       );
     return courseService;
+  };
+  const posts = (): PostService => {
+    if (!postService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Post service is unavailable",
+      );
+    return postService;
   };
   app.post(
     "/api/v1/account-verification-requests",
@@ -884,6 +1067,100 @@ export function createApp(
           isSelfLeave,
         );
         response.sendStatus(204);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/posts",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = postCreateBody(request.body);
+        const result = await posts().create(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          body,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(result.status)
+          .set({
+            Location: `/api/v1/posts/${result.value.id}`,
+            ETag: postEtag(result.value),
+          })
+          .json({ data: result.value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/posts",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const options = postListQuery(request.query);
+        const result = await posts().list(
+          param(request.params.courseId),
+          current.session.user.id,
+          options,
+        );
+        response.json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/posts/:postId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await posts().get(
+          param(request.params.postId),
+          current.session.user.id,
+        );
+        response.set("ETag", postEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/posts/:postId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = postUpdateBody(request.body);
+        const value = await posts().update(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body,
+        );
+        response.set("ETag", postEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/posts/:postId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await posts().delete(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response.status(204).send();
       } catch (error) {
         next(error);
       }

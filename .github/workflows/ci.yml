@@ -101,7 +101,7 @@ jobs:
           WEB_PORT: 5174
         run: |
           curl --fail --insecure --retry 20 --retry-connrefused https://localhost:${WEB_PORT}/api/health
-          docker compose exec -T postgres psql -U chalktalk -d chalktalk -tAc "SELECT count(*) FROM schema_migrations" | grep -qx "4"
+          docker compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '005_text_posts.sql')" | grep -qx t
 
       - name: Verify stale application dependencies self-repair
         env:
@@ -113,7 +113,7 @@ jobs:
           curl --fail --insecure --retry 20 --retry-connrefused https://localhost:${WEB_PORT}/api/health
           docker compose exec -T web node -e "require.resolve('jsdom')"
           docker compose exec -T web sh -c "! grep -qx stale /app/node_modules/.chalktalk-dependency-fingerprint"
-          docker compose exec -T postgres psql -U chalktalk -d chalktalk -tAc "SELECT count(*) FROM schema_migrations" | grep -qx "4"
+          docker compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '005_text_posts.sql')" | grep -qx t
 
       - name: Collect Compose logs
         if: always()

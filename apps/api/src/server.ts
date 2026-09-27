@@ -5,6 +5,7 @@ import { createPool } from "./database/pool.js";
 import { CourseService } from "./courses/service.js";
 import { JobWorker } from "./jobs/worker.js";
 import { createApp } from "./http/app.js";
+import { PostService } from "./posts/service.js";
 
 const environment = loadEnvironment();
 const { port } = environment;
@@ -17,6 +18,7 @@ const app = createApp({
     createEmailSender(environment),
   ),
   courseService: new CourseService(pool),
+  postService: new PostService(pool),
 });
 const worker = new JobWorker(pool);
 let workerRunning = false;

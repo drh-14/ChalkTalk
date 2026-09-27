@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { JobWorker } from "./worker.js";
+import { PostService, postEtag } from "../posts/service.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
@@ -180,5 +181,48 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     await expect(
       pool.query("SELECT status,attempts FROM jobs WHERE id=$1", [jobId]),
     ).resolves.toMatchObject({ rows: [{ status: "succeeded", attempts: 1 }] });
+  });
+  it("removes a course's posts and tags before removing the course", async () => {
+    const { courseId, jobId } = await seedJob();
+    const service = new PostService(pool);
+    const post = await service.create(courseId, ownerId, {
+      type: "question",
+      title: "Question",
+      bodyMarkdown: "Body",
+      tags: ["cleanup"],
+    });
+    expect(post.value.id).toBeDefined();
+    const duplicate = await service.create(courseId, ownerId, {
+      type: "note",
+      title: "Duplicate",
+      bodyMarkdown: "Body",
+      tags: ["cleanup"],
+    });
+    await service.update(
+      duplicate.value.id,
+      ownerId,
+      postEtag(duplicate.value),
+      {
+        duplicateOfPostId: post.value.id,
+        duplicateStatus: "confirmed",
+      },
+    );
+    await expect(worker.runOnce()).resolves.toBe(true);
+    const job = await pool.query("SELECT status FROM jobs WHERE id=$1", [
+      jobId,
+    ]);
+    expect(job.rows[0].status).toBe("succeeded");
+    expect(
+      (await pool.query("SELECT 1 FROM posts WHERE course_id=$1", [courseId]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (await pool.query("SELECT 1 FROM tags WHERE course_id=$1", [courseId]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (await pool.query("SELECT 1 FROM courses WHERE id=$1", [courseId]))
+        .rowCount,
+    ).toBe(0);
   });
 });
