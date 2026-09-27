@@ -393,6 +393,144 @@ a:focus-visible {
   grid-template-columns: 2.35rem 1fr auto;
   padding: 1rem 0;
 }
+.course-link {
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.course-link:hover {
+  background: #f7f5ed;
+}
+.course-row > span:nth-child(2) {
+  display: grid;
+  gap: 0.25rem;
+}
+.course-row small,
+.member-row small {
+  color: #778179;
+  font-size: 0.76rem;
+}
+.course-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+.button.secondary {
+  background: #e9eee5;
+  color: #24513f;
+}
+.course-form {
+  border-top: 1px solid #eeece4;
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1.2rem;
+  padding-top: 1.2rem;
+}
+.course-form h3 {
+  margin: 0;
+}
+.course-form label {
+  color: #34453d;
+  display: grid;
+  font-size: 0.82rem;
+  font-weight: 600;
+  gap: 0.45rem;
+}
+.course-form input,
+.member-actions select {
+  background: #fffefa;
+  border: 1px solid #d8d9cf;
+  border-radius: 0.55rem;
+  color: #1d2b26;
+  min-height: 2.6rem;
+  padding: 0.55rem 0.65rem;
+}
+.empty-state {
+  color: #68746d;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  padding: 1.2rem 0;
+}
+.empty-state p {
+  margin: 0 0 0.45rem;
+}
+.course-detail {
+  color: #1d2b26;
+  margin: 0 auto;
+  max-width: 52rem;
+  min-height: 100vh;
+  padding: 2rem clamp(1.25rem, 7vw, 5rem) 4rem;
+}
+.course-detail.loading {
+  max-width: none;
+}
+.course-detail-header {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+  margin: 3rem 0 2rem;
+}
+.course-detail-header .course-icon {
+  flex: 0 0 auto;
+}
+.course-detail-header .eyebrow {
+  color: #bb6334;
+}
+.course-detail-header h1 {
+  font-family: Fraunces, Georgia, serif;
+  font-size: clamp(2.25rem, 5vw, 4rem);
+  letter-spacing: -0.055em;
+  line-height: 1;
+  margin: 0.55rem 0;
+}
+.join-code {
+  color: #68746d;
+  margin: 0;
+}
+.join-code strong {
+  color: #24513f;
+  font-family: "DM Mono", monospace;
+}
+.members-card {
+  background: #fffefa;
+  border: 1px solid #e3e1d6;
+  border-radius: 0.85rem;
+  margin-top: 1.4rem;
+  padding: 1.25rem;
+}
+.member-row {
+  align-items: center;
+  border-top: 1px solid #eeece4;
+  display: flex;
+  justify-content: space-between;
+  padding: 0.9rem 0;
+}
+.member-row > div:first-child {
+  display: grid;
+  gap: 0.25rem;
+}
+.member-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+.member-actions select {
+  min-height: 2.2rem;
+}
+.course-management {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+.danger {
+  color: #9f3520;
+}
 .course-row h3,
 .post h3 {
   font-size: 0.91rem;
@@ -478,6 +616,14 @@ a:focus-visible {
   }
   .home-grid {
     grid-template-columns: 1fr;
+  }
+  .member-row {
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .member-actions {
+    align-items: flex-end;
+    flex-direction: column;
   }
 }
 

@@ -1,11 +1,14 @@
-export type RouteName = "landing" | "verify-email" | "reset-password" | "home";
+export type RouteName =
+  "landing" | "verify-email" | "reset-password" | "home" | "course";
 
 export type Route = {
   name: RouteName;
   token?: string;
+  courseId?: string;
 };
 
 export function routeForPath(pathname: string): RouteName {
+  if (/^\/courses\/[^/]+$/.test(pathname)) return "course";
   switch (pathname) {
     case "/verify-email":
       return "verify-email";
@@ -24,7 +27,9 @@ export function routeFromLocation(location: URL): Route {
     name === "verify-email" || name === "reset-password"
       ? location.searchParams.get("token") || undefined
       : undefined;
-  return { name, token };
+  const courseId =
+    name === "course" ? location.pathname.slice("/courses/".length) : undefined;
+  return { name, token, courseId };
 }
 
 export function initializeRoute(location: URL, history: History): Route {
