@@ -1,0 +1,5 @@
+# Design
+
+The new `GET /api/v1/posts/{postId}/duplicate-review` is an authenticated, staff-only read. It first resolves the source and current course membership, then requires an active confirmed duplicate and TA or instructor role. It returns the existing active post projection with staff-visible author identity, current ETag, and `Cache-Control: private, no-store`. Students in the course receive 403; nonmembers, absent, deleted, or nonconfirmed posts receive 404. The ordinary GET route and 303 behavior remain unchanged.
+
+The client keeps duplicate selection local to the staff review view rather than navigating to the ordinary post route. The left duplicate entry is a single keyboard-accessible full-card button styled like an ordinary post card; it has no nested link or action. A selection fetches the review detail and renders title, body, author, tags, canonical link, and unmerge in the right pane. Switching views or selections discards stale detail. Unmerge uses the detail's current version and clears selection after success.

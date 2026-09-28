@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import {
@@ -17,9 +18,12 @@ import {
   type Session,
 } from "../auth/client.js";
 import { CourseDetail, CourseHome } from "../courses/views.js";
+import { getCourse, type Course, type Versioned } from "../courses/client.js";
+import { Discussion } from "../posts/views.js";
 import {
   initializeRoute,
   navigate,
+  replaceCurrentQuery,
   routeFromLocation,
   type Route,
 } from "./routes.js";
@@ -545,6 +549,133 @@ function Home({
   );
 }
 
+function CourseFrame({
+  route,
+  session,
+  onNavigate,
+  onBeforeLeaveChange,
+}: {
+  route: Route;
+  session: Session;
+  onNavigate: (path: string) => void;
+  onBeforeLeaveChange: (guard: () => boolean) => void;
+}) {
+  const courseId = route.courseId!;
+  const [course, setCourse] = useState<Versioned<Course>>();
+  const [error, setError] = useState<{ courseId: string; message: string }>();
+  const [cycle, setCycle] = useState(0);
+  const beforeLeave = useRef<() => boolean>(() => true);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const visibleCourse = course?.data.id === courseId ? course : undefined;
+  useEffect(() => {
+    let active = true;
+    setCourse(undefined);
+    setError(undefined);
+    void getCourse(courseId)
+      .then((next) => {
+        if (active) setCourse(next);
+      })
+      .catch((caught) => {
+        if (active) setError({ courseId, message: errorMessage(caught) });
+      });
+    return () => {
+      active = false;
+    };
+  }, [courseId, cycle]);
+  useEffect(() => {
+    if (visibleCourse) headingRef.current?.focus();
+  }, [route.name, visibleCourse]);
+  const settings = route.name === "course-settings";
+  const discussionPath = `/courses/${encodeURIComponent(courseId)}`;
+  function follow(event: MouseEvent<HTMLAnchorElement>, path: string) {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
+    event.preventDefault();
+    if (beforeLeave.current()) onNavigate(path);
+  }
+  return (
+    <main className="discussion-shell">
+      <header className="discussion-header">
+        <div>
+          <a
+            className="text-button"
+            href="/home"
+            onClick={(event) => follow(event, "/home")}
+          >
+            ← All courses
+          </a>
+          <h1 ref={headingRef} tabIndex={-1}>
+            {visibleCourse?.data.name ??
+              (error?.courseId === courseId
+                ? "Course unavailable"
+                : "Loading course…")}
+          </h1>
+        </div>
+        <nav aria-label="Course navigation">
+          <a
+            href={discussionPath}
+            aria-current={!settings ? "page" : undefined}
+            onClick={(event) => follow(event, discussionPath)}
+          >
+            Discussion
+          </a>
+          <a
+            href={`${discussionPath}/settings`}
+            aria-current={settings ? "page" : undefined}
+            onClick={(event) => follow(event, `${discussionPath}/settings`)}
+          >
+            Course settings
+          </a>
+        </nav>
+      </header>
+      {error?.courseId === courseId ? (
+        <div role="alert">
+          {error.message}{" "}
+          <button
+            className="text-button"
+            onClick={() => setCycle((value) => value + 1)}
+          >
+            Try again
+          </button>
+        </div>
+      ) : !visibleCourse ? (
+        <p role="status">Loading course…</p>
+      ) : settings ? (
+        <CourseDetail
+          key={courseId}
+          courseId={courseId}
+          course={visibleCourse}
+          onCourseChange={setCourse}
+          csrfToken={session.csrfToken}
+          onBack={() => onNavigate("/home")}
+          userId={session.user.id}
+        />
+      ) : (
+        <Discussion
+          courseId={courseId}
+          course={visibleCourse.data}
+          userId={session.user.id}
+          postId={route.postId}
+          query={route.query}
+          csrfToken={session.csrfToken}
+          onNavigate={onNavigate}
+          onQueryChange={replaceCurrentQuery}
+          onBeforeLeaveChange={(guard) => {
+            beforeLeave.current = guard;
+            onBeforeLeaveChange(guard);
+          }}
+        />
+      )}
+    </main>
+  );
+}
+
 export function App() {
   const [route, setRoute] = useState<Route>(() =>
     routeFromLocation(new URL(window.location.href)),
@@ -552,8 +683,15 @@ export function App() {
   const [session, setSession] = useState<Session>();
   const [ready, setReady] = useState(false);
   const sessionRestoreStarted = useRef(false);
+  const beforeCourseLeave = useRef<() => boolean>(() => true);
+  const lastPath = useRef(
+    `${window.location.pathname}${window.location.search}`,
+  );
+  const internalNavigation = useRef(false);
   function move(path: string) {
+    internalNavigation.current = true;
     navigate(path);
+    lastPath.current = path;
     setRoute(initializeRoute(new URL(window.location.href), window.history));
   }
   function startSession(nextSession: Session) {
@@ -561,8 +699,21 @@ export function App() {
     move("/home");
   }
   useEffect(() => {
-    const updateRoute = () =>
+    const updateRoute = () => {
+      const nextPath = `${window.location.pathname}${window.location.search}`;
+      if (
+        !internalNavigation.current &&
+        window.location.pathname !==
+          new URL(lastPath.current, window.location.origin).pathname &&
+        !beforeCourseLeave.current()
+      ) {
+        window.history.pushState(null, "", lastPath.current);
+        return;
+      }
+      internalNavigation.current = false;
+      lastPath.current = nextPath;
       setRoute(initializeRoute(new URL(window.location.href), window.history));
+    };
     window.addEventListener("popstate", updateRoute);
     return () => window.removeEventListener("popstate", updateRoute);
   }, []);
@@ -583,7 +734,13 @@ export function App() {
         if (route.name === "landing") move("/home");
       })
       .catch(() => {
-        if (route.name === "home" || route.name === "course") move("/");
+        if (
+          route.name === "home" ||
+          route.name === "course" ||
+          route.name === "post" ||
+          route.name === "course-settings"
+        )
+          move("/");
       })
       .finally(() => setReady(true));
     // This intentionally restores browser session once, rather than on navigation.
@@ -608,13 +765,21 @@ export function App() {
         onSignOut={signOut}
       />
     );
-  if (route.name === "course" && route.courseId && session)
+  if (
+    (route.name === "course" ||
+      route.name === "post" ||
+      route.name === "course-settings") &&
+    route.courseId &&
+    session
+  )
     return (
-      <CourseDetail
-        courseId={route.courseId}
-        csrfToken={session.csrfToken}
-        onBack={() => move("/home")}
-        userId={session.user.id}
+      <CourseFrame
+        route={route}
+        session={session}
+        onNavigate={move}
+        onBeforeLeaveChange={(guard) => {
+          beforeCourseLeave.current = guard;
+        }}
       />
     );
   if (route.name === "verify-email")

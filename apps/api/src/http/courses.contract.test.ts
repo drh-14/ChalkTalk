@@ -1,4 +1,5 @@
 import request from "supertest";
+import { version as uuidVersion } from "uuid";
 import { describe, expect, it } from "vitest";
 import { type AuthService } from "../auth/service.js";
 import { type CourseService } from "../courses/service.js";
@@ -13,7 +14,7 @@ const environment = loadEnvironment({
   FRONTEND_BASE_URL: "https://app.example.edu",
 });
 const user = {
-  id: "11111111-1111-4111-8111-111111111111",
+  id: "01a0e5cc-58ae-7009-9f43-c8155fb2359f",
   email: "ada@example.edu",
   displayName: "Ada",
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -21,8 +22,8 @@ const user = {
   version: 1,
 };
 const course = {
-  id: "22222222-2222-4222-8222-222222222222",
-  organizationId: "33333333-3333-4333-8333-333333333333",
+  id: "01a0e5cc-58ae-7009-9f43-cd86eb2ae79c",
+  organizationId: "01a0e5cc-58ae-7009-9f43-d1ba75831d5f",
   name: "CS 101",
   status: "active" as const,
   joinCode: "ABCDEFGH",
@@ -30,12 +31,25 @@ const course = {
   updatedAt: user.updatedAt,
   version: 1,
 };
+const sessionId = "01a0e5cc-58af-7467-8ab1-6e6d7ad7f10a";
+const membershipId = "01a0e5cc-58af-7467-8ab1-709d2933809a";
+it("uses UUIDv7 identities in course contract fixtures", () => {
+  for (const id of [
+    user.id,
+    course.id,
+    course.organizationId,
+    sessionId,
+    membershipId,
+  ]) {
+    expect(uuidVersion(id)).toBe(7);
+  }
+});
 function app(courseOverrides: Partial<CourseService> = {}) {
   return createApp({
     environment,
     authService: {
       session: async () => ({
-        id: "session",
+        id: sessionId,
         user,
         expiresAt: "2026-12-01T00:00:00.000Z",
         csrfToken: "csrf",
@@ -65,7 +79,7 @@ function app(courseOverrides: Partial<CourseService> = {}) {
       createIdempotently: async () => ({ value: course, status: 201 }),
       get: async () => course,
       join: async () => ({
-        id: "membership",
+        id: membershipId,
         courseId: course.id,
         user: { id: user.id, displayName: user.displayName },
         role: "student" as const,
@@ -75,7 +89,7 @@ function app(courseOverrides: Partial<CourseService> = {}) {
       }),
       joinIdempotently: async () => ({
         value: {
-          id: "membership",
+          id: membershipId,
           courseId: course.id,
           user: { id: user.id, displayName: user.displayName },
           role: "student" as const,
@@ -87,7 +101,7 @@ function app(courseOverrides: Partial<CourseService> = {}) {
       }),
       members: async () => [],
       getMember: async () => ({
-        id: "membership",
+        id: membershipId,
         courseId: course.id,
         user: { id: user.id, displayName: user.displayName },
         role: "instructor" as const,
@@ -248,8 +262,9 @@ describe("course HTTP contract", () => {
     expect(second.body.error.code).toBe("course_deleting");
   });
   it("serves the remaining course and membership operations with their documented headers", async () => {
+    const otherUserId = "01a0e5cc-58ae-7009-9f43-d5453c12bca9";
     const membership = {
-      id: "membership",
+      id: membershipId,
       courseId: course.id,
       user: { id: user.id, displayName: user.displayName },
       role: "student" as const,
@@ -269,6 +284,7 @@ describe("course HTTP contract", () => {
       update: async () => ({ ...course, name: "CS 102", version: 2 }),
       updateMember: async () => ({
         ...membership,
+        user: { id: otherUserId, displayName: "Other member" },
         role: "ta" as const,
         version: 3,
       }),
@@ -316,13 +332,13 @@ describe("course HTTP contract", () => {
       .expect(200)
       .expect("ETag", '"v2"');
     await request(testApp)
-      .patch(`/api/v1/courses/${course.id}/members/${user.id}`)
+      .patch(`/api/v1/courses/${course.id}/members/${otherUserId}`)
       .set({ ...unsafe, "If-Match": '"v2"' })
       .send({ role: "ta" })
       .expect(200)
       .expect("ETag", '"v3"');
     await request(testApp)
-      .delete(`/api/v1/courses/${course.id}/members/${user.id}`)
+      .delete(`/api/v1/courses/${course.id}/members/${otherUserId}`)
       .set({ ...unsafe, "If-Match": '"v2"' })
       .expect(204);
     await request(testApp)
@@ -361,7 +377,7 @@ describe("course HTTP contract", () => {
         },
       }),
     )
-      .post("/api/v1/courses/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/members")
+      .post("/api/v1/courses/01a0e5cc-58ae-7009-9f43-d8c8d3b05438/members")
       .set("Origin", environment.frontendBaseUrl)
       .set("Cookie", cookie)
       .set("X-CSRF-Token", "csrf")

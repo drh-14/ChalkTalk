@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "../auth/client.js";
 import {
   createCourse,
@@ -273,16 +273,24 @@ export function CourseHome({
 
 export function CourseDetail({
   courseId,
+  course: sharedCourse,
+  onCourseChange,
   userId,
   csrfToken,
   onBack,
+  onDiscussion,
 }: {
   courseId: string;
+  course?: Versioned<Course>;
+  onCourseChange?: (course: Versioned<Course>) => void;
   userId: string;
   csrfToken: string;
   onBack: () => void;
+  onDiscussion?: () => void;
 }) {
-  const [course, setCourse] = useState<Versioned<Course>>();
+  const [localCourse, setLocalCourse] = useState<Versioned<Course>>();
+  const course = sharedCourse ?? localCourse;
+  const setCourse = onCourseChange ?? setLocalCourse;
   const [ownMembership, setOwnMembership] = useState<Membership>();
   const [members, setMembers] = useState<Membership[]>();
   const [membersCursor, setMembersCursor] = useState<string | null>();
@@ -293,17 +301,32 @@ export function CourseDetail({
   const [retry, setRetry] = useState<() => void>();
   const [pollCycle, setPollCycle] = useState(0);
   const [name, setName] = useState("");
-  const refresh = (preserveNotice = false) => {
+  const alive = useRef(true);
+  const currentCourseId = useRef(courseId);
+  currentCourseId.current = courseId;
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (course) setName(course.data.name);
+  }, [course]);
+  const refresh = (preserveNotice = false, refreshCourse = false) => {
     if (!preserveNotice) {
       setError(undefined);
       setRetry(undefined);
     }
     void Promise.all([
-      getCourse(courseId),
+      sharedCourse && !refreshCourse
+        ? Promise.resolve(sharedCourse)
+        : getCourse(courseId),
       getMembership(courseId, userId),
       listMembers(courseId),
     ])
       .then(([nextCourse, nextOwnMembership, nextMembers]) => {
+        if (!alive.current || currentCourseId.current !== courseId) return;
         setCourse(nextCourse);
         setName(nextCourse.data.name);
         setOwnMembership(nextOwnMembership.data);
@@ -312,6 +335,7 @@ export function CourseDetail({
         setMembersPageError(undefined);
       })
       .catch((caught) => {
+        if (!alive.current || currentCourseId.current !== courseId) return;
         if (caught instanceof ApiError && caught.code === "not_found") onBack();
         else setError(message(caught));
       });
@@ -322,7 +346,7 @@ export function CourseDetail({
   useEffect(() => {
     if (course?.data.status !== "deleting") return;
     const timer = window.setTimeout(() => {
-      refresh();
+      refresh(false, true);
       setPollCycle((current) => current + 1);
     }, 1_000);
     return () => window.clearTimeout(timer);
@@ -335,7 +359,7 @@ export function CourseDetail({
         "This course changed elsewhere. Details were refreshed; you can retry.",
       );
       setRetry(() => repeat);
-      refresh(true);
+      refresh(true, true);
     } else setError(message(caught));
   };
   const instructor = ownMembership?.role === "instructor";
@@ -356,9 +380,14 @@ export function CourseDetail({
     setPending(true);
     setError(undefined);
     try {
-      setCourse(
-        await updateCourse(courseId, { status }, csrfToken, course.etag),
+      const next = await updateCourse(
+        courseId,
+        { status },
+        csrfToken,
+        course.etag,
       );
+      if (alive.current && currentCourseId.current === courseId)
+        setCourse(next);
     } catch (caught) {
       resolveMutationError(caught, () => void changeStatus(status));
     } finally {
@@ -370,14 +399,14 @@ export function CourseDetail({
     setPending(true);
     setError(undefined);
     try {
-      setCourse(
-        await updateCourse(
-          courseId,
-          { name: name.trim() },
-          csrfToken,
-          course.etag,
-        ),
+      const next = await updateCourse(
+        courseId,
+        { name: name.trim() },
+        csrfToken,
+        course.etag,
       );
+      if (alive.current && currentCourseId.current === courseId)
+        setCourse(next);
     } catch (caught) {
       resolveMutationError(caught, () => void rename());
     } finally {
@@ -389,7 +418,9 @@ export function CourseDetail({
     setPending(true);
     setError(undefined);
     try {
-      setCourse(await deleteCourse(courseId, csrfToken, course.etag));
+      const next = await deleteCourse(courseId, csrfToken, course.etag);
+      if (alive.current && currentCourseId.current === courseId)
+        setCourse(next);
     } catch (caught) {
       resolveMutationError(caught, () => void startDeletion());
     } finally {
@@ -444,32 +475,45 @@ export function CourseDetail({
   }
   if (!course || !members || !ownMembership)
     return (
-      <main className="course-detail loading" aria-live="polite">
-        {error ?? "Loading course…"}
+      <section className="course-detail loading" aria-live="polite">
+        {error ? (
+          <p role="alert">{error}</p>
+        ) : (
+          <p role="status">Loading course settings…</p>
+        )}
         {error && (
           <button className="text-button" onClick={() => refresh()}>
             Try again
           </button>
         )}
-      </main>
+      </section>
     );
   return (
-    <main className="course-detail">
-      <button className="text-button" onClick={onBack}>
-        ← All courses
-      </button>
-      <header className="course-detail-header">
-        <CourseGlyph name={course.data.name} />
-        <div>
-          <p className="eyebrow">{course.data.status}</p>
-          <h1>{course.data.name}</h1>
-          {course.data.joinCode && (
-            <p className="join-code">
-              Join code: <strong>{course.data.joinCode}</strong>
-            </p>
+    <section className="course-detail">
+      {!sharedCourse && (
+        <>
+          <button className="text-button" onClick={onBack}>
+            ← All courses
+          </button>
+          {onDiscussion && (
+            <button className="text-button" onClick={onDiscussion}>
+              Discussion
+            </button>
           )}
-        </div>
-      </header>
+          <header className="course-detail-header">
+            <CourseGlyph name={course.data.name} />
+            <div>
+              <p className="eyebrow">{course.data.status}</p>
+              <h1>{course.data.name}</h1>
+              {course.data.joinCode && (
+                <p className="join-code">
+                  Join code: <strong>{course.data.joinCode}</strong>
+                </p>
+              )}
+            </div>
+          </header>
+        </>
+      )}
       {course.data.status === "deleting" && (
         <p className="form-message success" role="status">
           This course is being deleted. We’ll keep checking its progress.
@@ -498,7 +542,9 @@ export function CourseDetail({
               <strong>{member.user.displayName}</strong>
               <small>{member.role}</small>
             </div>
-            {instructor && course.data.status !== "deleting" ? (
+            {instructor &&
+            member.user.id !== userId &&
+            course.data.status !== "deleting" ? (
               <div className="member-actions">
                 <select
                   aria-label={`Role for ${member.user.displayName}`}
@@ -595,6 +641,6 @@ export function CourseDetail({
           </button>
         ) : null}
       </section>
-    </main>
+    </section>
   );
 }

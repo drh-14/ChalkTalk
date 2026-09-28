@@ -23,6 +23,7 @@ type Row = {
   version: string | number;
   display_name: string | null;
   author_deleted_at: Date | null;
+  canonical_title?: string | null;
 };
 export type CreatePost = {
   type: "question" | "note";
@@ -41,6 +42,13 @@ export type Post = Record<string, unknown> & {
   courseId: string;
   type: "question" | "note";
   deleted: boolean;
+  version: number;
+};
+export type MergedReference = {
+  id: string;
+  courseId: string;
+  duplicateOfPostId: string;
+  duplicateStatus: "confirmed";
   version: number;
 };
 export type ListPosts = {
@@ -243,14 +251,44 @@ export class PostService {
       return { value, status: 201 };
     });
   }
-  async get(id: string, userId: string): Promise<Post> {
+  async get(id: string, userId: string): Promise<Post | MergedReference> {
     const row = await this.row(this.pool, id);
     if (!row) throw notFound();
     const member = await this.membership(this.pool, row.course_id, userId);
+    if (row.duplicate_status === "confirmed") return this.mergedReference(row);
     return this.project(this.pool, row, userId, member.role);
+  }
+  async getDuplicateReview(id: string, userId: string): Promise<Post> {
+    const row = await this.row(this.pool, id);
+    if (!row) throw notFound();
+    const member = await this.membership(this.pool, row.course_id, userId);
+    if (row.deleted_at || row.duplicate_status !== "confirmed")
+      throw notFound();
+    if (!STAFF.has(member.role))
+      throw new AuthError(
+        403,
+        "permission_denied",
+        "Duplicate review is staff-only",
+      );
+    return this.project(this.pool, row, userId, member.role);
+  }
+  private mergedReference(row: Row): MergedReference {
+    return {
+      id: row.id,
+      courseId: row.course_id,
+      duplicateOfPostId: row.duplicate_of_post_id!,
+      duplicateStatus: "confirmed",
+      version: Number(row.version),
+    };
   }
   async list(courseId: string, userId: string, options: ListPosts) {
     const member = await this.membership(this.pool, courseId, userId);
+    if (options.duplicateStatus === "confirmed" && !STAFF.has(member.role))
+      throw new AuthError(
+        403,
+        "permission_denied",
+        "Duplicate review is staff-only",
+      );
     const { cursor, limit, ...filters } = options;
     const binding = createHash("sha256")
       .update(JSON.stringify({ courseId, userId, filters }))
@@ -291,6 +329,8 @@ export class PostService {
       return `$${values.length}`;
     };
     const clauses = ["p.course_id=$1", "p.deleted_at IS NULL"];
+    if (options.duplicateStatus !== "confirmed")
+      clauses.push("p.duplicate_status <> 'confirmed'");
     if (options.q)
       clauses.push(
         `p.search_vector @@ websearch_to_tsquery('english', ${add(options.q)})`,
@@ -324,14 +364,23 @@ export class PostService {
     const cursorClause = after
       ? `AND (rank_value,p.id)<(${add(after.value)}::${sortValue},${add(after.id)}::uuid)`
       : "";
-    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause.replaceAll("p.id", "listed.id")} ORDER BY rank_value DESC,id DESC LIMIT ${add(limit + 1)}`;
+    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,canonical.title AS canonical_title,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause.replaceAll("p.id", "listed.id")} ORDER BY rank_value DESC,id DESC LIMIT ${add(limit + 1)}`;
     const result = await this.pool.query<Row & { rank_value: number | Date }>(
       query,
       values,
     );
     const pageRows = result.rows.slice(0, limit);
     const data = await Promise.all(
-      pageRows.map((row) => this.project(this.pool, row, userId, member.role)),
+      pageRows.map((row) =>
+        options.duplicateStatus === "confirmed"
+          ? Promise.resolve({
+              ...this.mergedReference(row),
+              title: row.title,
+              canonicalTitle: row.canonical_title,
+              type: row.type,
+            })
+          : this.project(this.pool, row, userId, member.role),
+      ),
     );
     const tail = pageRows.at(-1);
     const nextCursor =
@@ -360,8 +409,13 @@ export class PostService {
     userId: string,
     etag: string | undefined,
     body: UpdatePost,
-  ): Promise<Post> {
+  ): Promise<Post | MergedReference> {
     return this.tx(async (db) => {
+      const initial = await this.row(db, id);
+      if (!initial) throw notFound();
+      await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        initial.course_id,
+      ]);
       const row = await this.row(db, id, true);
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
@@ -396,6 +450,21 @@ export class PostService {
           "permission_denied",
           "Duplicate review is staff-only",
         );
+      if (
+        row.duplicate_status === "confirmed" &&
+        (body.duplicateStatus !== "none" ||
+          body.duplicateOfPostId !== null ||
+          Object.entries(body).some(
+            ([key, value]) =>
+              value !== undefined &&
+              !["duplicateStatus", "duplicateOfPostId"].includes(key),
+          ))
+      )
+        throw new AuthError(
+          409,
+          "post_merged",
+          "Unmerge the post before editing it",
+        );
       const targetId =
         body.duplicateOfPostId === undefined
           ? row.duplicate_of_post_id
@@ -406,11 +475,24 @@ export class PostService {
           : body.duplicateStatus;
       if ((status === "none") !== (targetId === null))
         throw validation("Duplicate status and target must agree");
+      if (status === "confirmed") {
+        const inbound = await db.query(
+          "SELECT 1 FROM posts WHERE duplicate_of_post_id=$1 AND duplicate_status='confirmed' AND deleted_at IS NULL LIMIT 1",
+          [id],
+        );
+        if (inbound.rowCount)
+          throw new AuthError(
+            409,
+            "canonical_has_duplicates",
+            "Unmerge referring posts first",
+          );
+      }
       if (targetId !== null) {
         const target = await this.row(db, targetId);
         if (
           !target ||
           target.deleted_at ||
+          target.duplicate_status === "confirmed" ||
           target.course_id !== row.course_id ||
           target.id === row.id
         )
@@ -430,7 +512,10 @@ export class PostService {
       );
       if (body.tags !== undefined)
         await this.replaceTags(db, id, row.course_id, body.tags);
-      return this.project(db, (await this.row(db, id))!, userId, member.role);
+      const updated = (await this.row(db, id))!;
+      return status === "confirmed"
+        ? this.mergedReference(updated)
+        : this.project(db, updated, userId, member.role);
     });
   }
   async delete(
@@ -439,12 +524,33 @@ export class PostService {
     etag: string | undefined,
   ): Promise<void> {
     await this.tx(async (db) => {
+      const initial = await this.row(db, id);
+      if (!initial) throw notFound();
+      await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        initial.course_id,
+      ]);
       const row = await this.row(db, id, true);
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
       if (row.deleted_at) throw notFound();
       this.writable(member.status);
       this.checkRevision(row, etag);
+      if (row.duplicate_status === "confirmed")
+        throw new AuthError(
+          409,
+          "post_merged",
+          "Unmerge the post before deleting it",
+        );
+      const inbound = await db.query(
+        "SELECT 1 FROM posts WHERE duplicate_of_post_id=$1 AND duplicate_status='confirmed' AND deleted_at IS NULL LIMIT 1",
+        [id],
+      );
+      if (inbound.rowCount)
+        throw new AuthError(
+          409,
+          "canonical_has_duplicates",
+          "Unmerge referring posts first",
+        );
       if (row.author_user_id !== userId && !STAFF.has(member.role))
         throw new AuthError(
           403,

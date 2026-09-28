@@ -119,6 +119,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `anonymous`, `pinned`: `boolean`.
 - `duplicate_of_post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
 - `duplicate_status`: `text`; `none`, `suggested`, or `confirmed`.
+- Confirming a duplicate retains the original title and body in this row. Application reads exclude confirmed rows from ordinary lists and search, redirect direct links to the active canonical row, and expose only restricted title/target metadata to staff review. Unmerge restores the retained content. The application blocks deleting or merging a canonical row while confirmed rows refer to it; this lifecycle rule is not enforced by the foreign key alone.
 - `last_activity_at`, `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
 - `search_vector`: generated `tsvector`, nullable.

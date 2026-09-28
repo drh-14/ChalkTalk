@@ -1116,6 +1116,24 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/posts/:postId/duplicate-review",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await posts().getDuplicateReview(
+          param(request.params.postId),
+          current.session.user.id,
+        );
+        response
+          .set({ ETag: postEtag(value), "Cache-Control": "private, no-store" })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/posts/:postId",
     optionalReadOrigin,
     async (request, response, next) => {
@@ -1125,6 +1143,16 @@ export function createApp(
           param(request.params.postId),
           current.session.user.id,
         );
+        if (value.duplicateStatus === "confirmed") {
+          response
+            .status(303)
+            .set({
+              Location: `/api/v1/posts/${value.duplicateOfPostId}`,
+              "Cache-Control": "private, no-store",
+            })
+            .send();
+          return;
+        }
         response.set("ETag", postEtag(value)).json({ data: value });
       } catch (error) {
         next(error);

@@ -2530,7 +2530,7 @@ paths:
       tags:
         - Course Memberships
       summary: Update course member role
-      description: Update course member role.
+      description: Update another course member's role. Instructors cannot change their own role through this endpoint, even for a no-op update.
       operationId: updateCourseMember
       security:
         - session_cookie: []
@@ -2548,6 +2548,14 @@ paths:
                     error:
                       code: csrf_validation_failed
                       message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_updateCourseMember
+                      details: []
+                permission_denied:
+                  summary: An instructor cannot change their own course role through this endpoint.
+                  value:
+                    error:
+                      code: permission_denied
+                      message: You cannot change your own membership
                       requestId: req_updateCourseMember
                       details: []
         "200":
@@ -2711,7 +2719,7 @@ paths:
       tags:
         - Course Memberships
       summary: Remove course member
-      description: Remove course member.
+      description: Remove another course member. Instructors must use /courses/{courseId}/members/me to leave voluntarily.
       operationId: deleteCourseMember
       security:
         - session_cookie: []
@@ -2729,6 +2737,14 @@ paths:
                     error:
                       code: csrf_validation_failed
                       message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_deleteCourseMember
+                      details: []
+                permission_denied:
+                  summary: An instructor cannot remove their own membership through this endpoint.
+                  value:
+                    error:
+                      code: permission_denied
+                      message: You cannot remove your own membership here
                       requestId: req_deleteCourseMember
                       details: []
         "204":
@@ -3188,7 +3204,7 @@ paths:
       tags:
         - Posts
       summary: List or search posts in course
-      description: List or search active question/note posts in course. Deleted posts are excluded. Poll filtering is future-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+      description: List or search active question/note posts in course. Deleted and confirmed duplicate posts are excluded before ranking and pagination. Staff-only duplicateStatus=confirmed returns restricted source-title and canonical-target review entries. Poll filtering is future-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
       x-implementation-status: text-posts-live
       operationId: listCoursePosts
       security:
@@ -3199,7 +3215,9 @@ paths:
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/PostListResponse"
+                anyOf:
+                  - "$ref": "#/components/schemas/PostListResponse"
+                  - "$ref": "#/components/schemas/MergedPostReviewListResponse"
               example:
                 data:
                   - id: post_123
@@ -3368,7 +3386,7 @@ paths:
         - name: duplicateStatus
           in: query
           required: false
-          description: Filter by duplicate-review state.
+          description: Filter by duplicate-review state. confirmed is restricted to course TAs and instructors; ordinary lists always exclude confirmed sources.
           schema:
             type: string
             enum:
@@ -3387,12 +3405,68 @@ paths:
               - recent_activity
         - "$ref": "#/components/parameters/Cursor"
         - "$ref": "#/components/parameters/Limit"
+  "/posts/{postId}/duplicate-review":
+    get:
+      tags:
+        - Posts
+      summary: Review retained confirmed duplicate
+      description: Current course TAs and instructors can read the retained full active post projection for a confirmed duplicate, including source body, tags, staff-visible author, duplicate fields, and current version. Ordinary post GET still redirects to the canonical post. Nonmembers, missing/deleted/unconfirmed posts receive 404; current nonstaff members receive 403. The staff review list remains summary-only.
+      x-implementation-status: text-posts-live
+      operationId: getDuplicateReview
+      security:
+        - session_cookie: []
+      responses:
+        "200":
+          description: Retained confirmed duplicate post.
+          headers:
+            ETag:
+              "$ref": "#/components/headers/ETag"
+            Cache-Control:
+              description: Always private, no-store.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ActivePostDetailResponse"
+        "401":
+          description: Authentication is missing or invalid.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "403":
+          description: Current member is not a TA or instructor.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: Post is absent, not a confirmed active duplicate, or outside the caller's courses.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+      parameters:
+        - "$ref": "#/components/parameters/PostId"
   "/posts/{postId}":
     get:
       tags:
         - Posts
       summary: Retrieve post
-      description: Retrieve a post for a current course member, including a minimal tombstone by ID after deletion. Poll details are future-only.
+      description: Retrieve a post for a current course member, including a minimal tombstone by ID after deletion. A confirmed duplicate returns 303 to its canonical post without revealing source content. Poll details are future-only.
       x-implementation-status: text-posts-live
       operationId: getPost
       security:
@@ -3432,6 +3506,17 @@ paths:
                   createdAt: "2026-09-20T13:00:00Z"
                   updatedAt: "2026-09-20T14:30:00Z"
                   version: 3
+        "303":
+          description: Confirmed duplicate; current course member is directed to its canonical post without source content.
+          headers:
+            Location:
+              description: Canonical post API URL.
+              schema:
+                type: string
+            Cache-Control:
+              description: private, no-store.
+              schema:
+                type: string
         "404":
           description: Not Found
           content:
@@ -3498,7 +3583,7 @@ paths:
       tags:
         - Posts
       summary: Update post
-      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm duplicates and change pinned. Multipart and attachment changes are future-only. A tombstone returns 404 not_found.
+      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm or unmerge duplicates and change pinned. Confirmation retains the source content but returns only a canonical reference. A confirmed source cannot be edited until unmerged; a canonical with confirmed inbound references cannot be merged. Multipart and attachment changes are future-only. A tombstone returns 404 not_found.
       x-implementation-status: text-posts-live
       operationId: updatePost
       security:
@@ -3512,7 +3597,9 @@ paths:
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ActivePostDetailResponse"
+                oneOf:
+                  - "$ref": "#/components/schemas/ActivePostDetailResponse"
+                  - "$ref": "#/components/schemas/MergedReferenceResponse"
               example:
                 {
                   "data":
@@ -3744,7 +3831,7 @@ paths:
       tags:
         - Posts
       summary: Delete post
-      description: Delete post, retaining a minimal tombstone for direct member GET. A repeated delete returns 404 not_found.
+      description: Delete post, retaining a minimal tombstone for direct member GET. A confirmed source or a canonical with inbound confirmed sources returns 409. A repeated delete returns 404 not_found.
       x-implementation-status: text-posts-live
       operationId: deletePost
       security:
@@ -14169,6 +14256,79 @@ components:
       additionalProperties: false
       required:
         - data
+    MergedReference:
+      type: object
+      properties:
+        id:
+          type: string
+        courseId:
+          type: string
+        duplicateStatus:
+          type: string
+          const: confirmed
+        duplicateOfPostId:
+          type: string
+        version:
+          type: integer
+      additionalProperties: false
+      required:
+        - id
+        - courseId
+        - duplicateStatus
+        - duplicateOfPostId
+        - version
+    MergedReferenceResponse:
+      type: object
+      properties:
+        data:
+          "$ref": "#/components/schemas/MergedReference"
+      additionalProperties: false
+      required:
+        - data
+    MergedPostReview:
+      type: object
+      properties:
+        id:
+          type: string
+        courseId:
+          type: string
+        type:
+          type: string
+          enum: [question, note]
+        title:
+          type: string
+        duplicateStatus:
+          type: string
+          const: confirmed
+        duplicateOfPostId:
+          type: string
+        canonicalTitle:
+          type: string
+        version:
+          type: integer
+      additionalProperties: false
+      required:
+        - id
+        - courseId
+        - type
+        - title
+        - duplicateStatus
+        - duplicateOfPostId
+        - canonicalTitle
+        - version
+    MergedPostReviewListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            "$ref": "#/components/schemas/MergedPostReview"
+        page:
+          "$ref": "#/components/schemas/Page"
+      additionalProperties: false
+      required:
+        - data
+        - page
     ActivePostDetailResponse:
       type: object
       properties:
