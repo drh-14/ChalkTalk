@@ -871,7 +871,12 @@ it("asks before discarding a draft when selecting a post or closing the composer
   await screen.findByText("First question");
   await user.click(screen.getByRole("button", { name: "Create post" }));
   await user.type(screen.getByRole("textbox", { name: "Post title" }), "Draft");
-  await user.click(screen.getByRole("link", { name: /First question/ }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Post listings" })).getByRole(
+      "link",
+      { name: /First question/ },
+    ),
+  );
   expect(confirm).toHaveBeenCalledTimes(1);
   expect(navigate).not.toHaveBeenCalled();
   expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
@@ -882,7 +887,12 @@ it("asks before discarding a draft when selecting a post or closing the composer
   expect(confirm).toHaveBeenCalledTimes(2);
   expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
   confirm.mockReturnValue(true);
-  await user.click(screen.getByRole("link", { name: /First question/ }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Post listings" })).getByRole(
+      "link",
+      { name: /First question/ },
+    ),
+  );
   expect(navigate).toHaveBeenCalledWith("/courses/course-1/posts/p1");
   expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
 });
@@ -1235,10 +1245,12 @@ it("rejects blank and overlong composer fields before sending creation", async (
   await user.click(screen.getByRole("button", { name: "Create post" }));
   await user.click(screen.getByRole("button", { name: "Publish post" }));
   expect(screen.getByRole("alert").textContent).toContain("Post title");
-  await user.type(
-    screen.getByRole("textbox", { name: "Post title" }),
-    "x".repeat(201),
-  );
+  await user.click(screen.getByRole("textbox", { name: "Post title" }));
+  await user.paste("x".repeat(201));
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toHaveLength(201);
   await user.type(screen.getByRole("textbox", { name: "Post body" }), "body");
   await user.click(screen.getByRole("button", { name: "Publish post" }));
   expect(screen.getByRole("alert").textContent).toContain("200 characters");
