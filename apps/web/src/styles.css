@@ -39,28 +39,6 @@ body {
   justify-content: space-between;
   margin: 0 0 1.5rem;
 }
-.course-identity {
-  align-items: center;
-  display: flex;
-  gap: 0.9rem;
-  min-width: 0;
-  padding-bottom: 1rem;
-}
-.course-identity .course-icon {
-  border-radius: 0.75rem;
-  flex: none;
-  font-size: 0.95rem;
-  height: 3.1rem;
-  width: 3.1rem;
-}
-.course-eyebrow {
-  color: #bb6334;
-  font-family: "DM Mono", monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  margin: 0;
-  text-transform: uppercase;
-}
 .app-bar {
   background: #1f4d3e;
   color: #fffdf7;
@@ -93,13 +71,162 @@ body {
 .app-bar-start {
   gap: 1.25rem;
 }
-.app-bar-start .text-button {
+.app-bar-start .app-bar-back {
   border-left: 1px solid rgba(255, 253, 247, 0.28);
+  color: rgba(255, 253, 247, 0.72);
   font-size: 1rem;
+  font-weight: 600;
   padding: 0.5rem 0 0.5rem 1.25rem;
+  text-decoration: none;
+}
+.app-bar-start .app-bar-back:hover {
+  color: #fffdf7;
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 .app-bar .account-name {
   color: #fffdf7;
+}
+.app-bar .wordmark,
+.app-bar-back {
+  flex: none;
+  white-space: nowrap;
+}
+.app-bar.course .app-bar-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.app-bar.course .app-bar-start {
+  min-width: 0;
+}
+.app-bar.course .account-controls {
+  flex-wrap: nowrap;
+  justify-self: end;
+}
+.app-bar-course {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.app-bar-course::before {
+  color: rgba(255, 253, 247, 0.45);
+  content: "›" / "";
+  flex: none;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+.app-bar-course h1 {
+  color: #fffdf7;
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.35rem;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.course-status {
+  background: rgba(246, 189, 96, 0.18);
+  border-radius: 999px;
+  color: #f6bd60;
+  flex: none;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.15rem 0.55rem;
+  text-transform: capitalize;
+}
+.course-tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+.course-tabs a {
+  border-radius: 0.55rem;
+  color: rgba(255, 253, 247, 0.78);
+  font-weight: 600;
+  padding: 0.55rem 0.9rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.course-tabs a:hover {
+  background: rgba(255, 253, 247, 0.08);
+  color: #fffdf7;
+}
+.course-tabs a[aria-current] {
+  background: rgba(255, 253, 247, 0.16);
+  box-shadow: inset 0 -2px 0 #f6bd60;
+  color: #fffdf7;
+}
+.course-placeholder {
+  background: #fff;
+  border: 1px solid #e3e1d6;
+  border-radius: 0.75rem;
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 2rem;
+}
+.course-placeholder h2 {
+  font-family: Fraunces, Georgia, serif;
+  margin: 0 0 0.5rem;
+}
+.course-placeholder p {
+  color: #617167;
+  margin: 0;
+}
+@media (max-width: 1100px) {
+  .app-bar.course .app-bar-inner {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .app-bar.course .account-controls {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .course-tabs {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: center;
+  }
+}
+@media (max-width: 700px) {
+  .app-bar.course .app-bar-inner {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .app-bar.course .app-bar-start {
+    display: contents;
+  }
+  .app-bar.course .wordmark {
+    grid-column: 1 / 3;
+    grid-row: 1;
+  }
+  .app-bar.course .account-controls {
+    grid-column: 3;
+  }
+  .app-bar.course .account-name {
+    display: none;
+  }
+  .app-bar-back {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .app-bar-start .app-bar-back {
+    border-left: 0;
+    padding-left: 0;
+  }
+  .app-bar-course {
+    grid-column: 2 / -1;
+    grid-row: 2;
+  }
+  .course-tabs {
+    grid-row: 3;
+    justify-content: space-between;
+    justify-self: stretch;
+  }
+  .course-tabs a {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.5rem;
+  }
 }
 .discussion-header h1 {
   font-family: Fraunces, Georgia, serif;
@@ -132,7 +259,74 @@ body {
 }
 .discussion-columns {
   display: grid;
-  grid-template-columns: clamp(18rem, 28%, 26rem) minmax(0, 1fr);
+  grid-template-columns:
+    clamp(11.5rem, 13%, 13rem) clamp(18rem, 26%, 24rem)
+    minmax(0, 1fr);
+}
+.discussion-sidebar {
+  background: #f1efe6;
+  border-right: 1px solid #dde3d9;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.25rem 0.9rem;
+}
+.discussion-sidebar fieldset {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+.discussion-sidebar fieldset:disabled {
+  opacity: 0.5;
+}
+.discussion-sidebar legend {
+  color: #bb6334;
+  font-family: "DM Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.6rem;
+  padding: 0 0.7rem;
+  text-transform: uppercase;
+}
+.sidebar-filters {
+  display: grid;
+  gap: 0.2rem;
+}
+.sidebar-filters button {
+  background: none;
+  border: 0;
+  border-radius: 0.5rem;
+  color: #3b4a43;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+}
+.sidebar-filters button:hover:not(:disabled) {
+  background: #e7e4d8;
+}
+.sidebar-filters button[aria-pressed="true"] {
+  background: #fffdf9;
+  box-shadow: inset 3px 0 0 #1f4d3e;
+  color: #1f4d3e;
+}
+.sidebar-sort {
+  display: grid;
+  font-weight: 600;
+  gap: 0.35rem;
+  margin-top: 1.75rem;
+  padding: 0 0.2rem;
+}
+.sidebar-sort select {
+  background: #fff;
+  border: 1px solid #c8d2c7;
+  border-radius: 0.5rem;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 400;
+  padding: 0.45rem 0.4rem;
+  width: 100%;
 }
 .discussion-feed {
   border-right: 1px solid #dde3d9;
@@ -144,7 +338,7 @@ body {
 .discussion-feed > .post-view-picker,
 .discussion-feed > .discussion-toolbar,
 .discussion-feed > [role="alert"] {
-  margin-inline: clamp(1rem, 3vw, 2.5rem) 1.25rem;
+  margin-inline: 1.25rem;
 }
 .discussion-detail {
   background: #fffdf9;
@@ -169,10 +363,10 @@ body {
   outline-offset: -2px;
 }
 .post-list-scroll > .button {
-  margin: 1rem clamp(1rem, 3vw, 2.5rem) 1.25rem;
+  margin: 1rem 1.25rem 1.25rem;
 }
 .post-list-scroll > p {
-  padding-inline: clamp(1rem, 3vw, 2.5rem) 1.25rem;
+  padding-inline: 1.25rem;
 }
 .discussion-toolbar {
   display: flex;
@@ -371,10 +565,6 @@ body {
     flex-direction: column;
     min-height: 0;
     padding: 0;
-  }
-  .course-page.discussion .discussion-header {
-    margin: 0;
-    padding: clamp(1rem, 2vw, 1.75rem) clamp(1rem, 3vw, 2.5rem) 0;
   }
   .course-page.discussion .discussion-shell > [role="alert"],
   .course-page.discussion .discussion-shell > [role="status"] {
@@ -633,18 +823,51 @@ body {
   .discussion-columns {
     display: block;
   }
-  .discussion-columns.has-selection .discussion-feed {
+  .discussion-columns.has-selection .discussion-feed,
+  .discussion-columns.has-selection .discussion-sidebar {
     display: none;
+  }
+  .discussion-sidebar {
+    background: none;
+    border-bottom: 1px solid #e3e1d6;
+    border-right: 0;
+    overflow: visible;
+    padding: 0.9rem 1rem;
+  }
+  .discussion-sidebar legend {
+    clip: rect(0, 0, 0, 0);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    width: 1px;
+  }
+  .sidebar-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .sidebar-filters button {
+    border: 1px solid #d9ddd3;
+    border-radius: 999px;
+    font-size: 0.9rem;
+    padding: 0.35rem 0.8rem;
+  }
+  .sidebar-filters button[aria-pressed="true"] {
+    background: #1f4d3e;
+    border-color: #1f4d3e;
+    box-shadow: none;
+    color: #fffdf7;
+  }
+  .sidebar-sort {
+    align-items: center;
+    grid-template-columns: auto minmax(0, 1fr);
+    margin-top: 0.75rem;
   }
   .discussion-columns:not(.has-selection) .discussion-detail {
     display: none;
   }
   .course-page.discussion .discussion-shell {
     padding-inline: 0;
-  }
-  .course-page.discussion .discussion-header {
-    margin-bottom: 0;
-    padding-inline: 1rem;
   }
   .discussion-feed {
     border-right: 0;

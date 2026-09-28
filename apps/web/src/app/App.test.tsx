@@ -212,7 +212,8 @@ describe("ChalkTalk auth entry", () => {
     await screen.findByRole("heading", { name: course.name });
     const banner = within(screen.getByRole("banner"));
     expect(banner.getByRole("link", { name: "ChalkTalk" })).toBeTruthy();
-    expect(banner.getByRole("link", { name: "← All courses" })).toBeTruthy();
+    expect(banner.getByRole("link", { name: "All courses" })).toBeTruthy();
+    expect(screen.getByRole("banner").querySelector(".course-icon")).toBeNull();
     expect(banner.getByText("Ada Lovelace")).toBeTruthy();
     const signOut = banner.getByRole("button", { name: "Sign out" });
     await user.click(screen.getByRole("button", { name: "Create post" }));
@@ -277,6 +278,60 @@ describe("ChalkTalk auth entry", () => {
     await screen.findByRole("heading", { name: "Members" });
     expect(page().classList.contains("course-page")).toBe(true);
     expect(page().classList.contains("discussion")).toBe(false);
+  });
+  it("puts the course name and course tabs in the app bar, including Course resources", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    const banner = within(await screen.findByRole("banner"));
+    const heading = await banner.findByRole("heading", { name: course.name });
+    const tabs = within(
+      banner.getByRole("navigation", { name: "Course navigation" }),
+    );
+    expect(tabs.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "Discussion",
+      "Course resources",
+      "Course settings",
+    ]);
+    expect(
+      tabs
+        .getByRole("link", { name: "Discussion" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    await user.click(tabs.getByRole("link", { name: "Course resources" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}/resources`);
+    expect(
+      tabs
+        .getByRole("link", { name: "Course resources" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    expect(
+      tabs
+        .getByRole("link", { name: "Discussion" })
+        .getAttribute("aria-current"),
+    ).toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "Course resources" }),
+    ).toBeTruthy();
+    expect(banner.getByRole("heading", { name: course.name })).toBe(heading);
+    expect(
+      screen
+        .getByRole("banner")
+        .parentElement!.classList.contains("discussion"),
+    ).toBe(false);
   });
   it("updates the active course view on browser Back and Forward", async () => {
     setPath(`/courses/${course.id}`);
