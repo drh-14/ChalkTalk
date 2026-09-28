@@ -18,11 +18,17 @@ import {
   type Session,
 } from "../auth/client.js";
 import { CourseDetail, CourseHome } from "../courses/views.js";
-import { getCourse, type Course, type Versioned } from "../courses/client.js";
+import {
+  getCourse,
+  listCourses,
+  type Course,
+  type Versioned,
+} from "../courses/client.js";
 import { Discussion } from "../posts/views.js";
 import {
   initializeRoute,
   navigate,
+  replaceCurrentFilters,
   replaceCurrentQuery,
   routeFromLocation,
   type Route,
@@ -559,47 +565,153 @@ function Home({
   onOpenCourse: (courseId: string) => void;
 }) {
   const firstName = firstNameOf(session);
+  const today = new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(new Date());
   return (
     <>
       <AppBar variant="home" session={session} onSignOut={onSignOut} />
       <main className="home-shell">
         <section className="home-intro">
-          <p className="eyebrow">Tuesday, September 26</p>
+          <p className="eyebrow">{today}</p>
           <h1>Welcome back, {firstName}</h1>
-          <p>Here’s a small look at what’s moving across your courses.</p>
+          <p>Pick up where your courses left off.</p>
         </section>
-        <section className="home-grid">
-          <CourseHome
-            csrfToken={session.csrfToken}
-            onOpenCourse={onOpenCourse}
-          />
-          <article className="posts-card">
-            <div className="section-title">
-              <h2>In the discussion</h2>
-              <span>View all</span>
-            </div>
-            <div className="post">
-              <p className="post-meta">Linear Algebra II · 8 min ago</p>
-              <h3>
-                Why does the eigenbasis make this proof feel so much simpler?
-              </h3>
-              <p>
-                “Once the transformation is diagonal, the repeated application
-                is easier to see…”
-              </p>
-              <div>
-                <span>◌ 8 replies</span>
-                <span>♡ 14</span>
-              </div>
-            </div>
-            <div className="post">
-              <p className="post-meta">Data Structures · Yesterday</p>
-              <h3>Comparing the two balancing approaches</h3>
-            </div>
-          </article>
-        </section>
+        <CourseHome csrfToken={session.csrfToken} onOpenCourse={onOpenCourse} />
       </main>
     </>
+  );
+}
+
+const isPlainClick = (event: MouseEvent<HTMLAnchorElement>) =>
+  event.button === 0 &&
+  !event.metaKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  !event.altKey;
+
+/** Course list opened from the course name; ported from Khaihern Low's workspace redesign. */
+function CourseSwitcher({
+  currentCourseId,
+  onChoose,
+}: {
+  currentCourseId?: string;
+  onChoose: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [courses, setCourses] = useState<Course[]>();
+  const [error, setError] = useState<string>();
+  const [cycle, setCycle] = useState(0);
+  const root = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  // Courses load on first open so that rendering the header adds no requests.
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setError(undefined);
+    void listCourses()
+      .then((page) => {
+        if (active) setCourses(page.data);
+      })
+      .catch((caught) => {
+        if (active) setError(errorMessage(caught));
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, cycle]);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      toggle.current?.focus();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  function choose(event: MouseEvent<HTMLAnchorElement>, path: string) {
+    if (!isPlainClick(event)) return;
+    event.preventDefault();
+    setOpen(false);
+    onChoose(path);
+  }
+  return (
+    <div className="course-switcher" ref={root}>
+      <button
+        ref={toggle}
+        type="button"
+        className="switcher-button"
+        aria-label="Switch course"
+        aria-expanded={open}
+        aria-controls="course-switcher-panel"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div id="course-switcher-panel" className="switcher-panel">
+          {error ? (
+            <div className="switcher-message">
+              <p role="alert">{error}</p>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setCycle((value) => value + 1)}
+              >
+                Try again
+              </button>
+            </div>
+          ) : !courses ? (
+            <p className="switcher-message" role="status">
+              Loading courses…
+            </p>
+          ) : courses.length ? (
+            <ul aria-label="Your courses">
+              {courses.map((course) => {
+                const path = `/courses/${encodeURIComponent(course.id)}`;
+                return (
+                  <li key={course.id}>
+                    <a
+                      href={path}
+                      aria-current={
+                        course.id === currentCourseId ? "page" : undefined
+                      }
+                      onClick={(event) => choose(event, path)}
+                    >
+                      <span className="course-icon amber" aria-hidden="true">
+                        {course.name.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span>{course.name}</span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="switcher-message">
+              You have not joined a course yet.
+            </p>
+          )}
+          <a
+            className="switcher-home"
+            href="/home"
+            onClick={(event) => choose(event, "/home")}
+          >
+            All courses
+          </a>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -724,6 +836,12 @@ function CourseFrame({
                 ? "Course unavailable"
                 : "Loading course…")}
           </h1>
+          <CourseSwitcher
+            currentCourseId={courseId}
+            onChoose={(path) => {
+              if (beforeLeave.current()) onNavigate(path);
+            }}
+          />
           {visibleCourse && visibleCourse.data.status !== "active" && (
             <span className="course-status">{visibleCourse.data.status}</span>
           )}
@@ -764,6 +882,8 @@ function CourseFrame({
             csrfToken={session.csrfToken}
             onNavigate={onNavigate}
             onQueryChange={replaceCurrentQuery}
+            filters={route.filters}
+            onFiltersChange={replaceCurrentFilters}
             onBeforeLeaveChange={(guard) => {
               beforeLeave.current = guard;
               onBeforeLeaveChange(guard);

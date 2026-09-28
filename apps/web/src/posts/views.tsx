@@ -11,6 +11,7 @@ import {
   getPost,
   listMergedPosts,
   listPosts,
+  setPostPinned,
   unmergePost,
   type CreatePostInput,
   type MergedPost,
@@ -19,12 +20,14 @@ import {
   type PostListOptions,
   type PostSort,
 } from "./client.js";
+import { feedSearch, hasFilters, type FeedFilters } from "../app/routes.js";
 import { formatPostTime } from "./time.js";
 import {
   feedFilters,
   postStatuses,
   postTypeOf,
   type FeedFilter,
+  type PostStatus,
 } from "./types.js";
 
 /** Builds the course feed request; a search always sends its sort, otherwise only a non-default one. */
@@ -32,6 +35,7 @@ function feedOptions(
   query: string | undefined,
   filter: FeedFilter | undefined,
   sort: PostSort,
+  tag: string | undefined,
 ): PostListOptions {
   return {
     ...(query
@@ -40,6 +44,7 @@ function feedOptions(
         ? { sort }
         : {}),
     ...filter?.options,
+    ...(tag ? { tag } : {}),
   };
 }
 
@@ -57,10 +62,10 @@ const message = (error: unknown) =>
   error instanceof Error
     ? error.message
     : "Something went wrong. Please try again.";
-const discussionPath = (courseId: string, q?: string) =>
-  `/courses/${encodeURIComponent(courseId)}${q ? `?${new URLSearchParams({ q })}` : ""}`;
-const postPath = (courseId: string, postId: string, q?: string) =>
-  `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(postId)}${q ? `?${new URLSearchParams({ q })}` : ""}`;
+const discussionPath = (courseId: string, search = "") =>
+  `/courses/${encodeURIComponent(courseId)}${search}`;
+const postPath = (courseId: string, postId: string, search = "") =>
+  `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(postId)}${search}`;
 
 function PostByline({ post }: { post: Post }) {
   const time = formatPostTime(post.createdAt);
@@ -79,6 +84,70 @@ function PostByline({ post }: { post: Post }) {
           </time>
         </>
       )}
+    </>
+  );
+}
+
+function PostStatusBadge({ status }: { status: PostStatus }) {
+  if (status.icon === "pin")
+    return (
+      <span className="post-status pin" title={status.label}>
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+          <path
+            d="M12 17v5M9 10.76V6H8a2 2 0 0 1 0-4h8a2 2 0 0 1 0 4h-1v4.76a2 2 0 0 0 1.11 1.79l1.78.9A2 2 0 0 1 19 15.24V17H5v-1.76a2 2 0 0 1 1.11-1.79l1.78-.9A2 2 0 0 0 9 10.76Z"
+            fill="currentColor"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="visually-hidden">{status.label}</span>
+      </span>
+    );
+  return <span className={`post-status ${status.tone}`}>{status.label}</span>;
+}
+
+function TagList({
+  tags,
+  active,
+  onSelect,
+}: {
+  tags: string[];
+  active?: string;
+  onSelect: (tag: string) => void;
+}) {
+  if (!tags.length) return null;
+  return (
+    <ul className="tag-list" aria-label="Tags">
+      {tags.map((tag) => (
+        <li key={tag}>
+          <button
+            type="button"
+            className={`tag-chip${tag === active ? " active" : ""}`}
+            aria-pressed={tag === active}
+            aria-label={`Filter by tag ${tag}`}
+            onClick={() => onSelect(tag)}
+          >
+            #{tag}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The post view also shows when a post last had activity, if that came after its creation. */
+function ActivityTime({ post }: { post: Post }) {
+  const time = formatPostTime(post.lastActivityAt);
+  if (!time || !(Date.parse(post.lastActivityAt) > Date.parse(post.createdAt)))
+    return null;
+  return (
+    <>
+      {" "}
+      <time className="post-time" dateTime={time.dateTime} title={time.title}>
+        active {time.label}
+      </time>
     </>
   );
 }
@@ -109,15 +178,25 @@ function Composer({
   onCreated,
   onClose,
   onStateChange,
+  initialTitle = "",
 }: {
   courseId: string;
   csrfToken: string;
   onCreated: (post: Post) => void;
   onClose: () => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
+  /** A starting title, such as a search the reader chose to ask as a question. */
+  initialTitle?: string;
 }) {
   const [type, setType] = useState<"question" | "note">("question");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialTitle);
+  const bodyField = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (initialTitle)
+      bodyField.current?.querySelector<HTMLElement>(".cm-content")?.focus();
+    // Focus moves once, when a search opens the composer with a title.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [body, setBody] = useState("");
   const [preview, setPreview] = useState(false);
   const editor = useRef<PostEditorHandle>(null);
@@ -136,10 +215,25 @@ function Composer({
 
   useEffect(() => {
     onStateChange(
-      Boolean(title || body || tags || anonymous || type !== "question"),
+      Boolean(
+        title !== initialTitle ||
+        body ||
+        tags ||
+        anonymous ||
+        type !== "question",
+      ),
       pending,
     );
-  }, [anonymous, body, onStateChange, pending, tags, title, type]);
+  }, [
+    anonymous,
+    body,
+    initialTitle,
+    onStateChange,
+    pending,
+    tags,
+    title,
+    type,
+  ]);
 
   useEffect(() => {
     if (type !== "question" || !query) {
@@ -296,7 +390,7 @@ function Composer({
               </button>
             ))}
           </div>
-          <div hidden={preview}>
+          <div hidden={preview} ref={bodyField}>
             <PostEditor ref={editor} value={body} onChange={setBody} />
           </div>
           {preview && (
@@ -496,6 +590,9 @@ type DiscussionProps = {
   postId?: string;
   onNavigate: (path: string) => void;
   onQueryChange?: (query: string) => void;
+  /** Feed filters from the URL; without onFiltersChange the feed keeps its own. */
+  filters?: FeedFilters;
+  onFiltersChange?: (filters: FeedFilters) => void;
   onBeforeLeaveChange?: (guard: () => boolean) => void;
 };
 
@@ -512,6 +609,8 @@ function DiscussionContent({
   postId,
   onNavigate,
   onQueryChange,
+  filters: routeFilters,
+  onFiltersChange,
   onBeforeLeaveChange,
 }: DiscussionProps) {
   const [localCourse, setCourse] = useState<Course>();
@@ -523,12 +622,12 @@ function DiscussionContent({
   const [staff, setStaff] = useState(false);
   const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
-  const [filter, setFilter] = useState("all");
-  // A chosen sort belongs to the search it was chosen for; a new search starts at best match.
-  const [sortChoice, setSortChoice] = useState<{
-    query: string | undefined;
-    sort: PostSort;
-  }>();
+  const [localFilters, setLocalFilters] = useState<FeedFilters>({});
+  // Locally, a chosen sort belongs to the search it was chosen for; the URL drops it on a new search.
+  const [localSortQuery, setLocalSortQuery] = useState<string>();
+  const [pinPending, setPinPending] = useState(false);
+  const [pinError, setPinError] = useState("");
+  const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -542,7 +641,36 @@ function DiscussionContent({
   const [selectedReviewId, setSelectedReviewId] = useState<string>();
   const [reviewDetail, setReviewDetail] = useState<Post>();
   const [reviewDetailError, setReviewDetailError] = useState("");
+  const [composerSeed, setComposerSeed] = useState<{
+    title: string;
+    id: number;
+  }>();
   const composerState = useRef({ dirty: false, pending: false });
+  const listScroll = useRef(0);
+  const searchInput = useRef<HTMLInputElement>(null);
+  // "/" focuses search unless the reader is typing somewhere.
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if (
+        event.key !== "/" ||
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      )
+        return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
+      )
+        return;
+      event.preventDefault();
+      searchInput.current?.focus();
+    };
+    document.addEventListener("keydown", focusSearch);
+    return () => document.removeEventListener("keydown", focusSearch);
+  }, []);
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   const currentFeed = useRef(0);
@@ -597,16 +725,33 @@ function DiscussionContent({
     }, 300);
     return () => window.clearTimeout(timer);
   }, [draftQuery, onQueryChange, query]);
-  const filters = feedFilters(userId);
-  const activeFilter = filters.find((item) => item.key === filter);
+  const activeFilters = onFiltersChange ? (routeFilters ?? {}) : localFilters;
+  function changeFilters(next: FeedFilters) {
+    if (onFiltersChange) onFiltersChange(next);
+    else setLocalFilters(next);
+  }
+  const filterOptions = feedFilters(userId);
+  const activeFilter = filterOptions.find(
+    (item) => item.key === activeFilters.filter,
+  );
+  const filter = activeFilter?.key ?? "all";
+  const tag = activeFilters.tag;
+  const chosenSort =
+    onFiltersChange || localSortQuery === query
+      ? activeFilters.sort
+      : undefined;
   const sort: PostSort =
-    sortChoice &&
-    sortChoice.query === query &&
-    (query || sortChoice.sort !== "relevance")
-      ? sortChoice.sort
+    chosenSort && (query || chosenSort !== "relevance")
+      ? chosenSort
       : query
         ? "relevance"
         : "recent_activity";
+  const search = feedSearch(query, activeFilters);
+  const searchRef = useRef(search);
+  searchRef.current = search;
+  function selectTag(next: string) {
+    changeFilters({ ...activeFilters, tag: next });
+  }
   useEffect(() => {
     const generation = ++currentFeed.current;
     const controller = new AbortController();
@@ -627,6 +772,7 @@ function DiscussionContent({
             query,
             feedFilters(userId).find((item) => item.key === filter),
             sort,
+            tag,
           )),
       signal: controller.signal,
     };
@@ -655,7 +801,7 @@ function DiscussionContent({
       if (currentFeed.current === generation)
         currentFeed.current = generation + 1;
     };
-  }, [courseId, query, feedCycle, postView, filter, sort, userId]);
+  }, [courseId, query, feedCycle, postView, filter, sort, tag, userId]);
   useEffect(() => {
     if (!postId) {
       setDetail(undefined);
@@ -670,7 +816,9 @@ function DiscussionContent({
       .then((next) => {
         if (active) {
           if ("redirectToPostId" in next)
-            onNavigate(postPath(courseId, next.redirectToPostId, query));
+            onNavigate(
+              postPath(courseId, next.redirectToPostId, searchRef.current),
+            );
           else if (next.courseId !== courseId)
             setDetailError("This post is unavailable.");
           else setDetail(next);
@@ -683,7 +831,15 @@ function DiscussionContent({
       active = false;
       controller.abort();
     };
-  }, [courseId, onNavigate, postId, query]);
+  }, [courseId, onNavigate, postId, detailCycle]);
+  useEffect(() => {
+    if (!listScroll.current) return;
+    if (postId || composerOpen) window.scrollTo(0, 0);
+    else {
+      window.scrollTo(0, listScroll.current);
+      listScroll.current = 0;
+    }
+  }, [postId, composerOpen]);
 
   useEffect(() => {
     if (postView !== "duplicates" || !selectedReviewId) return;
@@ -722,7 +878,7 @@ function DiscussionContent({
         ? query
           ? { q: query, sort: "relevance" as const }
           : {}
-        : feedOptions(query, activeFilter, sort)),
+        : feedOptions(query, activeFilter, sort, tag)),
       cursor,
     };
     void (
@@ -785,6 +941,64 @@ function DiscussionContent({
   function navigate(path: string) {
     if (leaveComposer()) onNavigate(path);
   }
+  function openPost(id: string) {
+    if (!postId && !composerOpen) listScroll.current = window.scrollY;
+    navigate(postPath(courseId, id, search));
+  }
+  function clearQuery() {
+    setDraftQuery("");
+    if (query) {
+      lastRequestedQuery.current = "";
+      onQueryChange?.("");
+    }
+  }
+  function clearSearch() {
+    clearQuery();
+    searchInput.current?.focus();
+  }
+  function clearSearchAndFilters() {
+    clearQuery();
+    changeFilters({});
+  }
+  function openComposer(title?: string) {
+    if (composerOpen && !title) return;
+    if (composerOpen && !leaveComposer()) return;
+    if (!postId && !composerOpen) listScroll.current = window.scrollY;
+    setComposerSeed(title ? { title, id: Date.now() } : undefined);
+    setComposerOpen(true);
+  }
+  const askOffer =
+    query && postView === "posts" && course?.status === "active" ? (
+      <button
+        type="button"
+        className="button secondary ask-button"
+        onClick={() => openComposer(query.slice(0, 200))}
+      >
+        Ask “{query.length > 60 ? `${query.slice(0, 60)}…` : query}” as a new
+        question
+      </button>
+    ) : null;
+  async function togglePin(post: Post) {
+    if (pinPending) return;
+    setPinPending(true);
+    setPinError("");
+    try {
+      const next = await setPostPinned(post, !post.pinned, csrfToken);
+      setDetail(next);
+      setItems((prior) =>
+        prior.map((item) =>
+          item.id === next.id
+            ? { ...item, pinned: next.pinned, version: next.version }
+            : item,
+        ),
+      );
+    } catch (caught) {
+      setPinError(message(caught));
+      setDetailCycle((value) => value + 1);
+    } finally {
+      setPinPending(false);
+    }
+  }
   async function unmerge(post: MergedPost) {
     setReviewError("");
     try {
@@ -843,14 +1057,19 @@ function DiscussionContent({
           <fieldset disabled={postView === "duplicates"}>
             <legend>Show</legend>
             <div className="sidebar-filters">
-              {filters.map((item) => (
+              {filterOptions.map((item) => (
                 <button
                   key={item.key}
                   type="button"
                   className={item.nested ? "nested" : undefined}
                   aria-label={item.ariaLabel}
                   aria-pressed={filter === item.key}
-                  onClick={() => setFilter(item.key)}
+                  onClick={() => {
+                    const next = { ...activeFilters };
+                    if (item.key === "all") delete next.filter;
+                    else next.filter = item.key;
+                    changeFilters(next);
+                  }}
                 >
                   {item.label}
                 </button>
@@ -860,12 +1079,13 @@ function DiscussionContent({
               Sort by
               <select
                 value={sort}
-                onChange={(event) =>
-                  setSortChoice({
-                    query,
+                onChange={(event) => {
+                  if (!onFiltersChange) setLocalSortQuery(query);
+                  changeFilters({
+                    ...activeFilters,
                     sort: event.target.value as PostSort,
-                  })
-                }
+                  });
+                }}
               >
                 {query && <option value="relevance">Best match</option>}
                 <option value="recent_activity">Last updated</option>
@@ -874,6 +1094,24 @@ function DiscussionContent({
               </select>
             </label>
           </fieldset>
+          {tag && postView === "posts" && (
+            <div className="active-tag">
+              <span>Tag</span>
+              <button
+                type="button"
+                className="tag-chip active"
+                aria-label={`Remove tag filter ${tag}`}
+                onClick={() => {
+                  const next = { ...activeFilters };
+                  delete next.tag;
+                  changeFilters(next);
+                }}
+              >
+                #{tag}
+                <span aria-hidden="true"> ×</span>
+              </button>
+            </div>
+          )}
         </aside>
         <section className="discussion-feed" aria-label="Posts">
           {staff && (
@@ -895,11 +1133,12 @@ function DiscussionContent({
             </label>
           )}
           <div className="discussion-toolbar">
-            <div role="search">
+            <div role="search" className="search-field">
               <label className="visually-hidden" htmlFor="post-search">
                 Search posts
               </label>
               <input
+                ref={searchInput}
                 id="post-search"
                 type="search"
                 aria-describedby="post-search-help"
@@ -915,12 +1154,26 @@ function DiscussionContent({
                 }}
                 placeholder="Search posts"
               />
+              {draftQuery ? (
+                <button
+                  type="button"
+                  className="search-clear"
+                  aria-label="Clear search"
+                  onClick={clearSearch}
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              ) : (
+                <kbd className="search-key" aria-hidden="true">
+                  /
+                </kbd>
+              )}
             </div>
             <button
               type="button"
-              className="button primary"
+              className="button primary create-post"
               disabled={course?.status !== "active"}
-              onClick={() => setComposerOpen(true)}
+              onClick={() => openComposer()}
               aria-label="Create post"
             >
               + Create post
@@ -991,13 +1244,16 @@ function DiscussionContent({
             ) : items.length ? (
               <ul className="post-list">
                 {items.map((post) => (
-                  <li key={post.id}>
+                  <li
+                    key={post.id}
+                    className={post.id === postId ? "selected" : undefined}
+                  >
                     <a
                       className={`post-card${post.id === postId ? " selected" : ""}`}
-                      href={postPath(courseId, post.id, query)}
+                      href={postPath(courseId, post.id, search)}
                       onClick={(event) => {
                         event.preventDefault();
-                        navigate(postPath(courseId, post.id, query));
+                        openPost(post.id);
                       }}
                       aria-current={post.id === postId ? "page" : undefined}
                     >
@@ -1009,12 +1265,10 @@ function DiscussionContent({
                         {postStatuses(post).length > 0 && (
                           <span className="post-statuses">
                             {postStatuses(post).map((status) => (
-                              <span
+                              <PostStatusBadge
                                 key={status.label}
-                                className={`post-status ${status.tone}`}
-                              >
-                                {status.label}
-                              </span>
+                                status={status}
+                              />
                             ))}
                           </span>
                         )}
@@ -1033,11 +1287,32 @@ function DiscussionContent({
                         )}
                       </span>
                     </a>
+                    <TagList
+                      tags={post.tags}
+                      active={tag}
+                      onSelect={selectTag}
+                    />
                   </li>
                 ))}
               </ul>
+            ) : query || hasFilters(activeFilters) ? (
+              <div className="feed-empty">
+                <p>No posts found.</p>
+                <p>Nothing matches this search or these filters.</p>
+                {askOffer}
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={clearSearchAndFilters}
+                >
+                  Clear search and filters
+                </button>
+              </div>
             ) : (
-              <p>No posts found.</p>
+              <div className="feed-empty">
+                <p>No posts yet.</p>
+                <p>Start the discussion with a question or note.</p>
+              </div>
             )}
             {cursor && !loading && (
               <>
@@ -1056,6 +1331,12 @@ function DiscussionContent({
                 {pageError && <p role="alert">{pageError}</p>}
               </>
             )}
+            {items.length > 0 && !loading && !feedError && askOffer && (
+              <div className="ask-footer">
+                <p>Didn’t find what you need?</p>
+                {askOffer}
+              </div>
+            )}
           </div>
         </section>
         <section
@@ -1071,12 +1352,14 @@ function DiscussionContent({
                   className="text-button narrow-back"
                   onClick={() => {
                     if (leaveComposer() && postId)
-                      onNavigate(discussionPath(courseId, query));
+                      onNavigate(discussionPath(courseId, search));
                   }}
                 >
                   ← Back to posts
                 </button>
                 <Composer
+                  key={composerSeed?.id ?? 0}
+                  initialTitle={composerSeed?.title}
                   courseId={courseId}
                   csrfToken={csrfToken}
                   onClose={leaveComposer}
@@ -1087,7 +1370,7 @@ function DiscussionContent({
                     composerState.current = { dirty: false, pending: false };
                     setComposerOpen(false);
                     setFeedCycle((value) => value + 1);
-                    onNavigate(postPath(courseId, post.id, query));
+                    onNavigate(postPath(courseId, post.id, search));
                   }}
                 />
               </>
@@ -1164,7 +1447,7 @@ function DiscussionContent({
               <>
                 <button
                   className="text-button narrow-back"
-                  onClick={() => navigate(discussionPath(courseId, query))}
+                  onClick={() => navigate(discussionPath(courseId, search))}
                 >
                   ← Back to posts
                 </button>
@@ -1182,7 +1465,13 @@ function DiscussionContent({
                     <h2>{detail.title}</h2>
                     <p className="post-author">
                       <PostByline post={detail} />
+                      <ActivityTime post={detail} />
                     </p>
+                    <TagList
+                      tags={detail.tags}
+                      active={tag}
+                      onSelect={selectTag}
+                    />
                     <div className="post-markdown">
                       <PostBody bodyMarkdown={detail.bodyMarkdown} />
                     </div>
@@ -1195,15 +1484,42 @@ function DiscussionContent({
                       />
                     )}
                     {staff && postView === "posts" && (
-                      <MergeControl
-                        source={detail}
-                        courseId={courseId}
-                        csrfToken={csrfToken}
-                        onMerged={(targetId) => {
-                          setFeedCycle((value) => value + 1);
-                          onNavigate(postPath(courseId, targetId, query));
-                        }}
-                      />
+                      <div
+                        className="staff-actions"
+                        role="group"
+                        aria-label="Staff actions"
+                      >
+                        {course?.status === "active" && (
+                          <button
+                            type="button"
+                            className="button secondary compact"
+                            disabled={pinPending}
+                            onClick={() => void togglePin(detail)}
+                          >
+                            {pinPending
+                              ? detail.pinned
+                                ? "Unpinning…"
+                                : "Pinning…"
+                              : detail.pinned
+                                ? "Unpin"
+                                : "Pin"}
+                          </button>
+                        )}
+                        {pinError && (
+                          <p className="form-message error" role="alert">
+                            {pinError}
+                          </p>
+                        )}
+                        <MergeControl
+                          source={detail}
+                          courseId={courseId}
+                          csrfToken={csrfToken}
+                          onMerged={(targetId) => {
+                            setFeedCycle((value) => value + 1);
+                            onNavigate(postPath(courseId, targetId, search));
+                          }}
+                        />
+                      </div>
                     )}
                   </article>
                 )}
@@ -1212,6 +1528,15 @@ function DiscussionContent({
               <div className="detail-prompt">
                 <h2>Select a post</h2>
                 <p>Choose a post to read it here.</p>
+                {course?.status === "active" && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => openComposer()}
+                  >
+                    Start a new post
+                  </button>
+                )}
               </div>
             )}
           </div>

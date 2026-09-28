@@ -3,6 +3,8 @@ import type { Post, PostListOptions } from "./client.js";
 export type PostStatus = {
   label: string;
   tone: "positive" | "attention" | "neutral";
+  /** Shown as an icon, with the label kept for screen readers and hover. */
+  icon?: "pin";
 };
 export type PostTypeConfig = {
   label: string;
@@ -86,7 +88,9 @@ export const postTypeOf = (type: string): PostTypeConfig =>
 export function postStatuses(post: Post): PostStatus[] {
   return [
     ...(postTypeOf(post.type).statuses?.(post) ?? []),
-    ...(post.pinned ? [{ label: "Pinned", tone: "neutral" as const }] : []),
+    ...(post.pinned
+      ? [{ label: "Pinned", tone: "neutral" as const, icon: "pin" as const }]
+      : []),
   ];
 }
 
