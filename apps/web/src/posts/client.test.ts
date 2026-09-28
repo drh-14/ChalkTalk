@@ -95,3 +95,14 @@ it("sends type, answered, and sort filters for the course feed", async () => {
     "/api/v1/courses/course-1/posts?cursor=next&answered=false",
   ]);
 });
+
+it("sends the author filter for the course feed", async () => {
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+    json({ data: [], page: { nextCursor: null, hasMore: false } }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { authorId: "user-1" });
+  expect(fetchMock.mock.calls[0]![0]).toBe(
+    "/api/v1/courses/course-1/posts?authorId=user-1",
+  );
+});

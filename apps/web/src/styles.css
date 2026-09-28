@@ -306,6 +306,11 @@ body {
 .sidebar-filters button:hover:not(:disabled) {
   background: #e7e4d8;
 }
+.sidebar-filters button.nested {
+  font-size: 0.92rem;
+  font-weight: 500;
+  padding-left: 1.6rem;
+}
 .sidebar-filters button[aria-pressed="true"] {
   background: #fffdf9;
   box-shadow: inset 3px 0 0 #1f4d3e;
@@ -420,7 +425,7 @@ body {
   border-bottom: 1px solid #e3e1d6;
   display: grid;
   gap: 0.2rem;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   position: relative;
   padding: 0.7rem 1.25rem 0.7rem clamp(1rem, 3vw, 2.5rem);
   box-sizing: border-box;
@@ -441,26 +446,84 @@ body {
   background: #fffdf9;
   box-shadow: inset 3px 0 0 #1f4d3e;
 }
-.post-card > strong,
+.post-card-title strong,
 .post-card-title-button strong {
+  color: #1d2b26;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   overflow: hidden;
   font-size: 1.04rem;
+  line-height: 1.35;
 }
-.post-card > span:not(.post-kind) {
-  color: #58675e;
-  line-height: 1.4;
+.post-card-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.6rem;
+}
+.post-card-title {
+  flex: 1;
+  min-width: 0;
+}
+.post-type-badge {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 700;
+  gap: 0.3rem;
+  margin-right: 0.45rem;
+  padding: 0.1rem 0.5rem;
+  vertical-align: 0.12em;
+  white-space: nowrap;
+}
+.post-type-badge.question {
+  background: #fbe9dc;
+  color: #a45124;
+}
+.post-type-badge.note {
+  background: #e3eef3;
+  color: #24566b;
+}
+.post-type-badge.other {
+  background: #ecebe4;
+  color: #4d5a53;
+}
+.post-statuses {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  justify-content: flex-end;
+  max-width: 45%;
+}
+.post-status {
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.1rem 0.5rem;
+  white-space: nowrap;
+}
+.post-status.positive {
+  background: #e3f0e3;
+  color: #2c6a3f;
+}
+.post-status.attention {
+  background: #fdf0cf;
+  color: #8a5a0b;
+}
+.post-status.neutral {
+  background: #ecebe4;
+  color: #4d5a53;
 }
 .post-card-preview {
   color: #58675e;
   font-size: 0.82rem;
   line-height: 1.4;
+  height: 1.4em;
   min-height: 0;
   overflow: hidden;
   overflow-wrap: anywhere;
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 0.5rem), transparent);
 }
 .post-card-preview :is(p, ul, ol, blockquote, pre, h1, h2, h3, h4, h5, h6),
 .post-card-preview .katex-display {
@@ -468,6 +531,16 @@ body {
 }
 .post-card-preview :is(ul, ol) {
   padding-left: 1.2rem;
+}
+.post-card-foot {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+.post-card-extras {
+  color: #5b6862;
+  font-size: 0.82rem;
 }
 .post-card small,
 .post-author {
@@ -851,6 +924,11 @@ body {
     border-radius: 999px;
     font-size: 0.9rem;
     padding: 0.35rem 0.8rem;
+  }
+  .sidebar-filters button.nested {
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding-left: 0.8rem;
   }
   .sidebar-filters button[aria-pressed="true"] {
     background: #1f4d3e;
