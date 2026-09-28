@@ -19,4 +19,4 @@
 ## 3. Integration checks
 
 - [x] 3.1 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, and `openspec validate show-post-created-time --strict`, and confirm that all pass. On the Windows development checkout, `format:check` and the OpenAPI contract regex fail only because `core.autocrlf` produces CRLF line endings. Prettier passes with `--end-of-line auto`, and the changed files pass unchanged.
-- [ ] 3.2 In the running full-stack app, create a post as the AMS161 instructor and confirm that the feed and detail show "just now" with a full date-time on hover, and that seeded posts show their seed time.
+- [x] 3.2 In the running full-stack app, create a post as the AMS161 instructor and confirm that the feed and detail show "just now" with a full date-time on hover, and that seeded posts show their seed time. Verified in headless Chrome as the AMS161 instructor: a newly created post showed "just now" in the feed, every card shows a relative time or date with the full local date and time as its hover title, and seeded posts show their seed time.

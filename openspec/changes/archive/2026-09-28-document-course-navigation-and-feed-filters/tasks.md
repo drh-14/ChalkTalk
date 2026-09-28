@@ -1,0 +1,3 @@
+## 1. Verification
+
+- [x] 1.1 Map each scenario in `specs/course-discussion-frontend/spec.md` to an existing rendered test in `apps/web/src/app/App.test.tsx`, `apps/web/src/app/routes.test.ts`, `apps/web/src/posts/views.test.tsx`, or `apps/web/src/posts/client.test.ts`. Add a focused test for any scenario that has none; at minimum, check declining the discard prompt from the All courses link and from a tab other than Course settings. Verify with `npx vitest run --project web` and `openspec validate document-course-navigation-and-feed-filters --strict`. Archive `full-page-discussion-layout` before archiving this change.

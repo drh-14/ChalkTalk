@@ -333,6 +333,48 @@ describe("ChalkTalk auth entry", () => {
         .parentElement!.classList.contains("discussion"),
     ).toBe(false);
   });
+  it("guards drafts from All courses and Course resources and requests no resource data", async () => {
+    setPath(`/courses/${course.id}`);
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/sessions/current"))
+        return jsonResponse({ data: session });
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+      return jsonResponse({
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    const banner = within(await screen.findByRole("banner"));
+    await banner.findByRole("heading", { name: course.name });
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "My draft",
+    );
+    for (const name of ["All courses", "Course resources"]) {
+      await user.click(banner.getByRole("link", { name }));
+      expect(window.location.pathname).toBe(`/courses/${course.id}`);
+      expect(
+        screen.getByRole("textbox", { name: "Post title" }),
+      ).toHaveProperty("value", "My draft");
+    }
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockReturnValue(true);
+    await user.click(banner.getByRole("link", { name: "Course resources" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}/resources`);
+    expect(
+      await screen.findByRole("heading", { name: "Course resources" }),
+    ).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes("resources")),
+    ).toBe(false);
+    confirm.mockRestore();
+  });
   it("updates the active course view on browser Back and Forward", async () => {
     setPath(`/courses/${course.id}`);
     const member = {
