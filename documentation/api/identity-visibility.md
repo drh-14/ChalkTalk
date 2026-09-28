@@ -18,7 +18,7 @@ Anonymous messages remain supported. Live collaboration presence is intentionall
 
 ## Answer contributors
 
-`Answer.contributors` is required but may be `null`. A nonanonymous answer returns its contributor list. An anonymous answer returns the full contributor list to instructors and TAs and returns `null` to every student, including its contributors.
+`Answer.contributors` is required but may be `null`. A nonanonymous answer returns its contributor list. An anonymous answer returns the full contributor list to instructors and TAs and returns `null` to every student, including its contributors. Contributors whose accounts are deleted are omitted from every list, so a deleted account's ID is never exposed; the list can therefore be empty.
 
 ## Author filtering and search
 

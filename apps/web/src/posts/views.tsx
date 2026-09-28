@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import ReactMarkdown from "react-markdown";
+import { AnswerSections } from "../answers/views.js";
 import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
@@ -14,6 +15,7 @@ import {
   type Post,
   type PostDetail,
 } from "./client.js";
+import { formatPostTime } from "./time.js";
 
 const message = (error: unknown) =>
   error instanceof Error
@@ -29,6 +31,27 @@ const excerpt = (value: string) =>
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 150);
+
+function PostByline({ post }: { post: Post }) {
+  const time = formatPostTime(post.createdAt);
+  return (
+    <>
+      {post.author.displayName}
+      {time && (
+        <>
+          {" "}
+          <time
+            className="post-time"
+            dateTime={time.dateTime}
+            title={time.title}
+          >
+            {time.label}
+          </time>
+        </>
+      )}
+    </>
+  );
+}
 
 function relatedQuery(title: string, body: string): string {
   const words = (value: string) =>
@@ -409,6 +432,7 @@ function DiscussionContent({
   const [items, setItems] = useState<Post[]>([]);
   const [mergedItems, setMergedItems] = useState<MergedPost[]>([]);
   const [staff, setStaff] = useState(false);
+  const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
   const [reviewError, setReviewError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
@@ -433,7 +457,9 @@ function DiscussionContent({
     let active = true;
     void getMembership(courseId, userId)
       .then(({ data }) => {
-        if (active) setStaff(data.role === "ta" || data.role === "instructor");
+        if (!active) return;
+        setRole(data.role);
+        setStaff(data.role === "ta" || data.role === "instructor");
       })
       .catch(() => {
         if (active) setStaff(false);
@@ -825,7 +851,9 @@ function DiscussionContent({
                       <span className="post-kind">{post.type}</span>
                       <strong>{post.title}</strong>
                       <span>{excerpt(post.bodyMarkdown)}</span>
-                      <small>{post.author.displayName}</small>
+                      <small>
+                        <PostByline post={post} />
+                      </small>
                     </a>
                   </li>
                 ))}
@@ -852,139 +880,161 @@ function DiscussionContent({
             )}
           </div>
         </section>
-        <section className="discussion-detail" aria-label="Post detail">
-          {composerOpen ? (
-            <>
-              <button
-                type="button"
-                className="text-button narrow-back"
-                onClick={() => {
-                  if (leaveComposer() && postId)
-                    onNavigate(discussionPath(courseId, query));
-                }}
-              >
-                ← Back to posts
-              </button>
-              <Composer
-                courseId={courseId}
-                csrfToken={csrfToken}
-                onClose={leaveComposer}
-                onStateChange={(dirty, pending) => {
-                  composerState.current = { dirty, pending };
-                }}
-                onCreated={(post) => {
-                  composerState.current = { dirty: false, pending: false };
-                  setComposerOpen(false);
-                  setFeedCycle((value) => value + 1);
-                  onNavigate(postPath(courseId, post.id, query));
-                }}
-              />
-            </>
-          ) : postView === "duplicates" ? (
-            selectedReviewId ? (
-              reviewDetailError ? (
-                <p role="alert">{reviewDetailError}</p>
-              ) : !reviewDetail || reviewDetail.id !== selectedReviewId ? (
-                <p role="status">Loading duplicate…</p>
+        <section
+          className="discussion-detail"
+          aria-label="Post detail"
+          tabIndex={0}
+        >
+          <div className="discussion-detail-content">
+            {composerOpen ? (
+              <>
+                <button
+                  type="button"
+                  className="text-button narrow-back"
+                  onClick={() => {
+                    if (leaveComposer() && postId)
+                      onNavigate(discussionPath(courseId, query));
+                  }}
+                >
+                  ← Back to posts
+                </button>
+                <Composer
+                  courseId={courseId}
+                  csrfToken={csrfToken}
+                  onClose={leaveComposer}
+                  onStateChange={(dirty, pending) => {
+                    composerState.current = { dirty, pending };
+                  }}
+                  onCreated={(post) => {
+                    composerState.current = { dirty: false, pending: false };
+                    setComposerOpen(false);
+                    setFeedCycle((value) => value + 1);
+                    onNavigate(postPath(courseId, post.id, query));
+                  }}
+                />
+              </>
+            ) : postView === "duplicates" ? (
+              selectedReviewId ? (
+                reviewDetailError ? (
+                  <p role="alert">{reviewDetailError}</p>
+                ) : !reviewDetail || reviewDetail.id !== selectedReviewId ? (
+                  <p role="status">Loading duplicate…</p>
+                ) : (
+                  <article>
+                    <p className="post-kind">{reviewDetail.type}</p>
+                    <h2>{reviewDetail.title}</h2>
+                    <p className="post-author">
+                      <PostByline post={reviewDetail} />
+                    </p>
+                    <div className="post-markdown">
+                      <ReactMarkdown>{reviewDetail.bodyMarkdown}</ReactMarkdown>
+                    </div>
+                    {reviewDetail.tags.length > 0 && (
+                      <p>Tags: {reviewDetail.tags.join(", ")}</p>
+                    )}
+                    <p>
+                      Merged into{" "}
+                      <a
+                        href={postPath(
+                          courseId,
+                          reviewDetail.duplicateOfPostId!,
+                        )}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          setSelectedReviewId(undefined);
+                          setReviewDetail(undefined);
+                          setPostView("posts");
+                          navigate(
+                            postPath(courseId, reviewDetail.duplicateOfPostId!),
+                          );
+                        }}
+                      >
+                        {mergedItems.find(
+                          (item) => item.id === selectedReviewId,
+                        )?.canonicalTitle ?? "Canonical post"}
+                      </a>
+                    </p>
+                    {mergedItems.find(
+                      (item) => item.id === selectedReviewId,
+                    ) && (
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() =>
+                          void unmerge(
+                            mergedItems.find(
+                              (item) => item.id === selectedReviewId,
+                            )!,
+                          )
+                        }
+                        aria-label={`Unmerge ${reviewDetail.title}`}
+                      >
+                        Unmerge
+                      </button>
+                    )}
+                  </article>
+                )
               ) : (
-                <article>
-                  <p className="post-kind">{reviewDetail.type}</p>
-                  <h2>{reviewDetail.title}</h2>
-                  <p className="post-author">
-                    {reviewDetail.author.displayName}
-                  </p>
-                  <div className="post-markdown">
-                    <ReactMarkdown>{reviewDetail.bodyMarkdown}</ReactMarkdown>
-                  </div>
-                  {reviewDetail.tags.length > 0 && (
-                    <p>Tags: {reviewDetail.tags.join(", ")}</p>
-                  )}
-                  <p>
-                    Merged into{" "}
-                    <a
-                      href={postPath(courseId, reviewDetail.duplicateOfPostId!)}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        setSelectedReviewId(undefined);
-                        setReviewDetail(undefined);
-                        setPostView("posts");
-                        navigate(
-                          postPath(courseId, reviewDetail.duplicateOfPostId!),
-                        );
-                      }}
-                    >
-                      {mergedItems.find((item) => item.id === selectedReviewId)
-                        ?.canonicalTitle ?? "Canonical post"}
-                    </a>
-                  </p>
-                  {mergedItems.find((item) => item.id === selectedReviewId) && (
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() =>
-                        void unmerge(
-                          mergedItems.find(
-                            (item) => item.id === selectedReviewId,
-                          )!,
-                        )
-                      }
-                      aria-label={`Unmerge ${reviewDetail.title}`}
-                    >
-                      Unmerge
-                    </button>
-                  )}
-                </article>
+                <div className="detail-prompt">
+                  <h2>Select a duplicate post</h2>
+                  <p>Choose a duplicate to review it here.</p>
+                </div>
               )
+            ) : postId ? (
+              <>
+                <button
+                  className="text-button narrow-back"
+                  onClick={() => navigate(discussionPath(courseId, query))}
+                >
+                  ← Back to posts
+                </button>
+                {detailError ? (
+                  <p role="alert">{detailError}</p>
+                ) : !detail ||
+                  detail.id !== postId ||
+                  detail.courseId !== courseId ? (
+                  <p role="status">Loading post…</p>
+                ) : detail.deleted ? (
+                  <p>This post was deleted.</p>
+                ) : (
+                  <article>
+                    <p className="post-kind">{detail.type}</p>
+                    <h2>{detail.title}</h2>
+                    <p className="post-author">
+                      <PostByline post={detail} />
+                    </p>
+                    <div className="post-markdown">
+                      <ReactMarkdown>{detail.bodyMarkdown}</ReactMarkdown>
+                    </div>
+                    {detail.type === "question" && (
+                      <AnswerSections
+                        postId={detail.id}
+                        role={role}
+                        courseStatus={course?.status}
+                        csrfToken={csrfToken}
+                      />
+                    )}
+                    {staff && postView === "posts" && (
+                      <MergeControl
+                        source={detail}
+                        courseId={courseId}
+                        csrfToken={csrfToken}
+                        onMerged={(targetId) => {
+                          setFeedCycle((value) => value + 1);
+                          onNavigate(postPath(courseId, targetId, query));
+                        }}
+                      />
+                    )}
+                  </article>
+                )}
+              </>
             ) : (
               <div className="detail-prompt">
-                <h2>Select a duplicate post</h2>
-                <p>Choose a duplicate to review it here.</p>
+                <h2>Select a post</h2>
+                <p>Choose a question or note to read it here.</p>
               </div>
-            )
-          ) : postId ? (
-            <>
-              <button
-                className="text-button narrow-back"
-                onClick={() => navigate(discussionPath(courseId, query))}
-              >
-                ← Back to posts
-              </button>
-              {detailError ? (
-                <p role="alert">{detailError}</p>
-              ) : !detail ||
-                detail.id !== postId ||
-                detail.courseId !== courseId ? (
-                <p role="status">Loading post…</p>
-              ) : detail.deleted ? (
-                <p>This post was deleted.</p>
-              ) : (
-                <article>
-                  <p className="post-kind">{detail.type}</p>
-                  <h2>{detail.title}</h2>
-                  <p className="post-author">{detail.author.displayName}</p>
-                  <div className="post-markdown">
-                    <ReactMarkdown>{detail.bodyMarkdown}</ReactMarkdown>
-                  </div>
-                  {staff && postView === "posts" && (
-                    <MergeControl
-                      source={detail}
-                      courseId={courseId}
-                      csrfToken={csrfToken}
-                      onMerged={(targetId) => {
-                        setFeedCycle((value) => value + 1);
-                        onNavigate(postPath(courseId, targetId, query));
-                      }}
-                    />
-                  )}
-                </article>
-              )}
-            </>
-          ) : (
-            <div className="detail-prompt">
-              <h2>Select a post</h2>
-              <p>Choose a question or note to read it here.</p>
-            </div>
-          )}
+            )}
+          </div>
         </section>
       </div>
     </section>

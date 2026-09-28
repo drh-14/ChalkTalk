@@ -1,5 +1,12 @@
 import { StrictMode } from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
@@ -147,6 +154,129 @@ describe("ChalkTalk auth entry", () => {
     );
     expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
     confirm.mockRestore();
+  });
+  it("shows the ChalkTalk logo in the course header and guards drafts when it is followed", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const logo = within(screen.getByRole("banner")).getByRole("link", {
+      name: "ChalkTalk",
+    });
+    expect(logo.getAttribute("href")).toBe("/home");
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "My draft",
+    );
+    await user.click(logo);
+    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    confirm.mockReturnValue(true);
+    await user.click(logo);
+    expect(window.location.pathname).toBe("/home");
+    confirm.mockRestore();
+  });
+  it("offers the account controls in the course header and guards drafts on sign out", async () => {
+    setPath(`/courses/${course.id}`);
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/sessions/current"))
+        return init?.method === "DELETE"
+          ? new Response(null, { status: 204 })
+          : jsonResponse({ data: session });
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+      return jsonResponse({
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const banner = within(screen.getByRole("banner"));
+    expect(banner.getByRole("link", { name: "ChalkTalk" })).toBeTruthy();
+    expect(banner.getByRole("link", { name: "← All courses" })).toBeTruthy();
+    expect(banner.getByText("Ada Lovelace")).toBeTruthy();
+    const signOut = banner.getByRole("button", { name: "Sign out" });
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "My draft",
+    );
+    await user.click(signOut);
+    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
+    ).toBe(false);
+    confirm.mockReturnValue(true);
+    await user.click(signOut);
+    await screen.findByRole("heading", {
+      name: "Discuss the work that matters.",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/sessions/current",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    confirm.mockRestore();
+  });
+  it("uses the full-height course page only on the discussion route", async () => {
+    setPath(`/courses/${course.id}`);
+    const member = {
+      id: "membership_123",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: session.user.displayName },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        if (url.endsWith(`/members/${session.user.id}`))
+          return jsonResponse({ data: member });
+        if (url.endsWith("/members"))
+          return jsonResponse({
+            data: [member],
+            page: { nextCursor: null, hasMore: false },
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const page = () => screen.getByRole("banner").parentElement!;
+    expect(page().classList.contains("course-page")).toBe(true);
+    expect(page().classList.contains("discussion")).toBe(true);
+    await user.click(screen.getByRole("link", { name: "Course settings" }));
+    await screen.findByRole("heading", { name: "Members" });
+    expect(page().classList.contains("course-page")).toBe(true);
+    expect(page().classList.contains("discussion")).toBe(false);
   });
   it("updates the active course view on browser Back and Forward", async () => {
     setPath(`/courses/${course.id}`);

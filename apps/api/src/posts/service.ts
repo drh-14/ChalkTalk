@@ -23,6 +23,7 @@ type Row = {
   version: string | number;
   display_name: string | null;
   author_deleted_at: Date | null;
+  answered: boolean;
   canonical_title?: string | null;
 };
 export type CreatePost = {
@@ -69,6 +70,8 @@ const notFound = () => new AuthError(404, "not_found", "Post is not found");
 const validation = (message: string) =>
   new AuthError(422, "validation_failed", message);
 const STAFF = new Set<Role>(["ta", "instructor"]);
+const ANSWERED =
+  "EXISTS (SELECT 1 FROM answers a WHERE a.post_id=p.id AND a.deleted_at IS NULL)";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -111,7 +114,7 @@ export class PostService {
     lock = false,
   ): Promise<Row | undefined> {
     const result = await db.query<Row>(
-      `SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at FROM posts p LEFT JOIN users u ON u.id=p.author_user_id WHERE p.id=$1${lock ? " FOR UPDATE OF p" : ""}`,
+      `SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered FROM posts p LEFT JOIN users u ON u.id=p.author_user_id WHERE p.id=$1${lock ? " FOR UPDATE OF p" : ""}`,
       [id],
     );
     return result.rows[0];
@@ -163,7 +166,7 @@ export class PostService {
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
       lastActivityAt: row.last_activity_at.toISOString(),
-      ...(row.type === "question" ? { answered: false } : {}),
+      ...(row.type === "question" ? { answered: row.answered } : {}),
     };
   }
   private async replaceTags(
@@ -321,8 +324,6 @@ export class PostService {
         );
       }
     }
-    if (options.answered === true)
-      return { data: [], page: { nextCursor: null, hasMore: false } };
     const values: unknown[] = [courseId];
     const add = (value: unknown) => {
       values.push(value);
@@ -351,7 +352,10 @@ export class PostService {
       clauses.push(`p.created_at>=${add(options.createdAfter)}::timestamptz`);
     if (options.createdBefore)
       clauses.push(`p.created_at<=${add(options.createdBefore)}::timestamptz`);
-    if (options.answered === false) clauses.push("p.type='question'");
+    if (options.answered !== undefined)
+      clauses.push(
+        `p.type='question' AND ${options.answered ? "" : "NOT "}${ANSWERED}`,
+      );
     if (options.duplicateStatus)
       clauses.push(`p.duplicate_status=${add(options.duplicateStatus)}`);
     const sortExpression =
@@ -364,7 +368,7 @@ export class PostService {
     const cursorClause = after
       ? `AND (rank_value,p.id)<(${add(after.value)}::${sortValue},${add(after.id)}::uuid)`
       : "";
-    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,canonical.title AS canonical_title,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause.replaceAll("p.id", "listed.id")} ORDER BY rank_value DESC,id DESC LIMIT ${add(limit + 1)}`;
+    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause.replaceAll("p.id", "listed.id")} ORDER BY rank_value DESC,id DESC LIMIT ${add(limit + 1)}`;
     const result = await this.pool.query<Row & { rank_value: number | Date }>(
       query,
       values,

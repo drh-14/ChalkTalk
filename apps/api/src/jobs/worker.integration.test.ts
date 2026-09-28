@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { JobWorker } from "./worker.js";
 import { PostService, postEtag } from "../posts/service.js";
+import { AnswerService, answerEtag } from "../answers/service.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
@@ -224,5 +225,42 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       (await pool.query("SELECT 1 FROM courses WHERE id=$1", [courseId]))
         .rowCount,
     ).toBe(0);
+  });
+  it("removes a course's answers before its posts", async () => {
+    const { courseId, jobId } = await seedJob();
+    const post = await new PostService(pool).create(courseId, ownerId, {
+      type: "question",
+      title: "Answered",
+      bodyMarkdown: "Body",
+    });
+    const answers = new AnswerService(pool);
+    const kept = await answers.create(post.value.id, ownerId, {
+      bodyMarkdown: "Staff answer",
+    });
+    await answers.endorse(kept.value.id, ownerId, answerEtag(kept.value));
+    const other = await new PostService(pool).create(courseId, ownerId, {
+      type: "question",
+      title: "Deleted answer",
+      bodyMarkdown: "Body",
+    });
+    const removed = await answers.create(other.value.id, ownerId, {
+      bodyMarkdown: "Removed",
+    });
+    await answers.delete(removed.value.id, ownerId, answerEtag(removed.value));
+    await expect(worker.runOnce()).resolves.toBe(true);
+    const job = await pool.query("SELECT status FROM jobs WHERE id=$1", [
+      jobId,
+    ]);
+    expect(job.rows[0].status).toBe("succeeded");
+    const left = await pool.query(
+      "SELECT (SELECT count(*) FROM answers WHERE course_id=$1)::int AS answers,(SELECT count(*) FROM answer_contributors WHERE answer_id IN ($2,$3))::int AS contributors,(SELECT count(*) FROM answer_collaboration_documents WHERE answer_id IN ($2,$3))::int AS documents,(SELECT count(*) FROM courses WHERE id=$1)::int AS courses",
+      [courseId, kept.value.id, removed.value.id],
+    );
+    expect(left.rows[0]).toEqual({
+      answers: 0,
+      contributors: 0,
+      documents: 0,
+      courses: 0,
+    });
   });
 });

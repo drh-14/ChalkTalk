@@ -26,23 +26,87 @@ body {
   border: 0;
 }
 .discussion-shell {
-  min-height: 100vh;
+  min-height: calc(100vh - 4rem);
   padding: clamp(1rem, 3vw, 2.5rem);
-  padding-top: clamp(0.5rem, 1.5vw, 1.25rem);
+  padding-top: clamp(1rem, 2vw, 1.75rem);
   background: #f8f6ef;
 }
 .discussion-header {
-  display: flex;
-  justify-content: space-between;
   align-items: end;
+  border-bottom: 1px solid #dde3d9;
+  display: flex;
   gap: 1.5rem;
-  max-width: 1500px;
-  margin: 0 auto 1.5rem;
+  justify-content: space-between;
+  margin: 0 0 1.5rem;
+}
+.course-identity {
+  align-items: center;
+  display: flex;
+  gap: 0.9rem;
+  min-width: 0;
+  padding-bottom: 1rem;
+}
+.course-identity .course-icon {
+  border-radius: 0.75rem;
+  flex: none;
+  font-size: 0.95rem;
+  height: 3.1rem;
+  width: 3.1rem;
+}
+.course-eyebrow {
+  color: #bb6334;
+  font-family: "DM Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  margin: 0;
+  text-transform: uppercase;
+}
+.app-bar {
+  background: #1f4d3e;
+  color: #fffdf7;
+}
+.app-bar-inner {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: space-between;
+  margin: 0 auto;
+  min-height: 4rem;
+  padding: 0.5rem clamp(1rem, 3vw, 2.5rem);
+}
+.app-bar.home .app-bar-inner {
+  padding-inline: clamp(1.25rem, 7vw, 8rem);
+}
+.app-bar-start {
+  align-items: center;
+  display: flex;
+  gap: 1rem;
+}
+.app-bar .text-button {
+  color: #fffdf7;
+  text-decoration-color: rgba(255, 253, 247, 0.45);
+}
+.app-bar .wordmark {
+  font-size: 1.65rem;
+}
+.app-bar-start {
+  gap: 1.25rem;
+}
+.app-bar-start .text-button {
+  border-left: 1px solid rgba(255, 253, 247, 0.28);
+  font-size: 1rem;
+  padding: 0.5rem 0 0.5rem 1.25rem;
+}
+.app-bar .account-name {
+  color: #fffdf7;
 }
 .discussion-header h1 {
-  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
-  font-size: clamp(1.25rem, 2.2vw, 1.75rem);
-  margin: 0.35rem 0;
+  font-family: Fraunces, Georgia, serif;
+  font-size: clamp(1.7rem, 2.8vw, 2.4rem);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  margin: 0.2rem 0 0;
   overflow-wrap: anywhere;
 }
 .discussion-header nav {
@@ -50,60 +114,65 @@ body {
   gap: 0.5rem;
 }
 .discussion-header nav a {
-  border-radius: 0.65rem;
-  padding: 0.65rem 0.9rem;
+  border-bottom: 3px solid transparent;
+  color: #5b6b63;
+  font-weight: 600;
+  margin-bottom: -1px;
+  padding: 0.75rem 0.9rem;
   text-decoration: none;
   white-space: nowrap;
 }
-.discussion-header nav a[aria-current],
 .discussion-header nav a:hover {
-  background: #e7eee5;
+  border-bottom-color: #c8d2c7;
+  color: #1d2b26;
+}
+.discussion-header nav a[aria-current] {
+  border-bottom-color: #1f4d3e;
+  color: #1d2b26;
 }
 .discussion-columns {
   display: grid;
-  grid-template-columns: minmax(250px, 28.5%) minmax(0, 1fr);
-  gap: 1.25rem;
-  max-width: 1500px;
-  margin: auto;
-  align-items: start;
-}
-.discussion-feed,
-.discussion-detail {
-  background: #fffdf9;
-  border: 1px solid #dde3d9;
-  border-radius: 1rem;
-  padding: 1.25rem;
-  min-height: 65vh;
+  grid-template-columns: clamp(18rem, 28%, 26rem) minmax(0, 1fr);
 }
 .discussion-feed {
+  border-right: 1px solid #dde3d9;
   display: flex;
   flex-direction: column;
-  height: max(18rem, calc(100dvh - 10rem));
   min-height: 0;
+  padding-top: 1.25rem;
 }
-.post-list-scroll {
-  flex: 1;
+.discussion-feed > .post-view-picker,
+.discussion-feed > .discussion-toolbar,
+.discussion-feed > [role="alert"] {
+  margin-inline: clamp(1rem, 3vw, 2.5rem) 1.25rem;
+}
+.discussion-detail {
+  background: #fffdf9;
   min-height: 0;
-  overflow-y: scroll;
+  padding: 1.75rem clamp(1.25rem, 4vw, 3.5rem) 3rem;
+}
+.post-list-scroll,
+.discussion-detail {
   overscroll-behavior-y: contain;
-  scrollbar-gutter: stable;
   scrollbar-color: #a8b8ac transparent;
   scrollbar-width: thin;
-  padding-right: 0.35rem;
 }
-.post-list-scroll:focus-visible {
+.post-list-scroll {
+  border-top: 1px solid #e3e1d6;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.post-list-scroll:focus-visible,
+.discussion-detail:focus-visible {
   outline: 2px solid #287459;
   outline-offset: -2px;
 }
-.post-list-scroll::-webkit-scrollbar {
-  width: 0.65rem;
-}
-.post-list-scroll::-webkit-scrollbar-thumb {
-  background: #a8b8ac;
-  border-radius: 0.5rem;
-}
 .post-list-scroll > .button {
-  margin-top: 0.75rem;
+  margin: 1rem clamp(1rem, 3vw, 2.5rem) 1.25rem;
+}
+.post-list-scroll > p {
+  padding-inline: clamp(1rem, 3vw, 2.5rem) 1.25rem;
 }
 .discussion-toolbar {
   display: flex;
@@ -152,25 +221,27 @@ body {
 }
 .post-list {
   display: grid;
-  gap: 0.7rem;
 }
 .post-card {
+  border-bottom: 1px solid #e3e1d6;
   display: grid;
-  gap: 0.35rem;
+  gap: 0.3rem;
+  padding: 1rem 1.25rem 1rem clamp(1rem, 3vw, 2.5rem);
   position: relative;
-  border: 1px solid #dce4db;
-  border-radius: 0.75rem;
-  padding: 1rem;
   text-decoration: none;
-  background: #fff;
 }
 .post-card:hover,
-.post-card:focus-visible,
-.post-card:focus-within,
+.post-card:focus-within {
+  background: #f1efe6;
+}
+.post-card:focus-visible {
+  outline: 2px solid #287459;
+  outline-offset: -2px;
+}
+.post-card[aria-current],
 .post-card.selected {
-  border-color: #287459;
-  background: #f1f7ee;
-  outline-offset: 2px;
+  background: #fffdf9;
+  box-shadow: inset 3px 0 0 #1f4d3e;
 }
 .post-card strong {
   font-size: 1.04rem;
@@ -182,6 +253,10 @@ body {
 .post-card small,
 .post-author {
   color: #607169;
+}
+.post-time::before {
+  content: "·" / "";
+  margin-right: 0.35em;
 }
 .post-card-title-button {
   border: 0;
@@ -259,6 +334,41 @@ body {
   text-align: center;
   min-height: 50vh;
 }
+@media (min-width: 851px) {
+  .course-page.discussion {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+  }
+  .course-page.discussion .discussion-shell {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0;
+  }
+  .course-page.discussion .discussion-header {
+    margin: 0;
+    padding: clamp(1rem, 2vw, 1.75rem) clamp(1rem, 3vw, 2.5rem) 0;
+  }
+  .course-page.discussion .discussion-shell > [role="alert"],
+  .course-page.discussion .discussion-shell > [role="status"] {
+    padding: 1.5rem clamp(1rem, 3vw, 2.5rem);
+  }
+  .course-page.discussion .discussion-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .course-page.discussion .discussion-columns {
+    flex: 1;
+    min-height: 0;
+  }
+  .course-page.discussion .discussion-detail {
+    overflow-y: auto;
+  }
+}
 .post-composer {
   margin: 0;
 }
@@ -289,6 +399,75 @@ body {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+}
+.answer-sections {
+  border-top: 1px solid #e3e1d6;
+  display: grid;
+  gap: 1.25rem;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+}
+.answer {
+  background: #fff;
+  border: 1px solid #e3e1d6;
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.6rem;
+  padding: 1.1rem 1.25rem;
+}
+.answer h3 {
+  font-family: Fraunces, Georgia, serif;
+  font-size: 1.2rem;
+  margin: 0;
+}
+.answer-endorsed {
+  background: #e6f0e3;
+  border-radius: 999px;
+  color: #1f4d3e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  justify-self: start;
+  margin: 0;
+  padding: 0.2rem 0.65rem;
+}
+.answer-empty,
+.answer-note {
+  color: #617167;
+  margin: 0;
+}
+.answer-note {
+  font-size: 0.85rem;
+}
+.answer-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.answer-composer {
+  display: grid;
+  gap: 0.7rem;
+}
+.answer-composer > label:not(.checkbox-label) {
+  display: grid;
+  font-weight: 600;
+  gap: 0.3rem;
+}
+.answer-composer textarea {
+  background: #fff;
+  border: 1px solid #b9cbbd;
+  border-radius: 0.5rem;
+  font: inherit;
+  min-height: 7rem;
+  padding: 0.6rem;
+  resize: vertical;
+  width: 100%;
+}
+.answer-composer > .button {
+  justify-self: start;
+}
+.answer .post-markdown > :last-child {
+  margin-bottom: 0;
 }
 .related-questions {
   background: #fff;
@@ -326,7 +505,7 @@ body {
     display: block;
   }
   .discussion-header nav {
-    margin-top: 1rem;
+    margin-top: 0.25rem;
   }
   .discussion-columns {
     display: block;
@@ -337,18 +516,23 @@ body {
   .discussion-columns:not(.has-selection) .discussion-detail {
     display: none;
   }
-  .discussion-feed,
-  .discussion-detail {
-    min-height: 60vh;
+  .course-page.discussion .discussion-shell {
+    padding-inline: 0;
+  }
+  .course-page.discussion .discussion-header {
+    margin-bottom: 0;
+    padding-inline: 1rem;
   }
   .discussion-feed {
-    height: auto;
+    border-right: 0;
+  }
+  .discussion-detail {
+    min-height: 60vh;
+    padding: 1.25rem 1rem 2.5rem;
   }
   .post-list-scroll {
     overflow-y: visible;
     overscroll-behavior-y: auto;
-    scrollbar-gutter: auto;
-    padding-right: 0;
   }
   .narrow-back {
     display: inline-block;
@@ -641,20 +825,25 @@ a:focus-visible {
 .home-shell {
   background: #f8f6ef;
   color: #1d2b26;
-  min-height: 100vh;
+  display: flow-root;
+  min-height: calc(100vh - 4rem);
   padding: 0 clamp(1.25rem, 7vw, 8rem) 4rem;
 }
-.home-header {
-  align-items: center;
-  border-bottom: 1px solid #e1e1d8;
-  display: flex;
-  justify-content: space-between;
-  min-height: 5.25rem;
-}
-.home-header > div {
+.account-controls {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.8rem;
+  justify-content: end;
+}
+.account-name {
+  color: #1d2b26;
+  font-size: 0.9rem;
+  font-weight: 600;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .avatar {
   align-items: center;

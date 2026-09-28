@@ -1454,3 +1454,289 @@ it("uses the whole long title and caps body-derived suggestion terms", async () 
   expect(q).toContain("bodyterm");
   expect(q.length).toBeLessThanOrEqual(500);
 });
+
+const now = new Date("2026-09-28T12:00:00Z");
+const timeIn = (element: Element) => element.querySelector("time");
+
+it("shows each post's creation time beside its author in the feed and detail", async () => {
+  vi.setSystemTime(now);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.endsWith("/posts/p2"))
+        return json({
+          data: {
+            ...post("p2", "Older"),
+            createdAt: "2026-09-10T12:00:00Z",
+            updatedAt: "2026-09-27T12:00:00Z",
+          },
+        });
+      return page([
+        {
+          ...post("p1", "Recent"),
+          author: {
+            userId: "user-maya",
+            displayName: "Maya Chen",
+            anonymous: false,
+            deleted: false,
+          },
+          anonymous: false,
+          createdAt: "2026-09-28T09:00:00Z",
+          updatedAt: "2026-09-28T11:00:00Z",
+          lastActivityAt: "2026-09-28T11:00:00Z",
+        },
+      ]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      postId="p2"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const listings = await screen.findByRole("region", { name: "Post listings" });
+  const card = (await within(listings).findByText("Recent")).closest("a")!;
+  expect(within(card).getByText("Maya Chen")).toBeTruthy();
+  const cardTime = timeIn(card)!;
+  expect(cardTime.textContent).toBe("3 hours ago");
+  expect(cardTime.getAttribute("dateTime")).toBe("2026-09-28T09:00:00Z");
+  expect(cardTime.getAttribute("title")).toContain("2026");
+  expect(card.textContent).not.toMatch(/edited|updated/i);
+
+  await screen.findByRole("heading", { name: "Older" });
+  const detail = screen.getByRole("region", { name: "Post detail" });
+  const detailTime = timeIn(detail)!;
+  expect(detailTime.textContent).toMatch(/^Sep \d+$/);
+  expect(detailTime.getAttribute("dateTime")).toBe("2026-09-10T12:00:00Z");
+  expect(detailTime.getAttribute("title")).toContain("2026");
+  expect(detail.textContent).not.toMatch(/edited|updated/i);
+});
+
+it("shows an anonymous post's time without identifying its author", async () => {
+  vi.setSystemTime(now);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.endsWith("/posts/p1"))
+        return json({
+          data: {
+            ...post("p1", "Hidden author"),
+            createdAt: now.toISOString(),
+          },
+        });
+      return page([]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      userId="user-student"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Hidden author" });
+  const byline = screen.getByText("Anonymous");
+  expect(byline.textContent).toBe("Anonymous just now");
+  expect(timeIn(byline)?.getAttribute("dateTime")).toBe(now.toISOString());
+});
+
+it("shows a duplicate's time in staff review detail but not on its review card", async () => {
+  vi.setSystemTime(now);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/members/user-staff"))
+        return json({ data: { role: "ta" } });
+      if (url.includes("duplicateStatus=confirmed"))
+        return page([
+          {
+            id: "merged-1",
+            courseId: course.id,
+            type: "question",
+            title: "Old question",
+            duplicateStatus: "confirmed",
+            duplicateOfPostId: "canonical-1",
+            canonicalTitle: "Canonical question",
+            version: 2,
+          },
+        ]);
+      if (url.endsWith("/posts/merged-1/duplicate-review"))
+        return json({
+          data: {
+            ...post("merged-1", "Old question"),
+            createdAt: "2026-09-28T10:00:00Z",
+            duplicateStatus: "confirmed",
+            duplicateOfPostId: "canonical-1",
+            version: 2,
+          },
+        });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.selectOptions(
+    await screen.findByRole("combobox", { name: "Post view" }),
+    "Duplicate posts",
+  );
+  await user.click(await screen.findByRole("button", { name: "Old question" }));
+  const detail = screen.getByRole("region", { name: "Post detail" });
+  await waitFor(() => expect(timeIn(detail)?.textContent).toBe("2 hours ago"));
+  const card = screen
+    .getByRole("button", { name: "Old question" })
+    .closest(".post-card")!;
+  expect(timeIn(card)).toBeNull();
+});
+
+it("shows no time for a deleted post or a related-question suggestion", async () => {
+  vi.setSystemTime(now);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.endsWith("/posts/deleted"))
+        return json({
+          data: {
+            id: "deleted",
+            courseId: "course-1",
+            type: "question",
+            deleted: true,
+            createdAt: "2026-09-28T09:00:00Z",
+            updatedAt: "2026-09-28T11:00:00Z",
+            version: 2,
+          },
+        });
+      if (url.includes("type=question"))
+        return page([post("related", "Related cutoff")]);
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      postId="deleted"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("This post was deleted.");
+  const detail = screen.getByRole("region", { name: "Post detail" });
+  expect(timeIn(detail)).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "A cutoff question",
+  );
+  const suggestion = await screen.findByRole(
+    "link",
+    { name: /Related cutoff/ },
+    { timeout: 2000 },
+  );
+  expect(timeIn(suggestion)).toBeNull();
+});
+
+it("makes the post detail a focusable region beside the post listings and marks only the selected row", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.endsWith("/posts/p2"))
+        return json({ data: post("p2", "Second") });
+      return page([post("p1", "First"), post("p2", "Second")]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      postId="p2"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Second" });
+  const detail = screen.getByRole("region", { name: "Post detail" });
+  expect(detail.getAttribute("tabindex")).toBe("0");
+  const listings = screen.getByRole("region", { name: "Post listings" });
+  expect(listings.getAttribute("tabindex")).toBe("0");
+  const current = within(listings)
+    .getAllByRole("link")
+    .filter((link) => link.getAttribute("aria-current") === "page");
+  expect(current).toHaveLength(1);
+  expect(current[0]!.textContent).toContain("Second");
+});
+
+it("shows answer sections under questions only", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.endsWith("/members/user-student"))
+        return json({ data: { role: "student" } });
+      if (url.endsWith("/posts/q1")) return json({ data: post("q1", "Ask") });
+      if (url.endsWith("/posts/n1"))
+        return json({ data: { ...post("n1", "Notice"), type: "note" } });
+      if (url.endsWith("/posts/d1"))
+        return json({
+          data: {
+            id: "d1",
+            courseId: "course-1",
+            type: "question",
+            deleted: true,
+          },
+        });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([]);
+    }),
+  );
+  const view = render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-student"
+      postId="q1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Ask" });
+  expect(
+    await screen.findByRole("region", { name: "Students' answer" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("region", { name: "Instructors' answer" }),
+  ).toBeTruthy();
+  for (const [postId, ready] of [
+    ["n1", () => screen.findByRole("heading", { name: "Notice" })],
+    ["d1", () => screen.findByText("This post was deleted.")],
+  ] as const) {
+    view.rerender(
+      <Discussion
+        courseId={course.id}
+        course={course}
+        csrfToken="csrf"
+        userId="user-student"
+        postId={postId}
+        onNavigate={vi.fn()}
+      />,
+    );
+    await ready();
+    expect(
+      screen.queryByRole("region", { name: "Students' answer" }),
+    ).toBeNull();
+  }
+});
