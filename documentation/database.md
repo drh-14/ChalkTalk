@@ -166,6 +166,7 @@ The application must verify that a post and tag belong to the same course before
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`.
 - `(course_id, id)`: unique key used by same-course foreign keys.
 - `kind`: `text`; `student` or `staff`.
+- A partial unique index on `(post_id, kind)` where `deleted_at` is null allows at most one active answer of each kind per question. Deleted answers keep their row so later followups can reference them.
 - `body_markdown`: `text`, nullable.
 - `anonymous`: `boolean`.
 - `endorsed_at`: `timestamptz`, nullable.

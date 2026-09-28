@@ -1,5 +1,7 @@
 ## Answers
 
+**Implementation status (answers phase 1):** JSON answer creation, answer listing and retrieval, staff endorsement, and staff deletion are implemented. Answer text cannot change after creation in this phase: `PATCH /api/v1/answers/{answerId}`, collaboration connection tickets, multipart requests, attachments, and every followup operation below describe the future target contract and are not live, and their routes are unavailable. Multipart answer creation returns `422 validation_failed`. Active answers return `attachments: []`. Each answer's persistent Yjs document is created empty, with `body_markdown` holding the text; the collaborative-editing phase seeds the document from `body_markdown` the first time it opens an empty document. Because no followups exist yet, a deleted answer never needs a tombstone: it is absent from lists, `GET` returns `404 not_found`, and a new answer of the same kind can be created.
+
 Followup authors and answer contributors follow the shared [identity visibility policy](identity-visibility.md).
 
 ## Retained deleted answers and followups

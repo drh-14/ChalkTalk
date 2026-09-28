@@ -469,21 +469,22 @@ function ResetPassword({
   );
 }
 
-function Home({
+const firstNameOf = (session: Session) =>
+  session.user.displayName.split(" ")[0] || session.user.displayName;
+
+function AccountControls({
   session,
   onSignOut,
-  onOpenCourse,
+  canLeave = () => true,
 }: {
   session: Session;
   onSignOut: () => Promise<void>;
-  onOpenCourse: (courseId: string) => void;
+  canLeave?: () => boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const firstName =
-    session.user.displayName.split(" ")[0] || session.user.displayName;
   async function signOut() {
-    if (pending) return;
+    if (pending || !canLeave()) return;
     setPending(true);
     setError(undefined);
     try {
@@ -494,58 +495,108 @@ function Home({
     }
   }
   return (
-    <main className="home-shell">
-      <header className="home-header">
-        <a className="wordmark dark" href="/home">
-          Chalk<span>Talk</span>
-        </a>
-        <div>
-          <span className="avatar" aria-hidden="true">
-            {firstName[0]}
-          </span>
-          <button className="text-button" onClick={signOut} disabled={pending}>
-            {pending ? "Signing out…" : "Sign out"}
-          </button>
-        </div>
-      </header>
-      <section className="home-intro">
-        <p className="eyebrow">Tuesday, September 26</p>
-        <h1>Welcome back, {firstName}</h1>
-        <p>Here’s a small look at what’s moving across your courses.</p>
-      </section>
+    <div className="account-controls">
+      <span className="avatar" aria-hidden="true">
+        {firstNameOf(session)[0]}
+      </span>
+      <span className="account-name">{session.user.displayName}</span>
+      <button className="text-button" onClick={signOut} disabled={pending}>
+        {pending ? "Signing out…" : "Sign out"}
+      </button>
       {error && (
         <p className="form-message error" role="alert">
           {error}
         </p>
       )}
-      <section className="home-grid">
-        <CourseHome csrfToken={session.csrfToken} onOpenCourse={onOpenCourse} />
-        <article className="posts-card">
-          <div className="section-title">
-            <h2>In the discussion</h2>
-            <span>View all</span>
-          </div>
-          <div className="post">
-            <p className="post-meta">Linear Algebra II · 8 min ago</p>
-            <h3>
-              Why does the eigenbasis make this proof feel so much simpler?
-            </h3>
-            <p>
-              “Once the transformation is diagonal, the repeated application is
-              easier to see…”
-            </p>
-            <div>
-              <span>◌ 8 replies</span>
-              <span>♡ 14</span>
+    </div>
+  );
+}
+
+function AppBar({
+  variant,
+  session,
+  onSignOut,
+  canLeave,
+  onHomeClick,
+  children,
+}: {
+  variant: "home" | "course";
+  session: Session;
+  onSignOut: () => Promise<void>;
+  canLeave?: () => boolean;
+  onHomeClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  children?: ReactNode;
+}) {
+  return (
+    <header className={`app-bar ${variant}`}>
+      <div className="app-bar-inner">
+        <div className="app-bar-start">
+          <a className="wordmark" href="/home" onClick={onHomeClick}>
+            Chalk<span>Talk</span>
+          </a>
+          {children}
+        </div>
+        <AccountControls
+          session={session}
+          onSignOut={onSignOut}
+          canLeave={canLeave}
+        />
+      </div>
+    </header>
+  );
+}
+
+function Home({
+  session,
+  onSignOut,
+  onOpenCourse,
+}: {
+  session: Session;
+  onSignOut: () => Promise<void>;
+  onOpenCourse: (courseId: string) => void;
+}) {
+  const firstName = firstNameOf(session);
+  return (
+    <>
+      <AppBar variant="home" session={session} onSignOut={onSignOut} />
+      <main className="home-shell">
+        <section className="home-intro">
+          <p className="eyebrow">Tuesday, September 26</p>
+          <h1>Welcome back, {firstName}</h1>
+          <p>Here’s a small look at what’s moving across your courses.</p>
+        </section>
+        <section className="home-grid">
+          <CourseHome
+            csrfToken={session.csrfToken}
+            onOpenCourse={onOpenCourse}
+          />
+          <article className="posts-card">
+            <div className="section-title">
+              <h2>In the discussion</h2>
+              <span>View all</span>
             </div>
-          </div>
-          <div className="post">
-            <p className="post-meta">Data Structures · Yesterday</p>
-            <h3>Comparing the two balancing approaches</h3>
-          </div>
-        </article>
-      </section>
-    </main>
+            <div className="post">
+              <p className="post-meta">Linear Algebra II · 8 min ago</p>
+              <h3>
+                Why does the eigenbasis make this proof feel so much simpler?
+              </h3>
+              <p>
+                “Once the transformation is diagonal, the repeated application
+                is easier to see…”
+              </p>
+              <div>
+                <span>◌ 8 replies</span>
+                <span>♡ 14</span>
+              </div>
+            </div>
+            <div className="post">
+              <p className="post-meta">Data Structures · Yesterday</p>
+              <h3>Comparing the two balancing approaches</h3>
+            </div>
+          </article>
+        </section>
+      </main>
+    </>
   );
 }
 
@@ -553,11 +604,13 @@ function CourseFrame({
   route,
   session,
   onNavigate,
+  onSignOut,
   onBeforeLeaveChange,
 }: {
   route: Route;
   session: Session;
   onNavigate: (path: string) => void;
+  onSignOut: () => Promise<void>;
   onBeforeLeaveChange: (guard: () => boolean) => void;
 }) {
   const courseId = route.courseId!;
@@ -600,79 +653,101 @@ function CourseFrame({
     if (beforeLeave.current()) onNavigate(path);
   }
   return (
-    <main className="discussion-shell">
-      <header className="discussion-header">
-        <div>
-          <a
-            className="text-button"
-            href="/home"
-            onClick={(event) => follow(event, "/home")}
-          >
-            ← All courses
-          </a>
-          <h1 ref={headingRef} tabIndex={-1}>
-            {visibleCourse?.data.name ??
-              (error?.courseId === courseId
-                ? "Course unavailable"
-                : "Loading course…")}
-          </h1>
+    <div className={`course-page${settings ? "" : " discussion"}`}>
+      <AppBar
+        variant="course"
+        session={session}
+        onSignOut={onSignOut}
+        canLeave={() => beforeLeave.current()}
+        onHomeClick={(event) => follow(event, "/home")}
+      >
+        <a
+          className="text-button"
+          href="/home"
+          onClick={(event) => follow(event, "/home")}
+        >
+          ← All courses
+        </a>
+      </AppBar>
+      <main className="discussion-shell">
+        <div className="discussion-header">
+          <div className="course-identity">
+            {visibleCourse && (
+              <span className="course-icon amber" aria-hidden="true">
+                {visibleCourse.data.name.slice(0, 2).toUpperCase()}
+              </span>
+            )}
+            <div>
+              {visibleCourse && (
+                <p className="course-eyebrow">
+                  {visibleCourse.data.status} course
+                </p>
+              )}
+              <h1 ref={headingRef} tabIndex={-1}>
+                {visibleCourse?.data.name ??
+                  (error?.courseId === courseId
+                    ? "Course unavailable"
+                    : "Loading course…")}
+              </h1>
+            </div>
+          </div>
+          <nav aria-label="Course navigation">
+            <a
+              href={discussionPath}
+              aria-current={!settings ? "page" : undefined}
+              onClick={(event) => follow(event, discussionPath)}
+            >
+              Discussion
+            </a>
+            <a
+              href={`${discussionPath}/settings`}
+              aria-current={settings ? "page" : undefined}
+              onClick={(event) => follow(event, `${discussionPath}/settings`)}
+            >
+              Course settings
+            </a>
+          </nav>
         </div>
-        <nav aria-label="Course navigation">
-          <a
-            href={discussionPath}
-            aria-current={!settings ? "page" : undefined}
-            onClick={(event) => follow(event, discussionPath)}
-          >
-            Discussion
-          </a>
-          <a
-            href={`${discussionPath}/settings`}
-            aria-current={settings ? "page" : undefined}
-            onClick={(event) => follow(event, `${discussionPath}/settings`)}
-          >
-            Course settings
-          </a>
-        </nav>
-      </header>
-      {error?.courseId === courseId ? (
-        <div role="alert">
-          {error.message}{" "}
-          <button
-            className="text-button"
-            onClick={() => setCycle((value) => value + 1)}
-          >
-            Try again
-          </button>
-        </div>
-      ) : !visibleCourse ? (
-        <p role="status">Loading course…</p>
-      ) : settings ? (
-        <CourseDetail
-          key={courseId}
-          courseId={courseId}
-          course={visibleCourse}
-          onCourseChange={setCourse}
-          csrfToken={session.csrfToken}
-          onBack={() => onNavigate("/home")}
-          userId={session.user.id}
-        />
-      ) : (
-        <Discussion
-          courseId={courseId}
-          course={visibleCourse.data}
-          userId={session.user.id}
-          postId={route.postId}
-          query={route.query}
-          csrfToken={session.csrfToken}
-          onNavigate={onNavigate}
-          onQueryChange={replaceCurrentQuery}
-          onBeforeLeaveChange={(guard) => {
-            beforeLeave.current = guard;
-            onBeforeLeaveChange(guard);
-          }}
-        />
-      )}
-    </main>
+        {error?.courseId === courseId ? (
+          <div role="alert">
+            {error.message}{" "}
+            <button
+              className="text-button"
+              onClick={() => setCycle((value) => value + 1)}
+            >
+              Try again
+            </button>
+          </div>
+        ) : !visibleCourse ? (
+          <p role="status">Loading course…</p>
+        ) : settings ? (
+          <CourseDetail
+            key={courseId}
+            courseId={courseId}
+            course={visibleCourse}
+            onCourseChange={setCourse}
+            csrfToken={session.csrfToken}
+            onBack={() => onNavigate("/home")}
+            userId={session.user.id}
+          />
+        ) : (
+          <Discussion
+            courseId={courseId}
+            course={visibleCourse.data}
+            userId={session.user.id}
+            postId={route.postId}
+            query={route.query}
+            csrfToken={session.csrfToken}
+            onNavigate={onNavigate}
+            onQueryChange={replaceCurrentQuery}
+            onBeforeLeaveChange={(guard) => {
+              beforeLeave.current = guard;
+              onBeforeLeaveChange(guard);
+            }}
+          />
+        )}
+      </main>
+    </div>
   );
 }
 
@@ -777,6 +852,7 @@ export function App() {
         route={route}
         session={session}
         onNavigate={move}
+        onSignOut={signOut}
         onBeforeLeaveChange={(guard) => {
           beforeCourseLeave.current = guard;
         }}
