@@ -64,9 +64,13 @@ const discussionPath = (courseId: string, search = "") =>
   `/courses/${encodeURIComponent(courseId)}${search}`;
 const postPath = (courseId: string, postId: string, search = "") =>
   `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(postId)}${search}`;
+/** A plain-text preview: Markdown syntax goes, ordinary punctuation such as "(x)" or "p > 2" stays. */
 const excerpt = (value: string) =>
   value
-    .replace(/[#*_`>[\]()!]/g, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^[ \t]*(?:#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+|\d+[.)][ \t]+)/gm, "")
+    .replace(/(\*{1,3}|_{1,3})(?=\S)([^]*?\S)\1(?![\w*])/g, "$2")
+    .replace(/`+/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 150);

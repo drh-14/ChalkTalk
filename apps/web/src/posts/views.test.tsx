@@ -2472,3 +2472,30 @@ it("prompts to choose or start a post when nothing is selected", async () => {
   await user.click(screen.getByRole("button", { name: "Start a new post" }));
   expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
 });
+
+it("previews Markdown as plain text without dropping ordinary punctuation", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      page([
+        {
+          ...post("p1", "Math"),
+          bodyMarkdown:
+            "# Setup\n\nIs sqrt(x^2 - 9) equal to |3 tan(t)| when p > 2? Yes!\n\n- **Bold** and _italic_ with `code`\n> quoted [a link](https://example.com) and ![a figure](https://example.com/f.png)\n1. snake_case stays",
+        },
+      ]),
+    ),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const link = await screen.findByRole("link", { name: /Math/ });
+  expect(link.querySelector(".post-card-preview")?.textContent).toBe(
+    "Setup Is sqrt(x^2 - 9) equal to |3 tan(t)| when p > 2? Yes! Bold and italic with code quoted a link and a figure snake_case stays",
+  );
+});
