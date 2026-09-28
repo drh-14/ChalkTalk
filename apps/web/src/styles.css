@@ -285,6 +285,93 @@ body {
   min-height: 10rem;
   resize: vertical;
 }
+.post-body-field {
+  display: grid;
+  gap: 0.45rem;
+}
+.post-body-label {
+  font-weight: 600;
+}
+.post-body-mode,
+.post-format-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.post-format-toolbar[hidden] {
+  display: none;
+}
+.post-body-mode button,
+.post-format-toolbar button {
+  border: 1px solid #b9cbbd;
+  background: #fff;
+  color: #284337;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  font: inherit;
+  cursor: pointer;
+}
+.post-body-mode button[aria-pressed="true"] {
+  background: #e3efe7;
+  border-color: #487c60;
+}
+.post-body-mode button:focus-visible,
+.post-format-toolbar button:focus-visible,
+.post-source-editor .cm-focused {
+  outline: 2px solid #276f4d;
+  outline-offset: 2px;
+}
+.post-source-editor .cm-editor {
+  min-height: 12rem;
+  max-height: 28rem;
+  overflow: auto;
+  border: 1px solid #b9cbbd;
+  border-radius: 0.5rem;
+  background: #fff;
+  font-size: 0.95rem;
+}
+.post-source-editor .cm-content {
+  min-height: 11rem;
+  padding: 0.65rem;
+}
+.post-source-editor .invalid-math {
+  text-decoration: underline wavy #c62828 2px;
+  text-underline-offset: 0.2em;
+}
+.post-source-editor .post-editor-math {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  cursor: text;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.post-source-editor div.post-editor-math {
+  display: block;
+  padding: 0.2rem 0;
+}
+.post-source-editor .post-editor-math:focus-visible {
+  outline: 2px solid #276f4d;
+  outline-offset: 2px;
+}
+.post-math-diagnostics {
+  color: #a51d1d;
+  font-size: 0.85rem;
+}
+.post-math-diagnostics p {
+  margin: 0.3rem 0;
+}
+.post-preview {
+  min-height: 12rem;
+  padding: 0.65rem;
+  border: 1px solid #b9cbbd;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+.post-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
 .checkbox-label {
   display: flex;
   gap: 0.5rem;

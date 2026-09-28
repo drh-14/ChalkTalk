@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type UserConfig } from "vite";
+
+// The package's browser export uses document at import time, which is unavailable
+// in the Markdown validation worker. Its default export is DOM-free.
+const characterDecoder = createRequire(import.meta.url).resolve(
+  "decode-named-character-reference",
+);
 
 export function createViteConfig(
   environment: Record<string, string | undefined>,
@@ -9,6 +16,14 @@ export function createViteConfig(
   const cert = environment.VITE_TLS_CERT_PATH;
   return {
     plugins: [react()],
+    resolve: {
+      alias: [
+        {
+          find: "decode-named-character-reference",
+          replacement: characterDecoder,
+        },
+      ],
+    },
     server: {
       https:
         key && cert

@@ -7,8 +7,13 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import katex from "katex";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { getMathAnalysis } from "./mathDiagnostics.js";
 import { Discussion } from "./views.js";
+
+Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+Range.prototype.getBoundingClientRect = () => new DOMRect();
 
 const course = {
   id: "course-1",
@@ -45,11 +50,653 @@ const json = (body: unknown, status = 200) =>
   });
 const page = (posts: unknown[], cursor: string | null = null) =>
   json({ data: posts, page: { nextCursor: cursor, hasMore: !!cursor } });
+beforeEach(() => {
+  class AnalysisWorker {
+    onmessage: ((event: { data: unknown }) => void) | null = null;
+    postMessage({ version, source }: { version: number; source: string }) {
+      queueMicrotask(() =>
+        this.onmessage?.({ data: { version, ...getMathAnalysis(source) } }),
+      );
+    }
+    terminate() {}
+  }
+  vi.stubGlobal("Worker", AnalysisWorker);
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+it("offers formatting controls and previews the unsent post body", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Equation",
+  );
+  await user.click(screen.getByRole("button", { name: "Bold" }));
+  expect(
+    screen.getByRole("textbox", { name: "Post body" }).textContent,
+  ).toContain("****");
+  await user.keyboard("$x^2$");
+  await user.click(screen.getByRole("button", { name: "Preview" }));
+  expect(
+    screen
+      .getByRole("region", { name: "Post body preview" })
+      .querySelector("strong .katex"),
+  ).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Write" }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Equation",
+  );
+});
+
+it.each([
+  ["Bold", "**ptr**"],
+  ["Italic", "*ptr*"],
+  ["Inline code", "`ptr`"],
+  ["Inline math", "$ptr$"],
+])("wraps a real editor selection with %s syntax", async (button, expected) => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "ptr");
+  await user.keyboard(`{Shift>}${"{ArrowLeft}".repeat(3)}{/Shift}`);
+  await user.click(screen.getByRole("button", { name: button }));
+  expect(body.textContent).toBe(expected);
+  expect(document.activeElement).toBe(body);
+});
+
+it("places the link destination under the caret for immediate typing", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "notes");
+  await user.keyboard(`{Shift>}${"{ArrowLeft}".repeat(5)}{/Shift}`);
+  await user.click(screen.getByRole("button", { name: "Link" }));
+  expect(body.textContent).toBe("[notes](url)");
+  await user.keyboard("https://example.edu");
+  expect(body.textContent).toBe("[notes](https://example.edu)");
+});
+
+it.each([
+  ["Heading", "### one\n### two"],
+  ["Bulleted list", "- one\n- two"],
+  ["Numbered list", "1. one\n2. two"],
+  ["Block math", "$$\none\ntwo\n$$"],
+])("formats selected lines with %s in the editor", async (button, expected) => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "one{enter}two");
+  await user.keyboard(`{Shift>}${"{ArrowLeft}".repeat(7)}{/Shift}`);
+  await user.click(screen.getByRole("button", { name: button }));
+  expect(
+    Array.from(
+      body.querySelectorAll(".cm-line"),
+      (line) => line.textContent,
+    ).join("\n"),
+  ).toBe(expected);
+  expect(document.activeElement).toBe(body);
+});
+
+it("inserts math at the editor caret and removes a live LaTeX error when corrected", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(screen.getByRole("button", { name: "Inline math" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  expect(document.activeElement).toBe(body);
+  await user.keyboard("\\badcommand");
+  expect(body.textContent).toBe("$\\badcommand$");
+  expect(screen.getByLabelText("LaTeX diagnostics").textContent).toContain(
+    "LaTeX at position",
+  );
+  expect(body.querySelector(".invalid-math")).toBeTruthy();
+  await user.keyboard(`{Shift>}${"{ArrowLeft}".repeat(11)}{/Shift}x^2`);
+  expect(body.textContent).toBe("$x^2$");
+  expect(screen.getByLabelText("LaTeX diagnostics").textContent).toBe("");
+  expect(body.querySelector(".invalid-math")).toBeNull();
+});
+
+it("renders complete inline math in the editable body and reveals source on activation", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$x^2$ tail");
+  await waitFor(() =>
+    expect(body.querySelector(".post-editor-math .katex")).toBeTruthy(),
+  );
+  await user.click(body.querySelector(".post-editor-math")!);
+  expect(body.querySelector(".post-editor-math")).toBeNull();
+  expect(body.textContent).toContain("$x^2$ tail");
+  expect(document.activeElement).toBe(body);
+});
+
+it("renders standalone block math and reveals its source when a selection reaches it", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$${enter}x^2{enter}$${enter}tail");
+  await waitFor(() =>
+    expect(body.querySelector(".post-editor-math .katex-display")).toBeTruthy(),
+  );
+  await user.keyboard("{Control>}{a}{/Control}");
+  expect(body.querySelector(".post-editor-math")).toBeNull();
+  expect(body.textContent).toContain("$$");
+});
+
+it("reveals inline source when the keyboard caret reaches either formula boundary", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "a $x^2$ z");
+  await waitFor(() =>
+    expect(body.querySelector(".post-editor-math")).toBeTruthy(),
+  );
+  await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowLeft}");
+  expect(body.querySelector(".post-editor-math")).toBeNull();
+  expect(body.textContent).toBe("a $x^2$ z");
+});
+
+it("shows source and an accessible error when rendered math becomes invalid, then rerenders after correction", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$x^2$ tail");
+  await waitFor(() =>
+    expect(body.querySelector(".post-editor-math")).toBeTruthy(),
+  );
+  await user.click(body.querySelector(".post-editor-math")!);
+  await user.keyboard("{Control>}{a}{/Control}$\\badcommand$ tail");
+  expect(body.querySelector(".post-editor-math")).toBeNull();
+  await waitFor(() => expect(body.querySelector(".invalid-math")).toBeTruthy());
+  expect(screen.getByLabelText("LaTeX diagnostics").textContent).toContain(
+    "LaTeX at position",
+  );
+  await user.keyboard("{Control>}{a}{/Control}$x^2$ tail");
+  await waitFor(() =>
+    expect(body.querySelector(".post-editor-math")).toBeTruthy(),
+  );
+  expect(screen.getByLabelText("LaTeX diagnostics").textContent).toBe("");
+});
+
+it("submits the original math Markdown even while its formula is rendered in the editor", async () => {
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+    init?.method === "POST"
+      ? json({ data: post("new-post", "Math question") }, 201)
+      : page([]),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Math question",
+  );
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$x^2$ tail");
+  await waitFor(() =>
+    expect(body.querySelector(".post-editor-math")).toBeTruthy(),
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  expect(JSON.parse(create[1]?.body as string).bodyMarkdown).toBe("$x^2$ tail");
+});
+
+it("publishes the exact indented Markdown body with trailing whitespace", async () => {
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+    init?.method === "POST"
+      ? json({ data: post("new-post", "Code") }, 201)
+      : page([]),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "Code");
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "    code  ");
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  expect(JSON.parse(create[1]?.body as string).bodyMarkdown).toBe("    code  ");
+});
+
+it("rejects a whitespace-only Markdown body", async () => {
+  const fetchMock = vi.fn<typeof fetch>(async () => page([]));
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "Code");
+  await user.type(screen.getByRole("textbox", { name: "Post body" }), "    ");
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  expect(screen.getByRole("alert").textContent).toContain(
+    "Post body must be between 1 and 100,000 characters.",
+  );
+  expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(
+    false,
+  );
+});
+
+it("copies, pastes, and undoes formula source rather than rendered math", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$x^2$ tail");
+  await waitFor(() =>
+    expect(body.querySelector(".post-editor-math")).toBeTruthy(),
+  );
+  await user.keyboard("{Control>}{a}{/Control}");
+  const clipboard = await user.copy();
+  expect(clipboard?.getData("text/plain")).toBe("$x^2$ tail");
+  await user.keyboard("{ArrowRight}");
+  await user.paste(" $y^2$");
+  await user.keyboard("{Control>}{a}{/Control}");
+  expect((await user.copy())?.getData("text/plain")).toBe("$x^2$ tail $y^2$");
+  await user.keyboard("{Control>}{z}{/Control}");
+  await user.keyboard("{Control>}{a}{/Control}");
+  expect((await user.copy())?.getData("text/plain")).toBe("$x^2$ tail");
+});
+
+it("applies toolbar syntax at the raw caret after a rendered formula is opened", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$x^2$ tail");
+  await waitFor(() =>
+    expect(body.querySelector(".post-editor-math")).toBeTruthy(),
+  );
+  await user.click(screen.getByRole("button", { name: "Edit inline math" }));
+  await user.click(screen.getByRole("button", { name: "Bold" }));
+  expect(body.textContent).toBe("$****x^2$ tail");
+  expect(document.activeElement).toBe(body);
+});
+
+it("ignores older worker diagnostics after the author edits the body again", async () => {
+  type Reply = {
+    version: number;
+    diagnostics: { from: number; to: number; message: string }[];
+    formulas?: {
+      from: number;
+      to: number;
+      tex: string;
+      displayMode: boolean;
+    }[];
+  };
+  const messages: { version: number; source: string }[] = [];
+  let emit: (event: { data: Reply }) => void = () => {};
+  class FakeWorker {
+    onmessage: ((event: { data: Reply }) => void) | null = null;
+    postMessage(message: { version: number; source: string }) {
+      messages.push(message);
+      emit = (event) => this.onmessage?.(event);
+    }
+    terminate() {}
+  }
+  vi.stubGlobal("Worker", FakeWorker);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$\\badcommand$");
+  const old = messages.at(-1)!;
+  expect(messages).toHaveLength(old.source.length);
+  await user.keyboard("x");
+  const latest = messages.at(-1)!;
+  expect(latest.version).toBeGreaterThan(old.version);
+  emit({
+    data: {
+      version: old.version,
+      diagnostics: [{ from: 0, to: old.source.length, message: "Old error" }],
+    },
+  });
+  expect(screen.getByLabelText("LaTeX diagnostics").textContent).not.toContain(
+    "Old error",
+  );
+  emit({ data: { version: latest.version, diagnostics: [] } });
+  expect(body.querySelector(".invalid-math")).toBeNull();
+  emit({
+    data: {
+      version: old.version,
+      diagnostics: [],
+      formulas: [{ from: 0, to: 5, tex: "x^2", displayMode: false }],
+    },
+  });
+  expect(body.querySelector(".post-editor-math")).toBeNull();
+});
+
+it("keeps the post body editable if LaTeX checking fails", async () => {
+  class BrokenWorker {
+    postMessage() {
+      throw new Error("worker unavailable");
+    }
+    terminate() {}
+  }
+  vi.stubGlobal("Worker", BrokenWorker);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "Still editable");
+  expect(body.textContent).toBe("Still editable");
+  await user.keyboard("!");
+  expect(body.textContent).toBe("Still editable!");
+  await user.keyboard(" $x^2$ $\\badcommand$");
+  expect(body.textContent).toBe("Still editable! $x^2$ $\\badcommand$");
+  expect(body.querySelector(".post-editor-math, .invalid-math")).toBeNull();
+  expect(screen.getByLabelText("LaTeX diagnostics").textContent).toContain(
+    "unavailable",
+  );
+});
+
+it("keeps raw Markdown editable when the math worker cannot be constructed", async () => {
+  vi.stubGlobal(
+    "Worker",
+    class {
+      constructor() {
+        throw new Error("worker unavailable");
+      }
+    },
+  );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$x^2$ $\\badcommand$");
+  expect(body.textContent).toBe("$x^2$ $\\badcommand$");
+  expect(body.querySelector(".post-editor-math, .invalid-math")).toBeNull();
+  expect(screen.getByLabelText("LaTeX diagnostics").textContent).toContain(
+    "unavailable",
+  );
+});
+
+it("reveals previously rendered source if the math worker later fails", async () => {
+  const workers: FakeWorker[] = [];
+  class FakeWorker {
+    onmessage: ((event: { data: unknown }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    last: { version: number; source: string } | null = null;
+    constructor() {
+      workers.push(this);
+    }
+    postMessage(message: { version: number; source: string }) {
+      this.last = message;
+    }
+    terminate() {}
+  }
+  vi.stubGlobal("Worker", FakeWorker);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$x^2$ tail");
+  const activeWorker = workers.at(-1)!;
+  activeWorker.onmessage?.({
+    data: {
+      version: activeWorker.last!.version,
+      diagnostics: [],
+      formulas: [{ from: 0, to: 5, tex: "x^2", displayMode: false }],
+    },
+  });
+  expect(body.querySelector(".post-editor-math")).toBeTruthy();
+  activeWorker.onerror?.();
+  expect(body.querySelector(".post-editor-math")).toBeNull();
+  expect(body.textContent).toBe("$x^2$ tail");
+  activeWorker.onmessage?.({
+    data: {
+      version: activeWorker.last!.version,
+      diagnostics: [],
+      formulas: [{ from: 0, to: 5, tex: "x^2", displayMode: false }],
+    },
+  });
+  expect(body.querySelector(".post-editor-math")).toBeNull();
+  await waitFor(() =>
+    expect(screen.getByLabelText("LaTeX diagnostics").textContent).toContain(
+      "unavailable",
+    ),
+  );
+  await user.keyboard("{End} $y^2$");
+  expect(body.textContent).toBe("$x^2$ tail $y^2$");
+  expect(body.querySelector(".post-editor-math, .invalid-math")).toBeNull();
+});
+
+it("reveals raw source when the external math renderer fails in the editor", async () => {
+  vi.spyOn(katex, "render").mockImplementation(() => {
+    throw new Error("DOM rendering unavailable");
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const body = screen.getByRole("textbox", { name: "Post body" });
+  await user.type(body, "$x^2$ tail");
+  await waitFor(() => expect(body.textContent).toBe("$x^2$ tail"));
+  expect(body.querySelector(".post-editor-math")).toBeNull();
 });
 
 it("keeps the controls above a focusable scroll region for posts and duplicates", async () => {
@@ -272,7 +919,7 @@ it("shows the selected duplicate's retained detail instead of the canonical post
         return json({
           data: {
             ...post("merged-1", "Old question"),
-            bodyMarkdown: "Private retained body",
+            bodyMarkdown: "Private retained body with $x^2$",
             tags: ["cutoffs"],
             duplicateStatus: "confirmed",
             duplicateOfPostId: "canonical-1",
@@ -307,6 +954,7 @@ it("shows the selected duplicate's retained detail instead of the canonical post
   expect(card?.classList.contains("selected")).toBe(true);
   const detail = screen.getByRole("region", { name: "Post detail" });
   expect(detail.textContent).toContain("Private retained body");
+  expect(detail.querySelector(".katex")).toBeTruthy();
   expect(detail.textContent).toContain("cutoffs");
   expect(detail.textContent).toContain("Canonical question");
   expect(detail.textContent).not.toContain("Canonical body");
@@ -916,8 +1564,7 @@ it("shows a mobile Back to posts action for the composer and confirms draft disc
   );
   await user.click(screen.getByRole("button", { name: /Back to posts/ }));
   expect(confirm).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("textbox", { name: "Post body" })).toHaveProperty(
-    "value",
+  expect(screen.getByRole("textbox", { name: "Post body" }).textContent).toBe(
     "Draft body",
   );
   confirm.mockReturnValue(true);
@@ -952,18 +1599,27 @@ it("keeps a failed creation draft and navigates to the returned post after retry
     screen.getByRole("textbox", { name: "Post body" }),
     "Please explain it",
   );
+  await user.keyboard(" ");
+  await user.click(screen.getByRole("button", { name: "Inline math" }));
+  await user.keyboard("x^2");
   await user.click(screen.getByRole("button", { name: "Publish post" }));
   await screen.findByText("Try again");
   expect(
     (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
       .value,
   ).toBe("My question");
+  expect(screen.getByRole("textbox", { name: "Post body" }).textContent).toBe(
+    "Please explain it $x^2$",
+  );
   await user.click(screen.getByRole("button", { name: "Publish post" }));
   await waitFor(() =>
     expect(navigate).toHaveBeenCalledWith("/courses/course-1/posts/new-post"),
   );
   const posts = fetchMock.mock.calls.filter(
     ([, init]) => init?.method === "POST",
+  );
+  expect(JSON.parse(posts[0]?.[1]?.body as string).bodyMarkdown).toBe(
+    "Please explain it $x^2$",
   );
   expect(posts[0]?.[1]?.headers).toMatchObject({
     "X-CSRF-Token": "csrf",
@@ -1055,7 +1711,7 @@ it("shows a direct post with viewer-projected author and blocks hostile Markdown
           data: {
             ...post("p1", "Safe post"),
             bodyMarkdown:
-              "<script>alert(1)</script>\n\n[bad](javascript:alert(1)) **good**",
+              "<script>alert(1)</script>\n\n[bad](javascript:alert(1)) **good** and $x^2$",
           },
         });
       return page([]);
@@ -1074,6 +1730,9 @@ it("shows a direct post with viewer-projected author and blocks hostile Markdown
   expect(document.querySelector("script")).toBeNull();
   expect(document.querySelector('a[href^="javascript:"]')).toBeNull();
   expect(screen.getByText("good")).toBeTruthy();
+  expect(
+    screen.getByRole("region", { name: "Post detail" }).querySelector(".katex"),
+  ).toBeTruthy();
 });
 
 it("bounds debounced related-question requests to ten results while title and body both contribute", async () => {
@@ -1317,8 +1976,8 @@ it("rejects an overlong body before sending creation", async () => {
     screen.getByRole("textbox", { name: "Post title" }),
     "Question title",
   );
-  fireEvent.change(screen.getByRole("textbox", { name: "Post body" }), {
-    target: { value: "b".repeat(100001) },
+  fireEvent.paste(screen.getByRole("textbox", { name: "Post body" }), {
+    clipboardData: { getData: () => "b".repeat(100001) },
   });
   await user.click(screen.getByRole("button", { name: "Publish post" }));
   expect(screen.getByRole("alert").textContent).toContain("100,000 characters");
@@ -1438,8 +2097,8 @@ it("uses the whole long title and caps body-derived suggestion terms", async () 
   fireEvent.change(screen.getByRole("textbox", { name: "Post title" }), {
     target: { value: title },
   });
-  fireEvent.change(screen.getByRole("textbox", { name: "Post body" }), {
-    target: { value: `bodyterm ${"z".repeat(99990)}` },
+  fireEvent.paste(screen.getByRole("textbox", { name: "Post body" }), {
+    clipboardData: { getData: () => `bodyterm ${"z".repeat(99990)}` },
   });
   await waitFor(
     () => expect(urls.some((url) => url.includes("type=question"))).toBe(true),

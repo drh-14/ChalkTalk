@@ -1,10 +1,28 @@
 // @vitest-environment node
 
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createViteConfig } from "./vite.config.js";
 
 describe("Vite development configuration", () => {
+  it("resolves the character-reference decoder to a worker-safe implementation", async () => {
+    const configuration = createViteConfig({});
+    const aliases = configuration.resolve?.alias;
+    expect(Array.isArray(aliases)).toBe(true);
+    const decoderPath = (
+      aliases as { find: string; replacement: string }[]
+    ).find(
+      (alias) => alias.find === "decode-named-character-reference",
+    )?.replacement;
+    expect(decoderPath).toBeTruthy();
+    const decoder = await import(pathToFileURL(decoderPath!).href);
+    expect(decoder.decodeNamedCharacterReference("amp")).toBe("&");
+    expect(decoder.decodeNamedCharacterReference("not-a-reference")).toBe(
+      false,
+    );
+  });
+
   it("forwards API requests to the host API by default", () => {
     const configuration = createViteConfig({});
 

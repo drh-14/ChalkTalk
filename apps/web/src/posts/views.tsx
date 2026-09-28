@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import ReactMarkdown from "react-markdown";
+import { PostBody } from "./PostBody.js";
+import { PostEditor, type PostEditorHandle } from "./PostEditor.js";
+import type { FormatAction } from "./formatting.js";
 import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
@@ -66,6 +68,8 @@ function Composer({
   const [type, setType] = useState<"question" | "note">("question");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [preview, setPreview] = useState(false);
+  const editor = useRef<PostEditorHandle>(null);
   const [anonymous, setAnonymous] = useState(false);
   const [tags, setTags] = useState("");
   const [pending, setPending] = useState(false);
@@ -127,7 +131,7 @@ function Composer({
     const input: CreatePostInput = {
       type,
       title: title.trim(),
-      bodyMarkdown: body.trim(),
+      bodyMarkdown: body,
       anonymous,
       tags: tags
         .split(",")
@@ -138,7 +142,7 @@ function Composer({
       setError("Post title must be between 1 and 200 characters.");
       return;
     }
-    if (!input.bodyMarkdown || input.bodyMarkdown.length > 100000) {
+    if (!input.bodyMarkdown.trim() || input.bodyMarkdown.length > 100000) {
       setError("Post body must be between 1 and 100,000 characters.");
       return;
     }
@@ -193,15 +197,70 @@ function Composer({
             required
           />
         </label>
-        <label>
-          Post body
-          <textarea
-            aria-label="Post body"
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            required
-          />
-        </label>
+        <div className="post-body-field">
+          <span className="post-body-label">Post body</span>
+          <div className="post-body-mode">
+            <button
+              type="button"
+              aria-pressed={!preview}
+              onClick={() => setPreview(false)}
+            >
+              Write
+            </button>
+            <button
+              type="button"
+              aria-pressed={preview}
+              onClick={() => setPreview(true)}
+            >
+              Preview
+            </button>
+          </div>
+          <div
+            className="post-format-toolbar"
+            role="toolbar"
+            aria-label="Post body formatting"
+            hidden={preview}
+          >
+            {(
+              [
+                ["bold", "Bold"],
+                ["italic", "Italic"],
+                ["heading", "Heading"],
+                ["link", "Link"],
+                ["bullet-list", "Bulleted list"],
+                ["numbered-list", "Numbered list"],
+                ["code", "Inline code"],
+                ["inline-math", "Inline math"],
+                ["block-math", "Block math"],
+              ] as [FormatAction, string][]
+            ).map(([action, label]) => (
+              <button
+                key={action}
+                type="button"
+                aria-label={label}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => editor.current?.format(action)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div hidden={preview}>
+            <PostEditor ref={editor} value={body} onChange={setBody} />
+          </div>
+          {preview && (
+            <div
+              className="post-markdown post-preview"
+              role="region"
+              aria-label="Post body preview"
+            >
+              <PostBody bodyMarkdown={body} />
+            </div>
+          )}
+          <small>
+            Use $…$ for inline math and standalone $$ lines for block math.
+          </small>
+        </div>
         <label>
           Tags (comma-separated)
           <input
@@ -894,7 +953,7 @@ function DiscussionContent({
                     {reviewDetail.author.displayName}
                   </p>
                   <div className="post-markdown">
-                    <ReactMarkdown>{reviewDetail.bodyMarkdown}</ReactMarkdown>
+                    <PostBody bodyMarkdown={reviewDetail.bodyMarkdown} />
                   </div>
                   {reviewDetail.tags.length > 0 && (
                     <p>Tags: {reviewDetail.tags.join(", ")}</p>
@@ -963,7 +1022,7 @@ function DiscussionContent({
                   <h2>{detail.title}</h2>
                   <p className="post-author">{detail.author.displayName}</p>
                   <div className="post-markdown">
-                    <ReactMarkdown>{detail.bodyMarkdown}</ReactMarkdown>
+                    <PostBody bodyMarkdown={detail.bodyMarkdown} />
                   </div>
                   {staff && postView === "posts" && (
                     <MergeControl
