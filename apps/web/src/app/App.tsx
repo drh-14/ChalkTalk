@@ -518,6 +518,7 @@ function AppBar({
   onSignOut,
   canLeave,
   onHomeClick,
+  tabs,
   children,
 }: {
   variant: "home" | "course";
@@ -525,6 +526,7 @@ function AppBar({
   onSignOut: () => Promise<void>;
   canLeave?: () => boolean;
   onHomeClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  tabs?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -536,6 +538,7 @@ function AppBar({
           </a>
           {children}
         </div>
+        {tabs}
         <AccountControls
           session={session}
           onSignOut={onSignOut}
@@ -600,6 +603,18 @@ function Home({
   );
 }
 
+function CourseResources() {
+  return (
+    <section className="course-placeholder" aria-labelledby="resources-title">
+      <h2 id="resources-title">Course resources</h2>
+      <p>
+        Lecture notes, slides, and other course files will appear here. Sharing
+        resources isn't available yet.
+      </p>
+    </section>
+  );
+}
+
 function CourseFrame({
   route,
   session,
@@ -638,8 +653,26 @@ function CourseFrame({
   useEffect(() => {
     if (visibleCourse) headingRef.current?.focus();
   }, [route.name, visibleCourse]);
-  const settings = route.name === "course-settings";
+  const section =
+    route.name === "course-settings"
+      ? "settings"
+      : route.name === "course-resources"
+        ? "resources"
+        : "discussion";
   const discussionPath = `/courses/${encodeURIComponent(courseId)}`;
+  const tabs = [
+    { key: "discussion", label: "Discussion", path: discussionPath },
+    {
+      key: "resources",
+      label: "Course resources",
+      path: `${discussionPath}/resources`,
+    },
+    {
+      key: "settings",
+      label: "Course settings",
+      path: `${discussionPath}/settings`,
+    },
+  ];
   function follow(event: MouseEvent<HTMLAnchorElement>, path: string) {
     if (
       event.button !== 0 ||
@@ -653,61 +686,50 @@ function CourseFrame({
     if (beforeLeave.current()) onNavigate(path);
   }
   return (
-    <div className={`course-page${settings ? "" : " discussion"}`}>
+    <div
+      className={`course-page${section === "discussion" ? " discussion" : ""}`}
+    >
       <AppBar
         variant="course"
         session={session}
         onSignOut={onSignOut}
         canLeave={() => beforeLeave.current()}
         onHomeClick={(event) => follow(event, "/home")}
+        tabs={
+          <nav className="course-tabs" aria-label="Course navigation">
+            {tabs.map((tab) => (
+              <a
+                key={tab.key}
+                href={tab.path}
+                aria-current={section === tab.key ? "page" : undefined}
+                onClick={(event) => follow(event, tab.path)}
+              >
+                {tab.label}
+              </a>
+            ))}
+          </nav>
+        }
       >
         <a
-          className="text-button"
+          className="app-bar-back"
           href="/home"
           onClick={(event) => follow(event, "/home")}
         >
-          ← All courses
+          All courses
         </a>
+        <div className="app-bar-course">
+          <h1 ref={headingRef} tabIndex={-1}>
+            {visibleCourse?.data.name ??
+              (error?.courseId === courseId
+                ? "Course unavailable"
+                : "Loading course…")}
+          </h1>
+          {visibleCourse && visibleCourse.data.status !== "active" && (
+            <span className="course-status">{visibleCourse.data.status}</span>
+          )}
+        </div>
       </AppBar>
       <main className="discussion-shell">
-        <div className="discussion-header">
-          <div className="course-identity">
-            {visibleCourse && (
-              <span className="course-icon amber" aria-hidden="true">
-                {visibleCourse.data.name.slice(0, 2).toUpperCase()}
-              </span>
-            )}
-            <div>
-              {visibleCourse && (
-                <p className="course-eyebrow">
-                  {visibleCourse.data.status} course
-                </p>
-              )}
-              <h1 ref={headingRef} tabIndex={-1}>
-                {visibleCourse?.data.name ??
-                  (error?.courseId === courseId
-                    ? "Course unavailable"
-                    : "Loading course…")}
-              </h1>
-            </div>
-          </div>
-          <nav aria-label="Course navigation">
-            <a
-              href={discussionPath}
-              aria-current={!settings ? "page" : undefined}
-              onClick={(event) => follow(event, discussionPath)}
-            >
-              Discussion
-            </a>
-            <a
-              href={`${discussionPath}/settings`}
-              aria-current={settings ? "page" : undefined}
-              onClick={(event) => follow(event, `${discussionPath}/settings`)}
-            >
-              Course settings
-            </a>
-          </nav>
-        </div>
         {error?.courseId === courseId ? (
           <div role="alert">
             {error.message}{" "}
@@ -720,7 +742,9 @@ function CourseFrame({
           </div>
         ) : !visibleCourse ? (
           <p role="status">Loading course…</p>
-        ) : settings ? (
+        ) : section === "resources" ? (
+          <CourseResources />
+        ) : section === "settings" ? (
           <CourseDetail
             key={courseId}
             courseId={courseId}
@@ -813,7 +837,8 @@ export function App() {
           route.name === "home" ||
           route.name === "course" ||
           route.name === "post" ||
-          route.name === "course-settings"
+          route.name === "course-settings" ||
+          route.name === "course-resources"
         )
           move("/");
       })
@@ -843,7 +868,8 @@ export function App() {
   if (
     (route.name === "course" ||
       route.name === "post" ||
-      route.name === "course-settings") &&
+      route.name === "course-settings" ||
+      route.name === "course-resources") &&
     route.courseId &&
     session
   )

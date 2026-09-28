@@ -1740,3 +1740,147 @@ it("shows answer sections under questions only", async () => {
     ).toBeNull();
   }
 });
+
+function feedRequests(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls
+    .map(([url]) => new URL(String(url), "https://example.edu"))
+    .filter((url) => url.pathname === "/api/v1/courses/course-1/posts");
+}
+
+it("filters the feed from the sidebar and keeps the filter when loading more", async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    const params = new URL(url, "https://example.edu").searchParams;
+    if (params.get("cursor")) return page([post("p9", "Later question")]);
+    return page(
+      [post(`p-${params.toString() || "all"}`, `Feed ${params}`)],
+      "next",
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
+  );
+  const sidebar = await screen.findByRole("complementary", {
+    name: "Post filters",
+  });
+  const filter = (name: string) =>
+    within(sidebar).getByRole("button", { name });
+  expect(
+    ["All posts", "Questions", "Notes", "Unanswered"].map((name) =>
+      filter(name).getAttribute("aria-pressed"),
+    ),
+  ).toEqual(["true", "false", "false", "false"]);
+  await screen.findByText("Feed");
+  expect(feedRequests(fetchMock).at(-1)!.search).toBe("");
+
+  await user.click(filter("Questions"));
+  await screen.findByText("Feed type=question");
+  expect(filter("Questions").getAttribute("aria-pressed")).toBe("true");
+  expect(filter("All posts").getAttribute("aria-pressed")).toBe("false");
+  await user.click(filter("Notes"));
+  await screen.findByText("Feed type=note");
+  expect(screen.queryByText("Feed type=question")).toBeNull();
+  await user.click(filter("Unanswered"));
+  await screen.findByText("Feed answered=false");
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await screen.findByText("Later question");
+  const more = feedRequests(fetchMock).at(-1)!.searchParams;
+  expect(more.get("cursor")).toBe("next");
+  expect(more.get("answered")).toBe("false");
+  await user.click(filter("All posts"));
+  await screen.findByText("Feed");
+});
+
+it("sorts the feed and offers best match only while searching", async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  const view = render(
+    <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
+  );
+  const sort = (await screen.findByRole("combobox", {
+    name: "Sort by",
+  })) as HTMLSelectElement;
+  expect(sort.value).toBe("recent_activity");
+  expect([...sort.options].map((option) => option.value)).toEqual([
+    "recent_activity",
+    "newest",
+  ]);
+  await user.selectOptions(sort, "newest");
+  await waitFor(() =>
+    expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
+      "newest",
+    ),
+  );
+
+  await user.selectOptions(sort, "recent_activity");
+  view.rerender(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      query="cutoff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(feedRequests(fetchMock).at(-1)!.searchParams.get("q")).toBe(
+      "cutoff",
+    ),
+  );
+  await waitFor(() => expect(sort.value).toBe("relevance"));
+  expect([...sort.options].map((option) => option.textContent)).toEqual([
+    "Best match",
+    "Recent activity",
+    "Newest",
+  ]);
+  expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
+    "relevance",
+  );
+  await user.selectOptions(sort, "newest");
+  await waitFor(() => {
+    const params = feedRequests(fetchMock).at(-1)!.searchParams;
+    expect(params.get("q")).toBe("cutoff");
+    expect(params.get("sort")).toBe("newest");
+  });
+});
+
+it("disables the sidebar filters in the staff duplicate view", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/members/user-staff"))
+        return json({ data: { role: "ta" } });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.selectOptions(
+    await screen.findByRole("combobox", { name: "Post view" }),
+    "Duplicate posts",
+  );
+  const sidebar = screen.getByRole("complementary", { name: "Post filters" });
+  expect(
+    within(sidebar)
+      .getByRole("button", { name: "Questions" })
+      .matches(":disabled"),
+  ).toBe(true);
+  expect(
+    within(sidebar)
+      .getByRole("combobox", { name: "Sort by" })
+      .matches(":disabled"),
+  ).toBe(true);
+});

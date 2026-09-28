@@ -91,6 +91,11 @@ describe("routes", () => {
         new URL("https://app.example.edu/courses/abc/settings"),
       ),
     ).toEqual({ name: "course-settings", courseId: "abc" });
+    expect(
+      routeFromLocation(
+        new URL("https://app.example.edu/courses/abc/resources"),
+      ),
+    ).toEqual({ name: "course-resources", courseId: "abc" });
   });
 
   it("restores submitted q and selection from browser history", async () => {

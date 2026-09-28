@@ -14,8 +14,39 @@ import {
   type MergedPost,
   type Post,
   type PostDetail,
+  type PostListOptions,
+  type PostSort,
 } from "./client.js";
 import { formatPostTime } from "./time.js";
+
+const FEED_FILTERS = [
+  { key: "all", label: "All posts" },
+  { key: "questions", label: "Questions" },
+  { key: "notes", label: "Notes" },
+  { key: "unanswered", label: "Unanswered" },
+] as const;
+type FeedFilter = (typeof FEED_FILTERS)[number]["key"];
+/** Builds the course feed request; a search always sends its sort, otherwise only a non-default one. */
+function feedOptions(
+  query: string | undefined,
+  filter: FeedFilter,
+  sort: PostSort,
+): PostListOptions {
+  return {
+    ...(query
+      ? { q: query, sort }
+      : sort !== "recent_activity"
+        ? { sort }
+        : {}),
+    ...(filter === "questions"
+      ? { type: "question" as const }
+      : filter === "notes"
+        ? { type: "note" as const }
+        : filter === "unanswered"
+          ? { answered: false }
+          : {}),
+  };
+}
 
 const message = (error: unknown) =>
   error instanceof Error
@@ -434,6 +465,12 @@ function DiscussionContent({
   const [staff, setStaff] = useState(false);
   const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
+  const [filter, setFilter] = useState<FeedFilter>("all");
+  // A chosen sort belongs to the search it was chosen for; a new search starts at best match.
+  const [sortChoice, setSortChoice] = useState<{
+    query: string | undefined;
+    sort: PostSort;
+  }>();
   const [reviewError, setReviewError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -502,6 +539,14 @@ function DiscussionContent({
     }, 300);
     return () => window.clearTimeout(timer);
   }, [draftQuery, onQueryChange, query]);
+  const sort: PostSort =
+    sortChoice &&
+    sortChoice.query === query &&
+    (query || sortChoice.sort !== "relevance")
+      ? sortChoice.sort
+      : query
+        ? "relevance"
+        : "recent_activity";
   useEffect(() => {
     const generation = ++currentFeed.current;
     const controller = new AbortController();
@@ -514,7 +559,11 @@ function DiscussionContent({
     setPagePending(false);
     pageBusy.current = false;
     const options = {
-      ...(query ? { q: query, sort: "relevance" as const } : {}),
+      ...(postView === "duplicates"
+        ? query
+          ? { q: query, sort: "relevance" as const }
+          : {}
+        : feedOptions(query, filter, sort)),
       signal: controller.signal,
     };
     void (
@@ -542,7 +591,7 @@ function DiscussionContent({
       if (currentFeed.current === generation)
         currentFeed.current = generation + 1;
     };
-  }, [courseId, query, feedCycle, postView]);
+  }, [courseId, query, feedCycle, postView, filter, sort]);
   useEffect(() => {
     if (!postId) {
       setDetail(undefined);
@@ -605,7 +654,11 @@ function DiscussionContent({
     setPageError("");
     const generation = currentFeed.current;
     const options = {
-      ...(query ? { q: query, sort: "relevance" as const } : {}),
+      ...(postView === "duplicates"
+        ? query
+          ? { q: query, sort: "relevance" as const }
+          : {}
+        : feedOptions(query, filter, sort)),
       cursor,
     };
     void (
@@ -722,6 +775,39 @@ function DiscussionContent({
       <div
         className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}`}
       >
+        <aside className="discussion-sidebar" aria-label="Post filters">
+          <fieldset disabled={postView === "duplicates"}>
+            <legend>Show</legend>
+            <div className="sidebar-filters">
+              {FEED_FILTERS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  aria-pressed={filter === item.key}
+                  onClick={() => setFilter(item.key)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <label className="sidebar-sort">
+              Sort by
+              <select
+                value={sort}
+                onChange={(event) =>
+                  setSortChoice({
+                    query,
+                    sort: event.target.value as PostSort,
+                  })
+                }
+              >
+                {query && <option value="relevance">Best match</option>}
+                <option value="recent_activity">Recent activity</option>
+                <option value="newest">Newest</option>
+              </select>
+            </label>
+          </fieldset>
+        </aside>
         <section className="discussion-feed" aria-label="Posts">
           {staff && (
             <label className="post-view-picker">

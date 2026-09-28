@@ -82,3 +82,16 @@ it("recognizes a merged-post HTTP redirect without displaying the source", async
     redirectToPostId: "canonical-1",
   });
 });
+
+it("sends type, answered, and sort filters for the course feed", async () => {
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+    json({ data: [], page: { nextCursor: null, hasMore: false } }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { type: "note", sort: "newest" });
+  await listPosts("course-1", { answered: false, cursor: "next" });
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/v1/courses/course-1/posts?sort=newest&type=note",
+    "/api/v1/courses/course-1/posts?cursor=next&answered=false",
+  ]);
+});

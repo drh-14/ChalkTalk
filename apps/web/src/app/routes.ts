@@ -5,7 +5,8 @@ export type RouteName =
   | "home"
   | "course"
   | "post"
-  | "course-settings";
+  | "course-settings"
+  | "course-resources";
 
 export type Route = {
   name: RouteName;
@@ -18,6 +19,7 @@ export type Route = {
 export function routeForPath(pathname: string): RouteName {
   if (/^\/courses\/[^/]+\/posts\/[^/]+$/.test(pathname)) return "post";
   if (/^\/courses\/[^/]+\/settings$/.test(pathname)) return "course-settings";
+  if (/^\/courses\/[^/]+\/resources$/.test(pathname)) return "course-resources";
   if (/^\/courses\/[^/]+$/.test(pathname)) return "course";
   switch (pathname) {
     case "/verify-email":
@@ -38,7 +40,8 @@ export function routeFromLocation(location: URL): Route {
     return { name, token: location.searchParams.get("token") || undefined };
   const parts = location.pathname.split("/");
   const courseId = parts[2];
-  if (name === "course-settings") return { name, courseId };
+  if (name === "course-settings" || name === "course-resources")
+    return { name, courseId };
   const query = location.searchParams.get("q") || undefined;
   return {
     name,
