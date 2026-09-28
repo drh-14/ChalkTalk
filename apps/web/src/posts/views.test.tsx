@@ -1774,22 +1774,37 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
   });
   const filter = (name: string) =>
     within(sidebar).getByRole("button", { name });
-  const order = [
-    "All posts",
-    "My posts",
-    "Questions",
-    "Answered",
-    "Unanswered",
-    "Notes",
-  ];
   expect(
     within(sidebar)
       .getAllByRole("button")
       .map((button) => button.textContent),
-  ).toEqual(order);
+  ).toEqual([
+    "All posts",
+    "My posts",
+    "Instructor posts",
+    "TA posts",
+    "Questions",
+    "Answered",
+    "Unanswered",
+    "Pinned",
+    "Notes",
+    "Pinned",
+  ]);
+  const names = [
+    "All posts",
+    "My posts",
+    "Instructor posts",
+    "TA posts",
+    "Questions",
+    "Answered",
+    "Unanswered",
+    "Pinned questions",
+    "Notes",
+    "Pinned notes",
+  ];
   expect(
-    order.map((name) => filter(name).getAttribute("aria-pressed")),
-  ).toEqual(["true", "false", "false", "false", "false", "false"]);
+    names.map((name) => filter(name).getAttribute("aria-pressed")),
+  ).toEqual(["true", ...names.slice(1).map(() => "false")]);
   await screen.findByText("Feed");
   expect(feedRequests(fetchMock).at(-1)!.search).toBe("");
 
@@ -1802,6 +1817,16 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
   expect(screen.queryByText("Feed type=question")).toBeNull();
   await user.click(filter("My posts"));
   await screen.findByText("Feed authorId=user-me");
+  await user.click(filter("Instructor posts"));
+  await screen.findByText("Feed authorRole=instructor");
+  await user.click(filter("TA posts"));
+  await screen.findByText("Feed authorRole=ta");
+  await user.click(filter("Pinned questions"));
+  await screen.findByText("Feed type=question&pinned=true");
+  await user.click(filter("Pinned notes"));
+  await screen.findByText("Feed type=note&pinned=true");
+  expect(filter("Pinned notes").getAttribute("aria-pressed")).toBe("true");
+  expect(filter("Pinned questions").getAttribute("aria-pressed")).toBe("false");
   await user.click(filter("Answered"));
   await screen.findByText("Feed answered=true");
   await user.click(filter("Unanswered"));
@@ -1833,7 +1858,14 @@ it("sorts the feed and offers best match only while searching", async () => {
   expect([...sort.options].map((option) => option.value)).toEqual([
     "recent_activity",
     "newest",
+    "oldest",
   ]);
+  await user.selectOptions(sort, "oldest");
+  await waitFor(() =>
+    expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
+      "oldest",
+    ),
+  );
   await user.selectOptions(sort, "newest");
   await waitFor(() =>
     expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
@@ -1860,6 +1892,7 @@ it("sorts the feed and offers best match only while searching", async () => {
     "Best match",
     "Last updated",
     "Newest",
+    "Oldest",
   ]);
   expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
     "relevance",

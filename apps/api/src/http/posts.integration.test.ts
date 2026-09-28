@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import request from "supertest";
+import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
@@ -1016,5 +1017,183 @@ integration("text posts HTTP contract", () => {
     await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
       ids.course,
     ]);
+  });
+
+  describe("sort and filter options", () => {
+    const listCourse = "01a0e5cc-58ae-7009-9f43-f1ba75831a01";
+    const leaver = "01a0e5cc-58ae-7009-9f43-f1ba75831a02";
+    const seeded: Record<string, string> = {};
+    const list = (userId: string, query: string) =>
+      request(app(userId))
+        .get(`/api/v1/courses/${listCourse}/posts?limit=100&${query}`)
+        .set("Cookie", cookie);
+    const titles = (response: request.Response) =>
+      response.body.data.map((item: { title: string }) => item.title);
+    beforeAll(async () => {
+      await pool.query(
+        "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,'Filters','FILTERS1')",
+        [listCourse, ids.organization, ids.instructor],
+      );
+      await pool.query(
+        "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,'leaver@example.edu','Leaver','x')",
+        [leaver, ids.organization],
+      );
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'instructor'),($1,$3,'ta'),($1,$4,'student'),($1,$5,'student'),($1,$6,'ta')",
+        [
+          listCourse,
+          ids.instructor,
+          ids.staff,
+          ids.author,
+          ids.student,
+          leaver,
+        ],
+      );
+      const rows: [string, string, string, boolean, boolean, string][] = [
+        ["Instructor note", ids.instructor, "note", false, true, "2026-01-01"],
+        ["TA question", ids.staff, "question", false, true, "2026-01-02"],
+        [
+          "Anonymous instructor",
+          ids.instructor,
+          "question",
+          true,
+          false,
+          "2026-01-03",
+        ],
+        [
+          "Student question",
+          ids.author,
+          "question",
+          false,
+          false,
+          "2026-01-04",
+        ],
+        ["Leaver question", leaver, "question", false, false, "2026-01-05"],
+        ["Pinned student note", ids.author, "note", false, false, "2026-01-06"],
+      ];
+      for (const [title, author, type, anonymous, pinned, created] of rows) {
+        const id = uuidv7();
+        seeded[title] = id;
+        await pool.query(
+          "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,pinned,created_at,last_activity_at) VALUES ($1,$2,$3,$4,$5,'Body about filters',$6,$7,$8,$8)",
+          [
+            id,
+            listCourse,
+            author,
+            type,
+            title,
+            anonymous,
+            pinned || title === "Pinned student note",
+            created,
+          ],
+        );
+      }
+      // Account deletion removes memberships and anonymizes the account.
+      await pool.query("DELETE FROM course_memberships WHERE user_id=$1", [
+        leaver,
+      ]);
+      await pool.query(
+        "UPDATE users SET deleted_at=now(),display_name='Deleted user' WHERE id=$1",
+        [leaver],
+      );
+    });
+
+    it("sorts oldest first and pages through every post exactly once", async () => {
+      const all = await list(ids.author, "sort=oldest");
+      expect(all.status).toBe(200);
+      expect(titles(all)).toEqual([
+        "Instructor note",
+        "TA question",
+        "Anonymous instructor",
+        "Student question",
+        "Leaver question",
+        "Pinned student note",
+      ]);
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const pageResponse = await request(app(ids.author))
+          .get(
+            `/api/v1/courses/${listCourse}/posts?sort=oldest&limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          )
+          .set("Cookie", cookie);
+        expect(pageResponse.status).toBe(200);
+        seen.push(...titles(pageResponse));
+        cursor = pageResponse.body.page.nextCursor;
+      } while (cursor);
+      expect(seen).toEqual(titles(all));
+      const searched = await list(ids.author, "q=filters&sort=oldest");
+      expect(searched.status).toBe(200);
+      expect(titles(searched)[0]).toBe("Instructor note");
+      const newest = await request(app(ids.author))
+        .get(`/api/v1/courses/${listCourse}/posts?sort=newest&limit=1`)
+        .set("Cookie", cookie);
+      const replayed = await request(app(ids.author))
+        .get(
+          `/api/v1/courses/${listCourse}/posts?sort=oldest&limit=1&cursor=${encodeURIComponent(newest.body.page.nextCursor)}`,
+        )
+        .set("Cookie", cookie);
+      expect(replayed.status).toBe(400);
+    });
+
+    it("filters by pinned state alone and with a type", async () => {
+      expect(titles(await list(ids.author, "pinned=true&sort=oldest"))).toEqual(
+        ["Instructor note", "TA question", "Pinned student note"],
+      );
+      expect(
+        titles(await list(ids.author, "pinned=true&type=note&sort=oldest")),
+      ).toEqual(["Instructor note", "Pinned student note"]);
+      expect(
+        titles(await list(ids.author, "pinned=true&type=question")),
+      ).toEqual(["TA question"]);
+      expect(
+        titles(await list(ids.author, "pinned=false&sort=oldest")),
+      ).toEqual([
+        "Anonymous instructor",
+        "Student question",
+        "Leaver question",
+      ]);
+      const invalid = await list(ids.author, "pinned=yes");
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error.code).toBe("invalid_request");
+    });
+
+    it("filters by instructor and TA roles without revealing anonymous authors to students", async () => {
+      expect(
+        titles(await list(ids.author, "authorRole=instructor&sort=oldest")),
+      ).toEqual(["Instructor note"]);
+      expect(
+        titles(await list(ids.staff, "authorRole=instructor&sort=oldest")),
+      ).toEqual(["Instructor note", "Anonymous instructor"]);
+      expect(
+        titles(await list(ids.instructor, "authorRole=instructor&sort=oldest")),
+      ).toEqual(["Instructor note", "Anonymous instructor"]);
+      expect(titles(await list(ids.author, "authorRole=ta"))).toEqual([
+        "TA question",
+      ]);
+      for (const value of ["staff", "student", ""]) {
+        const invalid = await list(ids.author, `authorRole=${value}`);
+        expect(invalid.status).toBe(400);
+        expect(invalid.body.error.code).toBe("invalid_request");
+      }
+    });
+
+    it("matches only an author's current role", async () => {
+      await pool.query(
+        "UPDATE course_memberships SET role='instructor' WHERE course_id=$1 AND user_id=$2",
+        [listCourse, ids.staff],
+      );
+      try {
+        expect(titles(await list(ids.author, "authorRole=ta"))).toEqual([]);
+        expect(
+          titles(await list(ids.author, "authorRole=instructor&sort=oldest")),
+        ).toEqual(["Instructor note", "TA question"]);
+      } finally {
+        await pool.query(
+          "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+          [listCourse, ids.staff],
+        );
+      }
+    });
   });
 });

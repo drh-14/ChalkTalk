@@ -384,6 +384,8 @@ function postListQuery(query: Request["query"]): ListPosts {
     "createdAfter",
     "createdBefore",
     "answered",
+    "pinned",
+    "authorRole",
     "duplicateStatus",
     "sort",
     "cursor",
@@ -440,6 +442,16 @@ function postListQuery(query: Request["query"]): ListPosts {
     rawAnswered !== "false"
   )
     throw new AuthError(400, "invalid_request", "Answered is invalid");
+  const rawPinned = one("pinned");
+  if (rawPinned !== undefined && rawPinned !== "true" && rawPinned !== "false")
+    throw new AuthError(400, "invalid_request", "Pinned is invalid");
+  const authorRole = one("authorRole");
+  if (
+    authorRole !== undefined &&
+    authorRole !== "instructor" &&
+    authorRole !== "ta"
+  )
+    throw new AuthError(400, "invalid_request", "Author role is invalid");
   const duplicateStatus = one("duplicateStatus");
   if (
     duplicateStatus !== undefined &&
@@ -448,7 +460,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     throw new AuthError(400, "invalid_request", "Duplicate status is invalid");
   const sort = one("sort") ?? (q ? "relevance" : "recent_activity");
   if (
-    !["relevance", "newest", "recent_activity"].includes(sort) ||
+    !["relevance", "newest", "oldest", "recent_activity"].includes(sort) ||
     (sort === "relevance" && !q)
   )
     throw new AuthError(400, "invalid_request", "Sort is invalid");
@@ -467,6 +479,8 @@ function postListQuery(query: Request["query"]): ListPosts {
     createdAfter,
     createdBefore,
     answered: rawAnswered === undefined ? undefined : rawAnswered === "true",
+    pinned: rawPinned === undefined ? undefined : rawPinned === "true",
+    authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
     limit,
