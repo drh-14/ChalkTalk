@@ -60,8 +60,10 @@ export type ListPosts = {
   createdAfter?: string;
   createdBefore?: string;
   answered?: boolean;
+  pinned?: boolean;
+  authorRole?: "instructor" | "ta";
   duplicateStatus?: "none" | "suggested" | "confirmed";
-  sort: "relevance" | "newest" | "recent_activity";
+  sort: "relevance" | "newest" | "oldest" | "recent_activity";
   limit: number;
   cursor?: string;
 };
@@ -356,19 +358,31 @@ export class PostService {
       clauses.push(
         `p.type='question' AND ${options.answered ? "" : "NOT "}${ANSWERED}`,
       );
+    if (options.pinned !== undefined)
+      clauses.push(`p.pinned=${add(options.pinned)}`);
+    if (options.authorRole) {
+      clauses.push(
+        `EXISTS (SELECT 1 FROM course_memberships am WHERE am.course_id=p.course_id AND am.user_id=p.author_user_id AND am.role=${add(options.authorRole)})`,
+      );
+      // Like authorId, a student may not learn the role behind someone else's anonymous post.
+      if (!STAFF.has(member.role))
+        clauses.push(`(p.anonymous=false OR p.author_user_id=${add(userId)})`);
+    }
     if (options.duplicateStatus)
       clauses.push(`p.duplicate_status=${add(options.duplicateStatus)}`);
     const sortExpression =
-      options.sort === "newest"
+      options.sort === "newest" || options.sort === "oldest"
         ? "date_trunc('milliseconds',p.created_at)"
         : options.sort === "recent_activity"
           ? "date_trunc('milliseconds',p.last_activity_at)"
           : `round(ts_rank_cd(p.search_vector,websearch_to_tsquery('english',${add(options.q)}))::numeric,6)`;
     const sortValue = options.sort === "relevance" ? "numeric" : "timestamptz";
+    const ascending = options.sort === "oldest";
     const cursorClause = after
-      ? `AND (rank_value,p.id)<(${add(after.value)}::${sortValue},${add(after.id)}::uuid)`
+      ? `AND (rank_value,p.id)${ascending ? ">" : "<"}(${add(after.value)}::${sortValue},${add(after.id)}::uuid)`
       : "";
-    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause.replaceAll("p.id", "listed.id")} ORDER BY rank_value DESC,id DESC LIMIT ${add(limit + 1)}`;
+    const direction = ascending ? "ASC" : "DESC";
+    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause.replaceAll("p.id", "listed.id")} ORDER BY rank_value ${direction},id ${direction} LIMIT ${add(limit + 1)}`;
     const result = await this.pool.query<Row & { rank_value: number | Date }>(
       query,
       values,

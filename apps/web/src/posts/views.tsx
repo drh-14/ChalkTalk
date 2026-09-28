@@ -848,6 +848,7 @@ function DiscussionContent({
                   key={item.key}
                   type="button"
                   className={item.nested ? "nested" : undefined}
+                  aria-label={item.ariaLabel}
                   aria-pressed={filter === item.key}
                   onClick={() => setFilter(item.key)}
                 >
@@ -869,6 +870,7 @@ function DiscussionContent({
                 {query && <option value="relevance">Best match</option>}
                 <option value="recent_activity">Last updated</option>
                 <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
               </select>
             </label>
           </fieldset>

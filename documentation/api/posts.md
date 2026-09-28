@@ -351,9 +351,13 @@ Lists or searches the posts in a course. Confirmed duplicates are excluded from 
 
 `answered` (boolean, optional): Filter question posts by answer presence.
 
+`pinned` (boolean, optional): Filter by pinned state. Combine with `type` to list pinned posts of one type.
+
+`authorRole` (enum: instructor, ta, optional; values instructor, ta): Filter by the author's current role in the course. A post matches only while its author holds that role; posts by deleted accounts never match. For a student, anonymous posts other than the student's own are removed before ranking, pagination, `hasMore`, and counts, so the filter cannot reveal an anonymous author's role. Instructors and TAs match anonymous posts by that role.
+
 `duplicateStatus` (enum: none, suggested, confirmed, optional; values none, suggested, confirmed): Filter by duplicate-review state. `confirmed` is staff-only and returns review entries containing only `id`, `courseId`, `type`, `title`, `duplicateStatus`, `duplicateOfPostId`, `canonicalTitle`, and `version`; no source body, author, or tags. Suggested duplicates remain visible in ordinary results.
 
-`sort` (enum: relevance, newest, recent_activity, optional; values relevance, newest, recent_activity): Ordering. Defaults to relevance when q is present and recent_activity otherwise.
+`sort` (enum: relevance, newest, oldest, recent_activity, optional; values relevance, newest, oldest, recent_activity): Ordering. `newest` and `oldest` order by creation time, descending and ascending; `recent_activity` orders by the latest activity. Defaults to relevance when q is present and recent_activity otherwise.
 
 `cursor` (string, optional; minimum length 1, maximum length 2048): Opaque cursor returned by the previous page.
 

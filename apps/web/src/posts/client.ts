@@ -43,14 +43,16 @@ export type CreatePostInput = {
   anonymous: boolean;
   tags: string[];
 };
-export type PostSort = "relevance" | "newest" | "recent_activity";
+export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
   q?: string;
   sort?: PostSort;
   cursor?: string;
   type?: "question" | "note";
   answered?: boolean;
+  pinned?: boolean;
   authorId?: string;
+  authorRole?: "instructor" | "ta";
   limit?: number;
   signal?: AbortSignal;
 };
@@ -82,7 +84,9 @@ export async function listPosts(
   if (options.type) query.set("type", options.type);
   if (options.answered !== undefined)
     query.set("answered", String(options.answered));
+  if (options.pinned !== undefined) query.set("pinned", String(options.pinned));
   if (options.authorId) query.set("authorId", options.authorId);
+  if (options.authorRole) query.set("authorRole", options.authorRole);
   if (options.limit) query.set("limit", String(options.limit));
   const suffix = query.size ? `?${query}` : "";
   return receive<Page<Post>>(
