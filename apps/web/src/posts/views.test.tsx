@@ -98,9 +98,8 @@ it("keeps the controls above a focusable scroll region for posts and duplicates"
   expect(
     within(feed).getByRole("searchbox", { name: "Search posts" }),
   ).toBeTruthy();
-  await user.selectOptions(
-    within(feed).getByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    within(feed).getByRole("radio", { name: "Duplicate posts" }),
   );
   expect(
     within(listings).getByRole("button", { name: "Old question" }),
@@ -153,9 +152,8 @@ it("lets staff review merged posts without exposing their body and unmerge one",
       onNavigate={vi.fn()}
     />,
   );
-  await user.selectOptions(
-    await screen.findByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    await screen.findByRole("radio", { name: "Duplicate posts" }),
   );
   expect(await screen.findByText("Old question")).toBeTruthy();
   expect(screen.getByRole("link", { name: "Canonical question" })).toBeTruthy();
@@ -222,9 +220,8 @@ it("opens a duplicate card's canonical post in a new tab without replacing revie
       onNavigate={onNavigate}
     />,
   );
-  await user.selectOptions(
-    await screen.findByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    await screen.findByRole("radio", { name: "Duplicate posts" }),
   );
   const canonicalLink = await screen.findByRole("link", {
     name: "Canonical question",
@@ -295,9 +292,8 @@ it("shows the selected duplicate's retained detail instead of the canonical post
       onNavigate={vi.fn()}
     />,
   );
-  await user.selectOptions(
-    await screen.findByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    await screen.findByRole("radio", { name: "Duplicate posts" }),
   );
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   const card = screen
@@ -368,11 +364,12 @@ it("does not show a late duplicate review after switching back to posts", async 
       onNavigate={vi.fn()}
     />,
   );
-  const picker = await screen.findByRole("combobox", { name: "Post view" });
-  await user.selectOptions(picker, "Duplicate posts");
+  await user.click(
+    await screen.findByRole("radio", { name: "Duplicate posts" }),
+  );
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   await waitFor(() => expect(finishReview).toBeDefined());
-  await user.selectOptions(picker, "Posts");
+  await user.click(screen.getByRole("radio", { name: "Posts" }));
   finishReview!(
     json({
       data: {
@@ -381,7 +378,7 @@ it("does not show a late duplicate review after switching back to posts", async 
       },
     }),
   );
-  await screen.findByText("No posts found.");
+  await screen.findByText("No posts yet.");
   expect(screen.queryByText("Secret retained text")).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Merge as duplicate" }),
@@ -406,8 +403,8 @@ it("does not offer merged-post review to students", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await screen.findByText("No posts found.");
-  expect(screen.queryByRole("combobox", { name: "Post view" })).toBeNull();
+  await screen.findByText("No posts yet.");
+  expect(screen.queryByRole("group", { name: "Post view" })).toBeNull();
 });
 
 it("only offers merging while staff are viewing posts", async () => {
@@ -437,15 +434,14 @@ it("only offers merging while staff are viewing posts", async () => {
   expect(
     await screen.findByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
-  const postView = screen.getByRole("combobox", { name: "Post view" });
-  await user.selectOptions(postView, "Duplicate posts");
+  await user.click(screen.getByRole("radio", { name: "Duplicate posts" }));
   expect(
     screen.getByRole("heading", { name: "Select a duplicate post" }),
   ).toBeTruthy();
   expect(
     screen.queryByRole("button", { name: "Merge as duplicate" }),
   ).toBeNull();
-  await user.selectOptions(postView, "Posts");
+  await user.click(screen.getByRole("radio", { name: "Posts" }));
   expect(
     screen.getByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
@@ -573,7 +569,7 @@ it("keeps search syntax accessible without showing explanatory copy", async () =
   expect(description?.textContent).toBe(
     'Search words, "quoted phrases", OR, or -excluded terms.',
   );
-  expect(description?.classList.contains("visually-hidden")).toBe(true);
+  expect(description?.classList.contains("visually-hidden")).toBe(false);
 });
 
 it("searches live after 300 ms, preserves syntax, and removes the Search button", async () => {
@@ -1453,4 +1449,775 @@ it("uses the whole long title and caps body-derived suggestion terms", async () 
   expect(q).toContain("tail");
   expect(q).toContain("bodyterm");
   expect(q.length).toBeLessThanOrEqual(500);
+});
+
+const hoursAgo = (hours: number) =>
+  new Date(Date.now() - hours * 3_600_000).toISOString();
+const postsUrl = (urls: string[]) =>
+  urls
+    .filter((url) => url.startsWith("/api/v1/courses/course-1/posts"))
+    .map((url) => new URL(url, "https://example.edu"));
+
+it("shows compact rows with relative time, tags, and status badges", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      page([
+        {
+          ...post("n1", "Pinned note"),
+          type: "note",
+          pinned: true,
+          tags: ["syllabus"],
+          createdAt: hoursAgo(2),
+        },
+        {
+          ...post("q1", "Open question"),
+          answered: false,
+          pinned: false,
+          createdAt: hoursAgo(26),
+          author: {
+            userId: "u1",
+            displayName: "Grace Hopper",
+            anonymous: false,
+            deleted: false,
+          },
+        },
+      ]),
+    ),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const note = (await screen.findByText("Pinned note")).closest("li")!;
+  expect(within(note).getByText("note")).toBeTruthy();
+  expect(within(note).getByText("Pinned")).toBeTruthy();
+  expect(within(note).queryByText("Unanswered")).toBeNull();
+  expect(within(note).getByText("2 hours ago")).toBeTruthy();
+  expect(note.querySelector("time")?.getAttribute("datetime")).toBeTruthy();
+  expect(
+    within(note).getByRole("button", { name: "Filter by tag syllabus" }),
+  ).toBeTruthy();
+  const question = screen.getByText("Open question").closest("li")!;
+  expect(within(question).getByText("Unanswered")).toBeTruthy();
+  expect(within(question).queryByText("Pinned")).toBeNull();
+  expect(within(question).getByText("yesterday")).toBeTruthy();
+  expect(within(question).getByText("Grace Hopper")).toBeTruthy();
+  expect(within(question).getByText(/A useful explanation/)).toBeTruthy();
+});
+
+it("distinguishes an empty course from filters that match nothing and clears them", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts yet.");
+  expect(
+    screen.queryByRole("button", { name: "Clear search and filters" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("radio", { name: "Notes" }));
+  await screen.findByText("Nothing matches this search or these filters.");
+  await user.click(
+    screen.getByRole("button", { name: "Clear search and filters" }),
+  );
+  await screen.findByText("No posts yet.");
+  expect(
+    (screen.getByRole("radio", { name: "All posts" }) as HTMLInputElement)
+      .checked,
+  ).toBe(true);
+});
+
+it("requests the documented list parameters for each filter and sort", async () => {
+  const urls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      urls.push(url);
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts yet.");
+  expect(postsUrl(urls).at(-1)!.search).toBe("");
+  const last = () => Object.fromEntries(postsUrl(urls).at(-1)!.searchParams);
+  await user.click(screen.getByRole("radio", { name: "Questions" }));
+  await waitFor(() => expect(last()).toEqual({ type: "question" }));
+  await user.click(screen.getByRole("radio", { name: "Notes" }));
+  await waitFor(() => expect(last()).toEqual({ type: "note" }));
+  await user.click(screen.getByRole("radio", { name: "Unanswered" }));
+  await waitFor(() => expect(last()).toEqual({ answered: "false" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Sort posts" }),
+    "Newest",
+  );
+  await waitFor(() =>
+    expect(last()).toEqual({ answered: "false", sort: "newest" }),
+  );
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Sort posts" }),
+    "Recent activity",
+  );
+  await waitFor(() =>
+    expect(last()).toEqual({ answered: "false", sort: "recent_activity" }),
+  );
+  await user.click(screen.getByRole("radio", { name: "All posts" }));
+  await waitFor(() => expect(last()).toEqual({ sort: "recent_activity" }));
+  expect(
+    (screen.getByRole("radio", { name: "All posts" }) as HTMLInputElement)
+      .checked,
+  ).toBe(true);
+});
+
+it("uses relevance and disables sorting while a search is applied", async () => {
+  const urls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      urls.push(url);
+      return page([]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="cutoff"
+      filters={{ type: "note", sort: "newest" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts found.");
+  const sort = screen.getByRole("combobox", {
+    name: "Sort posts",
+  }) as HTMLSelectElement;
+  expect(sort.disabled).toBe(true);
+  expect(sort.value).toBe("relevance");
+  expect(Object.fromEntries(postsUrl(urls)[0]!.searchParams)).toEqual({
+    q: "cutoff",
+    sort: "relevance",
+    type: "note",
+  });
+});
+
+it("restores filters from the URL and preserves them on post links", async () => {
+  const urls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      urls.push(url);
+      return page([post("p1", "First")]);
+    }),
+  );
+  const navigate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      filters={{ type: "note", sort: "newest" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={navigate}
+    />,
+  );
+  await screen.findByText("First");
+  expect(Object.fromEntries(postsUrl(urls)[0]!.searchParams)).toEqual({
+    sort: "newest",
+    type: "note",
+  });
+  expect(
+    (screen.getByRole("radio", { name: "Notes" }) as HTMLInputElement).checked,
+  ).toBe(true);
+  expect(
+    (screen.getByRole("combobox", { name: "Sort posts" }) as HTMLSelectElement)
+      .value,
+  ).toBe("newest");
+  await user.click(screen.getByRole("link", { name: /First/ }));
+  expect(navigate).toHaveBeenCalledWith(
+    "/courses/course-1/posts/p1?type=note&sort=newest",
+  );
+});
+
+it("filters by a tag from a row, keeps the selected post, and removes the tag", async () => {
+  const urls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      urls.push(url);
+      if (url === "/api/v1/posts/p1")
+        return json({ data: { ...post("p1", "Selected"), tags: ["midterm"] } });
+      return page([{ ...post("p1", "Selected"), tags: ["midterm"] }]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Selected" });
+  const row = screen.getByRole("link", { name: /Selected/ }).closest("li")!;
+  await user.click(
+    within(row).getByRole("button", { name: "Filter by tag midterm" }),
+  );
+  await waitFor(() =>
+    expect(postsUrl(urls).at(-1)!.searchParams.get("tag")).toBe("midterm"),
+  );
+  expect(screen.getByRole("heading", { name: "Selected" })).toBeTruthy();
+  await user.click(
+    screen.getByRole("button", { name: "Remove tag filter midterm" }),
+  );
+  await waitFor(() =>
+    expect(postsUrl(urls).at(-1)!.searchParams.has("tag")).toBe(false),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Remove tag filter midterm" }),
+  ).toBeNull();
+});
+
+it("ignores a late response for a previous filter", async () => {
+  let releaseQuestions: (() => void) | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) => {
+      if (url.includes("type=question"))
+        return new Promise<Response>((resolve) => {
+          releaseQuestions = () =>
+            resolve(page([post("old", "Late question")]));
+        });
+      if (url.includes("type=note"))
+        return Promise.resolve(
+          page([{ ...post("n1", "Current note"), type: "note" }]),
+        );
+      return Promise.resolve(page([]));
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts yet.");
+  await user.click(screen.getByRole("radio", { name: "Questions" }));
+  await waitFor(() => expect(releaseQuestions).toBeDefined());
+  await user.click(screen.getByRole("radio", { name: "Notes" }));
+  await screen.findByText("Current note");
+  releaseQuestions!();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(screen.queryByText("Late question")).toBeNull();
+  expect(screen.getByText("Current note")).toBeTruthy();
+});
+
+it("keeps an open draft when filters change and hides filters for duplicate review", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/members/user-staff")
+        ? json({ data: { role: "ta" } })
+        : page([]),
+    ),
+  );
+  const confirm = vi.spyOn(window, "confirm");
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Unsent draft",
+  );
+  await user.click(screen.getByRole("radio", { name: "Notes" }));
+  expect(confirm).not.toHaveBeenCalled();
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toBe("Unsent draft");
+  expect(screen.getByRole("complementary", { name: "Filters" })).toBeTruthy();
+  await user.click(
+    await screen.findByRole("radio", { name: "Duplicate posts" }),
+  );
+  expect(screen.queryByRole("complementary", { name: "Filters" })).toBeNull();
+});
+
+function pinFixture(options: {
+  role?: "ta" | "student";
+  status?: "active" | "archived";
+  patch?: (init: RequestInit) => Promise<Response>;
+}) {
+  let version = 3;
+  let pinned = false;
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const current = () => ({ ...post("p1", "Pin me"), version, pinned });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/members/user-1"))
+        return json({ data: { role: options.role ?? "ta" } });
+      if (url === "/api/v1/posts/p1" && init?.method === "PATCH") {
+        if (options.patch) return options.patch(init);
+        pinned = JSON.parse(String(init.body)).pinned;
+        version += 1;
+        return json({ data: current() });
+      }
+      if (url === "/api/v1/posts/p1") return json({ data: current() });
+      return page([current()]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={{ ...course, status: options.status ?? "active" }}
+      csrfToken="csrf"
+      userId="user-1"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  return calls;
+}
+
+it("lets staff pin and unpin a post with conditional requests and updates its row", async () => {
+  const calls = pinFixture({});
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Pin" }));
+  await screen.findByRole("button", { name: "Unpin" });
+  const patch = calls.find((call) => call.init?.method === "PATCH")!;
+  expect(patch.init?.headers).toMatchObject({
+    "X-CSRF-Token": "csrf",
+    "If-Match": '"v3"',
+  });
+  expect(patch.init?.body).toBe(JSON.stringify({ pinned: true }));
+  const row = screen.getByRole("link", { name: /Pin me/ }).closest("li")!;
+  expect(within(row).getByText("Pinned")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Unpin" }));
+  await screen.findByRole("button", { name: "Pin" });
+  const patches = calls.filter((call) => call.init?.method === "PATCH");
+  expect(patches[1]!.init?.headers).toMatchObject({ "If-Match": '"v4"' });
+  expect(within(row).queryByText("Pinned")).toBeNull();
+});
+
+it("disables pinning while pending and refetches after a stale revision", async () => {
+  let reject!: () => void;
+  const calls = pinFixture({
+    patch: () =>
+      new Promise<Response>((resolve) => {
+        reject = () =>
+          resolve(
+            json(
+              {
+                error: {
+                  code: "version_conflict",
+                  message: "This post changed. Try again.",
+                },
+              },
+              412,
+            ),
+          );
+      }),
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Pin" }));
+  expect(
+    (screen.getByRole("button", { name: "Pinning…" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  reject();
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "This post changed. Try again.",
+  );
+  await screen.findByRole("button", { name: "Pin" });
+  expect(
+    calls.filter(
+      (call) => call.url === "/api/v1/posts/p1" && !call.init?.method,
+    ),
+  ).toHaveLength(2);
+});
+
+it("hides pinning from students and in archived courses", async () => {
+  pinFixture({ role: "student" });
+  await screen.findByRole("heading", { name: "Pin me" });
+  expect(screen.queryByRole("group", { name: "Staff actions" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Pin" })).toBeNull();
+  cleanup();
+  pinFixture({ status: "archived" });
+  await screen.findByRole("button", { name: "Merge as duplicate" });
+  expect(screen.getByRole("group", { name: "Staff actions" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Pin" })).toBeNull();
+});
+
+it("prompts to choose or start a post when nothing is selected", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText(
+      "Choose a question or note from the list to read it here.",
+    ),
+  ).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Start a new post" }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
+});
+
+it("returns from a post to the list with the same search and filters", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url === "/api/v1/posts/p1"
+        ? json({ data: post("p1", "Open post") })
+        : page([post("p1", "Open post")]),
+    ),
+  );
+  const navigate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      postId="p1"
+      query="cutoff"
+      filters={{ tag: "midterm" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={navigate}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Open post" });
+  await user.click(screen.getByRole("button", { name: /Back to posts/ }));
+  expect(navigate).toHaveBeenCalledWith(
+    "/courses/course-1?q=cutoff&tag=midterm",
+  );
+});
+
+it("shows staff a Post view toggle with the selected option exposed", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/members/user-staff")
+        ? json({ data: { role: "ta" } })
+        : page([]),
+    ),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const toggle = await screen.findByRole("group", { name: "Post view" });
+  const posts = within(toggle).getByRole("radio", { name: "Posts" });
+  const duplicates = within(toggle).getByRole("radio", {
+    name: "Duplicate posts",
+  });
+  expect((posts as HTMLInputElement).checked).toBe(true);
+  await user.click(duplicates);
+  expect((duplicates as HTMLInputElement).checked).toBe(true);
+  expect((posts as HTMLInputElement).checked).toBe(false);
+});
+
+it("clears an applied search with the Clear search control and refocuses the field", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([post("p1", "Cutoff post")])),
+  );
+  const onQueryChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="cutoff"
+      onQueryChange={onQueryChange}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Cutoff post");
+  await user.click(screen.getByRole("button", { name: "Clear search" }));
+  const searchbox = screen.getByRole("searchbox", { name: "Search posts" });
+  expect(onQueryChange).toHaveBeenCalledWith("");
+  expect((searchbox as HTMLInputElement).value).toBe("");
+  expect(document.activeElement).toBe(searchbox);
+  expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+});
+
+it("focuses search on slash except while typing in a field", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([post("p1", "Row")])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const row = await screen.findByRole("link", { name: /Row/ });
+  row.focus();
+  await user.keyboard("/");
+  const searchbox = screen.getByRole("searchbox", { name: "Search posts" });
+  expect(document.activeElement).toBe(searchbox);
+  expect((searchbox as HTMLInputElement).value).toBe("");
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  const title = screen.getByRole("textbox", { name: "Post title" });
+  await user.type(title, "a/b");
+  expect(document.activeElement).toBe(title);
+  expect((title as HTMLInputElement).value).toBe("a/b");
+});
+
+it("states the loaded result count for an applied search", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.includes("q=integration")
+        ? page(["a", "b", "c", "d"].map((id) => post(id, `Result ${id}`)))
+        : url.includes("q=limits")
+          ? page([post("e", "Only one")], "next")
+          : page([post("f", "Single")]),
+    ),
+  );
+  const { rerender } = render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="integration"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Result d");
+  const count = document.querySelector(".result-count")!;
+  expect(count.getAttribute("aria-live")).toBe("polite");
+  expect(count.textContent).toBe('4 results for "integration"');
+  rerender(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="limits"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Only one");
+  expect(document.querySelector(".result-count")!.textContent).toBe(
+    '1+ results for "limits"',
+  );
+  rerender(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="single"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Single");
+  expect(document.querySelector(".result-count")!.textContent).toBe(
+    '1 result for "single"',
+  );
+});
+
+it("asks an unmatched search as a new question with the body focused", async () => {
+  const urls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      urls.push(url);
+      return page([]);
+    }),
+  );
+  const confirm = vi.spyOn(window, "confirm");
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="integration by parts u choice"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Ask “integration by parts u choice” as a new question",
+    }),
+  );
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toBe("integration by parts u choice");
+  expect(document.activeElement).toBe(
+    screen.getByRole("textbox", { name: "Post body" }),
+  );
+  expect(screen.getByDisplayValue("Question").tagName).toBe("SELECT");
+  await waitFor(() =>
+    expect(
+      urls.some(
+        (url) =>
+          url.includes("type=question") &&
+          url.includes("limit=10") &&
+          url.includes("q=integration+OR+by+OR+parts"),
+      ),
+    ).toBe(true),
+  );
+  await user.click(screen.getByRole("button", { name: "Close composer" }));
+  expect(confirm).not.toHaveBeenCalled();
+  expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
+});
+
+it("offers asking after results, limits the title, and respects an open draft", async () => {
+  const longQuery = `limits ${"x".repeat(240)}`;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([post("p1", "Existing answer")])),
+  );
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query={longQuery}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Existing answer");
+  expect(screen.getByText("Didn’t find what you need?")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "My own draft",
+  );
+  const ask = screen.getByRole("button", { name: /as a new question/ });
+  await user.click(ask);
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toBe("My own draft");
+  confirm.mockReturnValue(true);
+  await user.click(ask);
+  const title = (
+    screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement
+  ).value;
+  expect(title).toBe(longQuery.slice(0, 200));
+  expect(title).toHaveLength(200);
+});
+
+it("does not offer asking in archived courses or duplicate review", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/members/user-staff")
+        ? json({ data: { role: "ta" } })
+        : page([]),
+    ),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={{ ...course, status: "archived" }}
+      csrfToken="csrf"
+      query="cutoff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts found.");
+  expect(
+    screen.queryByRole("button", { name: /as a new question/ }),
+  ).toBeNull();
+  cleanup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      query="cutoff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("button", { name: /as a new question/ });
+  await user.click(
+    await screen.findByRole("radio", { name: "Duplicate posts" }),
+  );
+  await screen.findByText("No duplicate posts found.");
+  expect(
+    screen.queryByRole("button", { name: /as a new question/ }),
+  ).toBeNull();
+});
+
+it("leaves an unmatched search to the no-match state instead of a zero count", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="nothing"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts found.");
+  expect(document.querySelector(".result-count")!.textContent).toBe("");
 });

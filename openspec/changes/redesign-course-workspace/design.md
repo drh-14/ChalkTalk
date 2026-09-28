@@ -32,9 +32,9 @@ See proposal.md for motivation. Current state that shapes the approach:
 
 ### D1. A single `AppShell` component wraps protected routes
 
-`AppShell` renders the top bar (wordmark, course switcher, optional course name plus Discussion/Settings nav, avatar, Sign out) and a main slot. `Home` and `CourseFrame` render inside it, and `CourseFrame` passes the course name and active tab. The course switcher is a native `<select>` labeled "Switch course", populated through the existing `listCourses`. It is fetched once per session and refreshed after create or join. Navigation from it goes through the same `beforeLeave` guard that `CourseFrame.follow` uses today.
+`AppShell` renders the top bar (wordmark, course switcher, optional course name plus Discussion/Settings nav, avatar, Sign out) and a main slot. `Home` and `CourseFrame` render inside it, and `CourseFrame` passes the course name and active tab. The course switcher is a "Switch course" disclosure button that opens a panel of course links. It calls the existing `listCourses` each time it opens, so a newly created or joined course shows up without extra refresh wiring. The panel closes on Escape (returning focus to the button) or on an outside pointer press. Navigation from it goes through the same `beforeLeave` guard that `CourseFrame.follow` uses today.
 
-*Alternatives:* a custom dropdown menu was rejected because it adds focus-management code with no benefit at this size. Keeping two headers was rejected because it is the root cause of the header disappearing inside courses.
+*Alternatives:* a native `<select>` filled on mount was rejected. It would add a course-list request to every page render, which reorders the requests existing tests expect, and a select filled lazily on focus opens before its options exist. The disclosure is plain links, not an ARIA menu, which keeps focus handling small. Keeping two headers was rejected because it is the root cause of the header disappearing inside courses.
 
 ### D2. Workspace layout is a CSS grid bounded by the viewport
 
@@ -60,7 +60,7 @@ Detail already obtains an ETag through `getPost`; after a failed pin it re-runs 
 
 ### D5. Rows and detail are restructured, not rewritten
 
-`PostCard` becomes `PostRow`, a single `<a>` or button as today plus the new metadata line and badges. Relative time uses `Intl.RelativeTimeFormat`, with a `<time dateTime>` element whose `title` holds the full local time. Detail is split into `PostHeader`, the body, and a `StaffActions` bar containing `MergeControl` and the new pin control. An empty `<section aria-label="Discussion">` placeholder is not rendered; the reserved region is only a layout slot in CSS, so no dead UI reaches users.
+Each list item becomes a compact row: the existing `.post-card` link gains a metadata line (type, badges, relative time), and tag chips sit beside the link inside the row's `<li>`, because buttons cannot be nested in a link. Relative time uses `Intl.RelativeTimeFormat` inside a `<time dateTime>` element. Its `title` holds the full local time for hover, and visually hidden text gives screen readers the full local time instead of the relative phrase. Detail is split into `PostHeader`, the body, and a `StaffActions` bar containing `MergeControl` and the new pin control. An empty `<section aria-label="Discussion">` placeholder is not rendered; the reserved region is only a layout slot in CSS, so no dead UI reaches users.
 
 ### D6. Settings reuse the existing `CourseDetail` logic with new section markup
 
@@ -70,9 +70,11 @@ Sections: "Course details" (labeled name input, Save, and, for instructors, the 
 
 `:root` defines color tokens (`--surface`, `--surface-raised`, `--ink`, `--ink-muted`, `--accent`, `--accent-ink`, `--danger`, `--line`, `--badge-*`), spacing (`--space-1`…`--space-8`), radii, the three font families, and `--topbar-h`. Styles for the shell, workspace, rows, detail, settings, and home use tokens. Landing and auth styles are left as they are, to keep the diff focused; they can migrate later.
 
-### D8. Programmatic focus uses `:focus:not(:focus-visible)`
+### D8. Route headings never draw a focus outline
 
-Headings keep `tabIndex={-1}` and the existing `.focus()` call. CSS adds `h1[tabindex="-1"]:focus:not(:focus-visible) { outline: none; }`, so keyboard users still see focus rings.
+Headings keep `tabIndex={-1}` and the existing `.focus()` call. CSS removes the outline from `h1[tabindex="-1"]:focus` and `h2[tabindex="-1"]:focus`. `tabIndex=-1` takes these headings out of the Tab order, so they only receive focus from script, and keyboard users never land on them. Interactive controls keep their focus rings.
+
+*Alternative:* `:focus:not(:focus-visible)` was tried first. Chromium treats script focus after a page load with no pointer input as focus-visible, so a directly loaded course URL still drew the outline.
 
 ### D9. Home removes the placeholder panel
 

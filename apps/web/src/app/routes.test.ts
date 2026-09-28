@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  feedSearch,
+  filtersFromSearch,
   initializeRoute,
   navigate,
+  replaceCurrentFilters,
   replaceCurrentQuery,
   routeForPath,
   routeFromLocation,
@@ -111,5 +114,60 @@ describe("routes", () => {
       courseId: "abc",
       query: "cutoff",
     });
+  });
+
+  it("round-trips feed filters and preserves them on post paths", () => {
+    const route = routeFromLocation(
+      new URL(
+        "https://app.example.edu/courses/abc/posts/p1?q=cutoff&type=note&tag=midterm&sort=newest",
+      ),
+    );
+    expect(route).toEqual({
+      name: "post",
+      courseId: "abc",
+      postId: "p1",
+      query: "cutoff",
+      filters: { type: "note", tag: "midterm", sort: "newest" },
+    });
+    expect(feedSearch(route.query, route.filters)).toBe(
+      "?q=cutoff&type=note&tag=midterm&sort=newest",
+    );
+    expect(feedSearch(undefined, { answered: false })).toBe("?answered=false");
+    expect(feedSearch()).toBe("");
+  });
+
+  it("ignores unknown or invalid filter values", () => {
+    expect(
+      filtersFromSearch(
+        new URLSearchParams(
+          "type=poll&answered=true&sort=relevance&tag=%20%20&extra=1",
+        ),
+      ),
+    ).toEqual({});
+    expect(
+      filtersFromSearch(new URLSearchParams("answered=false&type=note")),
+    ).toEqual({ answered: false });
+    expect(
+      routeFromLocation(new URL("https://app.example.edu/courses/abc?sort=x")),
+    ).toEqual({ name: "course", courseId: "abc" });
+  });
+
+  it("replaces filters in the current entry while keeping the search query", () => {
+    window.history.replaceState(null, "", "/courses/abc?q=cutoff&type=note");
+    const listener = vi.fn();
+    window.addEventListener("popstate", listener);
+    const length = window.history.length;
+
+    replaceCurrentFilters({ answered: false, sort: "newest" });
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      "/courses/abc?q=cutoff&answered=false&sort=newest",
+    );
+    expect(window.history.length).toBe(length);
+    expect(listener).toHaveBeenCalledOnce();
+    replaceCurrentFilters({});
+    expect(window.location.search).toBe("?q=cutoff");
+    window.removeEventListener("popstate", listener);
+    window.history.replaceState(null, "", "/");
   });
 });

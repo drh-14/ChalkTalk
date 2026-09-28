@@ -16,7 +16,10 @@ export type Post = {
   };
   anonymous: boolean;
   tags: string[];
+  pinned?: boolean;
+  answered?: boolean;
   createdAt: string;
+  updatedAt?: string;
   lastActivityAt: string;
   version: number;
   duplicateStatus?: "none" | "suggested" | "confirmed";
@@ -41,11 +44,14 @@ export type CreatePostInput = {
   anonymous: boolean;
   tags: string[];
 };
+export type PostSort = "relevance" | "newest" | "recent_activity";
 export type PostListOptions = {
   q?: string;
-  sort?: "relevance";
+  sort?: PostSort;
   cursor?: string;
-  type?: "question";
+  type?: "question" | "note";
+  answered?: false;
+  tag?: string;
   limit?: number;
   signal?: AbortSignal;
 };
@@ -75,6 +81,8 @@ export async function listPosts(
   if (options.sort) query.set("sort", options.sort);
   if (options.cursor) query.set("cursor", options.cursor);
   if (options.type) query.set("type", options.type);
+  if (options.answered === false) query.set("answered", "false");
+  if (options.tag) query.set("tag", options.tag);
   if (options.limit) query.set("limit", String(options.limit));
   const suffix = query.size ? `?${query}` : "";
   return receive<Page<Post>>(
@@ -187,6 +195,27 @@ export async function confirmMergePost(
       }),
     }),
   );
+}
+
+export async function setPostPinned(
+  post: Post,
+  pinned: boolean,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"v${post.version}"`,
+      },
+      body: JSON.stringify({ pinned }),
+    }),
+  );
+  return payload.data;
 }
 
 export async function createPost(

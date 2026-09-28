@@ -1,5 +1,12 @@
 import { StrictMode } from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
@@ -815,5 +822,211 @@ describe("ChalkTalk auth entry", () => {
           .disabled,
       ).toBe(false),
     );
+  });
+
+  function courseRoutesFetch(options: { posts?: unknown[] } = {}) {
+    const member = {
+      id: "membership_123",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: session.user.displayName },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    const otherCourse = { ...course, id: "course_456", name: "Calculus II" };
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/sessions/current") && init?.method === "DELETE")
+        return new Response(null, { status: 204 });
+      if (url.endsWith("/sessions/current"))
+        return jsonResponse({ data: session });
+      if (url === "/api/v1/courses")
+        return jsonResponse({
+          data: [course, otherCourse],
+          page: { nextCursor: null, hasMore: false },
+        });
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+      if (url.endsWith(`/courses/${otherCourse.id}`))
+        return jsonResponse({ data: otherCourse }, 200, { ETag: '"v1"' });
+      if (url.endsWith(`/members/${session.user.id}`))
+        return jsonResponse({ data: member });
+      if (url.endsWith("/members"))
+        return jsonResponse({
+          data: [member],
+          page: { nextCursor: null, hasMore: false },
+        });
+      if (url.includes("/posts"))
+        return jsonResponse({
+          data: options.posts ?? [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      return jsonResponse({
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+      });
+    });
+  }
+
+  it("shows the app top bar with Sign out on home, discussion, and settings", async () => {
+    for (const path of [
+      "/home",
+      `/courses/${course.id}`,
+      `/courses/${course.id}/settings`,
+    ]) {
+      setPath(path);
+      vi.stubGlobal("fetch", courseRoutesFetch());
+      render(<App />);
+      const banner = await screen.findByRole("banner");
+      expect(
+        await within(banner).findByRole("button", { name: "Sign out" }),
+      ).toBeTruthy();
+      expect(
+        within(banner).getByRole("link", { name: "ChalkTalk" }),
+      ).toBeTruthy();
+      expect(
+        within(banner).getByRole("button", { name: /Switch course/ }),
+      ).toBeTruthy();
+      expect(
+        within(banner).getByText("Signed in as Ada Lovelace"),
+      ).toBeTruthy();
+      if (path !== "/home")
+        expect(
+          await within(banner).findByRole("heading", { name: course.name }),
+        ).toBeTruthy();
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("switches courses from the top bar after loading the list on demand", async () => {
+    setPath(`/courses/${course.id}`);
+    const fetchMock = courseRoutesFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    expect(
+      fetchMock.mock.calls.some(([url]) => url === "/api/v1/courses"),
+    ).toBe(false);
+    await user.click(screen.getByRole("button", { name: /Switch course/ }));
+    const current = await screen.findByRole("link", {
+      name: /Linear Algebra II/,
+    });
+    expect(current.getAttribute("aria-current")).toBe("page");
+    await user.click(screen.getByRole("link", { name: /Calculus II/ }));
+    expect(window.location.pathname).toBe("/courses/course_456");
+    await screen.findByRole("heading", { name: "Calculus II" });
+    expect(screen.queryByRole("link", { name: /Calculus II/ })).toBeNull();
+  });
+
+  it("keeps the course and draft when switching course is declined", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal("fetch", courseRoutesFetch());
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Create post" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "Draft",
+    );
+    await user.click(screen.getByRole("button", { name: /Switch course/ }));
+    await user.click(await screen.findByRole("link", { name: /Calculus II/ }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    expect(
+      (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+        .value,
+    ).toBe("Draft");
+    confirm.mockRestore();
+  });
+
+  it("stores filters in the URL without new history entries and keeps them on posts", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "fetch",
+      courseRoutesFetch({
+        posts: [
+          {
+            id: "p1",
+            courseId: course.id,
+            type: "question",
+            deleted: false,
+            title: "Kept question",
+            bodyMarkdown: "Body",
+            author: {
+              userId: null,
+              displayName: "Anonymous",
+              anonymous: true,
+              deleted: false,
+            },
+            anonymous: true,
+            tags: [],
+            createdAt: course.createdAt,
+            lastActivityAt: course.createdAt,
+            version: 1,
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Kept question");
+    const length = window.history.length;
+    await user.click(screen.getByRole("radio", { name: "Unanswered" }));
+    expect(window.location.search).toBe("?answered=false");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Sort posts" }),
+      "Newest",
+    );
+    expect(window.location.search).toBe("?answered=false&sort=newest");
+    expect(window.history.length).toBe(length);
+    await user.click(
+      await screen.findByRole("link", { name: /Kept question/ }),
+    );
+    expect(window.location.pathname).toBe(`/courses/${course.id}/posts/p1`);
+    expect(window.location.search).toBe("?answered=false&sort=newest");
+    expect(
+      (screen.getByRole("radio", { name: "Unanswered" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
+  it("clears the search and filters from the URL when nothing matches", async () => {
+    setPath(`/courses/${course.id}?q=zzz&type=note`);
+    vi.stubGlobal("fetch", courseRoutesFetch());
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Clear search and filters" }),
+    );
+    expect(window.location.search).toBe("");
+    await screen.findByText("No posts yet.");
+    expect(
+      (
+        screen.getByRole("searchbox", {
+          name: "Search posts",
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("");
+  });
+
+  it("shows today's date and only real courses on home", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 3, 12));
+    setPath("/home");
+    vi.stubGlobal("fetch", courseRoutesFetch());
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome back, Ada" });
+    expect(screen.getByText("Tuesday, March 3")).toBeTruthy();
+    await screen.findByText("Linear Algebra II");
+    expect(screen.getByText("Calculus II")).toBeTruthy();
+    expect(screen.queryByText(/In the discussion/)).toBeNull();
+    expect(screen.queryByText(/replies/)).toBeNull();
+    expect(screen.queryByText(/Data Structures/)).toBeNull();
+    vi.useRealTimers();
   });
 });

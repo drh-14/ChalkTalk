@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createPost, getPost, listPosts } from "./client.js";
+import { createPost, getPost, listPosts, setPostPinned } from "./client.js";
 
 const post = {
   id: "post-1",
@@ -80,5 +80,71 @@ it("recognizes a merged-post HTTP redirect without displaying the source", async
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
   await expect(getPost("merged-1")).resolves.toEqual({
     redirectToPostId: "canonical-1",
+  });
+});
+
+it("serializes each documented feed filter and sends none for all posts", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockImplementation(async () =>
+      json({ data: [], page: { nextCursor: null, hasMore: false } }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1");
+  await listPosts("course-1", { type: "note", sort: "newest" });
+  await listPosts("course-1", { answered: false, tag: "mid term" });
+  await listPosts("course-1", { type: "question", sort: "recent_activity" });
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/v1/courses/course-1/posts",
+    "/api/v1/courses/course-1/posts?sort=newest&type=note",
+    "/api/v1/courses/course-1/posts?answered=false&tag=mid+term",
+    "/api/v1/courses/course-1/posts?sort=recent_activity&type=question",
+  ]);
+});
+
+it("pins a post with a conditional CSRF-protected PATCH of only pinned", async () => {
+  const pinned = { ...post, pinned: true, version: 4 };
+  const fetchMock = vi.fn().mockResolvedValue(json({ data: pinned }));
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(
+    setPostPinned({ ...post, version: 3 } as never, true, "csrf"),
+  ).resolves.toEqual(pinned);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/posts/post-1",
+    expect.objectContaining({
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": "csrf",
+        "If-Match": '"v3"',
+      },
+      body: JSON.stringify({ pinned: true }),
+    }),
+  );
+});
+
+it("maps a stale pin revision to an API error", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      json(
+        {
+          error: {
+            code: "version_conflict",
+            message: "The post changed. Refresh and try again.",
+          },
+        },
+        412,
+      ),
+    ),
+  );
+  await expect(
+    setPostPinned({ ...post, version: 1 } as never, false, "csrf"),
+  ).rejects.toMatchObject({
+    status: 412,
+    code: "version_conflict",
+    message: "The post changed. Refresh and try again.",
   });
 });

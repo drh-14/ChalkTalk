@@ -158,3 +158,36 @@ When a route change moves focus to the page heading for assistive-technology ann
 
 - **WHEN** a member navigates to a course and focus moves to its heading
 - **THEN** the heading receives focus without a visible focus outline, while tabbing to any control shows that control's focus indicator
+
+### Requirement: The search field shows its state and syntax
+
+The course search field SHALL show a search icon, and while it contains text it SHALL show a Clear search control that empties the field, removes `q` immediately, and returns focus to the field. While the field has focus, the supported syntax (words, quoted phrases, `OR`, and excluded terms) SHALL be visible as well as described to assistive technology. Pressing `/` while focus is not in a text field, select, or editable region SHALL move focus to the search field without typing the character. While a search is applied and its first page has loaded with at least one result, the feed SHALL state the number of loaded results with the applied query, indicating when more results are available, in a polite live region; a search with no results is described by the no-match state instead. The Posts/Duplicate posts selector SHALL be a two-option toggle labeled Post view that exposes the selected option to assistive technology.
+
+#### Scenario: A member clears a search with the Clear search control
+
+- **WHEN** a member with an applied search activates Clear search
+- **THEN** the field empties, `q` is removed from the URL, the unfiltered feed loads, and focus returns to the search field
+
+#### Scenario: A member presses slash
+
+- **WHEN** a member presses `/` while focus is on a post row
+- **THEN** focus moves to the search field and no `/` is entered
+
+#### Scenario: A search returns results
+
+- **WHEN** a search for `integration` returns four posts and no further page
+- **THEN** the feed states `4 results for "integration"`
+
+### Requirement: A search can become a new question
+
+While a search is applied in the Posts view of an active course, the feed SHALL offer to ask the applied query as a new question, after any results and in the no-match state. Activating it SHALL open the composer as a question whose title is the applied query, limited to the title's 200-character maximum, and SHALL move focus to the body field. The prefilled title SHALL trigger the existing related-question suggestions. The prefilled title alone SHALL not count as an unsaved draft for discard confirmation. When another composer draft is already open, the existing discard confirmation SHALL apply first, and declining it SHALL keep that draft. The offer SHALL not appear for archived or deleting courses or in Duplicate posts mode.
+
+#### Scenario: No results match a search
+
+- **WHEN** a search for `integration by parts u choice` matches nothing and the member activates the offer to ask it as a question
+- **THEN** the composer opens with that text as the question title, focus is in the body field, and related-question suggestions load for the title
+
+#### Scenario: A member leaves a prefilled composer untouched
+
+- **WHEN** a member opens the prefilled composer from a search and closes it without editing
+- **THEN** no discard confirmation is shown
