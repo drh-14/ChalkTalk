@@ -689,6 +689,12 @@ export class CourseService {
         );
       if (ifMatch !== courseEtag(row))
         throw new AuthError(412, "version_conflict", "Membership has changed");
+      if (actorId === targetId)
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "You cannot change your own membership",
+        );
       if (row.role === "instructor" && role !== "instructor") {
         const count = await client.query<{ count: string }>(
           "SELECT count(*)::text AS count FROM course_memberships WHERE course_id=$1 AND role='instructor'",
@@ -752,6 +758,12 @@ export class CourseService {
             412,
             "version_conflict",
             "Membership has changed",
+          );
+        if (actorId === targetId)
+          throw new AuthError(
+            403,
+            "permission_denied",
+            "You cannot remove your own membership here",
           );
       }
       if (row.role === "instructor") {

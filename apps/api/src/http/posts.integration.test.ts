@@ -11,14 +11,14 @@ const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
 const schema = `posts_${process.pid}_${Date.now()}`;
 const ids = {
-  organization: "33333333-3333-4333-8333-333333333333",
-  course: "44444444-4444-4444-8444-444444444444",
-  author: "11111111-1111-4111-8111-111111111111",
-  student: "22222222-2222-4222-8222-222222222222",
-  staff: "55555555-5555-4555-8555-555555555555",
-  instructor: "88888888-8888-4888-8888-888888888888",
-  outsider: "66666666-6666-4666-8666-666666666666",
-  otherCourse: "77777777-7777-4777-8777-777777777777",
+  organization: "01a0e5cc-58ae-7009-9f43-d1ba75831d5f",
+  course: "01a0e5cc-58ae-7009-9f43-d5453c12bca9",
+  author: "01a0e5cc-58ae-7009-9f43-c8155fb2359f",
+  student: "01a0e5cc-58ae-7009-9f43-cd86eb2ae79c",
+  staff: "01a0e5cc-58ae-7009-9f43-ddd412c3880b",
+  instructor: "01a0e5cc-58ae-7009-9f43-ea8bbebc2a38",
+  outsider: "01a0e5cc-58ae-7009-9f43-e237164911da",
+  otherCourse: "01a0e5cc-58ae-7009-9f43-e69b17afef06",
 };
 let admin: Pool;
 let pool: Pool;
@@ -29,12 +29,13 @@ const environment = loadEnvironment({
   FRONTEND_BASE_URL: "https://app.example.edu",
 });
 const cookie = "__Host-chalktalk_session=opaque";
+const sessionId = "01a0e5cc-58af-7467-8ab1-740de2b8c8c3";
 function app(userId = ids.author) {
   return createApp({
     environment,
     authService: {
       session: async () => ({
-        id: "session",
+        id: sessionId,
         user: {
           id: userId,
           email: "author@example.edu",
@@ -200,7 +201,7 @@ integration("text posts HTTP contract", () => {
       .get(created.headers.location)
       .set("Cookie", cookie);
     const absentRead = await request(app(ids.student))
-      .get("/api/v1/posts/99999999-9999-4999-8999-999999999999")
+      .get("/api/v1/posts/01a0e5cc-58ae-7009-9f43-edde38b21440")
       .set("Cookie", cookie);
     expect(otherCourseRead.status).toBe(404);
     expect(otherCourseRead.body.error.code).toBe("not_found");
@@ -278,6 +279,13 @@ integration("text posts HTTP contract", () => {
     expect(suggested.status).toBe(200);
     expect(suggested.headers.etag).toBe('"v2"');
     expect(suggested.body.data.duplicateStatus).toBe("suggested");
+    const visibleSuggestion = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts?duplicateStatus=suggested`)
+      .set("Cookie", cookie);
+    expect(visibleSuggestion.status).toBe(200);
+    expect(
+      visibleSuggestion.body.data.map((post: { id: string }) => post.id),
+    ).toContain(source.body.data.id);
     const stale = await unsafe(request(app()).patch(path))
       .set("If-Match", source.headers.etag)
       .send({ title: "New" });
@@ -441,6 +449,80 @@ integration("text posts HTTP contract", () => {
       .get(`${path}&type=question&cursor=${cursor}`)
       .set("Cookie", cookie);
     expect(wrongFilter.status).toBe(400);
+  });
+  it("matches an inflected question title through English full-text search", async () => {
+    const created = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Cutoffs for the course",
+        bodyMarkdown: "Please clarify the dates.",
+      })
+      .expect(201);
+    const results = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({ q: "A cutoff", type: "question", sort: "relevance" })
+      .set("Cookie", cookie);
+    expect(results.status).toBe(200);
+    expect(
+      results.body.data.some(
+        (post: { id: string }) => post.id === created.body.data.id,
+      ),
+    ).toBe(true);
+  });
+  it("finds question text that appears only in the body", async () => {
+    const created = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Where is the reading?",
+        bodyMarkdown: "The thermocline diagram is in chapter five.",
+      })
+      .expect(201);
+    const results = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({ q: "thermocline", type: "question", sort: "relevance" })
+      .set("Cookie", cookie);
+    expect(results.status).toBe(200);
+    expect(
+      results.body.data.some(
+        (post: { id: string }) => post.id === created.body.data.id,
+      ),
+    ).toBe(true);
+  });
+  it("matches a quoted phrase but excludes a forbidden term", async () => {
+    const created = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Office hours moved to Friday",
+        bodyMarkdown: "Please check the schedule.",
+      })
+      .expect(201);
+    const path = `/api/v1/courses/${ids.course}/posts`;
+    const phrase = await request(app(ids.student))
+      .get(path)
+      .query({ q: '"office hours"', type: "question", sort: "relevance" })
+      .set("Cookie", cookie);
+    expect(phrase.status).toBe(200);
+    expect(
+      phrase.body.data.some(
+        (post: { id: string }) => post.id === created.body.data.id,
+      ),
+    ).toBe(true);
+    const excluded = await request(app(ids.student))
+      .get(path)
+      .query({ q: "office -friday", type: "question", sort: "relevance" })
+      .set("Cookie", cookie);
+    expect(excluded.status).toBe(200);
+    expect(
+      excluded.body.data.some(
+        (post: { id: string }) => post.id === created.body.data.id,
+      ),
+    ).toBe(false);
   });
   it("does not expose a hidden post through mutation preconditions", async () => {
     const created = await unsafe(
@@ -612,10 +694,12 @@ integration("text posts HTTP contract", () => {
         duplicateStatus: "confirmed",
       });
     expect(staff.status).toBe(200);
-    expect(staff.body.data).toMatchObject({
-      pinned: true,
+    expect(staff.body.data).toEqual({
+      id: source.body.data.id,
+      courseId: ids.course,
       duplicateOfPostId: target.body.data.id,
       duplicateStatus: "confirmed",
+      version: 2,
     });
     const cleared = await unsafe(request(app(ids.staff)).patch(path))
       .set("If-Match", staff.headers.etag)
@@ -626,6 +710,224 @@ integration("text posts HTTP contract", () => {
       duplicateOfPostId: null,
       duplicateStatus: "none",
     });
+  });
+  it("hides confirmed duplicates from members and redirects old links to canonical posts", async () => {
+    const source = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Merging source",
+        bodyMarkdown: "Private retained body",
+      })
+      .expect(201);
+    const target = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Canonical target",
+        bodyMarkdown: "Canonical body",
+      })
+      .expect(201);
+    await unsafe(request(app(ids.staff)).patch(source.headers.location))
+      .set("If-Match", source.headers.etag)
+      .send({
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: target.body.data.id,
+      })
+      .expect(200);
+    for (const suffix of ["", "?q=Merging", "?duplicateStatus=confirmed"]) {
+      const listed = await request(app(ids.student))
+        .get(`/api/v1/courses/${ids.course}/posts${suffix}`)
+        .set("Cookie", cookie);
+      if (suffix.includes("confirmed")) expect(listed.status).toBe(403);
+      else
+        expect(
+          listed.body.data.map((item: { id: string }) => item.id),
+        ).not.toContain(source.body.data.id);
+    }
+    const redirected = await request(app(ids.student))
+      .get(source.headers.location)
+      .set("Cookie", cookie);
+    expect(redirected.status).toBe(303);
+    expect(redirected.headers.location).toBe(target.headers.location);
+    expect(redirected.headers["cache-control"]).toContain("no-store");
+    expect(redirected.text).not.toContain("Private retained body");
+    const review = await request(app(ids.staff))
+      .get(`/api/v1/courses/${ids.course}/posts?duplicateStatus=confirmed`)
+      .set("Cookie", cookie);
+    expect(review.status).toBe(200);
+    expect(review.body.data).toContainEqual(
+      expect.objectContaining({
+        id: source.body.data.id,
+        title: "Merging source",
+        duplicateOfPostId: target.body.data.id,
+        canonicalTitle: "Canonical target",
+      }),
+    );
+    expect(JSON.stringify(review.body.data)).not.toContain(
+      "Private retained body",
+    );
+    const inaccessible = await request(app(ids.outsider))
+      .get(source.headers.location)
+      .set("Cookie", cookie);
+    expect(inaccessible.status).toBe(404);
+  });
+  it("returns retained duplicate detail only to course staff", async () => {
+    const source = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Private duplicate review",
+        bodyMarkdown: "Retained **staff review** body",
+        anonymous: true,
+        tags: ["review-tag"],
+      })
+      .expect(201);
+    const target = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Review target",
+        bodyMarkdown: "Target",
+      })
+      .expect(201);
+    const reviewUrl = `${source.headers.location}/duplicate-review`;
+    const beforeMerge = await request(app(ids.staff))
+      .get(reviewUrl)
+      .set("Cookie", cookie);
+    expect(beforeMerge.status).toBe(404);
+    const merged = await unsafe(
+      request(app(ids.staff)).patch(source.headers.location),
+    )
+      .set("If-Match", source.headers.etag)
+      .send({
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: target.body.data.id,
+      })
+      .expect(200);
+    for (const staffId of [ids.staff, ids.instructor]) {
+      const review = await request(app(staffId))
+        .get(reviewUrl)
+        .set("Cookie", cookie);
+      expect(review.status).toBe(200);
+      expect(review.headers.etag).toBe(merged.headers.etag);
+      expect(review.headers["cache-control"]).toBe("private, no-store");
+      expect(review.body.data).toMatchObject({
+        id: source.body.data.id,
+        title: "Private duplicate review",
+        bodyMarkdown: "Retained **staff review** body",
+        tags: ["review-tag"],
+        author: { userId: ids.author, displayName: "Author", anonymous: true },
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: target.body.data.id,
+        version: merged.body.data.version,
+      });
+    }
+    const student = await request(app(ids.student))
+      .get(reviewUrl)
+      .set("Cookie", cookie);
+    expect(student.status).toBe(403);
+    expect(JSON.stringify(student.body)).not.toContain("staff review");
+    const outsider = await request(app(ids.outsider))
+      .get(reviewUrl)
+      .set("Cookie", cookie);
+    expect(outsider.status).toBe(404);
+    const absent = await request(app(ids.staff))
+      .get(
+        "/api/v1/posts/01a0e5cc-58ae-7009-9f43-edde38b21440/duplicate-review",
+      )
+      .set("Cookie", cookie);
+    expect(absent.status).toBe(404);
+    const unauthenticated = await request(app(ids.staff)).get(reviewUrl);
+    expect(unauthenticated.status).toBe(401);
+    const unmerged = await unsafe(
+      request(app(ids.staff)).patch(source.headers.location),
+    )
+      .set("If-Match", merged.headers.etag)
+      .send({ duplicateStatus: "none", duplicateOfPostId: null })
+      .expect(200);
+    const afterUnmerge = await request(app(ids.staff))
+      .get(reviewUrl)
+      .set("Cookie", cookie);
+    expect(afterUnmerge.status).toBe(404);
+    await unsafe(request(app()).delete(source.headers.location))
+      .set("If-Match", unmerged.headers.etag)
+      .expect(204);
+    const afterDelete = await request(app(ids.staff))
+      .get(reviewUrl)
+      .set("Cookie", cookie);
+    expect(afterDelete.status).toBe(404);
+  });
+  it("preserves canonical references until staff unmerge, then restores the retained source", async () => {
+    const source = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Retained source",
+        bodyMarkdown: "Retained source body",
+      })
+      .expect(201);
+    const target = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Protected canonical",
+        bodyMarkdown: "Target body",
+      })
+      .expect(201);
+    const merged = await unsafe(
+      request(app(ids.instructor)).patch(source.headers.location),
+    )
+      .set("If-Match", source.headers.etag)
+      .send({
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: target.body.data.id,
+      })
+      .expect(200);
+    const blockedDelete = await unsafe(
+      request(app()).delete(target.headers.location),
+    ).set("If-Match", target.headers.etag);
+    expect(blockedDelete.status).toBe(409);
+    expect(blockedDelete.body.error.code).toBe("canonical_has_duplicates");
+    const blockedMerge = await unsafe(
+      request(app(ids.staff)).patch(target.headers.location),
+    )
+      .set("If-Match", target.headers.etag)
+      .send({
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: source.body.data.id,
+      });
+    expect(blockedMerge.status).toBe(409);
+    const blockedEdit = await unsafe(
+      request(app(ids.staff)).patch(source.headers.location),
+    )
+      .set("If-Match", merged.headers.etag)
+      .send({ bodyMarkdown: "Changed" });
+    expect(blockedEdit.status).toBe(409);
+    const unmergeDenied = await unsafe(
+      request(app(ids.student)).patch(source.headers.location),
+    )
+      .set("If-Match", merged.headers.etag)
+      .send({ duplicateStatus: "none", duplicateOfPostId: null });
+    expect(unmergeDenied.status).toBe(403);
+    await unsafe(request(app(ids.staff)).patch(source.headers.location))
+      .set("If-Match", merged.headers.etag)
+      .send({ duplicateStatus: "none", duplicateOfPostId: null })
+      .expect(200);
+    const restored = await request(app(ids.student))
+      .get(source.headers.location)
+      .set("Cookie", cookie);
+    expect(restored.status).toBe(200);
+    expect(restored.body.data.bodyMarkdown).toBe("Retained source body");
+    await unsafe(request(app()).delete(target.headers.location))
+      .set("If-Match", target.headers.etag)
+      .expect(204);
   });
   it("returns a deleted-author identity projection without the original account name", async () => {
     const created = await unsafe(

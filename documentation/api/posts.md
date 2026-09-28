@@ -6,7 +6,9 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 
 ## Retained deleted posts
 
-Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false` and includes the content fields documented below. A tombstone sets it to `true` and contains only `id`, `courseId`, `type`, `deleted`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and update responses always contain an active post.
+Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false` and includes the content fields documented below. A tombstone sets it to `true` and contains only `id`, `courseId`, `type`, `deleted`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and ordinary update responses contain an active post; merge confirmation is the exception described below.
+
+Confirmed duplicates are retained in storage but removed from ordinary lists, full-text search, and Related questions. The old direct URL returns `303 See Other` to the canonical post for a current course member; it never returns the duplicate's content. Staff can retrieve a restricted duplicate-review list, read the retained source through a staff-only review endpoint, and unmerge it. Confirming a merge returns a minimal canonical reference rather than an active post.
 
 #### Tombstone example
 
@@ -315,7 +317,7 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 ### **`GET /api/v1/courses/{courseId}/posts`**
 
-Lists or searches the posts in a course. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+Lists or searches the posts in a course. Confirmed duplicates are excluded from all ordinary lists and searches, including Related questions, before pagination and ranking. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -349,7 +351,7 @@ Lists or searches the posts in a course. Without q, results default to recent_ac
 
 `answered` (boolean, optional): Filter question posts by answer presence.
 
-`duplicateStatus` (enum: none, suggested, confirmed, optional; values none, suggested, confirmed): Filter by duplicate-review state.
+`duplicateStatus` (enum: none, suggested, confirmed, optional; values none, suggested, confirmed): Filter by duplicate-review state. `confirmed` is staff-only and returns review entries containing only `id`, `courseId`, `type`, `title`, `duplicateStatus`, `duplicateOfPostId`, `canonicalTitle`, and `version`; no source body, author, or tags. Suggested duplicates remain visible in ordinary results.
 
 `sort` (enum: relevance, newest, recent_activity, optional; values relevance, newest, recent_activity): Ordering. Defaults to relevance when q is present and recent_activity otherwise.
 
@@ -497,6 +499,10 @@ curl --request GET '/api/v1/courses/course_123/posts' \
 
 `authentication_required`: Authentication is missing or invalid.
 
+##### `403 Forbidden`
+
+`permission_denied`: The `duplicateStatus=confirmed` review filter is restricted to course TAs and instructors.
+
 ##### `404 Not Found`
 
 `not_found`: The course is absent or hidden.
@@ -516,6 +522,8 @@ curl --request GET '/api/v1/courses/course_123/posts' \
 ### **`GET /api/v1/posts/{postId}`**
 
 Retrieves a post.
+
+A confirmed duplicate is not returned as a post. After checking current membership in its course, this endpoint responds `303 See Other` with `Location: /api/v1/posts/{canonicalPostId}` and `Cache-Control: private, no-store`. Nonmembers receive `404 not_found` without a redirect.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -545,13 +553,17 @@ None.
 
 None.
 
-**Success:** `200 OK`.
+**Success:** `200 OK` for an active post or tombstone; `303 See Other` for a confirmed duplicate.
 
 **Response media:** `application/json`.
 
 #### Response headers
 
 `ETag` (string): Opaque revision token for a later `If-Match` request.
+
+`Location` (string, on `303`): Same-course canonical post URL.
+
+`Cache-Control` (string, on `303`): `private, no-store`.
 
 #### Response body
 
@@ -679,11 +691,33 @@ curl --request GET '/api/v1/posts/post_123' \
 
 ---
 
+<a id="getDuplicateReview"></a>
+
+### **`GET /api/v1/posts/{postId}/duplicate-review`**
+
+Retrieves the retained full post for staff review of an active, confirmed duplicate. This endpoint does not redirect; the ordinary `GET /api/v1/posts/{postId}` still returns `303` to the canonical post. The response uses the existing active post projection, including title, body, tags, author as visible to staff, `duplicateStatus: confirmed`, `duplicateOfPostId`, and version. The staff review list remains summary-only.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Current course TA or instructor. Current student members receive `403 permission_denied`. Nonmembers, absent posts, deleted posts, and posts not confirmed as duplicates receive `404 not_found`.
+
+**Request media:** None. No request body or query parameters.
+
+**Success:** `200 OK` with `{ "data": <active post> }`.
+
+**Response headers:** `ETag` carries the current post revision for conditional unmerge; `Cache-Control: private, no-store` prevents retained source content from being cached.
+
+**Errors:** `401 authentication_required`, `403 permission_denied`, `404 not_found`, `500 internal_error`, `503 service_unavailable`.
+
+---
+
 <a id="updatePost"></a>
 
 ### **`PATCH /api/v1/posts/{postId}`**
 
 Updates a post. Members may suggest duplicates. Staff may confirm duplicates and change pinned. At least one metadata field or attachment addition is required.
+
+Staff confirmation retains the source text in storage but hides it from readers. The `200` confirmation response contains only `data.id`, `data.courseId`, `data.duplicateStatus: confirmed`, `data.duplicateOfPostId`, and `data.version`. Staff unmerge by setting `duplicateStatus: none` and `duplicateOfPostId: null` with the current ETag; the retained source becomes visible again. While merged, all other source edits and deletion fail with `409 post_merged`. A canonical post with confirmed inbound references cannot be deleted or merged until those sources are unmerged (`409 canonical_has_duplicates`). Canonical targets must be active, unmerged posts in the same course.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -894,6 +928,10 @@ curl --request PATCH '/api/v1/posts/post_123' \
 
 `course_archived`: The course is archived.
 
+`post_merged`: The confirmed source must be unmerged before it can be edited.
+
+`canonical_has_duplicates`: Confirmed sources must be unmerged before their canonical post can be merged.
+
 ##### `412 Precondition Failed`
 
 `version_conflict`: The supplied ETag is stale.
@@ -928,7 +966,7 @@ curl --request PATCH '/api/v1/posts/post_123' \
 
 ### **`DELETE /api/v1/posts/{postId}`**
 
-Deletes a post. A bodyless, authorless tombstone is retained when nested content requires it.
+Deletes a post. A bodyless, authorless tombstone is retained when nested content requires it. Confirmed sources cannot be deleted until unmerged, and canonicals with confirmed inbound references cannot be deleted until those references are unmerged.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -1012,6 +1050,10 @@ curl --request DELETE '/api/v1/posts/post_123' \
 ##### `409 Conflict`
 
 `course_archived`: The course is archived.
+
+`post_merged`: The confirmed source must be unmerged before it can be deleted.
+
+`canonical_has_duplicates`: Confirmed sources must be unmerged before their canonical post can be deleted.
 
 ##### `412 Precondition Failed`
 

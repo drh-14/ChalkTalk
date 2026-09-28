@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { JobWorker } from "./worker.js";
@@ -7,8 +8,8 @@ import { PostService, postEtag } from "../posts/service.js";
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
 const schema = `jobs_${process.pid}_${Date.now()}`;
-const organizationId = "88888888-8888-4888-8888-888888888888";
-const ownerId = "88888888-8888-4888-8888-888888888887";
+const organizationId = "01a0e5cc-58ae-7009-9f43-ea8bbebc2a38";
+const ownerId = "01a0e5cc-58af-7467-8ab1-42c703550929";
 let admin: Pool;
 let pool: Pool;
 let worker: JobWorker;
@@ -44,9 +45,8 @@ integration("JobWorker PostgreSQL lifecycle", () => {
 
   async function seedJob(maxAttempts = 5): Promise<Seeded> {
     sequence += 1;
-    const suffix = sequence.toString().padStart(12, "0");
-    const courseId = `88888888-8888-4888-8888-${suffix}`;
-    const jobId = `99999999-9999-4999-8999-${suffix}`;
+    const courseId = uuidv7();
+    const jobId = uuidv7();
     await pool.query(
       "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,$5)",
       [courseId, organizationId, ownerId, `Job course ${sequence}`, "ABCDEFGH"],

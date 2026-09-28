@@ -56,7 +56,7 @@ services:
     expose:
       - "3000"
     depends_on:
-      migrate:
+      seed-mock:
         condition: service_completed_successfully
     healthcheck:
       test:
@@ -70,6 +70,21 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+
+  seed-mock:
+    profiles: ["app"]
+    build: *development-build
+    working_dir: /app
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment: *api-environment
+    command: npm run db:seed:mock
+    volumes:
+      - .:/app
+      - api-node-modules:/app/node_modules
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
   web:
     profiles: ["app"]

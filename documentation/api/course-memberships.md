@@ -372,7 +372,7 @@ curl --request GET '/api/v1/courses/course_123/members/user_123' \
 
 ### **`PATCH /api/v1/courses/{courseId}/members/{userId}`**
 
-Updates a course member’s role.
+Updates another course member’s role. Instructors cannot change their own role through this endpoint, even when the requested role is unchanged.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -478,6 +478,8 @@ curl --request PATCH '/api/v1/courses/course_123/members/user_123' \
 
 `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
 
+`permission_denied`: An instructor cannot change their own course role through this endpoint. Use another instructor to administer the membership.
+
 ##### `401 Unauthorized`
 
 `authentication_required`: Authentication is missing or invalid.
@@ -516,7 +518,7 @@ curl --request PATCH '/api/v1/courses/course_123/members/user_123' \
 
 ### **`DELETE /api/v1/courses/{courseId}/members/{userId}`**
 
-Removes a member from a course.
+Removes another member from a course. Instructors cannot remove themselves through this endpoint; voluntary departure uses `DELETE /courses/{courseId}/members/me`.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -588,6 +590,8 @@ curl --request DELETE '/api/v1/courses/course_123/members/user_123' \
 ##### `403 Forbidden`
 
 `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+`permission_denied`: An instructor cannot remove their own membership through this endpoint. Use `/members/me` to leave voluntarily.
 
 ##### `401 Unauthorized`
 

@@ -12,6 +12,7 @@
     "dev:web": "npm run dev --workspace=@chalktalk/web",
     "dev:api": "npm run dev --workspace=@chalktalk/api",
     "db:migrate": "npm run migrate --workspace=@chalktalk/api",
+    "db:seed:mock": "npm run seed:mock --workspace=@chalktalk/api",
     "format": "prettier --write \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",
     "lint": "eslint .",

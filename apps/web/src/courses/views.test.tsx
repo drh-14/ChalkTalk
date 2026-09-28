@@ -116,6 +116,13 @@ describe("course browser workflows", () => {
     expect(screen.getByText("1 shown")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Load more members" }));
     await screen.findByText("Ada Lovelace");
+    expect(
+      screen.queryByRole("combobox", { name: "Role for Ada Lovelace" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("combobox", { name: "Role for Grace Hopper" }),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(1);
     expect(fetchMock).toHaveBeenLastCalledWith(
       `/api/v1/courses/${course.id}/members?cursor=member-next`,
       { credentials: "include", headers: { Accept: "application/json" } },

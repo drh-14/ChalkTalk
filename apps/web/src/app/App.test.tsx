@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
@@ -59,6 +59,413 @@ afterEach(() => {
 });
 
 describe("ChalkTalk auth entry", () => {
+  it("keeps a shared course header while switching between discussion and settings", async () => {
+    setPath(`/courses/${course.id}`);
+    const member = {
+      id: "membership_123",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: session.user.displayName },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/sessions/current"))
+        return jsonResponse({ data: session });
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+      if (url.endsWith(`/members/${session.user.id}`))
+        return jsonResponse({ data: member });
+      if (url.endsWith("/members"))
+        return jsonResponse({
+          data: [member],
+          page: { nextCursor: null, hasMore: false },
+        });
+      return jsonResponse({
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    const header = await screen.findByRole("heading", { name: course.name });
+    await user.click(screen.getByRole("link", { name: "Course settings" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}/settings`);
+    expect(screen.getByRole("heading", { name: course.name })).toBe(header);
+    expect(
+      screen
+        .getByRole("link", { name: "Course settings" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    await screen.findByRole("heading", { name: "Members" });
+    await user.click(screen.getByRole("link", { name: "Discussion" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    expect(screen.getByRole("heading", { name: course.name })).toBe(header);
+    expect(
+      screen
+        .getByRole("link", { name: "Discussion" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).endsWith("/sessions/current"),
+      ),
+    ).toHaveLength(1);
+  });
+  it("keeps the draft and URL when Settings navigation is declined", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Create post" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "My draft",
+    );
+    await user.click(screen.getByRole("link", { name: "Course settings" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+      "value",
+      "My draft",
+    );
+    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
+    confirm.mockRestore();
+  });
+  it("updates the active course view on browser Back and Forward", async () => {
+    setPath(`/courses/${course.id}`);
+    const member = {
+      id: "m1",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: "Ada" },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        if (url.endsWith(`/members/${session.user.id}`))
+          return jsonResponse({ data: member });
+        if (url.endsWith("/members"))
+          return jsonResponse({
+            data: [member],
+            page: { nextCursor: null, hasMore: false },
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("link", { name: "Course settings" }),
+    );
+    await screen.findByRole("heading", { name: "Members" });
+    await act(async () => {
+      window.history.back();
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("link", { name: "Discussion" })
+          .getAttribute("aria-current"),
+      ).toBe("page"),
+    );
+    await act(async () => {
+      window.history.forward();
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("link", { name: "Course settings" })
+          .getAttribute("aria-current"),
+      ).toBe("page"),
+    );
+  });
+  it("does not discard a draft when browser Back is declined", async () => {
+    setPath(`/courses/${course.id}/settings`);
+    const member = {
+      id: "m1",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: "Ada" },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        if (url.endsWith(`/members/${session.user.id}`))
+          return jsonResponse({ data: member });
+        if (url.endsWith("/members"))
+          return jsonResponse({
+            data: [member],
+            page: { nextCursor: null, hasMore: false },
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("link", { name: "Discussion" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Create post" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "Keep this",
+    );
+    await act(async () => {
+      window.history.back();
+    });
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+      "value",
+      "Keep this",
+    );
+    confirm.mockRestore();
+  });
+  it("keeps the course frame visible while settings members load and can retry", async () => {
+    setPath(`/courses/${course.id}/settings`);
+    let fail = true;
+    const member = {
+      id: "m1",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: "Ada" },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        if (url.endsWith(`/members/${session.user.id}`)) {
+          if (fail)
+            return jsonResponse(
+              {
+                error: {
+                  code: "unavailable",
+                  message: "Membership unavailable",
+                },
+              },
+              503,
+            );
+          return jsonResponse({ data: member });
+        }
+        if (url.endsWith("/members"))
+          return jsonResponse({
+            data: [member],
+            page: { nextCursor: null, hasMore: false },
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Membership unavailable",
+    );
+    expect(screen.getByRole("link", { name: "Discussion" })).toBeTruthy();
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("heading", { name: "Members" });
+  });
+  it("keeps the shared header visible during a slow settings request", async () => {
+    setPath(`/courses/${course.id}`);
+    let resolveMembers: ((response: Response) => void) | undefined;
+    const member = {
+      id: "m1",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: "Ada" },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        if (url.endsWith(`/members/${session.user.id}`))
+          return jsonResponse({ data: member });
+        if (url.endsWith("/members"))
+          return new Promise<Response>((resolve) => {
+            resolveMembers = resolve;
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    const header = await screen.findByRole("heading", { name: course.name });
+    await user.click(screen.getByRole("link", { name: "Course settings" }));
+    expect(screen.getByRole("heading", { name: course.name })).toBe(header);
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "Loading course settings",
+    );
+    await act(async () => {
+      resolveMembers?.(
+        jsonResponse({
+          data: [member],
+          page: { nextCursor: null, hasMore: false },
+        }),
+      );
+    });
+    await screen.findByRole("heading", { name: "Members" });
+  });
+  it("updates the shared heading immediately after renaming in Settings", async () => {
+    setPath(`/courses/${course.id}/settings`);
+    const member = {
+      id: "m1",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: "Ada" },
+      role: "instructor",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    const renamed = { ...course, name: "Advanced Algebra", version: 2 };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`) && init?.method === "PATCH")
+          return jsonResponse({ data: renamed }, 200, { ETag: '"v2"' });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        if (url.endsWith(`/members/${session.user.id}`))
+          return jsonResponse({ data: member });
+        if (url.endsWith("/members"))
+          return jsonResponse({
+            data: [member],
+            page: { nextCursor: null, hasMore: false },
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("button", { name: "Save name" });
+    await user.clear(screen.getByRole("textbox", { name: "Course name" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Course name" }),
+      renamed.name,
+    );
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+    await screen.findByRole("heading", { name: renamed.name });
+    await user.click(screen.getByRole("link", { name: "Discussion" }));
+    expect(screen.getByRole("heading", { name: renamed.name })).toBeTruthy();
+  });
+  it("replaces the selected post query live without discarding the composer draft", async () => {
+    setPath(`/courses/${course.id}/posts/p1?q=old`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course });
+        if (url.endsWith("/posts/p1"))
+          return jsonResponse({
+            data: {
+              id: "p1",
+              courseId: course.id,
+              type: "question",
+              deleted: false,
+              title: "Selected post",
+              bodyMarkdown: "Details",
+              author: {
+                userId: null,
+                displayName: "Anonymous",
+                anonymous: true,
+                deleted: false,
+              },
+              anonymous: true,
+              tags: [],
+              createdAt: "2026-01-01",
+              lastActivityAt: "2026-01-01",
+            },
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("button", { name: "Create post" });
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "Unsent draft",
+    );
+    const search = screen.getByRole("searchbox", { name: "Search posts" });
+    await user.clear(search);
+    await user.type(search, "new");
+    await waitFor(() => expect(window.location.search).toBe("?q=new"));
+    expect(window.location.pathname).toBe(`/courses/${course.id}/posts/p1`);
+    expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+      "value",
+      "Unsent draft",
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
   it("protects home while restoring the browser session", async () => {
     setPath("/home");
     vi.stubGlobal(
@@ -147,48 +554,32 @@ describe("ChalkTalk auth entry", () => {
       .mockResolvedValueOnce(
         jsonResponse({ data: instructorCourse }, 201, { ETag: '"v1"' }),
       )
-      .mockResolvedValueOnce(
-        jsonResponse({ data: instructorCourse }, 200, { ETag: '"v1"' }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            data: {
-              id: "membership_123",
-              courseId: course.id,
-              user: {
-                id: session.user.id,
-                displayName: session.user.displayName,
-              },
-              role: "instructor",
-              createdAt: course.createdAt,
-              updatedAt: course.updatedAt,
-              version: 1,
-            },
-          },
-          200,
-          { ETag: '"v1"' },
-        ),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          data: [
-            {
-              id: "membership_123",
-              courseId: course.id,
-              user: {
-                id: session.user.id,
-                displayName: session.user.displayName,
-              },
-              role: "instructor",
-              createdAt: course.createdAt,
-              updatedAt: course.updatedAt,
-              version: 1,
-            },
-          ],
+      .mockImplementation(async (url: string) => {
+        const member = {
+          id: "membership_123",
+          courseId: course.id,
+          user: { id: session.user.id, displayName: session.user.displayName },
+          role: "instructor",
+          createdAt: course.createdAt,
+          updatedAt: course.updatedAt,
+          version: 1,
+        };
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: instructorCourse }, 200, {
+            ETag: '"v1"',
+          });
+        if (url.endsWith(`/members/${session.user.id}`))
+          return jsonResponse({ data: member }, 200, { ETag: '"v1"' });
+        if (url.endsWith("/members"))
+          return jsonResponse({
+            data: [member],
+            page: { nextCursor: null, hasMore: false },
+          });
+        return jsonResponse({
+          data: [],
           page: { nextCursor: null, hasMore: false },
-        }),
-      );
+        });
+      });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -215,7 +606,7 @@ describe("ChalkTalk auth entry", () => {
   });
 
   it("shows instructor controls and sends the detail ETag when deleting a course", async () => {
-    setPath(`/courses/${course.id}`);
+    setPath(`/courses/${course.id}/settings`);
     const instructorCourse = { ...course, joinCode: "ABCDEFGH" };
     const member = {
       id: "membership_123",

@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { v7 as uuidv7 } from "uuid";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import request from "supertest";
@@ -17,10 +18,10 @@ const schema = `courses_${process.pid}_${Date.now()}`;
 let admin: Pool;
 let pool: Pool;
 let service: CourseService;
-const owner = "11111111-1111-4111-8111-111111111111";
-const guest = "22222222-2222-4222-8222-222222222222";
-const organization = "33333333-3333-4333-8333-333333333333";
-const guestOrganization = "44444444-4444-4444-8444-444444444444";
+const owner = "01a0e5cc-58ae-7009-9f43-c8155fb2359f";
+const guest = "01a0e5cc-58ae-7009-9f43-cd86eb2ae79c";
+const organization = "01a0e5cc-58ae-7009-9f43-d1ba75831d5f";
+const guestOrganization = "01a0e5cc-58ae-7009-9f43-d5453c12bca9";
 
 integration("CourseService PostgreSQL lifecycle", () => {
   beforeAll(async () => {
@@ -237,7 +238,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
       environment,
       authService: {
         session: async () => ({
-          id: "guest-session",
+          id: uuidv7(),
           user: {
             id: guest,
             email: "guest@guest.edu",
@@ -275,6 +276,120 @@ integration("CourseService PostgreSQL lifecycle", () => {
       .send({ joinCode: created.joinCode });
     expect(emptyKey.status).toBe(422);
     expect(emptyKey.body.error.code).toBe("validation_failed");
+  });
+  it("forbids self-targeted membership administration after If-Match checks through HTTP", async () => {
+    const environment = loadEnvironment({
+      AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+      ALLOWED_SCHOOL_DOMAINS: "example.edu",
+      FRONTEND_ORIGINS: "https://app.example.edu",
+      FRONTEND_BASE_URL: "https://app.example.edu",
+    });
+    const app = createApp({
+      environment,
+      authService: {
+        session: async () => ({
+          id: uuidv7(),
+          user: {
+            id: owner,
+            email: "owner@example.edu",
+            displayName: "Owner",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            version: 1,
+          },
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          csrfToken: "csrf",
+        }),
+      } as AuthService,
+      courseService: service,
+    });
+    const course = await service.create(
+      organization,
+      owner,
+      "Self administration",
+    );
+    const joined = await service.join(course.id, guest, course.joinCode!);
+    await service.updateMember(
+      course.id,
+      owner,
+      guest,
+      courseEtag(joined),
+      "instructor",
+    );
+    const target = `/api/v1/courses/${course.id}/members/${owner}`;
+    const headers = {
+      Cookie: "__Host-chalktalk_session=opaque",
+      Origin: environment.frontendBaseUrl,
+      "X-CSRF-Token": "csrf",
+    };
+    const before = await request(app)
+      .get(target)
+      .set("Cookie", headers.Cookie)
+      .expect(200);
+    const etag = before.headers.etag as string;
+    const missing = await request(app)
+      .patch(target)
+      .set(headers)
+      .send({ role: "student" });
+    expect(missing.status).toBe(428);
+    expect(missing.body.error.code).toBe("precondition_required");
+    const stale = await request(app)
+      .delete(target)
+      .set({ ...headers, "If-Match": '"v99"' });
+    expect(stale.status).toBe(412);
+    expect(stale.body.error.code).toBe("version_conflict");
+    for (const role of ["instructor", "student"]) {
+      const denied = await request(app)
+        .patch(target)
+        .set({ ...headers, "If-Match": etag })
+        .send({ role });
+      expect(denied.status).toBe(403);
+      expect(denied.body.error.code).toBe("permission_denied");
+    }
+    const deniedRemoval = await request(app)
+      .delete(target)
+      .set({ ...headers, "If-Match": etag });
+    expect(deniedRemoval.status).toBe(403);
+    expect(deniedRemoval.body.error.code).toBe("permission_denied");
+    const after = await request(app)
+      .get(target)
+      .set("Cookie", headers.Cookie)
+      .expect(200);
+    expect(after.headers.etag).toBe(etag);
+    expect(after.body).toEqual(before.body);
+    const otherTarget = `/api/v1/courses/${course.id}/members/${guest}`;
+    const otherBefore = await request(app)
+      .get(otherTarget)
+      .set("Cookie", headers.Cookie)
+      .expect(200);
+    const changedOther = await request(app)
+      .patch(otherTarget)
+      .set({ ...headers, "If-Match": otherBefore.headers.etag as string })
+      .send({ role: "ta" })
+      .expect(200);
+    expect(changedOther.body.data.role).toBe("ta");
+    await request(app)
+      .delete(otherTarget)
+      .set({ ...headers, "If-Match": changedOther.headers.etag as string })
+      .expect(204);
+    const rejoined = await service.join(course.id, guest, course.joinCode!);
+    await service.updateMember(
+      course.id,
+      owner,
+      guest,
+      courseEtag(rejoined),
+      "instructor",
+    );
+    await request(app)
+      .delete(`/api/v1/courses/${course.id}/members/me`)
+      .set(headers)
+      .expect(204);
+    await expect(
+      service.getMember(course.id, guest, owner),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
   });
   it("stores implemented resources using the documented database types and idempotency key", async () => {
     const columns = await pool.query<{
@@ -335,7 +450,8 @@ integration("CourseService PostgreSQL lifecycle", () => {
     ).rejects.toMatchObject({ code: "23514" });
     await expect(
       pool.query(
-        "INSERT INTO organizations (id,domain,name) VALUES ('99999999-9999-4999-8999-999999999999','UPPER.edu','Invalid')",
+        "INSERT INTO organizations (id,domain,name) VALUES ($1,'UPPER.edu','Invalid')",
+        [uuidv7()],
       ),
     ).rejects.toMatchObject({ code: "23514" });
   });
@@ -356,7 +472,8 @@ integration("CourseService PostgreSQL lifecycle", () => {
           await readFile(join(getMigrationDirectory(), name), "utf8"),
         );
       await isolated.query(
-        "INSERT INTO organizations (id,domain,name) VALUES ('88888888-8888-4888-8888-888888888888','UPPER.edu','Invalid')",
+        "INSERT INTO organizations (id,domain,name) VALUES ($1,'UPPER.edu','Invalid')",
+        [uuidv7()],
       );
       await expect(
         isolated.query(
@@ -391,7 +508,8 @@ integration("CourseService PostgreSQL lifecycle", () => {
         );
       await isolated.query(
         `INSERT INTO idempotency_records (id,scope,key,request_hash,status_code,response_body,expires_at)
-         VALUES ('77777777-7777-4777-8777-777777777777','upgrade','retained',decode('ab','hex'),201,'{"data":{"id":"old"}}',now()+interval '1 day')`,
+         VALUES ($1,'upgrade','retained',decode('ab','hex'),201,'{"data":{"id":"old"}}',now()+interval '1 day')`,
+        [uuidv7()],
       );
       await isolated.query(
         await readFile(
@@ -447,11 +565,11 @@ integration("CourseService PostgreSQL lifecycle", () => {
     expect(courseEtag(updated)).toBe('"v2"');
   });
   it("paginates member courses by a stable created-at and UUID keyset", async () => {
-    const pageUser = "55555555-5555-4555-8555-555555555555";
+    const pageUser = "01a0e5cc-58ae-7009-9f43-ddd412c3880b";
     const courseIds = [
-      "55555555-5555-4555-8555-555555555551",
-      "55555555-5555-4555-8555-555555555552",
-      "55555555-5555-4555-8555-555555555553",
+      "01a0e5cc-58af-7467-8ab1-42c703550929",
+      "01a0e5cc-58af-7467-8ab1-47194b3277ff",
+      "01a0e5cc-58af-7467-8ab1-48ddf4c7686f",
     ];
     const timestamp = "2026-09-01T12:00:00.000Z";
     await pool.query(
@@ -497,17 +615,17 @@ integration("CourseService PostgreSQL lifecycle", () => {
     ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
   });
   it("paginates organization courses and course members without duplicate timestamp rows", async () => {
-    const pageOrganization = "66666666-6666-4666-8666-666666666666";
-    const pageOwner = "66666666-6666-4666-8666-666666666667";
+    const pageOrganization = "01a0e5cc-58af-7467-8ab1-4e66e66610eb";
+    const pageOwner = "01a0e5cc-58af-7467-8ab1-5079030c44b7";
     const courseIds = [
-      "66666666-6666-4666-8666-666666666661",
-      "66666666-6666-4666-8666-666666666662",
-      "66666666-6666-4666-8666-666666666663",
+      "01a0e5cc-58af-7467-8ab1-57d9beb6a556",
+      "01a0e5cc-58af-7467-8ab1-5afcb9cc2c91",
+      "01a0e5cc-58af-7467-8ab1-5fcc31e68484",
     ];
     const memberIds = [
-      "77777777-7777-4777-8777-777777777771",
-      "77777777-7777-4777-8777-777777777772",
-      "77777777-7777-4777-8777-777777777773",
+      "01a0e5cc-58af-7467-8ab1-602f4a8adfc9",
+      "01a0e5cc-58af-7467-8ab1-670365f79e9f",
+      "01a0e5cc-58af-7467-8ab1-6bed31ea4e92",
     ];
     const timestamp = "2026-09-02T12:00:00.000Z";
     await pool.query(
@@ -654,12 +772,9 @@ integration("CourseService PostgreSQL lifecycle", () => {
   });
   it("retrieves a member beyond the first list page", async () => {
     const course = await service.create(organization, owner, "Large lecture");
-    const targetId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const targetId = uuidv7();
     for (let index = 0; index < 26; index += 1) {
-      const id =
-        index === 25
-          ? targetId
-          : `aaaaaaaa-aaaa-4aaa-8aaa-${index.toString().padStart(12, "0")}`;
+      const id = index === 25 ? targetId : uuidv7();
       await pool.query(
         "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,$4,'x')",
         [id, organization, `large-${index}@example.edu`, `Large ${index}`],
@@ -732,7 +847,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
         courseEtag({ version: 1 }),
         "student",
       ),
-    ).rejects.toMatchObject({ status: 409, code: "last_instructor" });
+    ).rejects.toMatchObject({ status: 403, code: "permission_denied" });
     const archived = await service.update(
       course.id,
       owner,
@@ -751,7 +866,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
   });
   it("does not reveal whether a course exists when a signed-in user joins", async () => {
     await expect(
-      service.join("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", guest, "ABCDEFGH"),
+      service.join(uuidv7(), guest, "ABCDEFGH"),
     ).rejects.toMatchObject({ status: 422, code: "invalid_join_code" });
     await expect(
       service.join("not-a-uuid", guest, "ABCDEFGH"),

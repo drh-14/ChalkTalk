@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
-    "migrate": "tsx src/database/migrate.ts"
+    "migrate": "tsx src/database/migrate.ts",
+    "seed:mock": "tsx src/database/seed-ams161.ts"
   },
   "dependencies": {
     "argon2": "^0.45.1",

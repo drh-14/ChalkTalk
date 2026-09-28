@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { v7 as uuidv7 } from "uuid";
 import { Pool, type PoolClient } from "pg";
 import request from "supertest";
 import {
@@ -771,7 +771,7 @@ integrationTest("AuthService PostgreSQL integration", () => {
       instructor.email,
       "correct horse battery staple",
     );
-    const courseId = randomUUID();
+    const courseId = uuidv7();
     const organization = await pool.query<{ organization_id: string }>(
       "SELECT organization_id FROM users WHERE id = $1",
       [instructor.id],
