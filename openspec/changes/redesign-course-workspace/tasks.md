@@ -59,6 +59,6 @@
 
 ## 11. Integration checks
 
-- [ ] 11.1 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`; verify all pass
-  Note: on a Windows checkout with `core.autocrlf=true`, `openapi.contract.test.ts` fails because its regex expects LF line endings in `documentation/openapi.yaml`. The file is unchanged from `main`, and the test passes with LF endings, as in CI. Prettier was checked with `--end-of-line auto` for the same reason.
-- [ ] 11.2 Capture post-change Playwright screenshots of the task 1.1 set and compare them with the baseline; verify landing and auth pages are unchanged and review the workspace, settings, and home at both widths against the spec scenarios
+- [x] 11.1 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build`; verify all pass
+  Note: format, lint, typecheck, and build pass. On the author's Windows machine (repository inside OneDrive, dev servers running), some existing web tests time out intermittently in full-suite runs; the same failures occur on `main` under identical conditions (4 and 2 failures in two runs), and every failing file passes when run alone. `openapi.contract.test.ts` fails only because `core.autocrlf=true` checks out CRLF line endings; its file is unchanged from `main`. CI checks out LF files.
+- [x] 11.2 Capture post-change Playwright screenshots of the task 1.1 set and compare them with the baseline; verify landing and auth pages are unchanged and review the workspace, settings, and home at both widths against the spec scenarios
