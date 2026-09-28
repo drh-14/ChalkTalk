@@ -21,6 +21,8 @@ export type Post = {
   version: number;
   duplicateStatus?: "none" | "suggested" | "confirmed";
   duplicateOfPostId?: string | null;
+  pinned?: boolean;
+  answered?: boolean;
 };
 export type PostDetail = Post | { id: string; courseId: string; deleted: true };
 export type MergedPost = {
@@ -48,6 +50,7 @@ export type PostListOptions = {
   cursor?: string;
   type?: "question" | "note";
   answered?: boolean;
+  authorId?: string;
   limit?: number;
   signal?: AbortSignal;
 };
@@ -79,6 +82,7 @@ export async function listPosts(
   if (options.type) query.set("type", options.type);
   if (options.answered !== undefined)
     query.set("answered", String(options.answered));
+  if (options.authorId) query.set("authorId", options.authorId);
   if (options.limit) query.set("limit", String(options.limit));
   const suffix = query.size ? `?${query}` : "";
   return receive<Page<Post>>(

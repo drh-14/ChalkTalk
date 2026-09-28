@@ -1750,6 +1750,8 @@ function feedRequests(fetchMock: ReturnType<typeof vi.fn>) {
 it("filters the feed from the sidebar and keeps the filter when loading more", async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
+    if (url.endsWith("/members/user-me"))
+      return json({ data: { role: "student" } });
     const params = new URL(url, "https://example.edu").searchParams;
     if (params.get("cursor")) return page([post("p9", "Later question")]);
     return page(
@@ -1760,18 +1762,34 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
   render(
-    <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      userId="user-me"
+      onNavigate={vi.fn()}
+    />,
   );
   const sidebar = await screen.findByRole("complementary", {
     name: "Post filters",
   });
   const filter = (name: string) =>
     within(sidebar).getByRole("button", { name });
+  const order = [
+    "All posts",
+    "My posts",
+    "Questions",
+    "Answered",
+    "Unanswered",
+    "Notes",
+  ];
   expect(
-    ["All posts", "Questions", "Notes", "Unanswered"].map((name) =>
-      filter(name).getAttribute("aria-pressed"),
-    ),
-  ).toEqual(["true", "false", "false", "false"]);
+    within(sidebar)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(order);
+  expect(
+    order.map((name) => filter(name).getAttribute("aria-pressed")),
+  ).toEqual(["true", "false", "false", "false", "false", "false"]);
   await screen.findByText("Feed");
   expect(feedRequests(fetchMock).at(-1)!.search).toBe("");
 
@@ -1782,6 +1800,10 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
   await user.click(filter("Notes"));
   await screen.findByText("Feed type=note");
   expect(screen.queryByText("Feed type=question")).toBeNull();
+  await user.click(filter("My posts"));
+  await screen.findByText("Feed authorId=user-me");
+  await user.click(filter("Answered"));
+  await screen.findByText("Feed answered=true");
   await user.click(filter("Unanswered"));
   await screen.findByText("Feed answered=false");
   await user.click(screen.getByRole("button", { name: "Load more posts" }));
@@ -1803,6 +1825,7 @@ it("sorts the feed and offers best match only while searching", async () => {
   const view = render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
+  expect(screen.queryByRole("button", { name: "My posts" })).toBeNull();
   const sort = (await screen.findByRole("combobox", {
     name: "Sort by",
   })) as HTMLSelectElement;
@@ -1835,7 +1858,7 @@ it("sorts the feed and offers best match only while searching", async () => {
   await waitFor(() => expect(sort.value).toBe("relevance"));
   expect([...sort.options].map((option) => option.textContent)).toEqual([
     "Best match",
-    "Recent activity",
+    "Last updated",
     "Newest",
   ]);
   expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
@@ -1883,4 +1906,73 @@ it("disables the sidebar filters in the staff duplicate view", async () => {
       .getByRole("combobox", { name: "Sort by" })
       .matches(":disabled"),
   ).toBe(true);
+});
+
+it("lays out each card with a type badge, status, preview, and byline from the post type list", async () => {
+  vi.setSystemTime(new Date("2026-09-28T12:00:00Z"));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/courses/course-1")) return json({ data: course });
+      return page([
+        {
+          ...post("q1", "Open question"),
+          answered: false,
+          createdAt: "2026-09-28T10:00:00Z",
+        },
+        {
+          ...post("q2", "Settled question"),
+          answered: true,
+          pinned: true,
+        },
+        { ...post("n1", "Office hours"), type: "note" },
+        { ...post("x1", "Future kind"), type: "poll" },
+      ]);
+    }),
+  );
+  render(
+    <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
+  );
+  const listings = await screen.findByRole("region", { name: "Post listings" });
+  const card = async (title: string) =>
+    within((await within(listings).findByText(title)).closest("a")!);
+  const open = await card("Open question");
+  expect(open.getByText("Question")).toBeTruthy();
+  expect(open.getByText("Unanswered")).toBeTruthy();
+  expect(open.getByText(/A useful explanation/)).toBeTruthy();
+  expect(open.getByText("2 hours ago")).toBeTruthy();
+  expect(open.getByText("Anonymous")).toBeTruthy();
+  expect(screen.getByText("Choose a post to read it here.")).toBeTruthy();
+  const settled = await card("Settled question");
+  expect(settled.getByText("Answered")).toBeTruthy();
+  expect(settled.getByText("Pinned")).toBeTruthy();
+  const note = await card("Office hours");
+  expect(note.getByText("Note")).toBeTruthy();
+  expect(note.queryByText(/Answered|Unanswered/)).toBeNull();
+  const unknown = await card("Future kind");
+  expect(unknown.getByText("Post")).toBeTruthy();
+  expect(unknown.queryByText(/Answered|Unanswered/)).toBeNull();
+});
+
+it("labels the post type in the detail pane from the post type list", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.endsWith("/posts/n1"))
+        return json({ data: { ...post("n1", "Office hours"), type: "note" } });
+      return page([]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      postId="n1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Office hours" });
+  const detail = screen.getByRole("region", { name: "Post detail" });
+  expect(within(detail).getByText("Note")).toBeTruthy();
 });

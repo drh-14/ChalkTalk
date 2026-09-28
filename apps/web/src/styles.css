@@ -306,6 +306,11 @@ body {
 .sidebar-filters button:hover:not(:disabled) {
   background: #e7e4d8;
 }
+.sidebar-filters button.nested {
+  font-size: 0.92rem;
+  font-weight: 500;
+  padding-left: 1.6rem;
+}
 .sidebar-filters button[aria-pressed="true"] {
   background: #fffdf9;
   box-shadow: inset 3px 0 0 #1f4d3e;
@@ -419,7 +424,7 @@ body {
 .post-card {
   border-bottom: 1px solid #e3e1d6;
   display: grid;
-  gap: 0.3rem;
+  gap: 0.45rem;
   padding: 1rem 1.25rem;
   position: relative;
   text-decoration: none;
@@ -438,11 +443,92 @@ body {
   box-shadow: inset 3px 0 0 #1f4d3e;
 }
 .post-card strong {
+  color: #1d2b26;
   font-size: 1.04rem;
+  line-height: 1.35;
 }
-.post-card span:not(.post-kind) {
+.post-card > span:not([class]) {
   color: #58675e;
   line-height: 1.4;
+}
+.post-card-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.6rem;
+}
+.post-card-title {
+  flex: 1;
+  min-width: 0;
+}
+.post-type-badge {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 700;
+  gap: 0.3rem;
+  margin-right: 0.45rem;
+  padding: 0.1rem 0.5rem;
+  vertical-align: 0.12em;
+  white-space: nowrap;
+}
+.post-type-badge.question {
+  background: #fbe9dc;
+  color: #a45124;
+}
+.post-type-badge.note {
+  background: #e3eef3;
+  color: #24566b;
+}
+.post-type-badge.other {
+  background: #ecebe4;
+  color: #4d5a53;
+}
+.post-statuses {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  justify-content: flex-end;
+  max-width: 45%;
+}
+.post-status {
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.1rem 0.5rem;
+  white-space: nowrap;
+}
+.post-status.positive {
+  background: #e3f0e3;
+  color: #2c6a3f;
+}
+.post-status.attention {
+  background: #fdf0cf;
+  color: #8a5a0b;
+}
+.post-status.neutral {
+  background: #ecebe4;
+  color: #4d5a53;
+}
+.post-card-preview {
+  -webkit-box-orient: vertical;
+  color: #5b6862;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  line-height: 1.45;
+  overflow: hidden;
+}
+.post-card-foot {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+.post-card-extras {
+  color: #5b6862;
+  font-size: 0.82rem;
 }
 .post-card small,
 .post-author {
@@ -728,6 +814,11 @@ body {
     border-radius: 999px;
     font-size: 0.9rem;
     padding: 0.35rem 0.8rem;
+  }
+  .sidebar-filters button.nested {
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding-left: 0.8rem;
   }
   .sidebar-filters button[aria-pressed="true"] {
     background: #1f4d3e;

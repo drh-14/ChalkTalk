@@ -18,18 +18,17 @@ import {
   type PostSort,
 } from "./client.js";
 import { formatPostTime } from "./time.js";
+import {
+  feedFilters,
+  postStatuses,
+  postTypeOf,
+  type FeedFilter,
+} from "./types.js";
 
-const FEED_FILTERS = [
-  { key: "all", label: "All posts" },
-  { key: "questions", label: "Questions" },
-  { key: "notes", label: "Notes" },
-  { key: "unanswered", label: "Unanswered" },
-] as const;
-type FeedFilter = (typeof FEED_FILTERS)[number]["key"];
 /** Builds the course feed request; a search always sends its sort, otherwise only a non-default one. */
 function feedOptions(
   query: string | undefined,
-  filter: FeedFilter,
+  filter: FeedFilter | undefined,
   sort: PostSort,
 ): PostListOptions {
   return {
@@ -38,14 +37,18 @@ function feedOptions(
       : sort !== "recent_activity"
         ? { sort }
         : {}),
-    ...(filter === "questions"
-      ? { type: "question" as const }
-      : filter === "notes"
-        ? { type: "note" as const }
-        : filter === "unanswered"
-          ? { answered: false }
-          : {}),
+    ...filter?.options,
   };
+}
+
+function PostTypeBadge({ type }: { type: string }) {
+  const config = postTypeOf(type);
+  return (
+    <span className={`post-type-badge ${config.tone}`}>
+      <span aria-hidden="true">{config.icon}</span>
+      {config.label}
+    </span>
+  );
 }
 
 const message = (error: unknown) =>
@@ -465,7 +468,7 @@ function DiscussionContent({
   const [staff, setStaff] = useState(false);
   const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
-  const [filter, setFilter] = useState<FeedFilter>("all");
+  const [filter, setFilter] = useState("all");
   // A chosen sort belongs to the search it was chosen for; a new search starts at best match.
   const [sortChoice, setSortChoice] = useState<{
     query: string | undefined;
@@ -539,6 +542,8 @@ function DiscussionContent({
     }, 300);
     return () => window.clearTimeout(timer);
   }, [draftQuery, onQueryChange, query]);
+  const filters = feedFilters(userId);
+  const activeFilter = filters.find((item) => item.key === filter);
   const sort: PostSort =
     sortChoice &&
     sortChoice.query === query &&
@@ -563,7 +568,11 @@ function DiscussionContent({
         ? query
           ? { q: query, sort: "relevance" as const }
           : {}
-        : feedOptions(query, filter, sort)),
+        : feedOptions(
+            query,
+            feedFilters(userId).find((item) => item.key === filter),
+            sort,
+          )),
       signal: controller.signal,
     };
     void (
@@ -591,7 +600,7 @@ function DiscussionContent({
       if (currentFeed.current === generation)
         currentFeed.current = generation + 1;
     };
-  }, [courseId, query, feedCycle, postView, filter, sort]);
+  }, [courseId, query, feedCycle, postView, filter, sort, userId]);
   useEffect(() => {
     if (!postId) {
       setDetail(undefined);
@@ -658,7 +667,7 @@ function DiscussionContent({
         ? query
           ? { q: query, sort: "relevance" as const }
           : {}
-        : feedOptions(query, filter, sort)),
+        : feedOptions(query, activeFilter, sort)),
       cursor,
     };
     void (
@@ -779,10 +788,11 @@ function DiscussionContent({
           <fieldset disabled={postView === "duplicates"}>
             <legend>Show</legend>
             <div className="sidebar-filters">
-              {FEED_FILTERS.map((item) => (
+              {filters.map((item) => (
                 <button
                   key={item.key}
                   type="button"
+                  className={item.nested ? "nested" : undefined}
                   aria-pressed={filter === item.key}
                   onClick={() => setFilter(item.key)}
                 >
@@ -802,7 +812,7 @@ function DiscussionContent({
                 }
               >
                 {query && <option value="relevance">Best match</option>}
-                <option value="recent_activity">Recent activity</option>
+                <option value="recent_activity">Last updated</option>
                 <option value="newest">Newest</option>
               </select>
             </label>
@@ -934,12 +944,37 @@ function DiscussionContent({
                       }}
                       aria-current={post.id === postId ? "page" : undefined}
                     >
-                      <span className="post-kind">{post.type}</span>
-                      <strong>{post.title}</strong>
-                      <span>{excerpt(post.bodyMarkdown)}</span>
-                      <small>
-                        <PostByline post={post} />
-                      </small>
+                      <span className="post-card-head">
+                        <span className="post-card-title">
+                          <PostTypeBadge type={post.type} />
+                          <strong>{post.title}</strong>
+                        </span>
+                        {postStatuses(post).length > 0 && (
+                          <span className="post-statuses">
+                            {postStatuses(post).map((status) => (
+                              <span
+                                key={status.label}
+                                className={`post-status ${status.tone}`}
+                              >
+                                {status.label}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </span>
+                      <span className="post-card-preview">
+                        {excerpt(post.bodyMarkdown)}
+                      </span>
+                      <span className="post-card-foot">
+                        <small>
+                          <PostByline post={post} />
+                        </small>
+                        {postTypeOf(post.type).extras?.(post) && (
+                          <span className="post-card-extras">
+                            {postTypeOf(post.type).extras?.(post)}
+                          </span>
+                        )}
+                      </span>
                     </a>
                   </li>
                 ))}
@@ -1007,7 +1042,9 @@ function DiscussionContent({
                   <p role="status">Loading duplicate…</p>
                 ) : (
                   <article>
-                    <p className="post-kind">{reviewDetail.type}</p>
+                    <p className="post-kind">
+                      {postTypeOf(reviewDetail.type).label}
+                    </p>
                     <h2>{reviewDetail.title}</h2>
                     <p className="post-author">
                       <PostByline post={reviewDetail} />
@@ -1084,7 +1121,7 @@ function DiscussionContent({
                   <p>This post was deleted.</p>
                 ) : (
                   <article>
-                    <p className="post-kind">{detail.type}</p>
+                    <p className="post-kind">{postTypeOf(detail.type).label}</p>
                     <h2>{detail.title}</h2>
                     <p className="post-author">
                       <PostByline post={detail} />
@@ -1117,7 +1154,7 @@ function DiscussionContent({
             ) : (
               <div className="detail-prompt">
                 <h2>Select a post</h2>
-                <p>Choose a question or note to read it here.</p>
+                <p>Choose a post to read it here.</p>
               </div>
             )}
           </div>
