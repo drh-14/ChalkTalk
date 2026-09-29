@@ -1,6 +1,6 @@
 ## Context
 
-`documentation/api/posts.md`, `documentation/api/identity-visibility.md`, `documentation/openapi.yaml`, and `documentation/database.md` describe a larger target system. The approved phase boundary is text-only questions and notes. The structural design is in `docs/design/2026-09-27-posts-api.md`; this OpenSpec change specifies the implementation slice for review.
+`documentation/api/posts.md`, `documentation/api/identity-visibility.md`, `documentation/openapi.yaml`, and `documentation/database.md` describe a larger target system. The approved phase boundary is text-only questions and notes. This OpenSpec design records the implementation slice and its structural decisions.
 
 ## Goals / Non-Goals
 
