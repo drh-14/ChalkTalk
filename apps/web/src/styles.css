@@ -156,11 +156,15 @@ body {
 }
 .post-card {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.2rem;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   position: relative;
   border: 1px solid #dce4db;
   border-radius: 0.75rem;
-  padding: 1rem;
+  padding: 0.7rem;
+  box-sizing: border-box;
+  height: 7.5rem;
+  overflow: hidden;
   text-decoration: none;
   background: #fff;
 }
@@ -172,12 +176,33 @@ body {
   background: #f1f7ee;
   outline-offset: 2px;
 }
-.post-card strong {
+.post-card > strong,
+.post-card-title-button strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-size: 1.04rem;
 }
-.post-card span:not(.post-kind) {
+.post-card > span:not(.post-kind) {
   color: #58675e;
   line-height: 1.4;
+}
+.post-card-preview {
+  color: #58675e;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  min-height: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 0.5rem), transparent);
+}
+.post-card-preview :is(p, ul, ol, blockquote, pre, h1, h2, h3, h4, h5, h6),
+.post-card-preview .katex-display {
+  margin: 0;
+}
+.post-card-preview :is(ul, ol) {
+  padding-left: 1.2rem;
 }
 .post-card small,
 .post-author {
@@ -285,6 +310,93 @@ body {
   min-height: 10rem;
   resize: vertical;
 }
+.post-body-field {
+  display: grid;
+  gap: 0.45rem;
+}
+.post-body-label {
+  font-weight: 600;
+}
+.post-body-mode,
+.post-format-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.post-format-toolbar[hidden] {
+  display: none;
+}
+.post-body-mode button,
+.post-format-toolbar button {
+  border: 1px solid #b9cbbd;
+  background: #fff;
+  color: #284337;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  font: inherit;
+  cursor: pointer;
+}
+.post-body-mode button[aria-pressed="true"] {
+  background: #e3efe7;
+  border-color: #487c60;
+}
+.post-body-mode button:focus-visible,
+.post-format-toolbar button:focus-visible,
+.post-source-editor .cm-focused {
+  outline: 2px solid #276f4d;
+  outline-offset: 2px;
+}
+.post-source-editor .cm-editor {
+  min-height: 12rem;
+  max-height: 28rem;
+  overflow: auto;
+  border: 1px solid #b9cbbd;
+  border-radius: 0.5rem;
+  background: #fff;
+  font-size: 0.95rem;
+}
+.post-source-editor .cm-content {
+  min-height: 11rem;
+  padding: 0.65rem;
+}
+.post-source-editor .invalid-math {
+  text-decoration: underline wavy #c62828 2px;
+  text-underline-offset: 0.2em;
+}
+.post-source-editor .post-editor-math {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  cursor: text;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.post-source-editor div.post-editor-math {
+  display: block;
+  padding: 0.2rem 0;
+}
+.post-source-editor .post-editor-math:focus-visible {
+  outline: 2px solid #276f4d;
+  outline-offset: 2px;
+}
+.post-math-diagnostics {
+  color: #a51d1d;
+  font-size: 0.85rem;
+}
+.post-math-diagnostics p {
+  margin: 0.3rem 0;
+}
+.post-preview {
+  min-height: 12rem;
+  padding: 0.65rem;
+  border: 1px solid #b9cbbd;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+.post-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
 .checkbox-label {
   display: flex;
   gap: 0.5rem;
@@ -310,13 +422,24 @@ body {
   padding: 0.55rem;
   text-decoration: none;
 }
+.related-questions li > a {
+  grid-template-rows: auto minmax(0, 1fr);
+  box-sizing: border-box;
+  height: 6rem;
+  overflow: hidden;
+}
+.related-questions li > a > strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
 .related-questions a:hover,
 .related-questions a:focus-visible {
   background: #edf5ed;
 }
-.related-questions a span {
+.related-questions .post-card-preview {
   color: #66756d;
-  font-size: 0.82rem;
 }
 .narrow-back {
   display: none;
