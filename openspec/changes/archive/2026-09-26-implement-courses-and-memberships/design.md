@@ -1,6 +1,6 @@
 ## Context
 
-The API and database references define courses and memberships, but SQL migration 002 stores only a minimal subset and the frontend uses dummy courses. The agreed architecture is recorded in `docs/design/2026-09-26-courses-and-memberships.md`.
+The API and database references define courses and memberships, but SQL migration 002 stores only a minimal subset and the frontend uses dummy courses. This OpenSpec design records the agreed architecture and implementation decisions.
 
 ## Goals / Non-Goals
 
