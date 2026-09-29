@@ -5,11 +5,25 @@ import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { mathOptions } from "./mathOptions.js";
 
-export function PostBody({ bodyMarkdown }: { bodyMarkdown: string }) {
+export function PostBody({
+  bodyMarkdown,
+  inertLinks = false,
+}: {
+  bodyMarkdown: string;
+  inertLinks?: boolean;
+}) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkMath]}
       rehypePlugins={[rehypeSanitize, [rehypeKatex, mathOptions]]}
+      components={
+        inertLinks
+          ? {
+              a: ({ children }) => <span>{children}</span>,
+              img: ({ alt }) => <span>{alt}</span>,
+            }
+          : undefined
+      }
     >
       {bodyMarkdown}
     </ReactMarkdown>

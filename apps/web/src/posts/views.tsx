@@ -25,13 +25,6 @@ const discussionPath = (courseId: string, q?: string) =>
   `/courses/${encodeURIComponent(courseId)}${q ? `?${new URLSearchParams({ q })}` : ""}`;
 const postPath = (courseId: string, postId: string, q?: string) =>
   `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(postId)}${q ? `?${new URLSearchParams({ q })}` : ""}`;
-const excerpt = (value: string) =>
-  value
-    .replace(/[#*_`>[\]()!]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 150);
-
 function relatedQuery(title: string, body: string): string {
   const words = (value: string) =>
     Array.from(
@@ -307,7 +300,9 @@ function Composer({
                       rel="noopener noreferrer"
                     >
                       <strong>{post.title}</strong>
-                      <span>{excerpt(post.bodyMarkdown)}</span>
+                      <div className="post-card-preview post-markdown">
+                        <PostBody bodyMarkdown={post.bodyMarkdown} inertLinks />
+                      </div>
                     </a>
                   </li>
                 ))}
@@ -883,7 +878,9 @@ function DiscussionContent({
                     >
                       <span className="post-kind">{post.type}</span>
                       <strong>{post.title}</strong>
-                      <span>{excerpt(post.bodyMarkdown)}</span>
+                      <div className="post-card-preview post-markdown">
+                        <PostBody bodyMarkdown={post.bodyMarkdown} inertLinks />
+                      </div>
                       <small>{post.author.displayName}</small>
                     </a>
                   </li>

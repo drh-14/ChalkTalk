@@ -1701,6 +1701,80 @@ it("uses submitted search text and server relevance order without parsing syntax
   expect(urls.some((url) => url.includes("sort=relevance"))).toBe(true);
 });
 
+it("renders Markdown and LaTeX in feed cards without nested links", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/courses/course-1")
+        ? json({ data: course })
+        : page([
+            {
+              ...post("p1", "Formatted question"),
+              bodyMarkdown:
+                "**cutoff** is $x^2$; see [notes](https://example.edu/notes) and ![diagram](https://example.edu/diagram.png)",
+            },
+          ]),
+    ),
+  );
+  const onNavigate = vi.fn();
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      onNavigate={onNavigate}
+    />,
+  );
+  const card = await screen.findByRole("link", { name: /Formatted question/ });
+  expect(card.querySelector(".post-card-preview strong")?.textContent).toBe(
+    "cutoff",
+  );
+  expect(card.querySelector(".post-card-preview .katex")).toBeTruthy();
+  expect(card.querySelector(".post-card-preview")?.textContent).toContain(
+    "notes",
+  );
+  expect(card.querySelector(".post-card-preview a")).toBeNull();
+  expect(card.querySelector(".post-card-preview img")).toBeNull();
+  expect(card.querySelector(".post-card-preview")?.textContent).toContain(
+    "diagram",
+  );
+  await userEvent.setup().click(card);
+  expect(onNavigate).toHaveBeenCalledWith("/courses/course-1/posts/p1");
+});
+
+it("renders Markdown and LaTeX in related questions without nested links", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.includes("type=question"))
+        return page([
+          {
+            ...post("p1", "Related formula"),
+            bodyMarkdown:
+              "**cutoff** is $x^2$; see [notes](https://example.edu/notes) and ![diagram](https://example.edu/diagram.png)",
+          },
+        ]);
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Formula cutoff",
+  );
+  const card = await screen.findByRole("link", { name: /Related formula/ });
+  expect(card.querySelector(".post-card-preview strong")?.textContent).toBe(
+    "cutoff",
+  );
+  expect(card.querySelector(".post-card-preview .katex")).toBeTruthy();
+  expect(card.querySelector(".post-card-preview a")).toBeNull();
+  expect(card.querySelector(".post-card-preview img")).toBeNull();
+});
+
 it("shows a direct post with viewer-projected author and blocks hostile Markdown HTML", async () => {
   vi.stubGlobal(
     "fetch",
