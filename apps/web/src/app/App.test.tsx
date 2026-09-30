@@ -529,28 +529,80 @@ describe("ChalkTalk auth entry", () => {
     render(<App />);
     await screen.findByText("Kept question");
     const length = window.history.length;
-    await user.click(screen.getByRole("button", { name: "Unanswered" }));
-    expect(window.location.search).toBe("?filter=question%3Aunanswered");
+    const show = screen.getByRole("combobox", {
+      name: "Show",
+    }) as HTMLSelectElement;
+    await user.selectOptions(show, "question");
+    expect(window.location.search).toBe("?filter=question");
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Sort by" }),
       "Newest",
     );
-    expect(window.location.search).toBe(
-      "?filter=question%3Aunanswered&sort=newest",
-    );
+    expect(window.location.search).toBe("?filter=question&sort=newest");
     expect(window.history.length).toBe(length);
     await user.click(
       await screen.findByRole("link", { name: /Kept question/ }),
     );
     expect(window.location.pathname).toBe(`/courses/${course.id}/posts/p1`);
-    expect(window.location.search).toBe(
-      "?filter=question%3Aunanswered&sort=newest",
+    expect(window.location.search).toBe("?filter=question&sort=newest");
+    expect(show.value).toBe("question");
+  });
+
+  it("keeps Notes Show selection with search, tag, and sort through post navigation", async () => {
+    setPath(`/courses/${course.id}?q=cutoff&tag=midterm&sort=oldest`);
+    vi.stubGlobal(
+      "fetch",
+      courseRoutesFetch({
+        posts: [
+          {
+            id: "p1",
+            courseId: course.id,
+            type: "note",
+            deleted: false,
+            title: "Kept pinned note",
+            bodyMarkdown: "Body",
+            author: {
+              userId: null,
+              displayName: "Anonymous",
+              anonymous: true,
+              deleted: false,
+            },
+            anonymous: true,
+            tags: ["midterm"],
+            pinned: true,
+            createdAt: course.createdAt,
+            lastActivityAt: course.createdAt,
+            version: 1,
+          },
+        ],
+      }),
     );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("link", {
+      name: /Kept pinned note/,
+    });
+    const show = screen.getByRole("combobox", {
+      name: "Show",
+    }) as HTMLSelectElement;
+    await user.selectOptions(show, "note");
+    const expected = {
+      q: "cutoff",
+      filter: "note",
+      tag: "midterm",
+      sort: "oldest",
+    };
     expect(
-      screen
-        .getByRole("button", { name: "Unanswered" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
+      Object.fromEntries(new URLSearchParams(window.location.search)),
+    ).toEqual(expected);
+    await user.click(
+      await screen.findByRole("link", { name: /Kept pinned note/ }),
+    );
+    expect(window.location.pathname).toBe(`/courses/${course.id}/posts/p1`);
+    expect(
+      Object.fromEntries(new URLSearchParams(window.location.search)),
+    ).toEqual(expected);
+    expect(show.value).toBe("note");
   });
 
   it("updates the active course view on browser Back and Forward", async () => {

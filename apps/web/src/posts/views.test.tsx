@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -67,6 +68,156 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+function mockDesktopViewport(initial = true) {
+  let matches = initial;
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    media: query,
+    get matches() {
+      return matches;
+    },
+    addEventListener: (
+      _type: string,
+      listener: (event: MediaQueryListEvent) => void,
+    ) => listeners.add(listener),
+    removeEventListener: (
+      _type: string,
+      listener: (event: MediaQueryListEvent) => void,
+    ) => listeners.delete(listener),
+  }));
+  return (next: boolean) => {
+    matches = next;
+    act(() => {
+      for (const listener of listeners)
+        listener({ matches: next } as MediaQueryListEvent);
+    });
+  };
+}
+
+it("collapses desktop filters with an accessible boundary control without fetching", async () => {
+  mockDesktopViewport();
+  const fetchMock = vi.fn(async () => page([post("p1", "First post")]));
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("First post");
+  const sidebar = document.querySelector(".discussion-sidebar")!;
+  const toggle = screen.getByRole("button", { name: "Collapse filters" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(toggle.getAttribute("aria-controls")).toBe(sidebar.id);
+  expect(sidebar.hasAttribute("inert")).toBe(false);
+  const requests = fetchMock.mock.calls.length;
+  await user.click(toggle);
+  expect(screen.getByRole("button", { name: "Expand filters" })).toBe(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(sidebar.hasAttribute("inert")).toBe(true);
+  expect(fetchMock.mock.calls.length).toBe(requests);
+  toggle.focus();
+  await user.keyboard("{Enter}");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(sidebar.hasAttribute("inert")).toBe(false);
+});
+
+it("keeps the selected filter and post detail while desktop filters collapse", async () => {
+  mockDesktopViewport();
+  const note = { ...post("p1", "Kept note"), type: "note" };
+  const fetchMock = vi.fn(async (url: string) =>
+    url.endsWith("/posts/p1") ? json({ data: note }) : page([note]),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const show = screen.getByRole("combobox", {
+    name: "Show",
+  }) as HTMLSelectElement;
+  await user.selectOptions(show, "note");
+  await waitFor(() =>
+    expect(feedRequests(fetchMock).at(-1)?.searchParams.get("type")).toBe(
+      "note",
+    ),
+  );
+  await screen.findByRole("heading", { name: "Kept note" });
+  const requests = fetchMock.mock.calls.length;
+  await user.click(screen.getByRole("button", { name: "Collapse filters" }));
+  expect(show.value).toBe("note");
+  expect(screen.getByRole("heading", { name: "Kept note" })).toBeTruthy();
+  expect(fetchMock.mock.calls.length).toBe(requests);
+  await user.click(screen.getByRole("button", { name: "Expand filters" }));
+  expect(show.value).toBe("note");
+});
+
+it("starts desktop filters expanded on each discussion mount", async () => {
+  mockDesktopViewport();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  const props = {
+    courseId: course.id,
+    course,
+    csrfToken: "csrf",
+    onNavigate: vi.fn(),
+  };
+  const view = render(<Discussion {...props} />);
+  await screen.findByText("No posts yet.");
+  await user.click(screen.getByRole("button", { name: "Collapse filters" }));
+  expect(
+    document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
+  ).toBe(true);
+  view.unmount();
+  render(<Discussion {...props} />);
+  expect(screen.getByRole("button", { name: "Collapse filters" })).toBeTruthy();
+  expect(
+    document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
+  ).toBe(false);
+});
+
+it("shows mobile filters after resize and restores desktop collapse state", async () => {
+  const resize = mockDesktopViewport();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts yet.");
+  await user.click(screen.getByRole("button", { name: "Collapse filters" }));
+  resize(false);
+  expect(screen.queryByRole("button", { name: "Expand filters" })).toBeNull();
+  expect(
+    document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
+  ).toBe(false);
+  expect(screen.getByRole("combobox", { name: "Show" })).toBeTruthy();
+  resize(true);
+  expect(screen.getByRole("button", { name: "Expand filters" })).toBeTruthy();
+  expect(
+    document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
+  ).toBe(true);
 });
 
 it("offers formatting controls and previews the unsent post body", async () => {
@@ -745,17 +896,114 @@ it("keeps the controls above a focusable scroll region for posts and duplicates"
   expect(
     within(feed).getByRole("searchbox", { name: "Search posts" }),
   ).toBeTruthy();
-  await user.selectOptions(
-    within(feed).getByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
-  );
+  const picker = within(feed).getByRole("group", { name: "Post view" });
+  expect(within(picker).queryByText("Post view")).toBeNull();
+  expect(
+    within(picker)
+      .getByRole("button", { name: "Active" })
+      .getAttribute("aria-pressed"),
+  ).toBe("true");
+  expect(
+    within(picker)
+      .getByRole("button", { name: "Duplicate" })
+      .getAttribute("aria-pressed"),
+  ).toBe("false");
+  await user.click(within(picker).getByRole("button", { name: "Duplicate" }));
+  expect(
+    within(picker)
+      .getByRole("button", { name: "Duplicate" })
+      .getAttribute("aria-pressed"),
+  ).toBe("true");
   expect(
     within(listings).getByRole("button", { name: "Old question" }),
   ).toBeTruthy();
+  within(picker).getByRole("button", { name: "Active" }).focus();
+  await user.keyboard("{Enter}");
+  expect(
+    within(picker)
+      .getByRole("button", { name: "Active" })
+      .getAttribute("aria-pressed"),
+  ).toBe("true");
+  expect(await within(listings).findByText("First")).toBeTruthy();
+});
+
+it("paginates duplicate posts with the active query and resets them after switching views", async () => {
+  const merged = (id: string, title: string) => ({
+    id,
+    courseId: course.id,
+    type: "question",
+    title,
+    duplicateStatus: "confirmed",
+    duplicateOfPostId: "canonical-1",
+    canonicalTitle: "Canonical question",
+    version: 1,
+  });
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    const request = new URL(url, "https://example.edu");
+    if (request.searchParams.get("duplicateStatus") === "confirmed") {
+      if (request.searchParams.get("cursor") === "duplicate-next")
+        return page([
+          merged("merged-1", "First duplicate"),
+          merged("merged-2", "Second duplicate"),
+        ]);
+      return page([merged("merged-1", "First duplicate")], "duplicate-next");
+    }
+    return page([post("active-1", "Active post")]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      query="cutoff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const picker = await screen.findByRole("group", { name: "Post view" });
+  const listings = screen.getByRole("region", { name: "Post listings" });
+  await within(listings).findByText("Active post");
+  await user.click(within(picker).getByRole("button", { name: "Duplicate" }));
+  await within(listings).findByRole("button", { name: "First duplicate" });
+  await user.click(
+    within(listings).getByRole("button", { name: "Load more posts" }),
+  );
+  await within(listings).findByRole("button", { name: "Second duplicate" });
+  const duplicateRequests = () =>
+    feedRequests(fetchMock).filter(
+      (request) => request.searchParams.get("duplicateStatus") === "confirmed",
+    );
+  expect(Object.fromEntries(duplicateRequests().at(-1)!.searchParams)).toEqual({
+    duplicateStatus: "confirmed",
+    q: "cutoff",
+    sort: "relevance",
+    cursor: "duplicate-next",
+  });
+  expect(
+    within(listings).getAllByRole("button", { name: "First duplicate" }),
+  ).toHaveLength(1);
+  expect(
+    within(listings)
+      .getAllByRole("button", { name: /duplicate$/ })
+      .map((button) => button.textContent),
+  ).toEqual(["First duplicate", "Second duplicate"]);
+  await user.click(within(picker).getByRole("button", { name: "Active" }));
+  await within(listings).findByText("Active post");
+  expect(within(listings).queryByText("Second duplicate")).toBeNull();
+  await user.click(within(picker).getByRole("button", { name: "Duplicate" }));
+  await waitFor(() => expect(duplicateRequests()).toHaveLength(3));
+  expect(duplicateRequests().at(-1)!.searchParams.has("cursor")).toBe(false);
+  await within(listings).findByRole("button", { name: "First duplicate" });
+  expect(within(listings).queryByText("Second duplicate")).toBeNull();
 });
 
 it("lets staff review merged posts without exposing their body and unmerge one", async () => {
   const calls: string[] = [];
+  let isMerged = true;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -763,18 +1011,43 @@ it("lets staff review merged posts without exposing their body and unmerge one",
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
       if (url.includes("duplicateStatus=confirmed"))
-        return page([
-          {
-            id: "merged-1",
-            courseId: course.id,
-            type: "question",
-            title: "Old question",
-            duplicateStatus: "confirmed",
-            duplicateOfPostId: "canonical-1",
-            canonicalTitle: "Canonical question",
-            version: 2,
-          },
-        ]);
+        return page(
+          isMerged
+            ? [
+                {
+                  id: "merged-existing",
+                  courseId: course.id,
+                  type: "question",
+                  title: "Earlier duplicate",
+                  duplicateStatus: "confirmed",
+                  duplicateOfPostId: "canonical-1",
+                  canonicalTitle: "Canonical question",
+                  version: 1,
+                },
+                {
+                  id: "merged-1",
+                  courseId: course.id,
+                  type: "question",
+                  title: "Old question",
+                  duplicateStatus: "confirmed",
+                  duplicateOfPostId: "canonical-1",
+                  canonicalTitle: "Canonical question",
+                  version: 2,
+                },
+              ]
+            : [
+                {
+                  id: "merged-existing",
+                  courseId: course.id,
+                  type: "question",
+                  title: "Earlier duplicate",
+                  duplicateStatus: "confirmed",
+                  duplicateOfPostId: "canonical-1",
+                  canonicalTitle: "Canonical question",
+                  version: 1,
+                },
+              ],
+        );
       if (url.endsWith("/posts/merged-1/duplicate-review"))
         return json({
           data: {
@@ -785,9 +1058,22 @@ it("lets staff review merged posts without exposing their body and unmerge one",
             version: 2,
           },
         });
-      if (init?.method === "PATCH")
+      if (init?.method === "PATCH") {
+        isMerged = false;
         return json({ data: post("merged-1", "Old question") });
-      return page([]);
+      }
+      return page(
+        isMerged
+          ? [
+              post("canonical-1", "Canonical question"),
+              post("unaffected-1", "Unaffected post"),
+            ]
+          : [
+              post("canonical-1", "Canonical question"),
+              post("merged-1", "Old question"),
+              post("unaffected-1", "Unaffected post"),
+            ],
+      );
     }),
   );
   const user = userEvent.setup();
@@ -800,12 +1086,22 @@ it("lets staff review merged posts without exposing their body and unmerge one",
       onNavigate={vi.fn()}
     />,
   );
-  await user.selectOptions(
-    await screen.findByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
+      "button",
+      { name: "Duplicate" },
+    ),
   );
   expect(await screen.findByText("Old question")).toBeTruthy();
-  expect(screen.getByRole("link", { name: "Canonical question" })).toBeTruthy();
+  const listings = screen.getByRole("region", { name: "Post listings" });
+  expect(
+    within(listings)
+      .getAllByRole("button", { name: /Earlier duplicate|Old question/ })
+      .map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Earlier duplicate", "Old question"]);
+  expect(
+    within(listings).getAllByRole("link", { name: "Canonical question" }),
+  ).toHaveLength(2);
   expect(screen.queryByText("Private retained body")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Old question" }));
   await waitFor(() =>
@@ -824,6 +1120,33 @@ it("lets staff review merged posts without exposing their body and unmerge one",
   expect(calls.some((call) => call.includes("duplicateStatus=confirmed"))).toBe(
     true,
   );
+  await waitFor(() =>
+    expect(
+      within(listings).queryByRole("button", { name: "Old question" }),
+    ).toBeNull(),
+  );
+  expect(
+    within(listings)
+      .getAllByRole("button", { name: /Earlier duplicate|Old question/ })
+      .map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Earlier duplicate"]);
+  await user.click(
+    within(screen.getByRole("group", { name: "Post view" })).getByRole(
+      "button",
+      { name: "Active" },
+    ),
+  );
+  await within(listings).findByText("Old question");
+  expect(
+    within(listings)
+      .getAllByRole("link")
+      .map(
+        (link) =>
+          link.textContent?.match(
+            /Canonical question|Old question|Unaffected post/,
+          )?.[0],
+      ),
+  ).toEqual(["Canonical question", "Old question", "Unaffected post"]);
 });
 
 it("opens a duplicate card's canonical post in a new tab without replacing review", async () => {
@@ -869,9 +1192,11 @@ it("opens a duplicate card's canonical post in a new tab without replacing revie
       onNavigate={onNavigate}
     />,
   );
-  await user.selectOptions(
-    await screen.findByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
+      "button",
+      { name: "Duplicate" },
+    ),
   );
   const canonicalLink = await screen.findByRole("link", {
     name: "Canonical question",
@@ -942,9 +1267,11 @@ it("shows the selected duplicate's retained detail instead of the canonical post
       onNavigate={vi.fn()}
     />,
   );
-  await user.selectOptions(
-    await screen.findByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
+      "button",
+      { name: "Duplicate" },
+    ),
   );
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   const card = screen
@@ -1016,11 +1343,16 @@ it("does not show a late duplicate review after switching back to posts", async 
       onNavigate={vi.fn()}
     />,
   );
-  const picker = await screen.findByRole("combobox", { name: "Post view" });
-  await user.selectOptions(picker, "Duplicate posts");
+  const picker = await screen.findByRole("group", { name: "Post view" });
+  await user.click(within(picker).getByRole("button", { name: "Duplicate" }));
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   await waitFor(() => expect(finishReview).toBeDefined());
-  await user.selectOptions(picker, "Posts");
+  await user.click(within(picker).getByRole("button", { name: "Active" }));
+  expect(
+    within(picker)
+      .getByRole("button", { name: "Active" })
+      .getAttribute("aria-pressed"),
+  ).toBe("true");
   finishReview!(
     json({
       data: {
@@ -1055,7 +1387,7 @@ it("does not offer merged-post review to students", async () => {
     />,
   );
   await screen.findByText("No posts yet.");
-  expect(screen.queryByRole("combobox", { name: "Post view" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Post view" })).toBeNull();
 });
 
 it("only offers merging while staff are viewing posts", async () => {
@@ -1085,15 +1417,15 @@ it("only offers merging while staff are viewing posts", async () => {
   expect(
     await screen.findByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
-  const postView = screen.getByRole("combobox", { name: "Post view" });
-  await user.selectOptions(postView, "Duplicate posts");
+  const postView = screen.getByRole("group", { name: "Post view" });
+  await user.click(within(postView).getByRole("button", { name: "Duplicate" }));
   expect(
     screen.getByRole("heading", { name: "Select a duplicate post" }),
   ).toBeTruthy();
   expect(
     screen.queryByRole("button", { name: "Merge as duplicate" }),
   ).toBeNull();
-  await user.selectOptions(postView, "Posts");
+  await user.click(within(postView).getByRole("button", { name: "Active" }));
   expect(
     screen.getByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
@@ -1132,14 +1464,17 @@ it("navigates an old merged-post route to its canonical post", async () => {
 it("lets staff find a canonical post and confirm a merge from post detail", async () => {
   const source = { ...post("source-1", "Old cutoff question"), version: 1 };
   const target = { ...post("target-1", "Course cutoff guide"), version: 1 };
+  const unaffected = post("unaffected-1", "Unaffected post");
   const calls: { url: string; init?: RequestInit }[] = [];
+  let isMerged = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
-      if (url.endsWith("/posts/source-1") && init?.method === "PATCH")
+      if (url.endsWith("/posts/source-1") && init?.method === "PATCH") {
+        isMerged = true;
         return json({
           data: {
             id: "source-1",
@@ -1149,9 +1484,50 @@ it("lets staff find a canonical post and confirm a merge from post detail", asyn
             version: 2,
           },
         });
+      }
       if (url.endsWith("/posts/source-1")) return json({ data: source });
+      if (url.includes("duplicateStatus=confirmed"))
+        return page(
+          isMerged
+            ? [
+                {
+                  id: "merged-existing",
+                  courseId: course.id,
+                  type: "question",
+                  title: "Earlier duplicate",
+                  duplicateStatus: "confirmed",
+                  duplicateOfPostId: target.id,
+                  canonicalTitle: target.title,
+                  version: 1,
+                },
+                {
+                  id: source.id,
+                  courseId: course.id,
+                  type: source.type,
+                  title: source.title,
+                  duplicateStatus: "confirmed",
+                  duplicateOfPostId: target.id,
+                  canonicalTitle: target.title,
+                  version: 2,
+                },
+              ]
+            : [
+                {
+                  id: "merged-existing",
+                  courseId: course.id,
+                  type: "question",
+                  title: "Earlier duplicate",
+                  duplicateStatus: "confirmed",
+                  duplicateOfPostId: target.id,
+                  canonicalTitle: target.title,
+                  version: 1,
+                },
+              ],
+        );
       if (url.includes("q=cutoff")) return page([source, target]);
-      return page([source, target]);
+      return page(
+        isMerged ? [unaffected, target] : [source, unaffected, target],
+      );
     }),
   );
   const user = userEvent.setup();
@@ -1165,6 +1541,18 @@ it("lets staff find a canonical post and confirm a merge from post detail", asyn
       onNavigate={vi.fn()}
     />,
   );
+  const listings = screen.getByRole("region", { name: "Post listings" });
+  await within(listings).findByText("Old cutoff question");
+  expect(
+    within(listings)
+      .getAllByRole("link")
+      .map(
+        (link) =>
+          link.textContent?.match(
+            /Old cutoff question|Unaffected post|Course cutoff guide/,
+          )?.[0],
+      ),
+  ).toEqual(["Old cutoff question", "Unaffected post", "Course cutoff guide"]);
   await user.click(
     await screen.findByRole("button", { name: "Merge as duplicate" }),
   );
@@ -1200,6 +1588,35 @@ it("lets staff find a canonical post and confirm a merge from post detail", asyn
       ),
     ).toBe(true),
   );
+  await waitFor(() =>
+    expect(within(listings).queryByText("Old cutoff question")).toBeNull(),
+  );
+  expect(
+    within(listings)
+      .getAllByRole("link")
+      .map(
+        (link) =>
+          link.textContent?.match(/Unaffected post|Course cutoff guide/)?.[0],
+      ),
+  ).toEqual(["Unaffected post", "Course cutoff guide"]);
+  await user.click(
+    within(screen.getByRole("group", { name: "Post view" })).getByRole(
+      "button",
+      { name: "Duplicate" },
+    ),
+  );
+  expect(
+    await within(listings).findByRole("button", {
+      name: "Old cutoff question",
+    }),
+  ).toBeTruthy();
+  expect(
+    within(listings)
+      .getAllByRole("button", {
+        name: /Earlier duplicate|Old cutoff question/,
+      })
+      .map((button) => button.getAttribute("aria-label")),
+  ).toEqual(["Earlier duplicate", "Old cutoff question"]);
 });
 
 it("keeps search syntax accessible without showing explanatory copy", async () => {
@@ -2322,9 +2739,11 @@ it("shows a duplicate's time in staff review detail but not on its review card",
       onNavigate={vi.fn()}
     />,
   );
-  await user.selectOptions(
-    await screen.findByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
+      "button",
+      { name: "Duplicate" },
+    ),
   );
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   const detail = screen.getByRole("region", { name: "Post detail" });
@@ -2413,29 +2832,27 @@ it("makes the post detail a focusable region beside the post listings and marks 
   expect(current[0]!.textContent).toContain("Second");
 });
 
-it("shows answer sections under questions only", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) => {
-      if (url.endsWith("/courses/course-1")) return json({ data: course });
-      if (url.endsWith("/members/user-student"))
-        return json({ data: { role: "student" } });
-      if (url.endsWith("/posts/q1")) return json({ data: post("q1", "Ask") });
-      if (url.endsWith("/posts/n1"))
-        return json({ data: { ...post("n1", "Notice"), type: "note" } });
-      if (url.endsWith("/posts/d1"))
-        return json({
-          data: {
-            id: "d1",
-            courseId: "course-1",
-            type: "question",
-            deleted: true,
-          },
-        });
-      if (url.endsWith("/answers")) return json({ data: [] });
-      return page([]);
-    }),
-  );
+it("shows question content without answer sections or fetching answers", async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    if (url.endsWith("/members/user-student"))
+      return json({ data: { role: "student" } });
+    if (url.endsWith("/posts/q1")) return json({ data: post("q1", "Ask") });
+    if (url.endsWith("/posts/n1"))
+      return json({ data: { ...post("n1", "Notice"), type: "note" } });
+    if (url.endsWith("/posts/d1"))
+      return json({
+        data: {
+          id: "d1",
+          courseId: "course-1",
+          type: "question",
+          deleted: true,
+        },
+      });
+    if (url.endsWith("/answers")) return json({ data: [] });
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
   const view = render(
     <Discussion
       courseId={course.id}
@@ -2447,12 +2864,21 @@ it("shows answer sections under questions only", async () => {
     />,
   );
   await screen.findByRole("heading", { name: "Ask" });
+  const detail = screen.getByRole("region", { name: "Post detail" });
   expect(
-    await screen.findByRole("region", { name: "Students' answer" }),
+    within(detail).getByText(
+      "A useful explanation about cutoffs and deadlines.",
+    ),
   ).toBeTruthy();
   expect(
-    screen.getByRole("region", { name: "Instructors' answer" }),
-  ).toBeTruthy();
+    within(detail).queryByRole("region", { name: "Students' answer" }),
+  ).toBeNull();
+  expect(
+    within(detail).queryByRole("region", { name: "Instructors' answer" }),
+  ).toBeNull();
+  expect(
+    fetchMock.mock.calls.some(([url]) => String(url).endsWith("/answers")),
+  ).toBe(false);
   for (const [postId, ready] of [
     ["n1", () => screen.findByRole("heading", { name: "Notice" })],
     ["d1", () => screen.findByText("This post was deleted.")],
@@ -2480,6 +2906,46 @@ function feedRequests(fetchMock: ReturnType<typeof vi.fn>) {
     .filter((url) => url.pathname === "/api/v1/courses/course-1/posts");
 }
 
+it("maps every Show option to its exact feed request parameters", async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    if (url.endsWith("/members/user-me"))
+      return json({ data: { role: "student" } });
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      userId="user-me"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const show = screen.getByRole("combobox", {
+    name: "Show",
+  }) as HTMLSelectElement;
+  const cases = [
+    ["all", {}],
+    ["mine", { authorId: "user-me" }],
+    ["instructors", { authorRole: "instructor" }],
+    ["tas", { authorRole: "ta" }],
+    ["question", { type: "question" }],
+    ["note", { type: "note" }],
+    ["all", {}],
+  ] as const;
+  for (const [key, expected] of cases) {
+    if (show.value !== key) await user.selectOptions(show, key);
+    await waitFor(() =>
+      expect(
+        Object.fromEntries(feedRequests(fetchMock).at(-1)?.searchParams ?? []),
+      ).toEqual(expected),
+    );
+    expect(show.value).toBe(key);
+  }
+});
+
 it("filters the feed from the sidebar and keeps the filter when loading more", async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
@@ -2505,72 +2971,86 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
   const sidebar = await screen.findByRole("complementary", {
     name: "Post filters",
   });
-  const filter = (name: string) =>
-    within(sidebar).getByRole("button", { name });
-  expect(
-    within(sidebar)
-      .getAllByRole("button")
-      .map((button) => button.textContent),
-  ).toEqual([
+  const filter = within(sidebar).getByRole("combobox", {
+    name: "Show",
+  }) as HTMLSelectElement;
+  expect([...filter.options].map((option) => option.textContent)).toEqual([
     "All posts",
     "My posts",
     "Instructor posts",
     "TA posts",
     "Questions",
-    "Answered",
-    "Unanswered",
-    "Pinned",
     "Notes",
-    "Pinned",
   ]);
-  const names = [
-    "All posts",
-    "My posts",
-    "Instructor posts",
-    "TA posts",
-    "Questions",
-    "Answered",
-    "Unanswered",
-    "Pinned questions",
-    "Notes",
-    "Pinned notes",
-  ];
-  expect(
-    names.map((name) => filter(name).getAttribute("aria-pressed")),
-  ).toEqual(["true", ...names.slice(1).map(() => "false")]);
+  expect(filter.value).toBe("all");
   await screen.findByText("Feed");
   expect(feedRequests(fetchMock).at(-1)!.search).toBe("");
 
-  await user.click(filter("Questions"));
+  await user.selectOptions(filter, "question");
   await screen.findByText("Feed type=question");
-  expect(filter("Questions").getAttribute("aria-pressed")).toBe("true");
-  expect(filter("All posts").getAttribute("aria-pressed")).toBe("false");
-  await user.click(filter("Notes"));
+  expect(filter.value).toBe("question");
+  await user.selectOptions(filter, "note");
   await screen.findByText("Feed type=note");
   expect(screen.queryByText("Feed type=question")).toBeNull();
-  await user.click(filter("My posts"));
+  await user.selectOptions(filter, "mine");
   await screen.findByText("Feed authorId=user-me");
-  await user.click(filter("Instructor posts"));
+  await user.selectOptions(filter, "instructors");
   await screen.findByText("Feed authorRole=instructor");
-  await user.click(filter("TA posts"));
+  await user.selectOptions(filter, "tas");
   await screen.findByText("Feed authorRole=ta");
-  await user.click(filter("Pinned questions"));
-  await screen.findByText("Feed type=question&pinned=true");
-  await user.click(filter("Pinned notes"));
-  await screen.findByText("Feed type=note&pinned=true");
-  expect(filter("Pinned notes").getAttribute("aria-pressed")).toBe("true");
-  expect(filter("Pinned questions").getAttribute("aria-pressed")).toBe("false");
-  await user.click(filter("Answered"));
-  await screen.findByText("Feed answered=true");
-  await user.click(filter("Unanswered"));
-  await screen.findByText("Feed answered=false");
+  await user.selectOptions(filter, "question");
+  await screen.findByText("Feed type=question");
   await user.click(screen.getByRole("button", { name: "Load more posts" }));
   await screen.findByText("Later question");
   const more = feedRequests(fetchMock).at(-1)!.searchParams;
   expect(more.get("cursor")).toBe("next");
-  expect(more.get("answered")).toBe("false");
-  await user.click(filter("All posts"));
+  expect(more.get("type")).toBe("question");
+  await user.selectOptions(filter, "all");
   await screen.findByText("Feed");
+  expect(filter.value).toBe("all");
+});
+
+it("retains a type filter on pagination and resets the cursor when Show changes", async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    const params = new URL(url, "https://example.edu").searchParams;
+    if (params.get("cursor")) return page([post("p2", "Second question")]);
+    return page([post("p1", "First question")], "next");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
+  );
+  const show = screen.getByRole("combobox", {
+    name: "Show",
+  }) as HTMLSelectElement;
+  await screen.findByText("First question");
+  await user.selectOptions(show, "question");
+  await waitFor(() =>
+    expect(
+      Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
+    ).toEqual({
+      type: "question",
+    }),
+  );
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await screen.findByText("Second question");
+  expect(
+    Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
+  ).toEqual({
+    type: "question",
+    cursor: "next",
+  });
+  await user.selectOptions(show, "note");
+  await waitFor(() =>
+    expect(
+      Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
+    ).toEqual({
+      type: "note",
+    }),
+  );
+  expect(screen.queryByText("Second question")).toBeNull();
 });
 
 it("sorts the feed and offers best match only while searching", async () => {
@@ -2583,7 +3063,12 @@ it("sorts the feed and offers best match only while searching", async () => {
   const view = render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  expect(screen.queryByRole("button", { name: "My posts" })).toBeNull();
+  expect(
+    [
+      ...(screen.getByRole("combobox", { name: "Show" }) as HTMLSelectElement)
+        .options,
+    ].some((option) => option.textContent === "My posts"),
+  ).toBe(false);
   const sort = (await screen.findByRole("combobox", {
     name: "Sort by",
   })) as HTMLSelectElement;
@@ -2638,6 +3123,94 @@ it("sorts the feed and offers best match only while searching", async () => {
   });
 });
 
+it("keeps the newest selected sort and cursor when an older sort request finishes late", async () => {
+  let releaseNewest!: (response: Response) => void;
+  const newestPage = new Promise<Response>((resolve) => {
+    releaseNewest = resolve;
+  });
+  const fetchMock = vi.fn(async (url: string) => {
+    const params = new URL(url, "https://example.edu").searchParams;
+    if (params.get("sort") === "newest") return newestPage;
+    if (params.get("sort") === "oldest")
+      return params.get("cursor") === "oldest-next"
+        ? page([post("old-3", "Third oldest")])
+        : page(
+            [post("old-1", "First oldest"), post("old-2", "Second oldest")],
+            "oldest-next",
+          );
+    return page([post("baseline", "Baseline")]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const listings = screen.getByRole("region", { name: "Post listings" });
+  await within(listings).findByText("Baseline");
+  const sort = screen.getByRole("combobox", { name: "Sort by" });
+  await user.selectOptions(sort, "newest");
+  await waitFor(() =>
+    expect(
+      feedRequests(fetchMock).some(
+        (request) => request.searchParams.get("sort") === "newest",
+      ),
+    ).toBe(true),
+  );
+  await user.selectOptions(sort, "oldest");
+  await within(listings).findByText("Second oldest");
+  await act(async () => {
+    releaseNewest(page([post("late", "Late newest")], "newest-next"));
+  });
+  const titles = () =>
+    within(listings)
+      .getAllByRole("link")
+      .map((link) => link.textContent ?? "");
+  expect(
+    titles().map((title) => title.match(/First oldest|Second oldest/)?.[0]),
+  ).toEqual(["First oldest", "Second oldest"]);
+  expect(within(listings).queryByText("Late newest")).toBeNull();
+  await user.click(
+    within(listings).getByRole("button", { name: "Load more posts" }),
+  );
+  await within(listings).findByText("Third oldest");
+  expect(
+    Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
+  ).toEqual({ sort: "oldest", cursor: "oldest-next" });
+});
+
+it("falls back to All posts for an unknown Show filter", async () => {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      filters={{ filter: "future:unknown" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  const show = screen.getByRole("combobox", {
+    name: "Show",
+  }) as HTMLSelectElement;
+  expect(show.value).toBe("all");
+  expect([...show.options].some((option) => option.value === "mine")).toBe(
+    false,
+  );
+  await waitFor(() => expect(feedRequests(fetchMock)).not.toHaveLength(0));
+  expect(
+    Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
+  ).toEqual({});
+});
+
 it("disables the sidebar filters in the staff duplicate view", async () => {
   vi.stubGlobal(
     "fetch",
@@ -2657,14 +3230,16 @@ it("disables the sidebar filters in the staff duplicate view", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.selectOptions(
-    await screen.findByRole("combobox", { name: "Post view" }),
-    "Duplicate posts",
+  await user.click(
+    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
+      "button",
+      { name: "Duplicate" },
+    ),
   );
   const sidebar = screen.getByRole("complementary", { name: "Post filters" });
   expect(
     within(sidebar)
-      .getByRole("button", { name: "Questions" })
+      .getByRole("combobox", { name: "Show" })
       .matches(":disabled"),
   ).toBe(true);
   expect(
@@ -2704,6 +3279,15 @@ it("lays out each card with a type badge, status, preview, and byline from the p
     within((await within(listings).findByText(title)).closest("a")!);
   const open = await card("Open question");
   expect(open.getByText("Question")).toBeTruthy();
+  expect(
+    open.getByText("Question").closest(".post-type-badge")?.textContent,
+  ).toBe("Question");
+  expect(
+    open
+      .getByText("Question")
+      .closest(".post-type-badge")
+      ?.classList.contains("question"),
+  ).toBe(true);
   expect(open.getByText("Unanswered")).toBeTruthy();
   expect(open.getByText(/A useful explanation/)).toBeTruthy();
   expect(open.getByText("2 hours ago")).toBeTruthy();
@@ -2712,11 +3296,35 @@ it("lays out each card with a type badge, status, preview, and byline from the p
   const settled = await card("Settled question");
   expect(settled.getByText("Answered")).toBeTruthy();
   expect(settled.getByText("Pinned")).toBeTruthy();
+  expect(
+    settled
+      .getByText("Pinned")
+      .closest(".post-status.pin")
+      ?.querySelector("svg"),
+  ).toBeTruthy();
   const note = await card("Office hours");
   expect(note.getByText("Note")).toBeTruthy();
+  expect(note.getByText("Note").closest(".post-type-badge")?.textContent).toBe(
+    "Note",
+  );
+  expect(
+    note
+      .getByText("Note")
+      .closest(".post-type-badge")
+      ?.classList.contains("note"),
+  ).toBe(true);
   expect(note.queryByText(/Answered|Unanswered/)).toBeNull();
   const unknown = await card("Future kind");
   expect(unknown.getByText("Post")).toBeTruthy();
+  expect(
+    unknown.getByText("Post").closest(".post-type-badge")?.textContent,
+  ).toBe("Post");
+  expect(
+    unknown
+      .getByText("Post")
+      .closest(".post-type-badge")
+      ?.classList.contains("other"),
+  ).toBe(true);
   expect(unknown.queryByText(/Answered|Unanswered/)).toBeNull();
 });
 
@@ -2756,7 +3364,7 @@ it("restores filters from props and keeps them on post links", async () => {
       csrfToken="csrf"
       query="cutoff"
       filters={{
-        filter: "question:unanswered",
+        filter: "question",
         tag: "midterm",
         sort: "oldest",
       }}
@@ -2766,17 +3374,19 @@ it("restores filters from props and keeps them on post links", async () => {
   );
   const link = await screen.findByRole("link", { name: /Filtered/ });
   const params = feedRequests(fetchMock).at(-1)!.searchParams;
-  expect(params.get("answered")).toBe("false");
+  expect(params.get("type")).toBe("question");
   expect(params.get("tag")).toBe("midterm");
   expect(params.get("sort")).toBe("oldest");
   expect(params.get("q")).toBe("cutoff");
   expect(link.getAttribute("href")).toBe(
-    "/courses/course-1/posts/p1?q=cutoff&filter=question%3Aunanswered&tag=midterm&sort=oldest",
+    "/courses/course-1/posts/p1?q=cutoff&filter=question&tag=midterm&sort=oldest",
   );
   const sidebar = screen.getByRole("complementary", { name: "Post filters" });
-  await userEvent
-    .setup()
-    .click(within(sidebar).getByRole("button", { name: "Notes" }));
+  const show = within(sidebar).getByRole("combobox", {
+    name: "Show",
+  }) as HTMLSelectElement;
+  expect(show.value).toBe("question");
+  await userEvent.setup().selectOptions(show, "note");
   expect(onFiltersChange).toHaveBeenCalledWith({
     filter: "note",
     tag: "midterm",
@@ -2884,6 +3494,256 @@ it("lets staff pin and unpin a post with conditional requests and updates its ro
   const patches = calls.filter((call) => call.init?.method === "PATCH");
   expect(patches[1]!.init?.headers).toMatchObject({ "If-Match": '"v4"' });
   expect(within(row).queryByText("Pinned")).toBeNull();
+});
+
+it.each(["oldest", "newest", "recent_activity", "relevance"] as const)(
+  "reorders the %s feed after pin and unpin while retaining detail",
+  async (sort) => {
+    let pinned = false;
+    let version = 3;
+    let olderActivity = "2026-01-01T00:00:00.000Z";
+    const older = () => ({
+      ...post("p1", "Older question"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastActivityAt: olderActivity,
+      pinned,
+      version,
+    });
+    const newer = {
+      ...post("p2", "Newer question"),
+      createdAt: "2026-01-02T00:00:00.000Z",
+      lastActivityAt: "2026-01-02T00:00:00.000Z",
+      pinned: false,
+      version: 1,
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/user-1"))
+        return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/p1" && init?.method === "PATCH") {
+        pinned = JSON.parse(String(init.body)).pinned;
+        version += 1;
+        olderActivity = "2026-01-03T00:00:00.000Z";
+        return json({ data: older() });
+      }
+      if (url === "/api/v1/posts/p1") return json({ data: older() });
+      const mode = new URL(url, "https://example.edu").searchParams.get("sort");
+      const posts = [older(), newer];
+      posts.sort(
+        (a, b) =>
+          Number(b.pinned) - Number(a.pinned) ||
+          (mode === "oldest"
+            ? Date.parse(a.createdAt) - Date.parse(b.createdAt)
+            : mode === "recent_activity" || !mode
+              ? Date.parse(b.lastActivityAt) - Date.parse(a.lastActivityAt)
+              : mode === "relevance"
+                ? b.id.localeCompare(a.id)
+                : Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+      );
+      return page(posts);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <Discussion
+        courseId={course.id}
+        course={course}
+        csrfToken="csrf"
+        userId="user-1"
+        postId="p1"
+        query={sort === "relevance" ? "question" : undefined}
+        filters={{ sort }}
+        onFiltersChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    const listings = await screen.findByRole("region", {
+      name: "Post listings",
+    });
+    const order = () =>
+      within(listings)
+        .getAllByRole("link")
+        .map((link) => link.querySelector("strong")?.textContent);
+    await screen.findByRole("link", { name: /Older question/ });
+    const originalOrder =
+      sort === "oldest"
+        ? ["Older question", "Newer question"]
+        : ["Newer question", "Older question"];
+    expect(order()).toEqual(originalOrder);
+    const beforePin = feedRequests(fetchMock).length;
+    await user.click(await screen.findByRole("button", { name: "Pin" }));
+    await screen.findByRole("button", { name: "Unpin" });
+    await waitFor(() =>
+      expect(order()).toEqual(["Older question", "Newer question"]),
+    );
+    expect(feedRequests(fetchMock)).toHaveLength(beforePin + 1);
+    const expectedRequest =
+      sort === "recent_activity"
+        ? {}
+        : sort === "relevance"
+          ? { q: "question", sort }
+          : { sort };
+    expect(
+      Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
+    ).toEqual(expectedRequest);
+    await user.click(screen.getByRole("button", { name: "Unpin" }));
+    await screen.findByRole("button", { name: "Pin" });
+    await waitFor(() =>
+      expect(order()).toEqual(
+        sort === "recent_activity"
+          ? ["Older question", "Newer question"]
+          : originalOrder,
+      ),
+    );
+    expect(feedRequests(fetchMock)).toHaveLength(beforePin + 2);
+    expect(
+      Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
+    ).toEqual(expectedRequest);
+    expect(
+      screen.getByRole("heading", { name: "Older question" }),
+    ).toBeTruthy();
+  },
+);
+
+it("keeps an unpinned post in the Questions feed and retains its detail", async () => {
+  let pinned = true;
+  const current = () => ({
+    ...post("p1", "Pinned post"),
+    pinned,
+    version: pinned ? 3 : 4,
+  });
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-1")) return json({ data: { role: "ta" } });
+    if (url === "/api/v1/posts/p1" && init?.method === "PATCH") {
+      pinned = false;
+      return json({ data: current() });
+    }
+    if (url === "/api/v1/posts/p1") return json({ data: current() });
+    return page([current()]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-1"
+      postId="p1"
+      filters={{ filter: "question" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("link", { name: /Pinned post/ });
+  await user.click(await screen.findByRole("button", { name: "Unpin" }));
+  await screen.findByRole("button", { name: "Pin" });
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole("link", { name: /Pinned post/ })).queryByText(
+        "Pinned",
+      ),
+    ).toBeNull(),
+  );
+  expect(screen.getByRole("heading", { name: "Pinned post" })).toBeTruthy();
+});
+
+it("keeps a newly pinned detail in the matching Questions feed", async () => {
+  let pinned = false;
+  const current = () => ({
+    ...post("p1", "Matching question"),
+    tags: ["midterm"],
+    pinned,
+    version: pinned ? 4 : 3,
+  });
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-1")) return json({ data: { role: "ta" } });
+    if (url === "/api/v1/posts/p1" && init?.method === "PATCH") {
+      pinned = true;
+      return json({ data: current() });
+    }
+    if (url === "/api/v1/posts/p1") return json({ data: current() });
+    const params = new URL(url, "https://example.edu").searchParams;
+    return page(
+      params.get("type") === "question" &&
+        params.get("q") === "cutoff" &&
+        params.get("tag") === "midterm"
+        ? [current()]
+        : [],
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-1"
+      postId="p1"
+      query="cutoff"
+      filters={{ filter: "question", tag: "midterm" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("button", { name: "Pin" });
+  await screen.findByRole("link", { name: /Matching question/ });
+  await user.click(screen.getByRole("button", { name: "Pin" }));
+  await screen.findByRole("button", { name: "Unpin" });
+  const row = (
+    await screen.findByRole("link", { name: /Matching question/ })
+  ).closest("li")!;
+  await waitFor(() => expect(within(row).getByText("Pinned")).toBeTruthy());
+  const params = feedRequests(fetchMock).at(-1)!.searchParams;
+  expect(params.get("type")).toBe("question");
+  expect(params.get("q")).toBe("cutoff");
+  expect(params.get("tag")).toBe("midterm");
+});
+
+it("keeps a newly pinned detail out of a Questions feed whose tag does not match", async () => {
+  let pinned = false;
+  const current = () => ({
+    ...post("p1", "Other tag"),
+    tags: ["midterm"],
+    pinned,
+    version: pinned ? 4 : 3,
+  });
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-1")) return json({ data: { role: "ta" } });
+    if (url === "/api/v1/posts/p1" && init?.method === "PATCH") {
+      pinned = true;
+      return json({ data: current() });
+    }
+    if (url === "/api/v1/posts/p1") return json({ data: current() });
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-1"
+      postId="p1"
+      filters={{ filter: "question", tag: "different" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("button", { name: "Pin" });
+  await waitFor(() => expect(feedRequests(fetchMock)).toHaveLength(1));
+  await user.click(screen.getByRole("button", { name: "Pin" }));
+  await screen.findByRole("button", { name: "Unpin" });
+  await waitFor(() => expect(feedRequests(fetchMock)).toHaveLength(2));
+  expect(screen.queryByRole("link", { name: /Other tag/ })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Other tag" })).toBeTruthy();
+  expect(
+    Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
+  ).toEqual({
+    type: "question",
+    tag: "different",
+  });
 });
 
 it("disables pinning while pending and refetches after a stale revision", async () => {
@@ -3004,17 +3864,16 @@ it("distinguishes an empty course from filters that match nothing and clears the
     screen.queryByRole("button", { name: "Clear search and filters" }),
   ).toBeNull();
   const sidebar = screen.getByRole("complementary", { name: "Post filters" });
-  await user.click(within(sidebar).getByRole("button", { name: "Notes" }));
+  const show = within(sidebar).getByRole("combobox", {
+    name: "Show",
+  }) as HTMLSelectElement;
+  await user.selectOptions(show, "note");
   await screen.findByText("Nothing matches this search or these filters.");
   await user.click(
     screen.getByRole("button", { name: "Clear search and filters" }),
   );
   await screen.findByText("No posts yet.");
-  expect(
-    within(sidebar)
-      .getByRole("button", { name: "All posts" })
-      .getAttribute("aria-pressed"),
-  ).toBe("true");
+  expect(show.value).toBe("all");
 });
 
 it("returns from a post to the list with the same search and filters", async () => {
