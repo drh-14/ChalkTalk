@@ -113,7 +113,12 @@ export class AnswerService {
     return result.rows[0];
   }
   private async project(db: Db, row: AnswerRow, role: Role): Promise<Answer> {
-    const contributors = await this.contributors(db, row.id, row.anonymous, role);
+    const contributors = await this.contributors(
+      db,
+      row.id,
+      row.anonymous,
+      role,
+    );
     return {
       id: row.id,
       postId: row.post_id,

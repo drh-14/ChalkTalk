@@ -6,7 +6,7 @@ Followup authors and answer contributors follow the shared [identity visibility 
 
 ## Retained deleted answers and followups
 
-Answer and followup read responses can contain active content or retained tombstones. `data.deleted` is the required discriminator. Active records set it to `false` and include the content fields documented below. An answer tombstone contains only `id`, `postId`, `kind`, `createdAt`, `updatedAt`, and `version`; a followup tombstone contains only `id`, `answerId`, `parentFollowupId`, `createdAt`, `updatedAt`, and `version`. Tombstones omit body content, contributors or authors, anonymity, attachments, and endorsement state. Create, update, and endorsement responses always contain active content.
+Answer and followup read responses can contain active content or retained tombstones. `data.deleted` is the required discriminator. Active records set it to `false` and include the content fields documented below. An answer tombstone contains only `id`, `postId`, `kind`, `deleted`, `createdAt`, `updatedAt`, and `version`; a followup tombstone contains only `id`, `answerId`, `parentFollowupId`, `deleted`, `createdAt`, `updatedAt`, and `version`. Tombstones omit body content, contributors or authors, anonymity, attachments, and endorsement state. Create, update, and endorsement responses always contain active content.
 
 #### Answer tombstone example
 
@@ -15,7 +15,6 @@ Answer and followup read responses can contain active content or retained tombst
   "id": "answer_123",
   "postId": "post_123",
   "kind": "student",
-  "deleted": false,
   "deleted": true,
   "createdAt": "2026-09-20T14:00:00Z",
   "updatedAt": "2026-09-20T15:00:00Z",
@@ -29,7 +28,6 @@ Answer and followup read responses can contain active content or retained tombst
 {
   "id": "followup_123",
   "answerId": "answer_123",
-  "deleted": false,
   "parentFollowupId": null,
   "deleted": true,
   "createdAt": "2026-09-20T14:30:00Z",

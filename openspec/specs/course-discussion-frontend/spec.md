@@ -8,7 +8,7 @@ Define the browser experience for course-scoped question and note discussions, i
 
 ### Requirement: Course members can browse a discussion-first post feed
 
-The protected `/courses/{courseId}` route SHALL show question and note post cards in a left-hand feed with title and plain-text body excerpt, with post detail beside the feed on wide screens. The feed SHALL preserve API order and show loading, empty, error, and retry states. Existing member and course-management controls SHALL remain available from a clearly labeled `/courses/{courseId}/settings` route. On narrow screens, feed and selected detail SHALL remain navigable without relying on hover.
+The protected `/courses/{courseId}` route SHALL show question and note post cards in a left-hand feed with title and compact rendered body preview, with post detail beside the feed on wide screens. The feed SHALL preserve API order and show loading, empty, error, and retry states. Existing member and course-management controls SHALL remain available from a clearly labeled `/courses/{courseId}/settings` route. On narrow screens, feed and selected detail SHALL remain navigable without relying on hover.
 
 #### Scenario: A member opens a course with posts
 
@@ -522,7 +522,7 @@ The time SHALL be shown beside "Anonymous" and "Deleted user" without changing t
 Each ordinary post card in the feed SHALL show these elements in this order:
 
 - **Header row:** a type badge immediately before the title, with the title's wrapped lines returning to the card's leading edge, and any status pills at the trailing edge.
-- **Preview:** a plain-text excerpt limited to two lines.
+- **Preview:** a compact rendered Markdown and LaTeX excerpt limited to two lines.
 - **Footer:** the viewer-projected author and the post's creation time together, with an optional type-specific summary at the trailing edge.
 - **Tags:** the post's tags as chips, when it has any, below the footer and outside the card's link.
 

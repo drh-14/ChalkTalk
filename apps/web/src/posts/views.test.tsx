@@ -2309,9 +2309,8 @@ it.each([
         expect(
           urls
             .filter((url) => url.includes("type=question"))
-            .map(
-              (url) =>
-                new URL(url, "https://example.edu").searchParams.get("q"),
+            .map((url) =>
+              new URL(url, "https://example.edu").searchParams.get("q"),
             )
             .at(-1),
         ).toBe(expectedQuery),
