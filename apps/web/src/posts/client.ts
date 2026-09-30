@@ -21,6 +21,8 @@ export type Post = {
   version: number;
   duplicateStatus?: "none" | "suggested" | "confirmed";
   duplicateOfPostId?: string | null;
+  pinned?: boolean;
+  answered?: boolean;
 };
 export type PostDetail = Post | { id: string; courseId: string; deleted: true };
 export type MergedPost = {
@@ -41,11 +43,17 @@ export type CreatePostInput = {
   anonymous: boolean;
   tags: string[];
 };
+export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
   q?: string;
-  sort?: "relevance";
+  sort?: PostSort;
   cursor?: string;
-  type?: "question";
+  type?: "question" | "note";
+  answered?: boolean;
+  pinned?: boolean;
+  authorId?: string;
+  authorRole?: "instructor" | "ta";
+  tag?: string;
   limit?: number;
   signal?: AbortSignal;
 };
@@ -75,6 +83,12 @@ export async function listPosts(
   if (options.sort) query.set("sort", options.sort);
   if (options.cursor) query.set("cursor", options.cursor);
   if (options.type) query.set("type", options.type);
+  if (options.answered !== undefined)
+    query.set("answered", String(options.answered));
+  if (options.pinned !== undefined) query.set("pinned", String(options.pinned));
+  if (options.authorId) query.set("authorId", options.authorId);
+  if (options.authorRole) query.set("authorRole", options.authorRole);
+  if (options.tag) query.set("tag", options.tag);
   if (options.limit) query.set("limit", String(options.limit));
   const suffix = query.size ? `?${query}` : "";
   return receive<Page<Post>>(
@@ -187,6 +201,27 @@ export async function confirmMergePost(
       }),
     }),
   );
+}
+
+export async function setPostPinned(
+  post: Post,
+  pinned: boolean,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"v${post.version}"`,
+      },
+      body: JSON.stringify({ pinned }),
+    }),
+  );
+  return payload.data;
 }
 
 export async function createPost(

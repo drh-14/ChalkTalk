@@ -18,11 +18,17 @@ import {
   type Session,
 } from "../auth/client.js";
 import { CourseDetail, CourseHome } from "../courses/views.js";
-import { getCourse, type Course, type Versioned } from "../courses/client.js";
+import {
+  getCourse,
+  listCourses,
+  type Course,
+  type Versioned,
+} from "../courses/client.js";
 import { Discussion } from "../posts/views.js";
 import {
   initializeRoute,
   navigate,
+  replaceCurrentFilters,
   replaceCurrentQuery,
   routeFromLocation,
   type Route,
@@ -469,21 +475,22 @@ function ResetPassword({
   );
 }
 
-function Home({
+const firstNameOf = (session: Session) =>
+  session.user.displayName.split(" ")[0] || session.user.displayName;
+
+function AccountControls({
   session,
   onSignOut,
-  onOpenCourse,
+  canLeave = () => true,
 }: {
   session: Session;
   onSignOut: () => Promise<void>;
-  onOpenCourse: (courseId: string) => void;
+  canLeave?: () => boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const firstName =
-    session.user.displayName.split(" ")[0] || session.user.displayName;
   async function signOut() {
-    if (pending) return;
+    if (pending || !canLeave()) return;
     setPending(true);
     setError(undefined);
     try {
@@ -494,58 +501,280 @@ function Home({
     }
   }
   return (
-    <main className="home-shell">
-      <header className="home-header">
-        <a className="wordmark dark" href="/home">
-          Chalk<span>Talk</span>
-        </a>
-        <div>
-          <span className="avatar" aria-hidden="true">
-            {firstName[0]}
-          </span>
-          <button className="text-button" onClick={signOut} disabled={pending}>
-            {pending ? "Signing out…" : "Sign out"}
-          </button>
-        </div>
-      </header>
-      <section className="home-intro">
-        <p className="eyebrow">Tuesday, September 26</p>
-        <h1>Welcome back, {firstName}</h1>
-        <p>Here’s a small look at what’s moving across your courses.</p>
-      </section>
+    <div className="account-controls">
+      <span className="avatar" aria-hidden="true">
+        {firstNameOf(session)[0]}
+      </span>
+      <span className="account-name">{session.user.displayName}</span>
+      <button className="text-button" onClick={signOut} disabled={pending}>
+        {pending ? "Signing out…" : "Sign out"}
+      </button>
       {error && (
         <p className="form-message error" role="alert">
           {error}
         </p>
       )}
-      <section className="home-grid">
+    </div>
+  );
+}
+
+function AppBar({
+  variant,
+  session,
+  onSignOut,
+  canLeave,
+  onHomeClick,
+  tabs,
+  children,
+}: {
+  variant: "home" | "course";
+  session: Session;
+  onSignOut: () => Promise<void>;
+  canLeave?: () => boolean;
+  onHomeClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  tabs?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <header className={`app-bar ${variant}`}>
+      <div className="app-bar-inner">
+        <div className="app-bar-start">
+          <a className="wordmark" href="/home" onClick={onHomeClick}>
+            Chalk<span>Talk</span>
+          </a>
+          {children}
+        </div>
+        {tabs}
+        <AccountControls
+          session={session}
+          onSignOut={onSignOut}
+          canLeave={canLeave}
+        />
+      </div>
+    </header>
+  );
+}
+
+function Home({
+  session,
+  onSignOut,
+  onOpenCourse,
+}: {
+  session: Session;
+  onSignOut: () => Promise<void>;
+  onOpenCourse: (courseId: string) => void;
+}) {
+  const firstName = firstNameOf(session);
+  const today = new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  }).format(new Date());
+  return (
+    <>
+      <AppBar variant="home" session={session} onSignOut={onSignOut} />
+      <main className="home-shell">
+        <section className="home-intro">
+          <p className="eyebrow">{today}</p>
+          <h1>Welcome back, {firstName}</h1>
+          <p>Pick up where your courses left off.</p>
+        </section>
         <CourseHome csrfToken={session.csrfToken} onOpenCourse={onOpenCourse} />
-        <article className="posts-card">
-          <div className="section-title">
-            <h2>In the discussion</h2>
-            <span>View all</span>
-          </div>
-          <div className="post">
-            <p className="post-meta">Linear Algebra II · 8 min ago</p>
-            <h3>
-              Why does the eigenbasis make this proof feel so much simpler?
-            </h3>
-            <p>
-              “Once the transformation is diagonal, the repeated application is
-              easier to see…”
-            </p>
-            <div>
-              <span>◌ 8 replies</span>
-              <span>♡ 14</span>
+      </main>
+    </>
+  );
+}
+
+const isPlainClick = (event: MouseEvent<HTMLAnchorElement>) =>
+  event.button === 0 &&
+  !event.metaKey &&
+  !event.ctrlKey &&
+  !event.shiftKey &&
+  !event.altKey;
+
+/** Course list opened from the course name; ported from Khaihern Low's workspace redesign. */
+function CourseSwitcher({
+  currentCourseId,
+  onChoose,
+}: {
+  currentCourseId?: string;
+  onChoose: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [courses, setCourses] = useState<Course[]>();
+  const [nextCursor, setNextCursor] = useState<string | null>();
+  const [error, setError] = useState<string>();
+  const [pageError, setPageError] = useState<string>();
+  const [pagePending, setPagePending] = useState(false);
+  const [cycle, setCycle] = useState(0);
+  const loadGeneration = useRef(0);
+  const root = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  // Courses load on first open so that rendering the header adds no requests.
+  useEffect(() => {
+    if (!open) return;
+    const generation = ++loadGeneration.current;
+    setCourses(undefined);
+    setNextCursor(undefined);
+    setError(undefined);
+    setPageError(undefined);
+    setPagePending(false);
+    void listCourses()
+      .then((page) => {
+        if (loadGeneration.current === generation) {
+          setCourses(page.data);
+          setNextCursor(page.page.nextCursor);
+        }
+      })
+      .catch((caught) => {
+        if (loadGeneration.current === generation)
+          setError(errorMessage(caught));
+      });
+    return () => {
+      loadGeneration.current += 1;
+    };
+  }, [open, cycle]);
+  function loadMore() {
+    if (!nextCursor || pagePending) return;
+    const generation = loadGeneration.current;
+    setPagePending(true);
+    setPageError(undefined);
+    void listCourses(nextCursor)
+      .then((page) => {
+        if (loadGeneration.current === generation) {
+          setCourses((current) => [...(current ?? []), ...page.data]);
+          setNextCursor(page.page.nextCursor);
+        }
+      })
+      .catch((caught) => {
+        if (loadGeneration.current === generation)
+          setPageError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (loadGeneration.current === generation) setPagePending(false);
+      });
+  }
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      toggle.current?.focus();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  function choose(event: MouseEvent<HTMLAnchorElement>, path: string) {
+    if (!isPlainClick(event)) return;
+    event.preventDefault();
+    setOpen(false);
+    onChoose(path);
+  }
+  return (
+    <div className="course-switcher" ref={root}>
+      <button
+        ref={toggle}
+        type="button"
+        className="switcher-button"
+        aria-label="Switch course"
+        aria-expanded={open}
+        aria-controls="course-switcher-panel"
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div id="course-switcher-panel" className="switcher-panel">
+          {error ? (
+            <div className="switcher-message">
+              <p role="alert">{error}</p>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setCycle((value) => value + 1)}
+              >
+                Try again
+              </button>
             </div>
-          </div>
-          <div className="post">
-            <p className="post-meta">Data Structures · Yesterday</p>
-            <h3>Comparing the two balancing approaches</h3>
-          </div>
-        </article>
-      </section>
-    </main>
+          ) : !courses ? (
+            <p className="switcher-message" role="status">
+              Loading courses…
+            </p>
+          ) : courses.length ? (
+            <ul aria-label="Your courses">
+              {courses.map((course) => {
+                const path = `/courses/${encodeURIComponent(course.id)}`;
+                return (
+                  <li key={course.id}>
+                    <a
+                      href={path}
+                      aria-current={
+                        course.id === currentCourseId ? "page" : undefined
+                      }
+                      onClick={(event) => choose(event, path)}
+                    >
+                      <span className="course-icon amber" aria-hidden="true">
+                        {course.name.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span>{course.name}</span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="switcher-message">
+              You have not joined a course yet.
+            </p>
+          )}
+          {pageError && (
+            <p className="switcher-message" role="alert">
+              {pageError}
+            </p>
+          )}
+          {courses && nextCursor && !error && (
+            <button
+              type="button"
+              className="text-button"
+              disabled={pagePending}
+              onClick={loadMore}
+            >
+              {pagePending
+                ? "Loading…"
+                : pageError
+                  ? "Try again"
+                  : "Load more courses"}
+            </button>
+          )}
+          <a
+            className="switcher-home"
+            href="/home"
+            onClick={(event) => choose(event, "/home")}
+          >
+            All courses
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CourseResources() {
+  return (
+    <section className="course-placeholder" aria-labelledby="resources-title">
+      <h2 id="resources-title">Course resources</h2>
+      <p>
+        Lecture notes, slides, and other course files will appear here. Sharing
+        resources isn't available yet.
+      </p>
+    </section>
   );
 }
 
@@ -553,11 +782,13 @@ function CourseFrame({
   route,
   session,
   onNavigate,
+  onSignOut,
   onBeforeLeaveChange,
 }: {
   route: Route;
   session: Session;
   onNavigate: (path: string) => void;
+  onSignOut: () => Promise<void>;
   onBeforeLeaveChange: (guard: () => boolean) => void;
 }) {
   const courseId = route.courseId!;
@@ -585,8 +816,26 @@ function CourseFrame({
   useEffect(() => {
     if (visibleCourse) headingRef.current?.focus();
   }, [route.name, visibleCourse]);
-  const settings = route.name === "course-settings";
+  const section =
+    route.name === "course-settings"
+      ? "settings"
+      : route.name === "course-resources"
+        ? "resources"
+        : "discussion";
   const discussionPath = `/courses/${encodeURIComponent(courseId)}`;
+  const tabs = [
+    { key: "discussion", label: "Discussion", path: discussionPath },
+    {
+      key: "resources",
+      label: "Course resources",
+      path: `${discussionPath}/resources`,
+    },
+    {
+      key: "settings",
+      label: "Course settings",
+      path: `${discussionPath}/settings`,
+    },
+  ];
   function follow(event: MouseEvent<HTMLAnchorElement>, path: string) {
     if (
       event.button !== 0 ||
@@ -600,79 +849,100 @@ function CourseFrame({
     if (beforeLeave.current()) onNavigate(path);
   }
   return (
-    <main className="discussion-shell">
-      <header className="discussion-header">
-        <div>
-          <a
-            className="text-button"
-            href="/home"
-            onClick={(event) => follow(event, "/home")}
-          >
-            ← All courses
-          </a>
+    <div
+      className={`course-page${section === "discussion" ? " discussion" : ""}`}
+    >
+      <AppBar
+        variant="course"
+        session={session}
+        onSignOut={onSignOut}
+        canLeave={() => beforeLeave.current()}
+        onHomeClick={(event) => follow(event, "/home")}
+        tabs={
+          <nav className="course-tabs" aria-label="Course navigation">
+            {tabs.map((tab) => (
+              <a
+                key={tab.key}
+                href={tab.path}
+                aria-current={section === tab.key ? "page" : undefined}
+                onClick={(event) => follow(event, tab.path)}
+              >
+                {tab.label}
+              </a>
+            ))}
+          </nav>
+        }
+      >
+        <a
+          className="app-bar-back"
+          href="/home"
+          onClick={(event) => follow(event, "/home")}
+        >
+          All courses
+        </a>
+        <div className="app-bar-course">
           <h1 ref={headingRef} tabIndex={-1}>
             {visibleCourse?.data.name ??
               (error?.courseId === courseId
                 ? "Course unavailable"
                 : "Loading course…")}
           </h1>
+          <CourseSwitcher
+            currentCourseId={courseId}
+            onChoose={(path) => {
+              if (beforeLeave.current()) onNavigate(path);
+            }}
+          />
+          {visibleCourse && visibleCourse.data.status !== "active" && (
+            <span className="course-status">{visibleCourse.data.status}</span>
+          )}
         </div>
-        <nav aria-label="Course navigation">
-          <a
-            href={discussionPath}
-            aria-current={!settings ? "page" : undefined}
-            onClick={(event) => follow(event, discussionPath)}
-          >
-            Discussion
-          </a>
-          <a
-            href={`${discussionPath}/settings`}
-            aria-current={settings ? "page" : undefined}
-            onClick={(event) => follow(event, `${discussionPath}/settings`)}
-          >
-            Course settings
-          </a>
-        </nav>
-      </header>
-      {error?.courseId === courseId ? (
-        <div role="alert">
-          {error.message}{" "}
-          <button
-            className="text-button"
-            onClick={() => setCycle((value) => value + 1)}
-          >
-            Try again
-          </button>
-        </div>
-      ) : !visibleCourse ? (
-        <p role="status">Loading course…</p>
-      ) : settings ? (
-        <CourseDetail
-          key={courseId}
-          courseId={courseId}
-          course={visibleCourse}
-          onCourseChange={setCourse}
-          csrfToken={session.csrfToken}
-          onBack={() => onNavigate("/home")}
-          userId={session.user.id}
-        />
-      ) : (
-        <Discussion
-          courseId={courseId}
-          course={visibleCourse.data}
-          userId={session.user.id}
-          postId={route.postId}
-          query={route.query}
-          csrfToken={session.csrfToken}
-          onNavigate={onNavigate}
-          onQueryChange={replaceCurrentQuery}
-          onBeforeLeaveChange={(guard) => {
-            beforeLeave.current = guard;
-            onBeforeLeaveChange(guard);
-          }}
-        />
-      )}
-    </main>
+      </AppBar>
+      <main className="discussion-shell">
+        {error?.courseId === courseId ? (
+          <div role="alert">
+            {error.message}{" "}
+            <button
+              className="text-button"
+              onClick={() => setCycle((value) => value + 1)}
+            >
+              Try again
+            </button>
+          </div>
+        ) : !visibleCourse ? (
+          <p role="status">Loading course…</p>
+        ) : section === "resources" ? (
+          <CourseResources />
+        ) : section === "settings" ? (
+          <CourseDetail
+            key={courseId}
+            courseId={courseId}
+            course={visibleCourse}
+            onCourseChange={setCourse}
+            csrfToken={session.csrfToken}
+            onBack={() => onNavigate("/home")}
+            userId={session.user.id}
+          />
+        ) : (
+          <Discussion
+            courseId={courseId}
+            course={visibleCourse.data}
+            userId={session.user.id}
+            postId={route.postId}
+            query={route.query}
+            csrfToken={session.csrfToken}
+            onNavigate={onNavigate}
+            onQueryChange={replaceCurrentQuery}
+            filters={route.filters}
+            onFiltersChange={replaceCurrentFilters}
+            onBeforeLeaveChange={(guard) => {
+              beforeLeave.current = guard;
+              onBeforeLeaveChange(guard);
+            }}
+          />
+        )}
+      </main>
+    </div>
   );
 }
 
@@ -738,7 +1008,8 @@ export function App() {
           route.name === "home" ||
           route.name === "course" ||
           route.name === "post" ||
-          route.name === "course-settings"
+          route.name === "course-settings" ||
+          route.name === "course-resources"
         )
           move("/");
       })
@@ -768,7 +1039,8 @@ export function App() {
   if (
     (route.name === "course" ||
       route.name === "post" ||
-      route.name === "course-settings") &&
+      route.name === "course-settings" ||
+      route.name === "course-resources") &&
     route.courseId &&
     session
   )
@@ -777,6 +1049,7 @@ export function App() {
         route={route}
         session={session}
         onNavigate={move}
+        onSignOut={signOut}
         onBeforeLeaveChange={(guard) => {
           beforeCourseLeave.current = guard;
         }}

@@ -1,6 +1,6 @@
 ## Posts
 
-**Implementation status (text-post phase):** JSON question and note creation, listing/search, retrieval, update, and deletion are implemented. Active text posts return `attachments: []`; questions return `answered: false` until answers are implemented. Poll creation, poll voting, multipart requests, attachments, download refresh, and view events below describe the future target contract and are not live. During this phase, poll creation and multipart create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
+**Implementation status (text-post phase):** JSON question and note creation, listing/search, retrieval, update, and deletion are implemented. Active text posts return `attachments: []`; questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. Poll creation, poll voting, multipart requests, attachments, download refresh, and view events below describe the future target contract and are not live. During this phase, poll creation and multipart create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
 
@@ -351,9 +351,13 @@ Lists or searches the posts in a course. Confirmed duplicates are excluded from 
 
 `answered` (boolean, optional): Filter question posts by answer presence.
 
+`pinned` (boolean, optional): Filter by pinned state. Combine with `type` to list pinned posts of one type.
+
+`authorRole` (enum: instructor, ta, optional; values instructor, ta): Filter by the author's current role in the course. A post matches only while its author holds that role; posts by deleted accounts never match. For a student, anonymous posts other than the student's own are removed before ranking, pagination, `hasMore`, and counts, so the filter cannot reveal an anonymous author's role. Instructors and TAs match anonymous posts by that role.
+
 `duplicateStatus` (enum: none, suggested, confirmed, optional; values none, suggested, confirmed): Filter by duplicate-review state. `confirmed` is staff-only and returns review entries containing only `id`, `courseId`, `type`, `title`, `duplicateStatus`, `duplicateOfPostId`, `canonicalTitle`, and `version`; no source body, author, or tags. Suggested duplicates remain visible in ordinary results.
 
-`sort` (enum: relevance, newest, recent_activity, optional; values relevance, newest, recent_activity): Ordering. Defaults to relevance when q is present and recent_activity otherwise.
+`sort` (enum: relevance, newest, oldest, recent_activity, optional; values relevance, newest, oldest, recent_activity): Pinned posts appear before unpinned posts for every sort. Within each group, `newest` and `oldest` order by creation time, descending and ascending; `recent_activity` orders by the latest activity. Defaults to relevance when q is present and recent_activity otherwise.
 
 `cursor` (string, optional; minimum length 1, maximum length 2048): Opaque cursor returned by the previous page.
 
@@ -718,6 +722,8 @@ Retrieves the retained full post for staff review of an active, confirmed duplic
 Updates a post. Members may suggest duplicates. Staff may confirm duplicates and change pinned. At least one metadata field or attachment addition is required.
 
 Staff confirmation retains the source text in storage but hides it from readers. The `200` confirmation response contains only `data.id`, `data.courseId`, `data.duplicateStatus: confirmed`, `data.duplicateOfPostId`, and `data.version`. Staff unmerge by setting `duplicateStatus: none` and `duplicateOfPostId: null` with the current ETag; the retained source becomes visible again. While merged, all other source edits and deletion fail with `409 post_merged`. A canonical post with confirmed inbound references cannot be deleted or merged until those sources are unmerged (`409 canonical_has_duplicates`). Canonical targets must be active, unmerged posts in the same course.
+
+Every successful update, including pin, unpin, merge, and unmerge, advances `lastActivityAt`. An unpinned post returns to its normal sort position; in `recent_activity` that position reflects the update time.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

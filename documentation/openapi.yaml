@@ -3383,6 +3383,21 @@ paths:
           description: Filter question posts by answer presence.
           schema:
             type: boolean
+        - name: pinned
+          in: query
+          required: false
+          description: Filter by pinned state. Combine with type to list pinned posts of one type.
+          schema:
+            type: boolean
+        - name: authorRole
+          in: query
+          required: false
+          description: Filter by the author's current role in the course. For a student, anonymous posts other than the student's own are removed before ranking and pagination, so the filter cannot reveal an anonymous author's role.
+          schema:
+            type: string
+            enum:
+              - instructor
+              - ta
         - name: duplicateStatus
           in: query
           required: false
@@ -3396,12 +3411,13 @@ paths:
         - name: sort
           in: query
           required: false
-          description: Ordering. Defaults to relevance when q is present and recent_activity otherwise.
+          description: Pinned posts appear before unpinned posts for every sort. Within each group, newest and oldest order by creation time, descending and ascending; recent_activity orders by the latest activity. Defaults to relevance when q is present and recent_activity otherwise.
           schema:
             type: string
             enum:
               - relevance
               - newest
+              - oldest
               - recent_activity
         - "$ref": "#/components/parameters/Cursor"
         - "$ref": "#/components/parameters/Limit"

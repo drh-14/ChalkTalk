@@ -24,6 +24,17 @@ function message(error: unknown): string {
     : "Something went wrong. Please try again.";
 }
 
+const ROLE_LABELS: Record<Membership["role"], string> = {
+  student: "Student",
+  ta: "TA",
+  instructor: "Instructor",
+};
+const STATUS_LABELS: Record<Course["status"], string> = {
+  active: "Active",
+  archived: "Archived (read-only)",
+  deleting: "Being deleted",
+};
+
 function CourseGlyph({ name }: { name: string }) {
   return (
     <span className="course-icon amber">{name.slice(0, 2).toUpperCase()}</span>
@@ -363,6 +374,19 @@ export function CourseDetail({
     } else setError(message(caught));
   };
   const instructor = ownMembership?.role === "instructor";
+  const canManage = (member: Membership) =>
+    instructor &&
+    member.user.id !== userId &&
+    course?.data.status !== "deleting";
+  const [copyState, setCopyState] = useState<string>();
+  async function copyJoinCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopyState("Copied");
+    } catch {
+      setCopyState("Copy failed. Select the code to copy it.");
+    }
+  }
   const loadMoreMembers = () => {
     if (!membersCursor || membersPagePending) return;
     setMembersPagePending(true);
@@ -505,11 +529,6 @@ export function CourseDetail({
             <div>
               <p className="eyebrow">{course.data.status}</p>
               <h1>{course.data.name}</h1>
-              {course.data.joinCode && (
-                <p className="join-code">
-                  Join code: <strong>{course.data.joinCode}</strong>
-                </p>
-              )}
             </div>
           </header>
         </>
@@ -529,6 +548,71 @@ export function CourseDetail({
           Retry
         </button>
       )}
+      <section
+        className="settings-card"
+        aria-labelledby="course-details-heading"
+      >
+        <div className="section-title">
+          <h2 id="course-details-heading">Course details</h2>
+        </div>
+        {instructor && course.data.status !== "deleting" ? (
+          <form
+            className="settings-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void rename();
+            }}
+          >
+            <label htmlFor="course-name-input">Course name</label>
+            <div className="field-row">
+              <input
+                id="course-name-input"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="button secondary compact"
+                disabled={pending}
+              >
+                Save name
+              </button>
+            </div>
+          </form>
+        ) : null}
+        <dl className="settings-facts">
+          {!(instructor && course.data.status !== "deleting") && (
+            <div>
+              <dt>Course name</dt>
+              <dd>{course.data.name}</dd>
+            </div>
+          )}
+          <div>
+            <dt>Status</dt>
+            <dd>{STATUS_LABELS[course.data.status]}</dd>
+          </div>
+          {course.data.joinCode && (
+            <div>
+              <dt>Join code</dt>
+              <dd className="join-code">
+                <code>{course.data.joinCode}</code>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => void copyJoinCode(course.data.joinCode!)}
+                >
+                  Copy join code
+                </button>
+                {copyState && (
+                  <span className="copy-status" role="status">
+                    {copyState}
+                  </span>
+                )}
+              </dd>
+            </div>
+          )}
+        </dl>
+      </section>
       <section className="members-card" aria-labelledby="members-heading">
         <div className="section-title">
           <h2 id="members-heading">Members</h2>
@@ -540,11 +624,9 @@ export function CourseDetail({
           <div className="member-row" key={member.id}>
             <div>
               <strong>{member.user.displayName}</strong>
-              <small>{member.role}</small>
+              {!canManage(member) && <small>{ROLE_LABELS[member.role]}</small>}
             </div>
-            {instructor &&
-            member.user.id !== userId &&
-            course.data.status !== "deleting" ? (
+            {canManage(member) ? (
               <div className="member-actions">
                 <select
                   aria-label={`Role for ${member.user.displayName}`}
@@ -593,54 +675,74 @@ export function CourseDetail({
           </>
         )}
       </section>
-      <section className="course-management" aria-label="Course actions">
-        {instructor && course.data.status !== "deleting" ? (
-          <>
-            <label className="rename-course">
-              Course name
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </label>
-            <button
-              className="button secondary"
-              disabled={pending}
-              onClick={() => void rename()}
-            >
-              Save name
-            </button>
-            <button
-              className="button secondary"
-              disabled={pending}
-              onClick={() =>
-                void changeStatus(
-                  course.data.status === "active" ? "archived" : "active",
-                )
-              }
-            >
-              {course.data.status === "active"
-                ? "Archive course"
-                : "Reopen course"}
-            </button>
-            <button
-              className="text-button danger"
-              disabled={pending}
-              onClick={() => void startDeletion()}
-            >
-              Delete course
-            </button>
-          </>
-        ) : course.data.status !== "deleting" ? (
-          <button
-            className="text-button danger"
-            disabled={pending}
-            onClick={() => void leave()}
-          >
-            Leave course
-          </button>
-        ) : null}
-      </section>
+      {course.data.status !== "deleting" && (
+        <section
+          className="settings-card danger-zone"
+          aria-labelledby="danger-zone-heading"
+        >
+          <div className="section-title">
+            <h2 id="danger-zone-heading">Danger zone</h2>
+          </div>
+          {instructor ? (
+            <>
+              <div className="danger-row">
+                <div>
+                  <strong>
+                    {course.data.status === "active"
+                      ? "Archive this course"
+                      : "Reopen this course"}
+                  </strong>
+                  <p>
+                    {course.data.status === "active"
+                      ? "Everyone keeps read access, but no one can post or join."
+                      : "Members can post again and new members can join."}
+                  </p>
+                </div>
+                <button
+                  className="button secondary compact"
+                  disabled={pending}
+                  onClick={() =>
+                    void changeStatus(
+                      course.data.status === "active" ? "archived" : "active",
+                    )
+                  }
+                >
+                  {course.data.status === "active"
+                    ? "Archive course"
+                    : "Reopen course"}
+                </button>
+              </div>
+              <div className="danger-row">
+                <div>
+                  <strong>Delete this course</strong>
+                  <p>Permanently removes the course and all of its posts.</p>
+                </div>
+                <button
+                  className="button danger compact"
+                  disabled={pending}
+                  onClick={() => void startDeletion()}
+                >
+                  Delete course
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="danger-row">
+              <div>
+                <strong>Leave this course</strong>
+                <p>You will need a join code to come back.</p>
+              </div>
+              <button
+                className="button danger compact"
+                disabled={pending}
+                onClick={() => void leave()}
+              >
+                Leave course
+              </button>
+            </div>
+          )}
+        </section>
+      )}
     </section>
   );
 }

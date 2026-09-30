@@ -308,4 +308,75 @@ describe("course browser workflows", () => {
       },
     );
   });
+
+  it("groups instructor settings into sections with a single role per member and a copyable join code", async () => {
+    const withCode = { ...course, joinCode: "ABCDEFGH" };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(response({ data: withCode }, 200, '"v1"'))
+        .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+        .mockResolvedValueOnce(page([instructor, student])),
+    );
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Course details" });
+    expect(screen.getByRole("heading", { name: "Members" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Danger zone" })).toBeTruthy();
+    expect(
+      (screen.getByRole("textbox", { name: "Course name" }) as HTMLInputElement)
+        .value,
+    ).toBe("Linear Algebra");
+    expect(screen.getByText("ABCDEFGH")).toBeTruthy();
+    const managed = screen.getByText("Grace Hopper").closest(".member-row")!;
+    expect(managed.firstElementChild?.textContent).toBe("Grace Hopper");
+    expect(
+      screen.getByRole("combobox", { name: "Role for Grace Hopper" }),
+    ).toBeTruthy();
+    const self = screen.getByText("Ada Lovelace").closest(".member-row")!;
+    expect(self.textContent).toBe("Ada LovelaceInstructor");
+    await user.click(screen.getByRole("button", { name: "Copy join code" }));
+    expect(writeText).toHaveBeenCalledWith("ABCDEFGH");
+    expect((await screen.findByRole("status")).textContent).toBe("Copied");
+  });
+
+  it("shows students read-only details without a join code and offers leaving", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+        .mockResolvedValueOnce(
+          response(
+            { data: { ...student, user: instructor.user } },
+            200,
+            '"v1"',
+          ),
+        )
+        .mockResolvedValueOnce(page([instructor])),
+    );
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Course details" });
+    expect(screen.queryByRole("textbox", { name: "Course name" })).toBeNull();
+    expect(screen.queryByText("Join code")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Archive course" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Leave course" })).toBeTruthy();
+    expect(screen.getByText("Instructor")).toBeTruthy();
+  });
 });

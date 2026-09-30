@@ -2,7 +2,7 @@ import { Pool } from "pg";
 import { version as uuidVersion } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "./migrate.js";
-import { seedAms161, AMS161_DEMO } from "./seed-ams161.js";
+import { seedAms161, AMS161_DEMO, AMS161_FIXTURE } from "./seed-ams161.js";
 import { AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
 import { PostService } from "../posts/service.js";
@@ -76,7 +76,7 @@ integration("AMS161 local prototype seed", () => {
     expect(result.rows[0].count).toBe(0);
   });
 
-  it("creates course members and twelve ordinary calculus questions to merge manually", async () => {
+  it("creates course members and a varied discussion with no merged posts", async () => {
     expect(
       await seedAms161(pool, {
         MOCK_DATA: "true",
@@ -98,19 +98,55 @@ integration("AMS161 local prototype seed", () => {
     expect(members.rows).toEqual([
       { role: "instructor", display_name: "Maya Chen" },
       { role: "student", display_name: "Alex Rivera" },
+      { role: "student", display_name: "Casey Morgan" },
       { role: "student", display_name: "Jordan Patel" },
       { role: "student", display_name: "Taylor Brooks" },
+      { role: "ta", display_name: "Sam Okafor" },
     ]);
     const posts = await pool.query(
       "SELECT duplicate_status, count(*)::int AS count FROM posts WHERE course_id=$1 GROUP BY duplicate_status ORDER BY duplicate_status",
       [AMS161_DEMO.courseId],
     );
-    expect(posts.rows).toEqual([{ duplicate_status: "none", count: 12 }]);
+    expect(posts.rows).toEqual([
+      { duplicate_status: "none", count: AMS161_FIXTURE.posts },
+    ]);
     const targetCount = await pool.query(
       "SELECT count(*)::int AS count FROM posts WHERE course_id=$1 AND duplicate_of_post_id IS NOT NULL",
       [AMS161_DEMO.courseId],
     );
     expect(targetCount.rows[0].count).toBe(0);
+    const shape = await pool.query(
+      "SELECT count(*) FILTER (WHERE type='question')::int AS questions, count(*) FILTER (WHERE type='note')::int AS notes, count(*) FILTER (WHERE anonymous)::int AS anonymous, bool_and(created_at<=last_activity_at AND last_activity_at<=now()) AS ordered, bool_or(created_at<now()-interval '90 days') AS old, bool_or(created_at>now()-interval '1 hour') AS recent FROM posts WHERE course_id=$1",
+      [AMS161_DEMO.courseId],
+    );
+    expect(shape.rows[0]).toEqual({
+      questions: AMS161_FIXTURE.questions,
+      notes: AMS161_FIXTURE.notes,
+      anonymous: 2,
+      ordered: true,
+      old: true,
+      recent: true,
+    });
+    const answers = await pool.query(
+      "SELECT a.kind, count(*)::int AS count, count(a.endorsed_at)::int AS endorsed, bool_and(a.created_at>=p.created_at) AS after_post, bool_and(c.answer_id IS NOT NULL) AS contributed FROM answers a JOIN posts p ON p.id=a.post_id JOIN answer_collaboration_documents c ON c.answer_id=a.id WHERE a.course_id=$1 GROUP BY a.kind ORDER BY a.kind",
+      [AMS161_DEMO.courseId],
+    );
+    expect(answers.rows).toEqual([
+      {
+        kind: "staff",
+        count: 7,
+        endorsed: 0,
+        after_post: true,
+        contributed: true,
+      },
+      {
+        kind: "student",
+        count: 5,
+        endorsed: 1,
+        after_post: true,
+        contributed: true,
+      },
+    ]);
   });
 
   it("lets the instructor log in while mock students have no shared usable credential", async () => {
@@ -128,7 +164,7 @@ integration("AMS161 local prototype seed", () => {
     ).rejects.toMatchObject({ status: 401 });
   });
 
-  it("shows all seeded questions in the student feed and searchable candidate pairs while staff review starts empty", async () => {
+  it("shows all seeded posts in the student feed with filters and searchable candidate pairs while staff review starts empty", async () => {
     const student = await pool.query<{ id: string }>(
       "SELECT id FROM users WHERE email='alex.rivera@ams161.mock.chalktalk.invalid'",
     );
@@ -142,10 +178,34 @@ integration("AMS161 local prototype seed", () => {
       student.rows[0]!.id,
       { limit: 30, sort: "recent_activity" },
     );
-    expect(ordinary.data).toHaveLength(12);
+    expect(ordinary.data).toHaveLength(AMS161_FIXTURE.posts);
     expect(ordinary.data.every((post) => post.duplicateStatus === "none")).toBe(
       true,
     );
+    const list = async (options: Parameters<PostService["list"]>[2]) =>
+      (
+        await posts.list(AMS161_DEMO.courseId, student.rows[0]!.id, {
+          limit: 30,
+          sort: "recent_activity",
+          ...options,
+        })
+      ).data;
+    expect(await list({ type: "note" })).toHaveLength(AMS161_FIXTURE.notes);
+    expect(
+      (await list({ pinned: true })).map((post) => post.title).sort(),
+    ).toEqual([
+      "Is the final exam cumulative?",
+      "Midterm 1: what to expect",
+      "Welcome to AMS161: how to use this forum",
+    ]);
+    expect(await list({ type: "question", answered: true })).toHaveLength(10);
+    expect(await list({ type: "question", answered: false })).toHaveLength(
+      AMS161_FIXTURE.questions - 10,
+    );
+    expect(await list({ authorRole: "ta" })).toHaveLength(1);
+    expect(
+      (await list({ tags: ["midterm"] })).map((post) => post.title).sort(),
+    ).toEqual(["Midterm 1: what to expect", "Series tests cheat sheet"]);
     const washerSearch = await posts.list(
       AMS161_DEMO.courseId,
       student.rows[0]!.id,
@@ -216,7 +276,7 @@ integration("AMS161 local prototype seed", () => {
       const count = await fresh.query(
         "SELECT count(*)::int AS count FROM posts",
       );
-      expect(count.rows[0].count).toBe(12);
+      expect(count.rows[0].count).toBe(AMS161_FIXTURE.posts);
     } finally {
       await fresh.end();
       await admin.query(`DROP SCHEMA IF EXISTS "${concurrentSchema}" CASCADE`);
