@@ -488,6 +488,56 @@ describe("ChalkTalk auth entry", () => {
     expect(screen.queryByRole("link", { name: /Calculus II/ })).toBeNull();
   });
 
+  it("moves the course tabs to their own row only when one row no longer fits", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal("fetch", courseRoutesFetch());
+    const resized: (() => void)[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resized.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const rowWidth = 1240;
+    let barWidth = 1500;
+    const scrollWidth = vi
+      .spyOn(Element.prototype, "scrollWidth", "get")
+      .mockImplementation(function (this: Element) {
+        return this.classList.contains("measuring") ? rowWidth : 0;
+      });
+    const clientWidth = vi
+      .spyOn(Element.prototype, "clientWidth", "get")
+      .mockImplementation(function (this: Element) {
+        return this.classList.contains("app-bar") ? barWidth : 0;
+      });
+    const resize = (width: number) => {
+      barWidth = width;
+      act(() => resized.forEach((callback) => callback()));
+    };
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: course.name });
+      const bar = document.querySelector("header.app-bar")!;
+      expect(bar.classList.contains("tabs-stacked")).toBe(false);
+      resize(1200);
+      expect(bar.classList.contains("tabs-stacked")).toBe(true);
+      expect(
+        document
+          .querySelector(".app-bar-inner")!
+          .classList.contains("measuring"),
+      ).toBe(false);
+      resize(1240);
+      expect(bar.classList.contains("tabs-stacked")).toBe(false);
+    } finally {
+      scrollWidth.mockRestore();
+      clientWidth.mockRestore();
+    }
+  });
+
   it("loads later course pages in the switcher and retries a failed page", async () => {
     setPath(`/courses/${course.id}`);
     const firstPage = [

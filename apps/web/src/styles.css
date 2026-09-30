@@ -138,10 +138,20 @@ h2[tabindex="-1"]:focus {
   flex: none;
   white-space: nowrap;
 }
+/* The sides share space equally to center the tabs, but never shrink below their content. */
 .app-bar.course .app-bar-inner {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
   padding-left: clamp(0.5rem, 1.5vw, 1.25rem);
+}
+/* Lays the row out at its natural width so the app bar can tell whether it fits. */
+.app-bar.course .app-bar-inner.measuring {
+  display: flex;
+  flex-wrap: nowrap;
+  width: max-content;
+}
+.app-bar.course .app-bar-inner.measuring > * {
+  flex: none;
 }
 .app-bar.course .app-bar-start {
   min-width: 0;
@@ -158,6 +168,7 @@ h2[tabindex="-1"]:focus {
 }
 .app-bar-course h1 {
   color: #fffdf7;
+  max-width: 20rem;
   font-family: Fraunces, Georgia, serif;
   font-size: 1.25rem;
   letter-spacing: -0.03em;
@@ -285,15 +296,15 @@ h2[tabindex="-1"]:focus {
   color: #617167;
   margin: 0;
 }
-@media (max-width: 1100px) {
-  .app-bar.course .app-bar-inner {
+@media (min-width: 701px) {
+  .app-bar.course.tabs-stacked .app-bar-inner {
     grid-template-columns: minmax(0, 1fr) auto;
   }
-  .app-bar.course .account-controls {
+  .app-bar.course.tabs-stacked .account-controls {
     grid-column: 2;
     grid-row: 1;
   }
-  .course-tabs {
+  .app-bar.course.tabs-stacked .course-tabs {
     grid-column: 1 / -1;
     grid-row: 2;
     justify-self: center;
@@ -336,6 +347,7 @@ h2[tabindex="-1"]:focus {
     grid-row: 2;
   }
   .course-tabs {
+    grid-column: 1 / -1;
     grid-row: 3;
     justify-content: space-between;
     justify-self: stretch;
