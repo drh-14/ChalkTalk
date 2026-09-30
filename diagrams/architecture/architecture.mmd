@@ -1,11 +1,12 @@
-%%{init: {"theme": "base", "flowchart": {"curve": "linear", "nodeSpacing": 40, "rankSpacing": 70, "padding": 18}, "themeCSS": ".nodeLabel, .nodeLabel p, .edgeLabel, .edgeLabel p, .cluster-label, .cluster-label span { font-family: Liberation Sans, Arial, sans-serif !important; } .cluster-label span, .cluster-label p { font-weight: 600 !important; font-size: 16px !important; color: #FFFFFF !important; } .edgeLabel, .edgeLabel p, .labelBkg { background-color: #000000 !important; color: #FFFFFF !important; font-size: 12px !important; } .cluster rect { fill: #000000 !important; stroke: #FFFFFF !important; }", "themeVariables": {"background": "#000000", "primaryColor": "#000000", "primaryTextColor": "#FFFFFF", "primaryBorderColor": "#FFFFFF", "lineColor": "#FFFFFF", "edgeLabelBackground": "#000000", "clusterBkg": "#000000", "clusterBorder": "#FFFFFF", "titleColor": "#FFFFFF", "fontSize": "15px", "fontFamily": "Liberation Sans, Arial, sans-serif"}}}%%
+%%{init: {"theme": "base", "layout": "elk", "flowchart": {"curve": "linear", "nodeSpacing": 90, "rankSpacing": 115, "diagramPadding": 40}, "themeVariables": {"background": "#FFFFFF", "primaryColor": "#F8FAFC", "primaryTextColor": "#0F172A", "primaryBorderColor": "#64748B", "lineColor": "#475569", "edgeLabelBackground": "#FFFFFF", "clusterBkg": "#F8FAFC", "clusterBorder": "#94A3B8", "titleColor": "#0F172A", "fontSize": "15px", "fontFamily": "Arial, sans-serif"}, "themeCSS": ".nodeLabel, .nodeLabel p, .edgeLabel, .edgeLabel p, .cluster-label, .cluster-label span { font-family: Arial, sans-serif !important; } .cluster-label span, .cluster-label p { font-weight: 600 !important; font-size: 12px !important; color: #0F172A !important; } .cluster rect { transform-box: fill-box; transform-origin: center; transform: scale(1.25, 1.20); } .cluster-label foreignObject { transform: translateX(-309px); } #my-svg-L_Frontend_WebServer_0 { transform: translateX(20px); } .edgeLabel, .edgeLabel p, .labelBkg { background-color: #FFFFFF !important; color: #334155 !important; font-size: 12px !important; }"}}%%
+%% Run python3 diagrams/architecture/render.py to regenerate matching exports.
 flowchart TB
     Frontend["Frontend (Docker / Vercel)<br/>React + Vite"]
 
     subgraph Backend["Backend (Docker / AWS ECS)"]
         direction LR
-        CollaborationEngine["Collaboration engine<br/>Yjs + Hocuspocus"]
         WebServer["Web server<br/>Express.js HTTP API"]
+        CollaborationEngine["Collaboration engine<br/>Yjs + Hocuspocus"]
         Worker["Worker<br/>Node.js process"]
     end
 
@@ -13,14 +14,23 @@ flowchart TB
     ObjectStore["Object Store<br/>SeaweedFS / AWS S3"]
     EmailProvider["Email Provider<br/>SMTP Server / AWS SES"]
 
-    Frontend -- "WebSocket" --> CollaborationEngine
     Frontend -- "HTTPS (REST)" --> WebServer
-    CollaborationEngine -- "load/save Yjs documents" --> ApplicationDatabase
-    WebServer -- "read/write data, queue jobs" --> ApplicationDatabase
+    Frontend -- "WebSocket" --> CollaborationEngine
+    CollaborationEngine -- "load/save Yjs<br/>documents" --> ApplicationDatabase
+    WebServer -- "read/write data<br/>queue jobs" --> ApplicationDatabase
     WebServer -- "upload/fetch files" --> ObjectStore
-    Worker -- "claim jobs, update data" --> ApplicationDatabase
-    Worker -- "read files for OCR" --> ObjectStore
+    Worker -- "claim jobs<br/>update data" --> ApplicationDatabase
+    Worker -- "read files<br/>for OCR" --> ObjectStore
     Worker -- "send emails" --> EmailProvider
 
-    classDef component fill:#000000,stroke:#FFFFFF,color:#FFFFFF,stroke-width:1px
-    class Frontend,WebServer,CollaborationEngine,Worker,ApplicationDatabase,ObjectStore,EmailProvider component
+    classDef client fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A,stroke-width:1.5px
+    classDef compute fill:#FFEDD5,stroke:#EA580C,color:#7C2D12,stroke-width:1.5px
+    classDef database fill:#F3E8FF,stroke:#9333EA,color:#581C87,stroke-width:1.5px
+    classDef storage fill:#DCFCE7,stroke:#16A34A,color:#14532D,stroke-width:1.5px
+    classDef external fill:#F1F5F9,stroke:#64748B,color:#334155,stroke-width:1.5px
+    class Frontend client
+    class CollaborationEngine,WebServer,Worker compute
+    class ApplicationDatabase database
+    class ObjectStore storage
+    class EmailProvider external
+    style Backend fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:1.5px
