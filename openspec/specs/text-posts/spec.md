@@ -117,7 +117,7 @@ When the author account is deleted, student `authorId` filters SHALL exclude tha
 
 ### Requirement: Text posts support conditional edits, duplicate review, and tombstones
 
-The author or staff SHALL be able to edit ordinary text fields; any course member MAY suggest an active same-course duplicate; only staff SHALL confirm or clear duplicate review and change pinning. A duplicate target SHALL exist, be active, and belong to the same course. Pin and duplicate-review changes SHALL preserve `lastActivityAt` so unpin and unmerge restore the prior `recent_activity` order; ordinary content edits SHALL advance it. Update and delete SHALL require `If-Match`, reject stale revisions, and reject writes to archived or deleting courses. Delete SHALL return `204` and retain a minimal tombstone visible to current course members with only `id`, `courseId`, `type`, `deleted: true`, `createdAt`, `updatedAt`, and `version`.
+The author or staff SHALL be able to edit ordinary text fields; any course member MAY suggest an active same-course duplicate; only staff SHALL confirm or clear duplicate review and change pinning. A duplicate target SHALL exist, be active, and belong to the same course. Update and delete SHALL require `If-Match`, reject stale revisions, and reject writes to archived or deleting courses. Delete SHALL return `204` and retain a minimal tombstone visible to current course members with only `id`, `courseId`, `type`, `deleted: true`, `createdAt`, `updatedAt`, and `version`.
 
 #### Scenario: A student suggests a duplicate without content-edit permission
 

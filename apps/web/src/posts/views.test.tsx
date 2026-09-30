@@ -1004,18 +1004,6 @@ it("paginates duplicate posts with the active query and resets them after switch
 it("lets staff review merged posts without exposing their body and unmerge one", async () => {
   const calls: string[] = [];
   let isMerged = true;
-  const canonical = {
-    ...post("canonical-1", "Canonical question"),
-    lastActivityAt: "2026-01-03T00:00:00.000Z",
-  };
-  const unaffected = {
-    ...post("unaffected-1", "Unaffected post"),
-    lastActivityAt: "2026-01-02T00:00:00.000Z",
-  };
-  const restored = {
-    ...post("merged-1", "Old question"),
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
-  };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -1063,7 +1051,7 @@ it("lets staff review merged posts without exposing their body and unmerge one",
       if (url.endsWith("/posts/merged-1/duplicate-review"))
         return json({
           data: {
-            ...restored,
+            ...post("merged-1", "Old question"),
             bodyMarkdown: "Private retained body",
             duplicateStatus: "confirmed",
             duplicateOfPostId: "canonical-1",
@@ -1072,10 +1060,19 @@ it("lets staff review merged posts without exposing their body and unmerge one",
         });
       if (init?.method === "PATCH") {
         isMerged = false;
-        return json({ data: restored });
+        return json({ data: post("merged-1", "Old question") });
       }
       return page(
-        isMerged ? [canonical, unaffected] : [canonical, unaffected, restored],
+        isMerged
+          ? [
+              post("canonical-1", "Canonical question"),
+              post("unaffected-1", "Unaffected post"),
+            ]
+          : [
+              post("canonical-1", "Canonical question"),
+              post("merged-1", "Old question"),
+              post("unaffected-1", "Unaffected post"),
+            ],
       );
     }),
   );
@@ -1149,7 +1146,7 @@ it("lets staff review merged posts without exposing their body and unmerge one",
             /Canonical question|Old question|Unaffected post/,
           )?.[0],
       ),
-  ).toEqual(["Canonical question", "Unaffected post", "Old question"]);
+  ).toEqual(["Canonical question", "Old question", "Unaffected post"]);
 });
 
 it("opens a duplicate card's canonical post in a new tab without replacing review", async () => {
@@ -3504,7 +3501,7 @@ it.each(["oldest", "newest", "recent_activity", "relevance"] as const)(
   async (sort) => {
     let pinned = false;
     let version = 3;
-    const olderActivity = "2026-01-01T00:00:00.000Z";
+    let olderActivity = "2026-01-01T00:00:00.000Z";
     const older = () => ({
       ...post("p1", "Older question"),
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -3525,6 +3522,7 @@ it.each(["oldest", "newest", "recent_activity", "relevance"] as const)(
       if (url === "/api/v1/posts/p1" && init?.method === "PATCH") {
         pinned = JSON.parse(String(init.body)).pinned;
         version += 1;
+        olderActivity = "2026-01-03T00:00:00.000Z";
         return json({ data: older() });
       }
       if (url === "/api/v1/posts/p1") return json({ data: older() });
@@ -3589,7 +3587,13 @@ it.each(["oldest", "newest", "recent_activity", "relevance"] as const)(
     ).toEqual(expectedRequest);
     await user.click(screen.getByRole("button", { name: "Unpin" }));
     await screen.findByRole("button", { name: "Pin" });
-    await waitFor(() => expect(order()).toEqual(originalOrder));
+    await waitFor(() =>
+      expect(order()).toEqual(
+        sort === "recent_activity"
+          ? ["Older question", "Newer question"]
+          : originalOrder,
+      ),
+    );
     expect(feedRequests(fetchMock)).toHaveLength(beforePin + 2);
     expect(
       Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),

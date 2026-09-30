@@ -723,8 +723,6 @@ Updates a post. Members may suggest duplicates. Staff may confirm duplicates and
 
 Staff confirmation retains the source text in storage but hides it from readers. The `200` confirmation response contains only `data.id`, `data.courseId`, `data.duplicateStatus: confirmed`, `data.duplicateOfPostId`, and `data.version`. Staff unmerge by setting `duplicateStatus: none` and `duplicateOfPostId: null` with the current ETag; the retained source becomes visible again. While merged, all other source edits and deletion fail with `409 post_merged`. A canonical post with confirmed inbound references cannot be deleted or merged until those sources are unmerged (`409 canonical_has_duplicates`). Canonical targets must be active, unmerged posts in the same course.
 
-Pinning and duplicate-review changes preserve `lastActivityAt`; ordinary content edits advance it. `updatedAt` and the post version advance for every successful update.
-
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
 **Access:** Author or staff for ordinary content edits; any course member may suggest a duplicate; only staff may confirm or clear duplicate review and change pinning. A nonmember receives `404 not_found`.

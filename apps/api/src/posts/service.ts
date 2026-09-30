@@ -524,7 +524,7 @@ export class PostService {
           throw validation("Duplicate target is invalid");
       }
       await db.query(
-        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,updated_at=now(),last_activity_at=CASE WHEN $8 THEN now() ELSE last_activity_at END,version=version+1 WHERE id=$1",
+        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [
           id,
           body.title ?? row.title,
@@ -533,7 +533,6 @@ export class PostService {
           body.pinned ?? row.pinned,
           targetId,
           status,
-          ordinary,
         ],
       );
       if (body.tags !== undefined)
