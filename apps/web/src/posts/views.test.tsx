@@ -2274,6 +2274,42 @@ it("bounds debounced related-question requests to ten results while title and bo
   ).toBe("_blank");
 });
 
+it("includes earlier distinct body words despite repeated trailing words", async () => {
+  const urls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      urls.push(url);
+      return url.endsWith("/courses/course-1")
+        ? json({ data: course })
+        : page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
+  );
+  await screen.findByRole("button", { name: "Create post" });
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "beta");
+  fireEvent.paste(screen.getByRole("textbox", { name: "Post body" }), {
+    clipboardData: { getData: () => "alpha beta beta beta beta" },
+  });
+  await waitFor(
+    () =>
+      expect(
+        urls
+          .filter((url) => url.includes("type=question"))
+          .map(
+            (url) =>
+              new URL(url, "https://example.edu").searchParams.get("q"),
+          )
+          .at(-1),
+      ).toBe("beta OR alpha"),
+    { timeout: 2000 },
+  );
+});
+
 it("does not show an obsolete feed response after the submitted query changes", async () => {
   let releaseOld!: (response: Response) => void;
   const oldPage = new Promise<Response>((resolve) => {

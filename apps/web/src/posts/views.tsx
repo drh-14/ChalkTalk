@@ -161,11 +161,11 @@ function relatedQuery(title: string, body: string): string {
   const titleWords = [...new Set(words(title))];
   const bodyWords = [
     ...new Set(
-      words(body)
-        .slice(-4)
-        .map((word) => word.slice(0, 40)),
+      words(body).map((word) => word.slice(0, 40)),
     ),
-  ].filter((word) => !titleWords.includes(word));
+  ]
+    .slice(-4)
+    .filter((word) => !titleWords.includes(word));
   const selected = [...titleWords];
   for (const word of bodyWords)
     if ([...selected, word].join(" OR ").length <= 500) selected.push(word);
