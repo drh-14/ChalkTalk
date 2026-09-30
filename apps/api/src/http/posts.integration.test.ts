@@ -738,21 +738,77 @@ integration("text posts HTTP contract", () => {
       .set("If-Match", older.headers.etag)
       .send({ pinned: true })
       .expect(200);
+    expect(pinned.body.data.lastActivityAt).toBe("2026-01-01T00:00:00.000Z");
     for (const sort of sorts)
       expect(await titleOrder(sort)).toEqual(["Toggle older", "Toggle newer"]);
-    await unsafe(
+    const unpinned = await unsafe(
       request(app(ids.staff)).patch(`/api/v1/posts/${older.body.data.id}`),
     )
       .set("If-Match", pinned.headers.etag)
       .send({ pinned: false })
       .expect(200);
+    expect(unpinned.body.data.lastActivityAt).toBe("2026-01-01T00:00:00.000Z");
     for (const sort of sorts) {
       expect(await titleOrder(sort)).toEqual(
-        sort === "oldest" || sort === "recent_activity"
+        sort === "oldest"
           ? ["Toggle older", "Toggle newer"]
           : ["Toggle newer", "Toggle older"],
       );
     }
+    const suggested = await unsafe(
+      request(app()).patch(`/api/v1/posts/${older.body.data.id}`),
+    )
+      .set("If-Match", unpinned.headers.etag)
+      .send({
+        duplicateStatus: "suggested",
+        duplicateOfPostId: newer.body.data.id,
+      })
+      .expect(200);
+    expect(suggested.body.data.lastActivityAt).toBe("2026-01-01T00:00:00.000Z");
+    const merged = await unsafe(
+      request(app(ids.staff)).patch(`/api/v1/posts/${older.body.data.id}`),
+    )
+      .set("If-Match", suggested.headers.etag)
+      .send({
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: newer.body.data.id,
+      })
+      .expect(200);
+    const activityAfterMerge = await pool.query<{ last_activity_at: Date }>(
+      "SELECT last_activity_at FROM posts WHERE id=$1",
+      [older.body.data.id],
+    );
+    expect(activityAfterMerge.rows[0]?.last_activity_at.toISOString()).toBe(
+      "2026-01-01T00:00:00.000Z",
+    );
+    const restored = await unsafe(
+      request(app(ids.staff)).patch(`/api/v1/posts/${older.body.data.id}`),
+    )
+      .set("If-Match", merged.headers.etag)
+      .send({ duplicateStatus: "none", duplicateOfPostId: null })
+      .expect(200);
+    expect(restored.body.data.lastActivityAt).toBe("2026-01-01T00:00:00.000Z");
+    for (const sort of sorts)
+      expect(await titleOrder(sort)).toEqual(
+        sort === "oldest"
+          ? ["Toggle older", "Toggle newer"]
+          : ["Toggle newer", "Toggle older"],
+      );
+    const defaultOrder = await request(app())
+      .get(`/api/v1/courses/${courseId}/posts?limit=2`)
+      .set("Cookie", cookie);
+    expect(
+      defaultOrder.body.data.map((post: { title: string }) => post.title),
+    ).toEqual(["Toggle newer", "Toggle older"]);
+    const edited = await unsafe(
+      request(app()).patch(`/api/v1/posts/${older.body.data.id}`),
+    )
+      .set("If-Match", restored.headers.etag)
+      .send({ bodyMarkdown: "Edited content" })
+      .expect(200);
+    expect(Date.parse(edited.body.data.lastActivityAt)).toBeGreaterThan(
+      Date.parse(restored.body.data.lastActivityAt),
+    );
   });
   it("keeps idempotent concurrent retries to one post and allows an expired key to be reused", async () => {
     const path = `/api/v1/courses/${ids.course}/posts`;
