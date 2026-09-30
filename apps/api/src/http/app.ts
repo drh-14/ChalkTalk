@@ -4,6 +4,11 @@ import express, {
   type Request,
   type Response,
 } from "express";
+import {
+  AnswerService,
+  answerEtag,
+  type CreateAnswer,
+} from "../answers/service.js";
 import { SESSION_COOKIE_NAME, sessionCookie } from "../auth/crypto.js";
 import { AuthError } from "../auth/errors.js";
 import {
@@ -27,6 +32,7 @@ export interface AppDependencies {
   authService?: AuthService;
   courseService?: CourseService;
   postService?: PostService;
+  answerService?: AnswerService;
 }
 type AuthContext = {
   credential: string;
@@ -357,6 +363,18 @@ function postCreateBody(value: unknown): CreatePost {
     tags: postTags(body.tags),
   };
 }
+function answerCreateBody(value: unknown): CreateAnswer {
+  const body = strictBody(
+    value,
+    ["bodyMarkdown", "anonymous"],
+    ["bodyMarkdown"],
+  );
+  const bodyMarkdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
+  if (!bodyMarkdown.trim()) throw validationError("Body is invalid");
+  if (body.anonymous !== undefined && typeof body.anonymous !== "boolean")
+    throw validationError("Anonymous is invalid");
+  return { bodyMarkdown, anonymous: body.anonymous as boolean | undefined };
+}
 function postListQuery(query: Request["query"]): ListPosts {
   const allowed = new Set([
     "q",
@@ -366,6 +384,8 @@ function postListQuery(query: Request["query"]): ListPosts {
     "createdAfter",
     "createdBefore",
     "answered",
+    "pinned",
+    "authorRole",
     "duplicateStatus",
     "sort",
     "cursor",
@@ -422,6 +442,16 @@ function postListQuery(query: Request["query"]): ListPosts {
     rawAnswered !== "false"
   )
     throw new AuthError(400, "invalid_request", "Answered is invalid");
+  const rawPinned = one("pinned");
+  if (rawPinned !== undefined && rawPinned !== "true" && rawPinned !== "false")
+    throw new AuthError(400, "invalid_request", "Pinned is invalid");
+  const authorRole = one("authorRole");
+  if (
+    authorRole !== undefined &&
+    authorRole !== "instructor" &&
+    authorRole !== "ta"
+  )
+    throw new AuthError(400, "invalid_request", "Author role is invalid");
   const duplicateStatus = one("duplicateStatus");
   if (
     duplicateStatus !== undefined &&
@@ -430,7 +460,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     throw new AuthError(400, "invalid_request", "Duplicate status is invalid");
   const sort = one("sort") ?? (q ? "relevance" : "recent_activity");
   if (
-    !["relevance", "newest", "recent_activity"].includes(sort) ||
+    !["relevance", "newest", "oldest", "recent_activity"].includes(sort) ||
     (sort === "relevance" && !q)
   )
     throw new AuthError(400, "invalid_request", "Sort is invalid");
@@ -449,6 +479,8 @@ function postListQuery(query: Request["query"]): ListPosts {
     createdAfter,
     createdBefore,
     answered: rawAnswered === undefined ? undefined : rawAnswered === "true",
+    pinned: rawPinned === undefined ? undefined : rawPinned === "true",
+    authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
     limit,
@@ -492,7 +524,13 @@ function postUpdateBody(value: unknown): UpdatePost {
 export function createApp(
   dependencies: AppDependencies = { environment: testEnvironment() },
 ) {
-  const { environment, authService, courseService, postService } = dependencies;
+  const {
+    environment,
+    authService,
+    courseService,
+    postService,
+    answerService,
+  } = dependencies;
   const app = express();
   app.disable("x-powered-by");
   app.use((_request, response, next) => {
@@ -592,6 +630,15 @@ export function createApp(
         "Course service is unavailable",
       );
     return courseService;
+  };
+  const answers = (): AnswerService => {
+    if (!answerService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Answer service is unavailable",
+      );
+    return answerService;
   };
   const posts = (): PostService => {
     if (!postService)
@@ -1185,6 +1232,95 @@ export function createApp(
       try {
         await posts().delete(
           param(request.params.postId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/posts/:postId/answers",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = answerCreateBody(request.body);
+        const result = await answers().create(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          body,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(result.status)
+          .set({
+            Location: `/api/v1/answers/${result.value.id}`,
+            ETag: answerEtag(result.value),
+          })
+          .json({ data: result.value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/posts/:postId/answers",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await answers().list(
+          param(request.params.postId),
+          current.session.user.id,
+        );
+        response.json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/answers/:answerId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await answers().get(
+          param(request.params.answerId),
+          current.session.user.id,
+        );
+        response.set("ETag", answerEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/answers/:answerId/endorsement",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const value = await answers().endorse(
+          param(request.params.answerId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response.set("ETag", answerEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/answers/:answerId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await answers().delete(
+          param(request.params.answerId),
           auth(response).session.user.id,
           request.header("if-match"),
         );

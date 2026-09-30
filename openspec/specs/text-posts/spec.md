@@ -8,12 +8,22 @@ Define the current JSON-only question and note API, including course isolation, 
 
 ### Requirement: Members can create and retrieve text posts
 
-The API SHALL support JSON `question` and `note` creation, course listing/search, and global-ID retrieval using the documented active post shape, response envelopes, `Location`, and ETag headers. Active posts SHALL expose `attachments: []`; questions SHALL expose `answered: false` until answers are implemented. Creation SHALL honor a matching `Idempotency-Key` for 24 hours and reject conflicting reuse.
+The API SHALL support JSON `question` and `note` creation, course listing/search, and global-ID retrieval using the documented active post shape, response envelopes, `Location`, and ETag headers. Active posts SHALL expose `attachments: []`. Questions SHALL expose `answered: true` exactly when the question has at least one active, non-deleted student or staff answer, and `answered: false` otherwise. The `answered` course-list filter SHALL return only questions whose `answered` value matches it. Creating, endorsing, or deleting an answer SHALL update the question's last-activity time without changing the question's `version` or ETag. Creation SHALL honor a matching `Idempotency-Key` for 24 hours and reject conflicting reuse.
 
 #### Scenario: A member creates a question
 
 - **WHEN** an authenticated course member submits a valid JSON question with a title, Markdown body, and tags
 - **THEN** the API returns `201`, `Location`, an ETag, a new post in that course, normalized tags, an empty attachment list, and `answered: false`
+
+#### Scenario: A question receives an answer
+
+- **WHEN** a course member creates the first answer to a question
+- **THEN** later reads and list results report that question with `answered: true`, the `answered=true` filter includes it, and the `answered=false` filter excludes it
+
+#### Scenario: A question's only answer is deleted
+
+- **WHEN** staff delete the only active answer to a question
+- **THEN** the question reports `answered: false` again
 
 #### Scenario: A matching creation request is retried
 
@@ -50,9 +60,15 @@ Post responses SHALL follow `documentation/api/identity-visibility.md`. Anonymou
 
 ### Requirement: Search and pagination cannot reveal hidden identities
 
-Course lists SHALL implement the documented full-text query, type, repeated-tag OR, author, date, answered, duplicate-status, sorting, limit, and cursor rules for supported text posts. Deleted posts SHALL be absent from every course list, whether unfiltered or filtered, and SHALL not influence ranking, pagination, `hasMore`, or counts. An `authorId` filter SHALL remove items whose author identity is hidden from the viewer before ranking, pagination, `hasMore`, or counts. Cursors SHALL be stable and bound to course, viewer, sort, and normalized filters.
+Course lists SHALL implement the documented full-text query, type, repeated-tag OR, author, author-role, date, answered, pinned, duplicate-status, sorting, limit, and cursor rules for supported text posts. Deleted posts SHALL be absent from every course list, whether unfiltered or filtered, and SHALL not influence ranking, pagination, `hasMore`, or counts. An `authorId` filter SHALL remove items whose author identity is hidden from the viewer before ranking, pagination, `hasMore`, or counts. Cursors SHALL be stable and bound to course, viewer, sort, and normalized filters.
 
 When the author account is deleted, student `authorId` filters SHALL exclude that author's posts even when the posts were nonanonymous. Staff MAY still match them, with a deleted-author projection. Invalid cursor sort values SHALL return `400 invalid_request` rather than reaching a database cast error.
+
+`sort=oldest` SHALL order posts by creation time ascending with the post ID as a tiebreaker. Pages SHALL continue without repeats or gaps, and it SHALL be valid with or without `q`.
+
+`pinned=true` and `pinned=false` SHALL return only posts with that pinned state and SHALL combine with the other filters.
+
+`authorRole=instructor` SHALL return only posts whose author currently holds an instructor membership in the course, and `authorRole=ta` only posts whose author currently holds a TA membership. Posts by deleted accounts, or by members whose role has since changed, therefore match only their current role. For a student, either value SHALL also remove anonymous posts other than the student's own before ranking, pagination, `hasMore`, or counts, so it cannot reveal an anonymous author's role. TAs and instructors SHALL match anonymous posts by that role. Any other `authorRole` value or a non-boolean `pinned` value SHALL return `400 invalid_request`.
 
 #### Scenario: Only hidden anonymous posts match an author filter
 
@@ -68,6 +84,36 @@ When the author account is deleted, student `authorId` filters SHALL exclude tha
 
 - **WHEN** a member lists posts after a post is deleted, with or without filters that would have matched it
 - **THEN** the deleted post is absent and does not affect the page or `hasMore`, while direct GET by its ID still returns its tombstone
+
+#### Scenario: A member pages through posts oldest first
+
+- **WHEN** a member lists with `sort=oldest` and follows each `nextCursor`
+- **THEN** every post appears exactly once, in ascending creation order
+
+#### Scenario: A member lists pinned questions
+
+- **WHEN** a member lists with `type=question&pinned=true`
+- **THEN** only pinned questions are returned
+
+#### Scenario: A member lists instructor posts
+
+- **WHEN** a member lists with `authorRole=instructor` and the course has a nonanonymous instructor post, a nonanonymous TA post, and a student post
+- **THEN** only the instructor post is returned
+
+#### Scenario: A member lists TA posts
+
+- **WHEN** a member lists with `authorRole=ta` in the same course
+- **THEN** only the TA post is returned
+
+#### Scenario: A student lists by role with an anonymous staff post
+
+- **WHEN** the course also has an anonymous instructor post, and a student lists with `authorRole=instructor`
+- **THEN** the anonymous instructor post is omitted for the student but returned for a TA or instructor viewer
+
+#### Scenario: A caller sends an unsupported author role
+
+- **WHEN** a member lists with `authorRole=staff`, `authorRole=student`, or `pinned=yes`
+- **THEN** the API returns `400 invalid_request`
 
 ### Requirement: Text posts support conditional edits, duplicate review, and tombstones
 
@@ -96,12 +142,12 @@ This phase SHALL reject poll creation and multipart create/update requests with 
 
 ### Requirement: Course deletion cleans post data
 
-The durable course-deletion worker SHALL remove post-tag links, posts, and tags before removing the course, without breaking retry after a partial cleanup failure.
+The durable course-deletion worker SHALL remove answer contributors, answer collaboration documents, answers, post-tag links, posts, and tags before removing the course, without breaking retry after a partial cleanup failure.
 
 #### Scenario: A course with posts is deleted
 
 - **WHEN** course deletion is accepted and its worker completes
-- **THEN** the course, its posts, and its tags are removed and the course becomes not found
+- **THEN** the course, its posts, their answers, and its tags are removed and the course becomes not found
 
 ### Requirement: Tests enforce the text-post contract
 

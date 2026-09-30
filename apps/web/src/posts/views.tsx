@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { PostBody } from "./PostBody.js";
 import { PostEditor, type PostEditorHandle } from "./PostEditor.js";
 import type { FormatAction } from "./formatting.js";
+import { AnswerSections } from "../answers/views.js";
 import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
@@ -10,21 +11,147 @@ import {
   getPost,
   listMergedPosts,
   listPosts,
+  setPostPinned,
   unmergePost,
   type CreatePostInput,
   type MergedPost,
   type Post,
   type PostDetail,
+  type PostListOptions,
+  type PostSort,
 } from "./client.js";
+import { feedSearch, hasFilters, type FeedFilters } from "../app/routes.js";
+import { formatPostTime } from "./time.js";
+import {
+  feedFilters,
+  postStatuses,
+  postTypeOf,
+  type FeedFilter,
+  type PostStatus,
+} from "./types.js";
+
+// Temporarily disable answer panels and their fetches in post detail.
+const ANSWERS_ENABLED = false;
+
+/** Builds the course feed request; a search always sends its sort, otherwise only a non-default one. */
+function feedOptions(
+  query: string | undefined,
+  filter: FeedFilter | undefined,
+  sort: PostSort,
+  tag: string | undefined,
+): PostListOptions {
+  return {
+    ...(query
+      ? { q: query, sort }
+      : sort !== "recent_activity"
+        ? { sort }
+        : {}),
+    ...filter?.options,
+    ...(tag ? { tag } : {}),
+  };
+}
+
+function PostTypeBadge({ type }: { type: string }) {
+  const config = postTypeOf(type);
+  return (
+    <span className={`post-type-badge ${config.tone}`}>{config.label}</span>
+  );
+}
 
 const message = (error: unknown) =>
   error instanceof Error
     ? error.message
     : "Something went wrong. Please try again.";
-const discussionPath = (courseId: string, q?: string) =>
-  `/courses/${encodeURIComponent(courseId)}${q ? `?${new URLSearchParams({ q })}` : ""}`;
-const postPath = (courseId: string, postId: string, q?: string) =>
-  `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(postId)}${q ? `?${new URLSearchParams({ q })}` : ""}`;
+const discussionPath = (courseId: string, search = "") =>
+  `/courses/${encodeURIComponent(courseId)}${search}`;
+const postPath = (courseId: string, postId: string, search = "") =>
+  `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(postId)}${search}`;
+
+function PostByline({ post }: { post: Post }) {
+  const time = formatPostTime(post.createdAt);
+  return (
+    <>
+      {post.author.displayName}
+      {time && (
+        <>
+          {" "}
+          <time
+            className="post-time"
+            dateTime={time.dateTime}
+            title={time.title}
+          >
+            {time.label}
+          </time>
+        </>
+      )}
+    </>
+  );
+}
+
+function PostStatusBadge({ status }: { status: PostStatus }) {
+  if (status.icon === "pin")
+    return (
+      <span className="post-status pin" title={status.label}>
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+          <path
+            d="M12 17v5M9 10.76V6H8a2 2 0 0 1 0-4h8a2 2 0 0 1 0 4h-1v4.76a2 2 0 0 0 1.11 1.79l1.78.9A2 2 0 0 1 19 15.24V17H5v-1.76a2 2 0 0 1 1.11-1.79l1.78-.9A2 2 0 0 0 9 10.76Z"
+            fill="currentColor"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="visually-hidden">{status.label}</span>
+      </span>
+    );
+  return <span className={`post-status ${status.tone}`}>{status.label}</span>;
+}
+
+function TagList({
+  tags,
+  active,
+  onSelect,
+}: {
+  tags: string[];
+  active?: string;
+  onSelect: (tag: string) => void;
+}) {
+  if (!tags.length) return null;
+  return (
+    <ul className="tag-list" aria-label="Tags">
+      {tags.map((tag) => (
+        <li key={tag}>
+          <button
+            type="button"
+            className={`tag-chip${tag === active ? " active" : ""}`}
+            aria-pressed={tag === active}
+            aria-label={`Filter by tag ${tag}`}
+            onClick={() => onSelect(tag)}
+          >
+            #{tag}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The post view also shows when a post last had activity, if that came after its creation. */
+function ActivityTime({ post }: { post: Post }) {
+  const time = formatPostTime(post.lastActivityAt);
+  if (!time || !(Date.parse(post.lastActivityAt) > Date.parse(post.createdAt)))
+    return null;
+  return (
+    <>
+      {" "}
+      <time className="post-time" dateTime={time.dateTime} title={time.title}>
+        active {time.label}
+      </time>
+    </>
+  );
+}
+
 function relatedQuery(title: string, body: string): string {
   const words = (value: string) =>
     Array.from(
@@ -51,15 +178,25 @@ function Composer({
   onCreated,
   onClose,
   onStateChange,
+  initialTitle = "",
 }: {
   courseId: string;
   csrfToken: string;
   onCreated: (post: Post) => void;
   onClose: () => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
+  /** A starting title, such as a search the reader chose to ask as a question. */
+  initialTitle?: string;
 }) {
   const [type, setType] = useState<"question" | "note">("question");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialTitle);
+  const composer = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (initialTitle)
+      composer.current?.querySelector<HTMLElement>(".cm-content")?.focus();
+    // Focus moves once, when a search opens the composer with a title.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [body, setBody] = useState("");
   const [preview, setPreview] = useState(false);
   const editor = useRef<PostEditorHandle>(null);
@@ -78,10 +215,25 @@ function Composer({
 
   useEffect(() => {
     onStateChange(
-      Boolean(title || body || tags || anonymous || type !== "question"),
+      Boolean(
+        title !== initialTitle ||
+        body ||
+        tags ||
+        anonymous ||
+        type !== "question",
+      ),
       pending,
     );
-  }, [anonymous, body, onStateChange, pending, tags, title, type]);
+  }, [
+    anonymous,
+    body,
+    initialTitle,
+    onStateChange,
+    pending,
+    tags,
+    title,
+    type,
+  ]);
 
   useEffect(() => {
     if (type !== "question" || !query) {
@@ -160,7 +312,11 @@ function Composer({
     }
   }
   return (
-    <section className="post-composer" aria-label="Create a post">
+    <section
+      ref={composer}
+      className="post-composer"
+      aria-label="Create a post"
+    >
       <div className="section-title">
         <h2>Create a post</h2>
         <button type="button" className="text-button" onClick={onClose}>
@@ -376,7 +532,7 @@ function MergeControl({
     <div className="post-merge-control">
       <button
         type="button"
-        className="button secondary"
+        className="button secondary compact"
         onClick={() => setOpen((value) => !value)}
       >
         Merge as duplicate
@@ -438,6 +594,9 @@ type DiscussionProps = {
   postId?: string;
   onNavigate: (path: string) => void;
   onQueryChange?: (query: string) => void;
+  /** Feed filters from the URL; without onFiltersChange the feed keeps its own. */
+  filters?: FeedFilters;
+  onFiltersChange?: (filters: FeedFilters) => void;
   onBeforeLeaveChange?: (guard: () => boolean) => void;
 };
 
@@ -454,6 +613,8 @@ function DiscussionContent({
   postId,
   onNavigate,
   onQueryChange,
+  filters: routeFilters,
+  onFiltersChange,
   onBeforeLeaveChange,
 }: DiscussionProps) {
   const [localCourse, setCourse] = useState<Course>();
@@ -463,7 +624,21 @@ function DiscussionContent({
   const [items, setItems] = useState<Post[]>([]);
   const [mergedItems, setMergedItems] = useState<MergedPost[]>([]);
   const [staff, setStaff] = useState(false);
+  const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [desktopFilters, setDesktopFilters] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(min-width: 851px)").matches,
+  );
+  const [localFilters, setLocalFilters] = useState<FeedFilters>({});
+  // Locally, a chosen sort belongs to the search it was chosen for; the URL drops it on a new search.
+  const [localSortQuery, setLocalSortQuery] = useState<string>();
+  const [pinPending, setPinPending] = useState(false);
+  const [pinError, setPinError] = useState("");
+  const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -477,7 +652,45 @@ function DiscussionContent({
   const [selectedReviewId, setSelectedReviewId] = useState<string>();
   const [reviewDetail, setReviewDetail] = useState<Post>();
   const [reviewDetailError, setReviewDetailError] = useState("");
+  const [composerSeed, setComposerSeed] = useState<{
+    title: string;
+    id: number;
+  }>();
   const composerState = useRef({ dirty: false, pending: false });
+  const listScroll = useRef(0);
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const viewport = window.matchMedia("(min-width: 851px)");
+    const update = () => setDesktopFilters(viewport.matches);
+    viewport.addEventListener("change", update);
+    update();
+    return () => viewport.removeEventListener("change", update);
+  }, []);
+  // "/" focuses search unless the reader is typing somewhere.
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if (
+        event.key !== "/" ||
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      )
+        return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        target?.closest('[contenteditable="true"]') ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
+      )
+        return;
+      event.preventDefault();
+      searchInput.current?.focus();
+    };
+    document.addEventListener("keydown", focusSearch);
+    return () => document.removeEventListener("keydown", focusSearch);
+  }, []);
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   const currentFeed = useRef(0);
@@ -487,7 +700,9 @@ function DiscussionContent({
     let active = true;
     void getMembership(courseId, userId)
       .then(({ data }) => {
-        if (active) setStaff(data.role === "ta" || data.role === "instructor");
+        if (!active) return;
+        setRole(data.role);
+        setStaff(data.role === "ta" || data.role === "instructor");
       })
       .catch(() => {
         if (active) setStaff(false);
@@ -530,6 +745,33 @@ function DiscussionContent({
     }, 300);
     return () => window.clearTimeout(timer);
   }, [draftQuery, onQueryChange, query]);
+  const activeFilters = onFiltersChange ? (routeFilters ?? {}) : localFilters;
+  function changeFilters(next: FeedFilters) {
+    if (onFiltersChange) onFiltersChange(next);
+    else setLocalFilters(next);
+  }
+  const filterOptions = feedFilters(userId);
+  const activeFilter = filterOptions.find(
+    (item) => item.key === activeFilters.filter,
+  );
+  const filter = activeFilter?.key ?? "all";
+  const tag = activeFilters.tag;
+  const chosenSort =
+    onFiltersChange || localSortQuery === query
+      ? activeFilters.sort
+      : undefined;
+  const sort: PostSort =
+    chosenSort && (query || chosenSort !== "relevance")
+      ? chosenSort
+      : query
+        ? "relevance"
+        : "recent_activity";
+  const search = feedSearch(query, activeFilters);
+  const searchRef = useRef(search);
+  searchRef.current = search;
+  function selectTag(next: string) {
+    changeFilters({ ...activeFilters, tag: next });
+  }
   useEffect(() => {
     const generation = ++currentFeed.current;
     const controller = new AbortController();
@@ -542,7 +784,16 @@ function DiscussionContent({
     setPagePending(false);
     pageBusy.current = false;
     const options = {
-      ...(query ? { q: query, sort: "relevance" as const } : {}),
+      ...(postView === "duplicates"
+        ? query
+          ? { q: query, sort: "relevance" as const }
+          : {}
+        : feedOptions(
+            query,
+            feedFilters(userId).find((item) => item.key === filter),
+            sort,
+            tag,
+          )),
       signal: controller.signal,
     };
     void (
@@ -570,7 +821,7 @@ function DiscussionContent({
       if (currentFeed.current === generation)
         currentFeed.current = generation + 1;
     };
-  }, [courseId, query, feedCycle, postView]);
+  }, [courseId, query, feedCycle, postView, filter, sort, tag, userId]);
   useEffect(() => {
     if (!postId) {
       setDetail(undefined);
@@ -585,7 +836,9 @@ function DiscussionContent({
       .then((next) => {
         if (active) {
           if ("redirectToPostId" in next)
-            onNavigate(postPath(courseId, next.redirectToPostId, query));
+            onNavigate(
+              postPath(courseId, next.redirectToPostId, searchRef.current),
+            );
           else if (next.courseId !== courseId)
             setDetailError("This post is unavailable.");
           else setDetail(next);
@@ -598,7 +851,15 @@ function DiscussionContent({
       active = false;
       controller.abort();
     };
-  }, [courseId, onNavigate, postId, query]);
+  }, [courseId, onNavigate, postId, detailCycle]);
+  useEffect(() => {
+    if (!listScroll.current) return;
+    if (postId || composerOpen) window.scrollTo(0, 0);
+    else {
+      window.scrollTo(0, listScroll.current);
+      listScroll.current = 0;
+    }
+  }, [postId, composerOpen]);
 
   useEffect(() => {
     if (postView !== "duplicates" || !selectedReviewId) return;
@@ -633,7 +894,11 @@ function DiscussionContent({
     setPageError("");
     const generation = currentFeed.current;
     const options = {
-      ...(query ? { q: query, sort: "relevance" as const } : {}),
+      ...(postView === "duplicates"
+        ? query
+          ? { q: query, sort: "relevance" as const }
+          : {}
+        : feedOptions(query, activeFilter, sort, tag)),
       cursor,
     };
     void (
@@ -696,6 +961,58 @@ function DiscussionContent({
   function navigate(path: string) {
     if (leaveComposer()) onNavigate(path);
   }
+  function openPost(id: string) {
+    if (!postId && !composerOpen) listScroll.current = window.scrollY;
+    navigate(postPath(courseId, id, search));
+  }
+  function clearQuery() {
+    setDraftQuery("");
+    if (query) {
+      lastRequestedQuery.current = "";
+      onQueryChange?.("");
+    }
+  }
+  function clearSearch() {
+    clearQuery();
+    searchInput.current?.focus();
+  }
+  function clearSearchAndFilters() {
+    clearQuery();
+    changeFilters({});
+  }
+  function openComposer(title?: string) {
+    if (composerOpen && !title) return;
+    if (composerOpen && !leaveComposer()) return;
+    if (!postId && !composerOpen) listScroll.current = window.scrollY;
+    setComposerSeed(title ? { title, id: Date.now() } : undefined);
+    setComposerOpen(true);
+  }
+  const askOffer =
+    query && postView === "posts" && course?.status === "active" ? (
+      <button
+        type="button"
+        className="button secondary ask-button"
+        onClick={() => openComposer(query.slice(0, 200))}
+      >
+        Ask “{query.length > 60 ? `${query.slice(0, 60)}…` : query}” as a new
+        question
+      </button>
+    ) : null;
+  async function togglePin(post: Post) {
+    if (pinPending) return;
+    setPinPending(true);
+    setPinError("");
+    try {
+      const next = await setPostPinned(post, !post.pinned, csrfToken);
+      setDetail(next);
+      setFeedCycle((value) => value + 1);
+    } catch (caught) {
+      setPinError(message(caught));
+      setDetailCycle((value) => value + 1);
+    } finally {
+      setPinPending(false);
+    }
+  }
   async function unmerge(post: MergedPost) {
     setReviewError("");
     try {
@@ -748,33 +1065,145 @@ function DiscussionContent({
       )}
       {courseError && <p role="alert">{courseError}</p>}
       <div
-        className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}`}
+        className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}${desktopFilters && filtersCollapsed ? " filters-collapsed" : ""}`}
       >
-        <section className="discussion-feed" aria-label="Posts">
-          {staff && (
-            <label className="post-view-picker">
-              Post view
+        <aside
+          id="post-filters"
+          className="discussion-sidebar"
+          aria-label="Post filters"
+          aria-hidden={desktopFilters && filtersCollapsed ? true : undefined}
+          inert={desktopFilters && filtersCollapsed}
+        >
+          <fieldset disabled={postView === "duplicates"}>
+            <label className="sidebar-show">
+              Show
               <select
-                aria-label="Post view"
-                value={postView}
+                value={filter}
                 onChange={(event) => {
-                  setSelectedReviewId(undefined);
-                  setReviewDetail(undefined);
-                  setReviewDetailError("");
-                  setPostView(event.target.value as "posts" | "duplicates");
+                  const key = event.target.value;
+                  const next = { ...activeFilters };
+                  if (key === "all") delete next.filter;
+                  else next.filter = key;
+                  changeFilters(next);
                 }}
               >
-                <option value="posts">Posts</option>
-                <option value="duplicates">Duplicate posts</option>
+                {filterOptions.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.ariaLabel ?? item.label}
+                  </option>
+                ))}
               </select>
             </label>
+            <label className="sidebar-sort">
+              Sort by
+              <select
+                value={sort}
+                onChange={(event) => {
+                  if (!onFiltersChange) setLocalSortQuery(query);
+                  changeFilters({
+                    ...activeFilters,
+                    sort: event.target.value as PostSort,
+                  });
+                }}
+              >
+                {query && <option value="relevance">Best match</option>}
+                <option value="recent_activity">Last updated</option>
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+              </select>
+            </label>
+          </fieldset>
+          {tag && postView === "posts" && (
+            <div className="active-tag">
+              <span>Tag</span>
+              <button
+                type="button"
+                className="tag-chip active"
+                aria-label={`Remove tag filter ${tag}`}
+                onClick={() => {
+                  const next = { ...activeFilters };
+                  delete next.tag;
+                  changeFilters(next);
+                }}
+              >
+                #{tag}
+                <span aria-hidden="true"> ×</span>
+              </button>
+            </div>
+          )}
+        </aside>
+        {desktopFilters && (
+          <button
+            type="button"
+            className="filter-collapse-toggle"
+            aria-label={
+              filtersCollapsed ? "Expand filters" : "Collapse filters"
+            }
+            aria-controls="post-filters"
+            aria-expanded={!filtersCollapsed}
+            onClick={() => setFiltersCollapsed((collapsed) => !collapsed)}
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {filtersCollapsed ? (
+                <>
+                  <path d="m6 7 5 5-5 5" />
+                  <path d="m12 7 5 5-5 5" />
+                </>
+              ) : (
+                <>
+                  <path d="m12 7-5 5 5 5" />
+                  <path d="m18 7-5 5 5 5" />
+                </>
+              )}
+            </svg>
+          </button>
+        )}
+        <section className="discussion-feed" aria-label="Posts">
+          {staff && (
+            <div
+              className="post-view-picker"
+              role="group"
+              aria-label="Post view"
+            >
+              <div className="post-view-segments">
+                {(
+                  [
+                    ["posts", "Active"],
+                    ["duplicates", "Duplicate"],
+                  ] as const
+                ).map(([view, label]) => (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-pressed={postView === view}
+                    onClick={() => {
+                      setSelectedReviewId(undefined);
+                      setReviewDetail(undefined);
+                      setReviewDetailError("");
+                      setPostView(view);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           <div className="discussion-toolbar">
-            <div role="search">
+            <div role="search" className="search-field">
               <label className="visually-hidden" htmlFor="post-search">
                 Search posts
               </label>
               <input
+                ref={searchInput}
                 id="post-search"
                 type="search"
                 aria-describedby="post-search-help"
@@ -790,12 +1219,22 @@ function DiscussionContent({
                 }}
                 placeholder="Search posts"
               />
+              {draftQuery && (
+                <button
+                  type="button"
+                  className="search-clear"
+                  aria-label="Clear search"
+                  onClick={clearSearch}
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              )}
             </div>
             <button
               type="button"
-              className="button primary"
+              className="button primary create-post"
               disabled={course?.status !== "active"}
-              onClick={() => setComposerOpen(true)}
+              onClick={() => openComposer()}
               aria-label="Create post"
             >
               + Create post
@@ -866,28 +1305,75 @@ function DiscussionContent({
             ) : items.length ? (
               <ul className="post-list">
                 {items.map((post) => (
-                  <li key={post.id}>
+                  <li
+                    key={post.id}
+                    className={post.id === postId ? "selected" : undefined}
+                  >
                     <a
                       className={`post-card${post.id === postId ? " selected" : ""}`}
-                      href={postPath(courseId, post.id, query)}
+                      href={postPath(courseId, post.id, search)}
                       onClick={(event) => {
                         event.preventDefault();
-                        navigate(postPath(courseId, post.id, query));
+                        openPost(post.id);
                       }}
                       aria-current={post.id === postId ? "page" : undefined}
                     >
-                      <span className="post-kind">{post.type}</span>
-                      <strong>{post.title}</strong>
+                      <span className="post-card-head">
+                        <span className="post-card-title">
+                          <PostTypeBadge type={post.type} />
+                          <strong>{post.title}</strong>
+                        </span>
+                        {postStatuses(post).length > 0 && (
+                          <span className="post-statuses">
+                            {postStatuses(post).map((status) => (
+                              <PostStatusBadge
+                                key={status.label}
+                                status={status}
+                              />
+                            ))}
+                          </span>
+                        )}
+                      </span>
                       <div className="post-card-preview post-markdown">
                         <PostBody bodyMarkdown={post.bodyMarkdown} inertLinks />
                       </div>
-                      <small>{post.author.displayName}</small>
+                      <span className="post-card-foot">
+                        <small>
+                          <PostByline post={post} />
+                        </small>
+                        {postTypeOf(post.type).extras?.(post) && (
+                          <span className="post-card-extras">
+                            {postTypeOf(post.type).extras?.(post)}
+                          </span>
+                        )}
+                      </span>
                     </a>
+                    <TagList
+                      tags={post.tags}
+                      active={tag}
+                      onSelect={selectTag}
+                    />
                   </li>
                 ))}
               </ul>
+            ) : query || hasFilters(activeFilters) ? (
+              <div className="feed-empty">
+                <p>No posts found.</p>
+                <p>Nothing matches this search or these filters.</p>
+                {askOffer}
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={clearSearchAndFilters}
+                >
+                  Clear search and filters
+                </button>
+              </div>
             ) : (
-              <p>No posts found.</p>
+              <div className="feed-empty">
+                <p>No posts yet.</p>
+                <p>Start the discussion with a question or note.</p>
+              </div>
             )}
             {cursor && !loading && (
               <>
@@ -906,141 +1392,215 @@ function DiscussionContent({
                 {pageError && <p role="alert">{pageError}</p>}
               </>
             )}
+            {items.length > 0 && !loading && !feedError && askOffer && (
+              <div className="ask-footer">
+                <p>Didn’t find what you need?</p>
+                {askOffer}
+              </div>
+            )}
           </div>
         </section>
-        <section className="discussion-detail" aria-label="Post detail">
-          {composerOpen ? (
-            <>
-              <button
-                type="button"
-                className="text-button narrow-back"
-                onClick={() => {
-                  if (leaveComposer() && postId)
-                    onNavigate(discussionPath(courseId, query));
-                }}
-              >
-                ← Back to posts
-              </button>
-              <Composer
-                courseId={courseId}
-                csrfToken={csrfToken}
-                onClose={leaveComposer}
-                onStateChange={(dirty, pending) => {
-                  composerState.current = { dirty, pending };
-                }}
-                onCreated={(post) => {
-                  composerState.current = { dirty: false, pending: false };
-                  setComposerOpen(false);
-                  setFeedCycle((value) => value + 1);
-                  onNavigate(postPath(courseId, post.id, query));
-                }}
-              />
-            </>
-          ) : postView === "duplicates" ? (
-            selectedReviewId ? (
-              reviewDetailError ? (
-                <p role="alert">{reviewDetailError}</p>
-              ) : !reviewDetail || reviewDetail.id !== selectedReviewId ? (
-                <p role="status">Loading duplicate…</p>
+        <section
+          className="discussion-detail"
+          aria-label="Post detail"
+          tabIndex={0}
+        >
+          <div className="discussion-detail-content">
+            {composerOpen ? (
+              <>
+                <button
+                  type="button"
+                  className="text-button narrow-back"
+                  onClick={() => {
+                    if (leaveComposer() && postId)
+                      onNavigate(discussionPath(courseId, search));
+                  }}
+                >
+                  ← Back to posts
+                </button>
+                <Composer
+                  key={composerSeed?.id ?? 0}
+                  initialTitle={composerSeed?.title}
+                  courseId={courseId}
+                  csrfToken={csrfToken}
+                  onClose={leaveComposer}
+                  onStateChange={(dirty, pending) => {
+                    composerState.current = { dirty, pending };
+                  }}
+                  onCreated={(post) => {
+                    composerState.current = { dirty: false, pending: false };
+                    setComposerOpen(false);
+                    setFeedCycle((value) => value + 1);
+                    onNavigate(postPath(courseId, post.id, search));
+                  }}
+                />
+              </>
+            ) : postView === "duplicates" ? (
+              selectedReviewId ? (
+                reviewDetailError ? (
+                  <p role="alert">{reviewDetailError}</p>
+                ) : !reviewDetail || reviewDetail.id !== selectedReviewId ? (
+                  <p role="status">Loading duplicate…</p>
+                ) : (
+                  <article>
+                    <p className="post-kind">
+                      {postTypeOf(reviewDetail.type).label}
+                    </p>
+                    <h2>{reviewDetail.title}</h2>
+                    <p className="post-author">
+                      <PostByline post={reviewDetail} />
+                    </p>
+                    <div className="post-markdown">
+                      <PostBody bodyMarkdown={reviewDetail.bodyMarkdown} />
+                    </div>
+                    {reviewDetail.tags.length > 0 && (
+                      <p>Tags: {reviewDetail.tags.join(", ")}</p>
+                    )}
+                    <p>
+                      Merged into{" "}
+                      <a
+                        href={postPath(
+                          courseId,
+                          reviewDetail.duplicateOfPostId!,
+                        )}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          setSelectedReviewId(undefined);
+                          setReviewDetail(undefined);
+                          setPostView("posts");
+                          navigate(
+                            postPath(courseId, reviewDetail.duplicateOfPostId!),
+                          );
+                        }}
+                      >
+                        {mergedItems.find(
+                          (item) => item.id === selectedReviewId,
+                        )?.canonicalTitle ?? "Canonical post"}
+                      </a>
+                    </p>
+                    {mergedItems.find(
+                      (item) => item.id === selectedReviewId,
+                    ) && (
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() =>
+                          void unmerge(
+                            mergedItems.find(
+                              (item) => item.id === selectedReviewId,
+                            )!,
+                          )
+                        }
+                        aria-label={`Unmerge ${reviewDetail.title}`}
+                      >
+                        Unmerge
+                      </button>
+                    )}
+                  </article>
+                )
               ) : (
-                <article>
-                  <p className="post-kind">{reviewDetail.type}</p>
-                  <h2>{reviewDetail.title}</h2>
-                  <p className="post-author">
-                    {reviewDetail.author.displayName}
-                  </p>
-                  <div className="post-markdown">
-                    <PostBody bodyMarkdown={reviewDetail.bodyMarkdown} />
-                  </div>
-                  {reviewDetail.tags.length > 0 && (
-                    <p>Tags: {reviewDetail.tags.join(", ")}</p>
-                  )}
-                  <p>
-                    Merged into{" "}
-                    <a
-                      href={postPath(courseId, reviewDetail.duplicateOfPostId!)}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        setSelectedReviewId(undefined);
-                        setReviewDetail(undefined);
-                        setPostView("posts");
-                        navigate(
-                          postPath(courseId, reviewDetail.duplicateOfPostId!),
-                        );
-                      }}
-                    >
-                      {mergedItems.find((item) => item.id === selectedReviewId)
-                        ?.canonicalTitle ?? "Canonical post"}
-                    </a>
-                  </p>
-                  {mergedItems.find((item) => item.id === selectedReviewId) && (
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() =>
-                        void unmerge(
-                          mergedItems.find(
-                            (item) => item.id === selectedReviewId,
-                          )!,
-                        )
-                      }
-                      aria-label={`Unmerge ${reviewDetail.title}`}
-                    >
-                      Unmerge
-                    </button>
-                  )}
-                </article>
+                <div className="detail-prompt">
+                  <h2>Select a duplicate post</h2>
+                  <p>Choose a duplicate to review it here.</p>
+                </div>
               )
+            ) : postId ? (
+              <>
+                <button
+                  className="text-button narrow-back"
+                  onClick={() => navigate(discussionPath(courseId, search))}
+                >
+                  ← Back to posts
+                </button>
+                {detailError ? (
+                  <p role="alert">{detailError}</p>
+                ) : !detail ||
+                  detail.id !== postId ||
+                  detail.courseId !== courseId ? (
+                  <p role="status">Loading post…</p>
+                ) : detail.deleted ? (
+                  <p>This post was deleted.</p>
+                ) : (
+                  <article>
+                    <p className="post-kind">{postTypeOf(detail.type).label}</p>
+                    <h2>{detail.title}</h2>
+                    <p className="post-author">
+                      <PostByline post={detail} />
+                      <ActivityTime post={detail} />
+                    </p>
+                    <TagList
+                      tags={detail.tags}
+                      active={tag}
+                      onSelect={selectTag}
+                    />
+                    <div className="post-markdown">
+                      <PostBody bodyMarkdown={detail.bodyMarkdown} />
+                    </div>
+                    {ANSWERS_ENABLED && detail.type === "question" && (
+                      <AnswerSections
+                        postId={detail.id}
+                        role={role}
+                        courseStatus={course?.status}
+                        csrfToken={csrfToken}
+                      />
+                    )}
+                    {staff && postView === "posts" && (
+                      <div
+                        className="staff-actions"
+                        role="group"
+                        aria-label="Staff actions"
+                      >
+                        {course?.status === "active" && (
+                          <button
+                            type="button"
+                            className="button secondary compact"
+                            disabled={pinPending}
+                            onClick={() => void togglePin(detail)}
+                          >
+                            {pinPending
+                              ? detail.pinned
+                                ? "Unpinning…"
+                                : "Pinning…"
+                              : detail.pinned
+                                ? "Unpin"
+                                : "Pin"}
+                          </button>
+                        )}
+                        {pinError && (
+                          <p className="form-message error" role="alert">
+                            {pinError}
+                          </p>
+                        )}
+                        <MergeControl
+                          source={detail}
+                          courseId={courseId}
+                          csrfToken={csrfToken}
+                          onMerged={(targetId) => {
+                            setFeedCycle((value) => value + 1);
+                            onNavigate(postPath(courseId, targetId, search));
+                          }}
+                        />
+                      </div>
+                    )}
+                  </article>
+                )}
+              </>
             ) : (
               <div className="detail-prompt">
-                <h2>Select a duplicate post</h2>
-                <p>Choose a duplicate to review it here.</p>
+                <h2>Select a post</h2>
+                <p>Choose a post to read it here.</p>
+                {course?.status === "active" && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => openComposer()}
+                  >
+                    Start a new post
+                  </button>
+                )}
               </div>
-            )
-          ) : postId ? (
-            <>
-              <button
-                className="text-button narrow-back"
-                onClick={() => navigate(discussionPath(courseId, query))}
-              >
-                ← Back to posts
-              </button>
-              {detailError ? (
-                <p role="alert">{detailError}</p>
-              ) : !detail ||
-                detail.id !== postId ||
-                detail.courseId !== courseId ? (
-                <p role="status">Loading post…</p>
-              ) : detail.deleted ? (
-                <p>This post was deleted.</p>
-              ) : (
-                <article>
-                  <p className="post-kind">{detail.type}</p>
-                  <h2>{detail.title}</h2>
-                  <p className="post-author">{detail.author.displayName}</p>
-                  <div className="post-markdown">
-                    <PostBody bodyMarkdown={detail.bodyMarkdown} />
-                  </div>
-                  {staff && postView === "posts" && (
-                    <MergeControl
-                      source={detail}
-                      courseId={courseId}
-                      csrfToken={csrfToken}
-                      onMerged={(targetId) => {
-                        setFeedCycle((value) => value + 1);
-                        onNavigate(postPath(courseId, targetId, query));
-                      }}
-                    />
-                  )}
-                </article>
-              )}
-            </>
-          ) : (
-            <div className="detail-prompt">
-              <h2>Select a post</h2>
-              <p>Choose a question or note to read it here.</p>
-            </div>
-          )}
+            )}
+          </div>
         </section>
       </div>
     </section>

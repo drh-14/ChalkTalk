@@ -22,12 +22,22 @@ The protected `/courses/{courseId}` route SHALL show question and note post card
 
 ### Requirement: Desktop post listings scroll independently
 
-On screens wider than 850px, the left-hand post cards and their Load more control SHALL occupy a viewport-bounded, visibly scrollable region. The Posts/Duplicate posts selector, search field, and Create post button SHALL remain above that region. The region SHALL have an accessible name and be keyboard-focusable. The same structure SHALL apply to normal posts and staff duplicate review cards. On screens at or below 850px, the cards SHALL use natural page scrolling rather than a nested scroll area. The right-hand detail pane SHALL not be constrained by this feed behavior.
+On screens wider than 850px, the discussion route SHALL fill the viewport below the course header with three full-height columns (the feed filter sidebar, the post list, and the post detail pane), separated by single dividers and without enclosing rounded panels. The page itself SHALL not scroll on this route. The left-hand post cards and their Load more control SHALL occupy a visibly scrollable region. The Posts/Duplicate posts selector, search field, and Create post button SHALL remain above that region. The region SHALL have an accessible name and be keyboard-focusable. The same structure SHALL apply to normal posts and staff duplicate review cards. The right-hand detail pane SHALL scroll independently of the post list, SHALL keep its accessible name, and SHALL be keyboard-focusable so its content can be scrolled without a pointer. Scrolling either column SHALL not move the other or the filter sidebar. On screens at or below 850px, the cards and the detail pane SHALL use natural page scrolling rather than nested scroll areas.
 
 #### Scenario: A member browses a long post list
 
 - **WHEN** a member scrolls the desktop post list
-- **THEN** post cards and Load more move within the left-hand pane while its controls remain available above the list
+- **THEN** post cards and Load more move within the post list column while its controls remain available above the list, and the filter sidebar and post detail pane do not move
+
+#### Scenario: A member reads a long post
+
+- **WHEN** a member scrolls a selected post whose content is taller than the desktop window
+- **THEN** only the detail pane scrolls, the post list, filter sidebar, and course header stay in place, and the page itself does not scroll
+
+#### Scenario: A keyboard user scrolls the post detail
+
+- **WHEN** a keyboard user moves focus to the desktop post detail pane
+- **THEN** the pane is focusable by its accessible name and scrolls with the keyboard
 
 #### Scenario: Staff switch to duplicate posts
 
@@ -113,12 +123,17 @@ Rendered React interaction tests SHALL cover feed cards, creation and field limi
 
 ### Requirement: Live search uses the documented course full-text interface
 
-Search SHALL update after approximately 300 ms without input changes, with no Search button or Enter submission requirement. The browser SHALL trim a nonempty query at its edges, limit it to the API's 500-character `q` maximum, store the applied query as `q` in the URL by replacing the current history entry, and send it to the course posts API with `sort=relevance`. Clearing the input SHALL immediately remove `q` and restore the unfiltered feed. The browser SHALL pass PostgreSQL web-search syntax through without its own parser, preserve API result order, and reset pagination when the applied query changes. Live search SHALL not close a selected post or composer, discard an unsent draft, or trigger draft-discard confirmation. Search controls SHALL describe words, quoted phrases, `OR`, and excluded terms to assistive technology.
+Search SHALL update after approximately 300 ms without input changes, with no Search button or Enter submission requirement. The browser SHALL trim a nonempty query at its edges, limit it to the API's 500-character `q` maximum, store the applied query as `q` in the URL by replacing the current history entry, and send it to the course posts API with `sort=relevance` unless the member has chosen a different sort for the current applied query. Clearing the input SHALL immediately remove `q` and restore the unfiltered feed. The browser SHALL pass PostgreSQL web-search syntax through without its own parser, preserve API result order, and reset pagination when the applied query changes. Live search SHALL not close a selected post or composer, discard an unsent draft, or trigger draft-discard confirmation. Search controls SHALL describe words, quoted phrases, `OR`, and excluded terms to assistive technology.
 
 #### Scenario: A member types a search
 
 - **WHEN** a member enters `A cutoff` and pauses for approximately 300 ms
 - **THEN** the browser requests encoded `q=A cutoff` with `sort=relevance`, replaces the URL query, and displays the posts returned by the API without a Search-button click
+
+#### Scenario: A member sorts search results by newest
+
+- **WHEN** a member with an applied search chooses Newest
+- **THEN** the browser requests the same `q` with `sort=newest` and displays the results in the returned order
 
 #### Scenario: A member clears the search
 
@@ -132,17 +147,37 @@ Search SHALL update after approximately 300 ms without input changes, with no Se
 
 ### Requirement: Course discussion and settings share a stable frame
 
-The protected Discussion and Course settings routes for the same course SHALL render the same course name, Back to courses control, and Discussion/Settings navigation in a persistent course header. Switching between them SHALL use same-document navigation, not reload the application or re-run session restoration. The active navigation item SHALL be identifiable visually and to assistive technology. Settings content MAY remain narrower than the discussion content.
+The protected Discussion, Course resources, and Course settings routes for the same course SHALL render one persistent course header in the app bar. From the start of the bar, it shows the ChalkTalk logo and an "All courses" link followed by the course name, as a breadcrumb; the course name SHALL be the page's top-level heading, and a course that is not active SHALL also show its status. A "Switch course" control SHALL follow the course name. It SHALL load the member's courses only when first opened, mark the current course, link to each course and to All courses, and close on Escape or an outside click. Discussion, Course resources, and Course settings tabs SHALL be centered in the bar, in that order, with the account controls at the end. Switching between the three routes SHALL use same-document navigation, not reload the application or re-run session restoration. The active tab SHALL be identifiable visually and to assistive technology. When the route changes, focus SHALL move to the course heading for screen-reader announcement without a visible focus ring. Following a tab, All courses, the logo, a course in the switcher, or Sign out SHALL ask before discarding an unsent post draft. When the bar is too narrow for one row, the tabs SHALL move to their own centered row; at phone widths, the logo and account controls, the breadcrumb, and the tabs SHALL each take a row without horizontal scrolling, and the switcher list SHALL fit within the screen. Settings content MAY remain narrower than the discussion content.
 
 #### Scenario: A member opens Course settings from Discussion
 
-- **WHEN** a signed-in member activates Course settings
+- **WHEN** a signed-in member activates the Course settings tab
 - **THEN** the course header remains visible, the URL changes to `/courses/{courseId}/settings` without a document reload, and the settings content replaces the discussion content
 
 #### Scenario: A member returns to Discussion
 
 - **WHEN** a member activates Discussion from Course settings or uses browser Back
-- **THEN** the shared header remains, the discussion content returns, and the appropriate navigation item is active
+- **THEN** the shared header remains, the discussion content returns, and the Discussion tab is active
+
+#### Scenario: A member opens Course resources
+
+- **WHEN** a member activates the Course resources tab
+- **THEN** the same header heading remains, the URL changes to `/courses/{courseId}/resources`, and the Course resources tab is active
+
+#### Scenario: A member leaves with an unsent draft
+
+- **WHEN** a member with an unsent post draft follows a tab, All courses, the logo, or Sign out and declines the discard prompt
+- **THEN** the draft, route, and session remain unchanged
+
+#### Scenario: A member switches course
+
+- **WHEN** a member opens the course switcher and selects another course
+- **THEN** the member's courses load only at that point with the current course marked, and the browser navigates to the chosen course
+
+#### Scenario: A member with a draft declines to switch course
+
+- **WHEN** a member with an unsent post draft selects another course in the switcher and declines the discard prompt
+- **THEN** the course, route, and draft remain unchanged
 
 ### Requirement: Settings load and fail inside the shared course frame
 
@@ -318,3 +353,222 @@ Invalid complete LaTeX SHALL remain source with its existing red underline and a
 
 - **WHEN** formula analysis is unavailable
 - **THEN** raw text remains editable, and no stale formula covers it
+
+### Requirement: Posts are listed as flat rows and read at full width
+
+Post cards in the left-hand list, including staff duplicate review cards, SHALL appear as full-width rows separated by dividers rather than individually bordered, rounded boxes. The selected row SHALL be distinguished by a tinted background and a leading accent bar in addition to its existing current-item state, so selection is not conveyed by color alone. Hover and keyboard focus SHALL remain visible on every row. In the detail pane, post content and the post composer SHALL use the full width of the pane, apart from its padding. The home page and course settings route SHALL keep their existing presentation.
+
+#### Scenario: A member selects a post
+
+- **WHEN** a member selects a post in the desktop list
+- **THEN** its row shows the tinted background and accent bar, is marked as the current item, and the other rows show no selection
+
+#### Scenario: A member reads on a wide screen
+
+- **WHEN** a member opens a post on a wide screen
+- **THEN** the post text spans the full width of the detail pane rather than a narrower column
+
+### Requirement: Members can filter and sort the course feed
+
+The discussion route SHALL show a filter sidebar, a landmark named "Post filters", with a single-choice dropdown named "Show". All posts SHALL come first and be the default, with no filter parameter. The dropdown SHALL offer these author filters:
+
+- **My posts:** `authorId` set to the signed-in member; shown only when the signed-in member is known.
+- **Instructor posts:** `authorRole=instructor`.
+- **TA posts:** `authorRole=ta`.
+
+The remaining choices SHALL be generated from the frontend's list of known post types. For the current types, the order SHALL be:
+
+- **All posts**, **My posts** when signed in, **Instructor posts**, and **TA posts**.
+- **Questions** (`type=question`).
+- **Notes** (`type=note`).
+
+A type SHALL be added to the list only once the API accepts it as a list filter. The sidebar SHALL also offer a Sort by control with these options:
+
+- **Last updated:** `sort=recent_activity`; the default when no search is applied, and then the browser omits `sort` from the request.
+- **Newest:** `sort=newest`.
+- **Oldest:** `sort=oldest`.
+- **Best match:** `sort=relevance`; offered only while a search is applied, and the default then.
+
+Selecting a tag chip on a card or in the post view SHALL add that tag as a filter alongside the active sidebar filter, sending `tag` with the feed request and showing a removable chip, named "Remove tag filter {tag}", in the sidebar. Selecting a tag SHALL not close the selected post.
+
+A sort chosen during one applied search SHALL apply only to that query; a new or cleared search SHALL return to its default. Changing the filter, tag, or sort SHALL reset pagination and ignore stale responses exactly as a query change does. Load more SHALL keep the active filter, tag, and sort. In staff duplicate review, the filters and sort SHALL be disabled and SHALL not affect review requests.
+
+On the course discussion and post routes, the active sidebar filter, tag, and chosen sort SHALL be stored in the URL as `filter`, `tag`, and `sort` query parameters, beside `q`. They SHALL be updated by replacing the current history entry rather than adding one, restored when the page loads or the member navigates Back or Forward, and preserved on post links. Unknown or invalid values SHALL be ignored.
+
+On screens at or below 850px, the Show and Sort by dropdowns SHALL appear above the feed and SHALL be hidden while a post is selected.
+
+#### Scenario: A member sees filters for each post type
+
+- **WHEN** a signed-in member opens the discussion route
+- **THEN** Show offers All posts, My posts, Instructor posts, TA posts, Questions, and Notes in that order, with All posts selected
+
+#### Scenario: A member shows questions
+
+- **WHEN** a member selects Questions
+- **THEN** the browser requests the course feed with `type=question`, selects Questions in Show, and replaces the list with the returned questions
+
+#### Scenario: A member shows posts by instructors or TAs
+
+- **WHEN** a member selects Instructor posts, then TA posts
+- **THEN** the browser requests the course feed with `authorRole=instructor`, then with `authorRole=ta`
+
+#### Scenario: A member shows notes
+
+- **WHEN** a member selects Notes
+- **THEN** the browser requests the course feed with `type=note` and selects Notes in Show
+
+#### Scenario: A member sorts oldest first
+
+- **WHEN** a member chooses Oldest
+- **THEN** the browser requests the course feed with `sort=oldest`
+
+#### Scenario: A member loads more filtered posts
+
+- **WHEN** a member loads the next page while a filter is active
+- **THEN** the next request carries the cursor together with the same filter and sort
+
+#### Scenario: Best match is offered only while searching
+
+- **WHEN** a member with no applied search opens the sort control
+- **THEN** only Last updated, Newest, and Oldest are offered, and Best match appears and becomes selected once a search is applied
+
+#### Scenario: Staff review duplicates
+
+- **WHEN** a TA or instructor switches the post view to Duplicate
+- **THEN** the sidebar's filters and sort are disabled
+
+#### Scenario: A member filters by a tag
+
+- **WHEN** a member selects the `midterm` chip on a card while viewing a post, then removes it from the sidebar
+- **THEN** the feed is requested with `tag=midterm` while the post stays open, and then requested again without `tag`
+
+#### Scenario: A member shares a filtered view
+
+- **WHEN** a member selects Questions and Newest, then opens a post
+- **THEN** the URL reads `?filter=question&sort=newest` without new history entries, the post link keeps those parameters, and Questions stays selected
+
+### Requirement: Course resources has a placeholder page
+
+The protected `/courses/{courseId}/resources` route SHALL render inside the shared course frame and show a "Course resources" heading that explains that course files will appear there and that sharing resources is not available yet. It SHALL not request resource data and SHALL use natural page scrolling rather than the full-height discussion layout.
+
+#### Scenario: A member opens Course resources
+
+- **WHEN** a signed-in course member opens `/courses/{courseId}/resources`
+- **THEN** the shared course header shows the course name with the Course resources tab active, and the page shows the placeholder heading and explanation
+
+### Requirement: Question detail shows the students' and instructors' answers
+
+When the detail pane shows an active question, it SHALL show a Students' answer section and an Instructors' answer section below the question, loaded from the documented answers list for that post. Notes, deleted posts, and staff duplicate review SHALL not show answer sections. Each section SHALL show loading, error with retry, and empty states. An existing answer SHALL render its Markdown safely, like post bodies, together with its creation time and its viewer-projected contributors. An anonymous answer whose contributors are hidden SHALL show "Anonymous", and an answer with no visible contributors SHALL show "Deleted user". An endorsed answer SHALL show that it is endorsed.
+
+A member whose role matches an empty section (students for the students' answer; TAs and instructors for the instructors' answer) SHALL be able to write that answer with an optional anonymity choice. The composer SHALL require a trimmed nonempty body of at most 100,000 characters, send the documented create request with CSRF and an idempotency key, prevent duplicate submission while pending, keep the draft on failure, and explain that the answer cannot be edited after posting in this phase. A `409 answer_kind_exists` response SHALL reload the answers instead of showing a second composer. TAs and instructors SHALL be able to endorse an unendorsed answer and to delete an unendorsed answer after confirming, sending the answer's current ETag. Students SHALL not see endorse or delete controls. Answer controls SHALL be unavailable when the course is archived or deleting.
+
+#### Scenario: A student answers an unanswered question
+
+- **WHEN** a student opens a question with no students' answer and submits a valid answer
+- **THEN** the browser sends the documented create request and shows the created answer in the Students' answer section without a composer
+
+#### Scenario: Another student posted first
+
+- **WHEN** a student submits an answer but the API returns `409 answer_kind_exists`
+- **THEN** the browser reloads the answers and shows the existing students' answer
+
+#### Scenario: A TA endorses an answer
+
+- **WHEN** a TA endorses the students' answer
+- **THEN** the browser sends a conditional endorsement request and the section shows the answer as endorsed without endorse or delete controls
+
+#### Scenario: A student views a note
+
+- **WHEN** a student opens a note
+- **THEN** no answer sections or answer composers appear
+
+### Requirement: Posts show when they were created
+
+Each ordinary feed card, the post detail pane, and the staff duplicate-review detail pane SHALL show the post's server-returned `createdAt` beside the displayed author. The visible text SHALL be relative to the viewer's current time: "just now" under one minute, then English minutes, hours, and days ago, such as "3 hours ago", for up to seven days. Posts older than seven days SHALL show a short English calendar date such as "Sep 20", including the year only when it differs from the current year. Dates and hover text SHALL use the viewer's local time zone. Every displayed time SHALL be a semantic time element whose machine-readable value is the original `createdAt` and whose hover text gives the full local date and time. A `createdAt` in the future SHALL display as "just now". If `createdAt` cannot be parsed as a date, the browser SHALL omit the time rather than show invalid text.
+
+The time SHALL be shown beside "Anonymous" and "Deleted user" without changing the viewer-projected author. In the post detail pane only, when the post's `lastActivityAt` is later than its `createdAt`, the browser SHALL also show that time, prefixed "active", using the same formatting and semantic time element. The browser SHALL not display `updatedAt`, SHALL not show `lastActivityAt` on feed cards, and SHALL not mark any post as edited. Staff duplicate-review cards, related-question suggestions, and deleted-post tombstones SHALL not gain a time.
+
+#### Scenario: A member browses the feed
+
+- **WHEN** a course member views a feed card for a post created three hours earlier
+- **THEN** the card shows the author followed by a relative time such as "3 hours ago", and hovering it shows the full local date and time
+
+#### Scenario: A member opens an older post
+
+- **WHEN** a member opens the detail pane for a post created more than seven days earlier
+- **THEN** the pane shows a short calendar date beside the author instead of a relative time
+
+#### Scenario: An anonymous post shows its time
+
+- **WHEN** a student views another student's anonymous post
+- **THEN** the byline shows "Anonymous" with the creation time and no identifying author information
+
+#### Scenario: A staff member was the last to change a post
+
+- **WHEN** staff pin or merge-review a post after it was created, so its `updatedAt` is later than its `createdAt`
+- **THEN** the post still shows no edited or updated indicator
+
+#### Scenario: A post had later activity
+
+- **WHEN** a member opens a post created six hours ago whose last activity was one hour ago
+- **THEN** the detail pane shows "6 hours ago" and "active 1 hour ago", and the feed card shows only "6 hours ago"
+
+#### Scenario: Staff review a duplicate
+
+- **WHEN** a TA selects a card in Duplicate posts
+- **THEN** the right-hand review pane shows the source's creation time beside its staff-visible author, while the review card itself still shows only the title and merged-into link
+
+### Requirement: Post cards separate type, title, preview, and byline
+
+Each ordinary post card in the feed SHALL show these elements in this order:
+
+- **Header row:** a type badge immediately before the title, with the title's wrapped lines returning to the card's leading edge, and any status pills at the trailing edge.
+- **Preview:** a plain-text excerpt limited to two lines.
+- **Footer:** the viewer-projected author and the post's creation time together, with an optional type-specific summary at the trailing edge.
+- **Tags:** the post's tags as chips, when it has any, below the footer and outside the card's link.
+
+The title SHALL be the most prominent text on the card. The badge's label, icon, and color and the card's statuses SHALL come from the same post type list that generates the sidebar filters. Questions SHALL show Answered or Unanswered from the API's `answered` value. Any pinned post SHALL show Pinned. Notes SHALL show no answer status. A post whose type is not in the list SHALL render with a neutral "Post" badge and no type-specific status instead of failing. The detail pane SHALL label a post's type from the same list and show the post's tag chips below the byline. When no post is selected, its prompt SHALL not name specific post types. Staff duplicate review cards keep their restricted title and merged-into content.
+
+#### Scenario: A member scans an unanswered question
+
+- **WHEN** the feed contains a question whose `answered` value is false
+- **THEN** its card shows a Question badge beside the title, an Unanswered pill, a two-line preview, and the author with the creation time
+
+#### Scenario: A member sees a pinned, answered question
+
+- **WHEN** the feed contains a question that is answered and pinned
+- **THEN** its card shows both Answered and Pinned pills
+
+#### Scenario: A member sees a note
+
+- **WHEN** the feed contains a note
+- **THEN** its card shows a Note badge and no Answered or Unanswered pill
+
+#### Scenario: The API returns a type the frontend does not know
+
+- **WHEN** the feed contains a post whose type is not in the post type list
+- **THEN** its card renders with a neutral Post badge and no type-specific status
+
+#### Scenario: A tagged post is listed
+
+- **WHEN** the feed contains a post tagged `midterm`
+- **THEN** its card and its detail pane show a `#midterm` chip whose accessible name is "Filter by tag midterm"
+
+### Requirement: Staff can pin and unpin a post from the post view
+
+When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group containing the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
+
+#### Scenario: A TA pins a post
+
+- **WHEN** a TA activates Pin on a post at version 3
+- **THEN** the browser sends `pinned: true` with `If-Match: "v3"`, the button becomes Unpin, and the post's feed row shows Pinned
+
+#### Scenario: A pin races another update
+
+- **WHEN** the pin request returns `412 version_conflict`
+- **THEN** the browser shows the error message and reloads the post
+
+#### Scenario: A student views a post
+
+- **WHEN** a student opens a post
+- **THEN** no Staff actions group or Pin control appears

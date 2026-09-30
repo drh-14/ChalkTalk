@@ -18,11 +18,13 @@ Anonymous messages remain supported. Live collaboration presence is intentionall
 
 ## Answer contributors
 
-`Answer.contributors` is required but may be `null`. A nonanonymous answer returns its contributor list. An anonymous answer returns the full contributor list to instructors and TAs and returns `null` to every student, including its contributors.
+`Answer.contributors` is required but may be `null`. A nonanonymous answer returns its contributor list. An anonymous answer returns the full contributor list to instructors and TAs and returns `null` to every student, including its contributors. Contributors whose accounts are deleted are omitted from every list, so a deleted account's ID is never exposed; the list can therefore be empty.
 
 ## Author filtering and search
 
 For `authorId` filters, instructors and TAs may match all content by that author. A student may match the author's nonanonymous content and the student's own anonymous content. Content whose author identity is hidden from the viewer is removed before ranking, before pagination and `hasMore` calculation, and before counts are calculated. An ordinary filter with no visible matches returns `200 OK` with an empty collection.
+
+The `authorRole` filter follows the same rule. Instructors and TAs match every post whose author currently holds the requested role. A student matches only nonanonymous posts and the student's own anonymous posts, so the filter never reveals the role behind someone else's anonymous post.
 
 After an author account is deleted, students cannot match that author's content through `authorId`, including content that was nonanonymous. Staff may still match it, but every returned author projection remains `Deleted user` with a null ID.
 
