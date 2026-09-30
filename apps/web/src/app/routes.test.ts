@@ -124,7 +124,7 @@ describe("routes", () => {
   it("round-trips feed filters and preserves them on post paths", () => {
     const route = routeFromLocation(
       new URL(
-        "https://app.example.edu/courses/abc/posts/p1?q=cutoff&filter=question%3Apinned&tag=midterm&sort=oldest",
+        "https://app.example.edu/courses/abc/posts/p1?q=cutoff&filter=question&tag=midterm&sort=oldest",
       ),
     );
     expect(route).toEqual({
@@ -132,10 +132,10 @@ describe("routes", () => {
       courseId: "abc",
       postId: "p1",
       query: "cutoff",
-      filters: { filter: "question:pinned", tag: "midterm", sort: "oldest" },
+      filters: { filter: "question", tag: "midterm", sort: "oldest" },
     });
     expect(feedSearch(route.query, route.filters)).toBe(
-      "?q=cutoff&filter=question%3Apinned&tag=midterm&sort=oldest",
+      "?q=cutoff&filter=question&tag=midterm&sort=oldest",
     );
     expect(feedSearch(undefined, { filter: "mine" })).toBe("?filter=mine");
     expect(feedSearch()).toBe("");
@@ -152,6 +152,21 @@ describe("routes", () => {
     expect(
       routeFromLocation(new URL("https://app.example.edu/courses/abc?sort=x")),
     ).toEqual({ name: "course", courseId: "abc" });
+    for (const filter of [
+      "question:pinned",
+      "question:unanswered",
+      "other",
+      "all",
+    ])
+      expect(
+        routeFromLocation(
+          new URL(`https://app.example.edu/courses/abc?filter=${filter}`),
+        ),
+      ).toEqual({ name: "course", courseId: "abc" });
+    for (const filter of ["mine", "instructors", "tas", "question", "note"])
+      expect(filtersFromSearch(new URLSearchParams({ filter }))).toEqual({
+        filter,
+      });
   });
 
   it("replaces filters in the current entry while keeping the search query", () => {
@@ -159,9 +174,9 @@ describe("routes", () => {
     const listener = vi.fn();
     window.addEventListener("popstate", listener);
     const length = window.history.length;
-    replaceCurrentFilters({ filter: "question:unanswered", sort: "newest" });
+    replaceCurrentFilters({ filter: "question", sort: "newest" });
     expect(`${window.location.pathname}${window.location.search}`).toBe(
-      "/courses/abc?q=cutoff&filter=question%3Aunanswered&sort=newest",
+      "/courses/abc?q=cutoff&filter=question&sort=newest",
     );
     expect(window.history.length).toBe(length);
     expect(listener).toHaveBeenCalledOnce();

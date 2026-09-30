@@ -1,3 +1,5 @@
+import { POST_TYPES } from "../posts/types.js";
+
 export type RouteName =
   | "landing"
   | "verify-email"
@@ -26,6 +28,12 @@ export type Route = {
 };
 
 const FILTER_KEYS = ["filter", "tag", "sort"] as const;
+const FILTER_VALUES = new Set([
+  "mine",
+  "instructors",
+  "tas",
+  ...Object.keys(POST_TYPES),
+]);
 const SORTS: readonly FeedSort[] = [
   "relevance",
   "newest",
@@ -37,8 +45,7 @@ const SORTS: readonly FeedSort[] = [
 export function filtersFromSearch(params: URLSearchParams): FeedFilters {
   const filters: FeedFilters = {};
   const filter = params.get("filter");
-  if (filter && /^[a-z]+(:[a-z]+)?$/.test(filter) && filter.length <= 40)
-    filters.filter = filter;
+  if (filter && FILTER_VALUES.has(filter)) filters.filter = filter;
   const tag = params.get("tag")?.trim();
   if (tag) filters.tag = tag.slice(0, 40);
   const sort = params.get("sort");

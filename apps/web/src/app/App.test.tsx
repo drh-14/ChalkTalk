@@ -43,6 +43,14 @@ function jsonResponse(body: unknown, status = 200, headers: HeadersInit = {}) {
   });
 }
 
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function unauthenticatedResponse() {
   return jsonResponse(
     {
@@ -484,6 +492,7 @@ describe("ChalkTalk auth entry", () => {
       })),
     ];
     const laterCourse = { ...course, id: "course_026", name: "Course 26" };
+    const lastCourse = { ...course, id: "course_027", name: "Course 27" };
     const baseFetch = courseRoutesFetch();
     let nextAttempts = 0;
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -501,9 +510,14 @@ describe("ChalkTalk auth entry", () => {
             )
           : jsonResponse({
               data: [laterCourse],
-              page: { nextCursor: null, hasMore: false },
+              page: { nextCursor: "page-3", hasMore: true },
             });
       }
+      if (url === "/api/v1/courses?cursor=page-3")
+        return jsonResponse({
+          data: [lastCourse],
+          page: { nextCursor: null, hasMore: false },
+        });
       return baseFetch(url, init);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -516,9 +530,142 @@ describe("ChalkTalk auth entry", () => {
     await user.click(screen.getByRole("button", { name: "Load more courses" }));
     expect(await screen.findByText("Try later")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    await user.click(await screen.findByRole("link", { name: /Course 26/ }));
-    expect(window.location.pathname).toBe("/courses/course_026");
+    expect(await screen.findByRole("link", { name: /Course 26/ })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Load more courses" }));
+    await user.click(await screen.findByRole("link", { name: /Course 27/ }));
+    expect(window.location.pathname).toBe("/courses/course_027");
     expect(nextAttempts).toBe(2);
+    expect(
+      fetchMock.mock.calls
+        .filter(([url]) => String(url).startsWith("/api/v1/courses?cursor="))
+        .map(([url]) => url),
+    ).toEqual([
+      "/api/v1/courses?cursor=page-2",
+      "/api/v1/courses?cursor=page-2",
+      "/api/v1/courses?cursor=page-3",
+    ]);
+  });
+
+  it("ignores a first page from a closed switcher session", async () => {
+    setPath(`/courses/${course.id}`);
+    const first = deferredResponse();
+    const reopened = deferredResponse();
+    const baseFetch = courseRoutesFetch();
+    let listCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url === "/api/v1/courses")
+          return ++listCalls === 1 ? first.promise : reopened.promise;
+        return baseFetch(url, init);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const toggle = screen.getByRole("button", { name: /Switch course/ });
+    await user.click(toggle);
+    await waitFor(() => expect(listCalls).toBe(1));
+    await user.click(toggle);
+    await user.click(toggle);
+    await waitFor(() => expect(listCalls).toBe(2));
+    await act(async () => {
+      first.resolve(
+        jsonResponse({
+          data: [{ ...course, id: "stale", name: "Stale course" }],
+          page: { nextCursor: "stale-cursor", hasMore: true },
+        }),
+      );
+    });
+    expect(screen.queryByRole("link", { name: /Stale course/ })).toBeNull();
+    expect(screen.getByText("Loading courses…")).toBeTruthy();
+    await act(async () => {
+      reopened.resolve(
+        jsonResponse({
+          data: [{ ...course, id: "fresh", name: "Fresh course" }],
+          page: { nextCursor: null, hasMore: false },
+        }),
+      );
+    });
+    expect(screen.getByRole("link", { name: /Fresh course/ })).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Load more courses" }),
+    ).toBeNull();
+  });
+
+  it("ignores a later page from a closed switcher session", async () => {
+    setPath(`/courses/${course.id}`);
+    const oldLaterPage = deferredResponse();
+    const reopened = deferredResponse();
+    const baseFetch = courseRoutesFetch();
+    let firstPageCalls = 0;
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/v1/courses") {
+        firstPageCalls += 1;
+        return firstPageCalls === 1
+          ? Promise.resolve(
+              jsonResponse({
+                data: [course],
+                page: { nextCursor: "old-cursor", hasMore: true },
+              }),
+            )
+          : reopened.promise;
+      }
+      if (url === "/api/v1/courses?cursor=old-cursor")
+        return oldLaterPage.promise;
+      if (url === "/api/v1/courses?cursor=new-cursor")
+        return Promise.resolve(
+          jsonResponse({
+            data: [
+              { ...course, id: "fresh-later", name: "Fresh later course" },
+            ],
+            page: { nextCursor: null, hasMore: false },
+          }),
+        );
+      return baseFetch(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const toggle = screen.getByRole("button", { name: /Switch course/ });
+    await user.click(toggle);
+    await user.click(
+      await screen.findByRole("button", { name: "Load more courses" }),
+    );
+    await user.click(toggle);
+    await user.click(toggle);
+    await waitFor(() => expect(firstPageCalls).toBe(2));
+    await act(async () => {
+      oldLaterPage.resolve(
+        jsonResponse({
+          data: [{ ...course, id: "stale-later", name: "Stale later course" }],
+          page: { nextCursor: "stale-cursor", hasMore: true },
+        }),
+      );
+    });
+    expect(
+      screen.queryByRole("link", { name: /Stale later course/ }),
+    ).toBeNull();
+    await act(async () => {
+      reopened.resolve(
+        jsonResponse({
+          data: [course],
+          page: { nextCursor: "new-cursor", hasMore: true },
+        }),
+      );
+    });
+    await user.click(screen.getByRole("button", { name: "Load more courses" }));
+    expect(
+      await screen.findByRole("link", { name: /Fresh later course/ }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("link", { name: /Stale later course/ }),
+    ).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/courses?cursor=new-cursor",
+      expect.anything(),
+    );
   });
 
   it("keeps the course and draft when switching course is declined", async () => {

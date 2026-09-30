@@ -607,39 +607,52 @@ function CourseSwitcher({
   const [pageError, setPageError] = useState<string>();
   const [pagePending, setPagePending] = useState(false);
   const [cycle, setCycle] = useState(0);
+  const loadGeneration = useRef(0);
   const root = useRef<HTMLDivElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
   // Courses load on first open so that rendering the header adds no requests.
   useEffect(() => {
     if (!open) return;
-    let active = true;
+    const generation = ++loadGeneration.current;
+    setCourses(undefined);
+    setNextCursor(undefined);
     setError(undefined);
     setPageError(undefined);
+    setPagePending(false);
     void listCourses()
       .then((page) => {
-        if (active) {
+        if (loadGeneration.current === generation) {
           setCourses(page.data);
           setNextCursor(page.page.nextCursor);
         }
       })
       .catch((caught) => {
-        if (active) setError(errorMessage(caught));
+        if (loadGeneration.current === generation)
+          setError(errorMessage(caught));
       });
     return () => {
-      active = false;
+      loadGeneration.current += 1;
     };
   }, [open, cycle]);
   function loadMore() {
     if (!nextCursor || pagePending) return;
+    const generation = loadGeneration.current;
     setPagePending(true);
     setPageError(undefined);
     void listCourses(nextCursor)
       .then((page) => {
-        setCourses((current) => [...(current ?? []), ...page.data]);
-        setNextCursor(page.page.nextCursor);
+        if (loadGeneration.current === generation) {
+          setCourses((current) => [...(current ?? []), ...page.data]);
+          setNextCursor(page.page.nextCursor);
+        }
       })
-      .catch((caught) => setPageError(errorMessage(caught)))
-      .finally(() => setPagePending(false));
+      .catch((caught) => {
+        if (loadGeneration.current === generation)
+          setPageError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (loadGeneration.current === generation) setPagePending(false);
+      });
   }
   useEffect(() => {
     if (!open) return;
