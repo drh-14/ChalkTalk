@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  feedSearch,
+  filtersFromSearch,
   initializeRoute,
   navigate,
+  replaceCurrentFilters,
   replaceCurrentQuery,
   routeForPath,
   routeFromLocation,
@@ -91,6 +94,11 @@ describe("routes", () => {
         new URL("https://app.example.edu/courses/abc/settings"),
       ),
     ).toEqual({ name: "course-settings", courseId: "abc" });
+    expect(
+      routeFromLocation(
+        new URL("https://app.example.edu/courses/abc/resources"),
+      ),
+    ).toEqual({ name: "course-resources", courseId: "abc" });
   });
 
   it("restores submitted q and selection from browser history", async () => {
@@ -111,5 +119,84 @@ describe("routes", () => {
       courseId: "abc",
       query: "cutoff",
     });
+  });
+
+  it("round-trips feed filters and preserves them on post paths", () => {
+    const route = routeFromLocation(
+      new URL(
+        "https://app.example.edu/courses/abc/posts/p1?q=cutoff&filter=question&tag=midterm&sort=oldest",
+      ),
+    );
+    expect(route).toEqual({
+      name: "post",
+      courseId: "abc",
+      postId: "p1",
+      query: "cutoff",
+      filters: { filter: "question", tag: "midterm", sort: "oldest" },
+    });
+    expect(feedSearch(route.query, route.filters)).toBe(
+      "?q=cutoff&filter=question&tag=midterm&sort=oldest",
+    );
+    expect(feedSearch(undefined, { filter: "mine" })).toBe("?filter=mine");
+    expect(feedSearch()).toBe("");
+  });
+
+  it("ignores unknown or invalid filter values", () => {
+    expect(
+      filtersFromSearch(
+        new URLSearchParams(
+          "filter=Bad%20Key&sort=sideways&tag=%20%20&extra=1",
+        ),
+      ),
+    ).toEqual({});
+    expect(
+      routeFromLocation(new URL("https://app.example.edu/courses/abc?sort=x")),
+    ).toEqual({ name: "course", courseId: "abc" });
+    for (const filter of [
+      "question:pinned",
+      "question:unanswered",
+      "other",
+      "all",
+    ])
+      expect(
+        routeFromLocation(
+          new URL(`https://app.example.edu/courses/abc?filter=${filter}`),
+        ),
+      ).toEqual({ name: "course", courseId: "abc" });
+    for (const filter of ["mine", "instructors", "tas", "question", "note"])
+      expect(filtersFromSearch(new URLSearchParams({ filter }))).toEqual({
+        filter,
+      });
+  });
+
+  it("replaces filters in the current entry while keeping the search query", () => {
+    window.history.replaceState(null, "", "/courses/abc?q=cutoff&filter=note");
+    const listener = vi.fn();
+    window.addEventListener("popstate", listener);
+    const length = window.history.length;
+    replaceCurrentFilters({ filter: "question", sort: "newest" });
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      "/courses/abc?q=cutoff&filter=question&sort=newest",
+    );
+    expect(window.history.length).toBe(length);
+    expect(listener).toHaveBeenCalledOnce();
+    replaceCurrentFilters({});
+    expect(window.location.search).toBe("?q=cutoff");
+    window.removeEventListener("popstate", listener);
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("drops a chosen sort when the search changes, keeping the other filters", () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/courses/abc?q=cutoff&filter=note&sort=newest",
+    );
+    replaceCurrentQuery("deadline");
+    expect(window.location.search).toBe("?q=deadline&filter=note");
+    window.history.replaceState(null, "", "/courses/abc?q=cutoff&sort=newest");
+    replaceCurrentQuery("cutoff");
+    expect(window.location.search).toBe("?q=cutoff&sort=newest");
+    window.history.replaceState(null, "", "/");
   });
 });

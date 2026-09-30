@@ -1,10 +1,12 @@
 ## Answers
 
+**Implementation status (answers phase 1):** JSON answer creation, answer listing and retrieval, staff endorsement, and staff deletion are implemented. Answer text cannot change after creation in this phase: `PATCH /api/v1/answers/{answerId}`, collaboration connection tickets, multipart requests, attachments, and every followup operation below describe the future target contract and are not live, and their routes are unavailable. Multipart answer creation returns `422 validation_failed`. Active answers return `attachments: []`. Each answer's persistent Yjs document is created empty, with `body_markdown` holding the text; the collaborative-editing phase seeds the document from `body_markdown` the first time it opens an empty document. Because no followups exist yet, a deleted answer never needs a tombstone: it is absent from lists, `GET` returns `404 not_found`, and a new answer of the same kind can be created.
+
 Followup authors and answer contributors follow the shared [identity visibility policy](identity-visibility.md).
 
 ## Retained deleted answers and followups
 
-Answer and followup read responses can contain active content or retained tombstones. `data.deleted` is the required discriminator. Active records set it to `false` and include the content fields documented below. An answer tombstone contains only `id`, `postId`, `kind`, `createdAt`, `updatedAt`, and `version`; a followup tombstone contains only `id`, `answerId`, `parentFollowupId`, `createdAt`, `updatedAt`, and `version`. Tombstones omit body content, contributors or authors, anonymity, attachments, and endorsement state. Create, update, and endorsement responses always contain active content.
+In the future target contract, answer and followup read responses can contain active content or retained tombstones. `data.deleted` is the required discriminator. Active records set it to `false` and include the content fields documented below. An answer tombstone contains only `id`, `postId`, `kind`, `deleted`, `createdAt`, `updatedAt`, and `version`; a followup tombstone contains only `id`, `answerId`, `parentFollowupId`, `deleted`, `createdAt`, `updatedAt`, and `version`. Tombstones omit body content, contributors or authors, anonymity, attachments, and endorsement state. Create, update, and endorsement responses always contain active content.
 
 #### Answer tombstone example
 
@@ -13,7 +15,6 @@ Answer and followup read responses can contain active content or retained tombst
   "id": "answer_123",
   "postId": "post_123",
   "kind": "student",
-  "deleted": false,
   "deleted": true,
   "createdAt": "2026-09-20T14:00:00Z",
   "updatedAt": "2026-09-20T15:00:00Z",
@@ -27,7 +28,6 @@ Answer and followup read responses can contain active content or retained tombst
 {
   "id": "followup_123",
   "answerId": "answer_123",
-  "deleted": false,
   "parentFollowupId": null,
   "deleted": true,
   "createdAt": "2026-09-20T14:30:00Z",
@@ -108,7 +108,7 @@ None.
 
 `data.kind` (enum: student, staff, required): Shared answer group derived from contributor role.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the answer content fields below; `true` includes only `data.id`, `data.postId`, `data.kind`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown projection of the persistent answer Yjs document.
 
@@ -276,7 +276,7 @@ None specific to this operation.
 
 `data.kind` (enum: student, staff, required): Shared answer group derived from contributor role.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the answer content fields below; `true` includes only `data.id`, `data.postId`, `data.kind`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown projection of the persistent answer Yjs document.
 
@@ -423,7 +423,7 @@ None.
 
 `data.kind` (enum: student, staff, required): Shared answer group derived from contributor role.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the answer content fields below; `true` includes only `data.id`, `data.postId`, `data.kind`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown projection of the persistent answer Yjs document.
 
@@ -582,7 +582,7 @@ None.
 
 `data.kind` (enum: student, staff, required): Shared answer group derived from contributor role.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the answer content fields below; `true` includes only `data.id`, `data.postId`, `data.kind`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown projection of the persistent answer Yjs document.
 
@@ -986,7 +986,7 @@ None.
 
 `data.kind` (enum: student, staff, required): Shared answer group derived from contributor role.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the answer content fields below; `true` includes only `data.id`, `data.postId`, `data.kind`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown projection of the persistent answer Yjs document.
 
@@ -1166,7 +1166,7 @@ None.
 
 `data.parentFollowupId` (string or null, required): Parent followup ID, or null for a direct answer followup.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the followup content fields below; `true` includes only `data.id`, `data.answerId`, `data.parentFollowupId`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown content.
 
@@ -1326,7 +1326,7 @@ None specific to this operation.
 
 `data.parentFollowupId` (string or null, required): Parent followup ID, or null for a direct answer followup.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the followup content fields below; `true` includes only `data.id`, `data.answerId`, `data.parentFollowupId`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown content.
 
@@ -1493,7 +1493,7 @@ None.
 
 `data.parentFollowupId` (string or null, required): Parent followup ID, or null for a direct answer followup.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the followup content fields below; `true` includes only `data.id`, `data.answerId`, `data.parentFollowupId`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown content.
 
@@ -1653,7 +1653,7 @@ None specific to this operation.
 
 `data.parentFollowupId` (string or null, required): Parent followup ID, or null for a direct answer followup.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the followup content fields below; `true` includes only `data.id`, `data.answerId`, `data.parentFollowupId`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown content.
 
@@ -1800,7 +1800,7 @@ None.
 
 `data.parentFollowupId` (string or null, required): Parent followup ID, or null for a direct answer followup.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the followup content fields below; `true` includes only `data.id`, `data.answerId`, `data.parentFollowupId`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown content.
 
@@ -1957,7 +1957,7 @@ None.
 
 `data.parentFollowupId` (string or null, required): Parent followup ID, or null for a direct answer followup.
 
-`data.deleted` (boolean, required): Required active-or-tombstone discriminator. `false` includes the followup content fields below; `true` includes only `data.id`, `data.answerId`, `data.parentFollowupId`, `data.createdAt`, `data.updatedAt`, and `data.version`.
+`data.deleted` (boolean, required): Active-content or retained-tombstone discriminator; see [Retained deleted answers and followups](#retained-deleted-answers-and-followups).
 
 `data.bodyMarkdown` (string, required): Markdown content.
 

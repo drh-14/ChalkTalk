@@ -82,3 +82,40 @@ it("recognizes a merged-post HTTP redirect without displaying the source", async
     redirectToPostId: "canonical-1",
   });
 });
+
+it("sends type, answered, and sort filters for the course feed", async () => {
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+    json({ data: [], page: { nextCursor: null, hasMore: false } }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { type: "note", sort: "newest" });
+  await listPosts("course-1", { answered: false, cursor: "next" });
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/v1/courses/course-1/posts?sort=newest&type=note",
+    "/api/v1/courses/course-1/posts?cursor=next&answered=false",
+  ]);
+});
+
+it("sends the author filter for the course feed", async () => {
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+    json({ data: [], page: { nextCursor: null, hasMore: false } }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { authorId: "user-1" });
+  expect(fetchMock.mock.calls[0]![0]).toBe(
+    "/api/v1/courses/course-1/posts?authorId=user-1",
+  );
+});
+
+it("sends pinned, author role, and oldest sort for the course feed", async () => {
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+    json({ data: [], page: { nextCursor: null, hasMore: false } }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { type: "note", pinned: true, sort: "oldest" });
+  await listPosts("course-1", { authorRole: "ta" });
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/v1/courses/course-1/posts?sort=oldest&type=note&pinned=true",
+    "/api/v1/courses/course-1/posts?authorRole=ta",
+  ]);
+});

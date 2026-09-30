@@ -1,5 +1,12 @@
 import { StrictMode } from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
@@ -34,6 +41,14 @@ function jsonResponse(body: unknown, status = 200, headers: HeadersInit = {}) {
     status,
     headers: { "Content-Type": "application/json", ...headers },
   });
+}
+
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 function unauthenticatedResponse() {
@@ -148,6 +163,643 @@ describe("ChalkTalk auth entry", () => {
     expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
     confirm.mockRestore();
   });
+  it("shows the ChalkTalk logo in the course header and guards drafts when it is followed", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const logo = within(screen.getByRole("banner")).getByRole("link", {
+      name: "ChalkTalk",
+    });
+    expect(logo.getAttribute("href")).toBe("/home");
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "My draft",
+    );
+    await user.click(logo);
+    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    confirm.mockReturnValue(true);
+    await user.click(logo);
+    expect(window.location.pathname).toBe("/home");
+    confirm.mockRestore();
+  });
+  it("offers the account controls in the course header and guards drafts on sign out", async () => {
+    setPath(`/courses/${course.id}`);
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/sessions/current"))
+        return init?.method === "DELETE"
+          ? new Response(null, { status: 204 })
+          : jsonResponse({ data: session });
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+      return jsonResponse({
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const banner = within(screen.getByRole("banner"));
+    expect(banner.getByRole("link", { name: "ChalkTalk" })).toBeTruthy();
+    expect(banner.getByRole("link", { name: "All courses" })).toBeTruthy();
+    expect(screen.getByRole("banner").querySelector(".course-icon")).toBeNull();
+    expect(banner.getByText("Ada Lovelace")).toBeTruthy();
+    const signOut = banner.getByRole("button", { name: "Sign out" });
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "My draft",
+    );
+    await user.click(signOut);
+    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
+    ).toBe(false);
+    confirm.mockReturnValue(true);
+    await user.click(signOut);
+    await screen.findByRole("heading", {
+      name: "Discuss the work that matters.",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/sessions/current",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    confirm.mockRestore();
+  });
+  it("uses the full-height course page only on the discussion route", async () => {
+    setPath(`/courses/${course.id}`);
+    const member = {
+      id: "membership_123",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: session.user.displayName },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        if (url.endsWith(`/members/${session.user.id}`))
+          return jsonResponse({ data: member });
+        if (url.endsWith("/members"))
+          return jsonResponse({
+            data: [member],
+            page: { nextCursor: null, hasMore: false },
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const page = () => screen.getByRole("banner").parentElement!;
+    expect(page().classList.contains("course-page")).toBe(true);
+    expect(page().classList.contains("discussion")).toBe(true);
+    await user.click(screen.getByRole("link", { name: "Course settings" }));
+    await screen.findByRole("heading", { name: "Members" });
+    expect(page().classList.contains("course-page")).toBe(true);
+    expect(page().classList.contains("discussion")).toBe(false);
+  });
+  it("puts the course name and course tabs in the app bar, including Course resources", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    const banner = within(await screen.findByRole("banner"));
+    const heading = await banner.findByRole("heading", { name: course.name });
+    const tabs = within(
+      banner.getByRole("navigation", { name: "Course navigation" }),
+    );
+    expect(tabs.getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "Discussion",
+      "Course resources",
+      "Course settings",
+    ]);
+    expect(
+      tabs
+        .getByRole("link", { name: "Discussion" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    await user.click(tabs.getByRole("link", { name: "Course resources" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}/resources`);
+    expect(
+      tabs
+        .getByRole("link", { name: "Course resources" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    expect(
+      tabs
+        .getByRole("link", { name: "Discussion" })
+        .getAttribute("aria-current"),
+    ).toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "Course resources" }),
+    ).toBeTruthy();
+    expect(banner.getByRole("heading", { name: course.name })).toBe(heading);
+    expect(
+      screen
+        .getByRole("banner")
+        .parentElement!.classList.contains("discussion"),
+    ).toBe(false);
+  });
+  it("guards drafts from All courses and Course resources and requests no resource data", async () => {
+    setPath(`/courses/${course.id}`);
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/sessions/current"))
+        return jsonResponse({ data: session });
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+      return jsonResponse({
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    const banner = within(await screen.findByRole("banner"));
+    await banner.findByRole("heading", { name: course.name });
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "My draft",
+    );
+    for (const name of ["All courses", "Course resources"]) {
+      await user.click(banner.getByRole("link", { name }));
+      expect(window.location.pathname).toBe(`/courses/${course.id}`);
+      expect(
+        screen.getByRole("textbox", { name: "Post title" }),
+      ).toHaveProperty("value", "My draft");
+    }
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockReturnValue(true);
+    await user.click(banner.getByRole("link", { name: "Course resources" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}/resources`);
+    expect(
+      await screen.findByRole("heading", { name: "Course resources" }),
+    ).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes("resources")),
+    ).toBe(false);
+    confirm.mockRestore();
+  });
+  it("shows today's date and only real courses on home", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 3, 12));
+    setPath("/home");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith("/courses"))
+          return jsonResponse({
+            data: [
+              course,
+              { ...course, id: "course_456", name: "Calculus II" },
+            ],
+            page: { nextCursor: null, hasMore: false },
+          });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome back, Ada" });
+    expect(screen.getByText("Tuesday, March 3")).toBeTruthy();
+    await screen.findByText("Linear Algebra II");
+    expect(screen.getByText("Calculus II")).toBeTruthy();
+    expect(screen.queryByText(/In the discussion/)).toBeNull();
+    expect(screen.queryByText(/replies/)).toBeNull();
+    expect(screen.queryByText(/Data Structures/)).toBeNull();
+    vi.useRealTimers();
+  });
+  function courseRoutesFetch(options: { posts?: unknown[] } = {}) {
+    const member = {
+      id: "membership_123",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: session.user.displayName },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    const otherCourse = { ...course, id: "course_456", name: "Calculus II" };
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/sessions/current") && init?.method === "DELETE")
+        return new Response(null, { status: 204 });
+      if (url.endsWith("/sessions/current"))
+        return jsonResponse({ data: session });
+      if (url === "/api/v1/courses")
+        return jsonResponse({
+          data: [course, otherCourse],
+          page: { nextCursor: null, hasMore: false },
+        });
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+      if (url.endsWith(`/courses/${otherCourse.id}`))
+        return jsonResponse({ data: otherCourse }, 200, { ETag: '"v1"' });
+      if (url.endsWith(`/members/${session.user.id}`))
+        return jsonResponse({ data: member });
+      if (url.endsWith("/members"))
+        return jsonResponse({
+          data: [member],
+          page: { nextCursor: null, hasMore: false },
+        });
+      if (url.includes("/posts"))
+        return jsonResponse({
+          data: options.posts ?? [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      return jsonResponse({
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+      });
+    });
+  }
+
+  it("switches courses from the top bar after loading the list on demand", async () => {
+    setPath(`/courses/${course.id}`);
+    const fetchMock = courseRoutesFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    expect(
+      fetchMock.mock.calls.some(([url]) => url === "/api/v1/courses"),
+    ).toBe(false);
+    await user.click(screen.getByRole("button", { name: /Switch course/ }));
+    const current = await screen.findByRole("link", {
+      name: /Linear Algebra II/,
+    });
+    expect(current.getAttribute("aria-current")).toBe("page");
+    await user.click(screen.getByRole("link", { name: /Calculus II/ }));
+    expect(window.location.pathname).toBe("/courses/course_456");
+    await screen.findByRole("heading", { name: "Calculus II" });
+    expect(screen.queryByRole("link", { name: /Calculus II/ })).toBeNull();
+  });
+
+  it("loads later course pages in the switcher and retries a failed page", async () => {
+    setPath(`/courses/${course.id}`);
+    const firstPage = [
+      course,
+      ...Array.from({ length: 24 }, (_, index) => ({
+        ...course,
+        id: `extra_${index}`,
+        name: `Course ${index + 2}`,
+      })),
+    ];
+    const laterCourse = { ...course, id: "course_026", name: "Course 26" };
+    const lastCourse = { ...course, id: "course_027", name: "Course 27" };
+    const baseFetch = courseRoutesFetch();
+    let nextAttempts = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/courses")
+        return jsonResponse({
+          data: firstPage,
+          page: { nextCursor: "page-2", hasMore: true },
+        });
+      if (url === "/api/v1/courses?cursor=page-2") {
+        nextAttempts += 1;
+        return nextAttempts === 1
+          ? jsonResponse(
+              { error: { code: "unavailable", message: "Try later" } },
+              503,
+            )
+          : jsonResponse({
+              data: [laterCourse],
+              page: { nextCursor: "page-3", hasMore: true },
+            });
+      }
+      if (url === "/api/v1/courses?cursor=page-3")
+        return jsonResponse({
+          data: [lastCourse],
+          page: { nextCursor: null, hasMore: false },
+        });
+      return baseFetch(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    await user.click(screen.getByRole("button", { name: /Switch course/ }));
+    expect(await screen.findByRole("link", { name: /Course 25/ })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Course 26/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Load more courses" }));
+    expect(await screen.findByText("Try later")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("link", { name: /Course 26/ })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Load more courses" }));
+    await user.click(await screen.findByRole("link", { name: /Course 27/ }));
+    expect(window.location.pathname).toBe("/courses/course_027");
+    expect(nextAttempts).toBe(2);
+    expect(
+      fetchMock.mock.calls
+        .filter(([url]) => String(url).startsWith("/api/v1/courses?cursor="))
+        .map(([url]) => url),
+    ).toEqual([
+      "/api/v1/courses?cursor=page-2",
+      "/api/v1/courses?cursor=page-2",
+      "/api/v1/courses?cursor=page-3",
+    ]);
+  });
+
+  it("ignores a first page from a closed switcher session", async () => {
+    setPath(`/courses/${course.id}`);
+    const first = deferredResponse();
+    const reopened = deferredResponse();
+    const baseFetch = courseRoutesFetch();
+    let listCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url === "/api/v1/courses")
+          return ++listCalls === 1 ? first.promise : reopened.promise;
+        return baseFetch(url, init);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const toggle = screen.getByRole("button", { name: /Switch course/ });
+    await user.click(toggle);
+    await waitFor(() => expect(listCalls).toBe(1));
+    await user.click(toggle);
+    await user.click(toggle);
+    await waitFor(() => expect(listCalls).toBe(2));
+    await act(async () => {
+      first.resolve(
+        jsonResponse({
+          data: [{ ...course, id: "stale", name: "Stale course" }],
+          page: { nextCursor: "stale-cursor", hasMore: true },
+        }),
+      );
+    });
+    expect(screen.queryByRole("link", { name: /Stale course/ })).toBeNull();
+    expect(screen.getByText("Loading courses…")).toBeTruthy();
+    await act(async () => {
+      reopened.resolve(
+        jsonResponse({
+          data: [{ ...course, id: "fresh", name: "Fresh course" }],
+          page: { nextCursor: null, hasMore: false },
+        }),
+      );
+    });
+    expect(screen.getByRole("link", { name: /Fresh course/ })).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Load more courses" }),
+    ).toBeNull();
+  });
+
+  it("ignores a later page from a closed switcher session", async () => {
+    setPath(`/courses/${course.id}`);
+    const oldLaterPage = deferredResponse();
+    const reopened = deferredResponse();
+    const baseFetch = courseRoutesFetch();
+    let firstPageCalls = 0;
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/v1/courses") {
+        firstPageCalls += 1;
+        return firstPageCalls === 1
+          ? Promise.resolve(
+              jsonResponse({
+                data: [course],
+                page: { nextCursor: "old-cursor", hasMore: true },
+              }),
+            )
+          : reopened.promise;
+      }
+      if (url === "/api/v1/courses?cursor=old-cursor")
+        return oldLaterPage.promise;
+      if (url === "/api/v1/courses?cursor=new-cursor")
+        return Promise.resolve(
+          jsonResponse({
+            data: [
+              { ...course, id: "fresh-later", name: "Fresh later course" },
+            ],
+            page: { nextCursor: null, hasMore: false },
+          }),
+        );
+      return baseFetch(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    const toggle = screen.getByRole("button", { name: /Switch course/ });
+    await user.click(toggle);
+    await user.click(
+      await screen.findByRole("button", { name: "Load more courses" }),
+    );
+    await user.click(toggle);
+    await user.click(toggle);
+    await waitFor(() => expect(firstPageCalls).toBe(2));
+    await act(async () => {
+      oldLaterPage.resolve(
+        jsonResponse({
+          data: [{ ...course, id: "stale-later", name: "Stale later course" }],
+          page: { nextCursor: "stale-cursor", hasMore: true },
+        }),
+      );
+    });
+    expect(
+      screen.queryByRole("link", { name: /Stale later course/ }),
+    ).toBeNull();
+    await act(async () => {
+      reopened.resolve(
+        jsonResponse({
+          data: [course],
+          page: { nextCursor: "new-cursor", hasMore: true },
+        }),
+      );
+    });
+    await user.click(screen.getByRole("button", { name: "Load more courses" }));
+    expect(
+      await screen.findByRole("link", { name: /Fresh later course/ }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("link", { name: /Stale later course/ }),
+    ).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/courses?cursor=new-cursor",
+      expect.anything(),
+    );
+  });
+
+  it("keeps the course and draft when switching course is declined", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal("fetch", courseRoutesFetch());
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Create post" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "Draft",
+    );
+    await user.click(screen.getByRole("button", { name: /Switch course/ }));
+    await user.click(await screen.findByRole("link", { name: /Calculus II/ }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    expect(
+      (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+        .value,
+    ).toBe("Draft");
+    confirm.mockRestore();
+  });
+
+  it("stores filters in the URL without new history entries and keeps them on posts", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "fetch",
+      courseRoutesFetch({
+        posts: [
+          {
+            id: "p1",
+            courseId: course.id,
+            type: "question",
+            deleted: false,
+            title: "Kept question",
+            bodyMarkdown: "Body",
+            author: {
+              userId: null,
+              displayName: "Anonymous",
+              anonymous: true,
+              deleted: false,
+            },
+            anonymous: true,
+            tags: [],
+            createdAt: course.createdAt,
+            lastActivityAt: course.createdAt,
+            version: 1,
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Kept question");
+    const length = window.history.length;
+    const show = screen.getByRole("combobox", {
+      name: "Show",
+    }) as HTMLSelectElement;
+    await user.selectOptions(show, "question");
+    expect(window.location.search).toBe("?filter=question");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Sort by" }),
+      "Newest",
+    );
+    expect(window.location.search).toBe("?filter=question&sort=newest");
+    expect(window.history.length).toBe(length);
+    await user.click(
+      await screen.findByRole("link", { name: /Kept question/ }),
+    );
+    expect(window.location.pathname).toBe(`/courses/${course.id}/posts/p1`);
+    expect(window.location.search).toBe("?filter=question&sort=newest");
+    expect(show.value).toBe("question");
+  });
+
+  it("keeps Notes Show selection with search, tag, and sort through post navigation", async () => {
+    setPath(`/courses/${course.id}?q=cutoff&tag=midterm&sort=oldest`);
+    vi.stubGlobal(
+      "fetch",
+      courseRoutesFetch({
+        posts: [
+          {
+            id: "p1",
+            courseId: course.id,
+            type: "note",
+            deleted: false,
+            title: "Kept pinned note",
+            bodyMarkdown: "Body",
+            author: {
+              userId: null,
+              displayName: "Anonymous",
+              anonymous: true,
+              deleted: false,
+            },
+            anonymous: true,
+            tags: ["midterm"],
+            pinned: true,
+            createdAt: course.createdAt,
+            lastActivityAt: course.createdAt,
+            version: 1,
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("link", {
+      name: /Kept pinned note/,
+    });
+    const show = screen.getByRole("combobox", {
+      name: "Show",
+    }) as HTMLSelectElement;
+    await user.selectOptions(show, "note");
+    const expected = {
+      q: "cutoff",
+      filter: "note",
+      tag: "midterm",
+      sort: "oldest",
+    };
+    expect(
+      Object.fromEntries(new URLSearchParams(window.location.search)),
+    ).toEqual(expected);
+    await user.click(
+      await screen.findByRole("link", { name: /Kept pinned note/ }),
+    );
+    expect(window.location.pathname).toBe(`/courses/${course.id}/posts/p1`);
+    expect(
+      Object.fromEntries(new URLSearchParams(window.location.search)),
+    ).toEqual(expected);
+    expect(show.value).toBe("note");
+  });
+
   it("updates the active course view on browser Back and Forward", async () => {
     setPath(`/courses/${course.id}`);
     const member = {
