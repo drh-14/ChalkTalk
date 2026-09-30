@@ -677,6 +677,7 @@ function DiscussionContent({
       const target = event.target as HTMLElement | null;
       if (
         target?.isContentEditable ||
+        target?.closest('[contenteditable="true"]') ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "")
       )
         return;

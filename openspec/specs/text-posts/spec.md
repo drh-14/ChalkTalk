@@ -119,6 +119,8 @@ When the author account is deleted, student `authorId` filters SHALL exclude tha
 
 The author or staff SHALL be able to edit ordinary text fields; any course member MAY suggest an active same-course duplicate; only staff SHALL confirm or clear duplicate review and change pinning. A duplicate target SHALL exist, be active, and belong to the same course. Update and delete SHALL require `If-Match`, reject stale revisions, and reject writes to archived or deleting courses. Delete SHALL return `204` and retain a minimal tombstone visible to current course members with only `id`, `courseId`, `type`, `deleted: true`, `createdAt`, `updatedAt`, and `version`.
 
+Every successful post update, including pinning, unpinning, merging, and unmerging, SHALL advance `lastActivityAt`. After unpinning, a post SHALL follow the selected sort; `recent_activity` SHALL use the new activity time.
+
 #### Scenario: A student suggests a duplicate without content-edit permission
 
 - **WHEN** a nonauthor course member conditionally sets a valid same-course duplicate suggestion

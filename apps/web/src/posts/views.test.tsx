@@ -4065,7 +4065,7 @@ it("prompts to choose or start a post when nothing is selected", async () => {
   expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
 });
 
-it("previews Markdown as plain text without dropping ordinary punctuation", async () => {
+it("renders Markdown previews without dropping ordinary punctuation", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
@@ -4087,7 +4087,12 @@ it("previews Markdown as plain text without dropping ordinary punctuation", asyn
     />,
   );
   const link = await screen.findByRole("link", { name: /Math/ });
-  expect(link.querySelector(".post-card-preview")?.textContent).toBe(
+  expect(
+    link
+      .querySelector(".post-card-preview")
+      ?.textContent?.replace(/\s+/g, " ")
+      .trim(),
+  ).toBe(
     "Setup Is sqrt(x^2 - 9) equal to |3 tan(t)| when p > 2? Yes! Bold and italic with code quoted a link and a figure snake_case stays",
   );
 });

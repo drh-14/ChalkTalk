@@ -562,6 +562,11 @@ When a TA or instructor views an ordinary post, the post view SHALL show a "Staf
 - **WHEN** a TA activates Pin on a post at version 3
 - **THEN** the browser sends `pinned: true` with `If-Match: "v3"`, the button becomes Unpin, and the post's feed row shows Pinned
 
+#### Scenario: A TA unpins a post in Last updated sort
+
+- **WHEN** a TA unpins a post while the feed uses Last updated
+- **THEN** the feed reloads without pin precedence, and the post follows its new update time
+
 #### Scenario: A pin races another update
 
 - **WHEN** the pin request returns `412 version_conflict`
