@@ -475,6 +475,13 @@ describe("ChalkTalk auth entry", () => {
       name: /Linear Algebra II/,
     });
     expect(current.getAttribute("aria-current")).toBe("page");
+    const panel = current.closest("#course-switcher-panel") as HTMLElement;
+    expect(
+      within(panel).queryByRole("link", { name: "All courses" }),
+    ).toBeNull();
+    expect(screen.getAllByRole("link", { name: "All courses" })).toHaveLength(
+      1,
+    );
     await user.click(screen.getByRole("link", { name: /Calculus II/ }));
     expect(window.location.pathname).toBe("/courses/course_456");
     await screen.findByRole("heading", { name: "Calculus II" });
@@ -724,15 +731,12 @@ describe("ChalkTalk auth entry", () => {
     render(<App />);
     await screen.findByText("Kept question");
     const length = window.history.length;
-    const show = screen.getByRole("combobox", {
-      name: "Show",
-    }) as HTMLSelectElement;
-    await user.selectOptions(show, "question");
+    const questions = screen.getByRole("radio", {
+      name: "Questions",
+    }) as HTMLInputElement;
+    await user.click(questions);
     expect(window.location.search).toBe("?filter=question");
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Sort by" }),
-      "Newest",
-    );
+    await user.click(screen.getByRole("radio", { name: "Newest" }));
     expect(window.location.search).toBe("?filter=question&sort=newest");
     expect(window.history.length).toBe(length);
     await user.click(
@@ -740,7 +744,7 @@ describe("ChalkTalk auth entry", () => {
     );
     expect(window.location.pathname).toBe(`/courses/${course.id}/posts/p1`);
     expect(window.location.search).toBe("?filter=question&sort=newest");
-    expect(show.value).toBe("question");
+    expect(questions.checked).toBe(true);
   });
 
   it("keeps Notes Show selection with search, tag, and sort through post navigation", async () => {
@@ -777,10 +781,10 @@ describe("ChalkTalk auth entry", () => {
     await screen.findByRole("link", {
       name: /Kept pinned note/,
     });
-    const show = screen.getByRole("combobox", {
-      name: "Show",
-    }) as HTMLSelectElement;
-    await user.selectOptions(show, "note");
+    const notes = screen.getByRole("radio", {
+      name: "Notes",
+    }) as HTMLInputElement;
+    await user.click(notes);
     const expected = {
       q: "cutoff",
       filter: "note",
@@ -797,7 +801,7 @@ describe("ChalkTalk auth entry", () => {
     expect(
       Object.fromEntries(new URLSearchParams(window.location.search)),
     ).toEqual(expected);
-    expect(show.value).toBe("note");
+    expect(notes.checked).toBe(true);
   });
 
   it("updates the active course view on browser Back and Forward", async () => {

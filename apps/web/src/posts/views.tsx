@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { PostBody } from "./PostBody.js";
 import { PostEditor, type PostEditorHandle } from "./PostEditor.js";
 import type { FormatAction } from "./formatting.js";
@@ -20,7 +28,13 @@ import {
   type PostListOptions,
   type PostSort,
 } from "./client.js";
-import { feedSearch, hasFilters, type FeedFilters } from "../app/routes.js";
+import {
+  feedSearch,
+  hasFilters,
+  hasTag,
+  MAX_FEED_TAGS,
+  type FeedFilters,
+} from "../app/routes.js";
 import { formatPostTime } from "./time.js";
 import {
   feedFilters,
@@ -38,7 +52,8 @@ function feedOptions(
   query: string | undefined,
   filter: FeedFilter | undefined,
   sort: PostSort,
-  tag: string | undefined,
+  tags: string[],
+  tagMatch: "any" | undefined,
 ): PostListOptions {
   return {
     ...(query
@@ -47,7 +62,7 @@ function feedOptions(
         ? { sort }
         : {}),
     ...filter?.options,
-    ...(tag ? { tag } : {}),
+    ...(tags.length ? { tags, ...(tagMatch ? { tagMatch } : {}) } : {}),
   };
 }
 
@@ -114,7 +129,7 @@ function TagList({
   onSelect,
 }: {
   tags: string[];
-  active?: string;
+  active?: string[];
   onSelect: (tag: string) => void;
 }) {
   if (!tags.length) return null;
@@ -124,8 +139,8 @@ function TagList({
         <li key={tag}>
           <button
             type="button"
-            className={`tag-chip${tag === active ? " active" : ""}`}
-            aria-pressed={tag === active}
+            className={`tag-chip${hasTag(active, tag) ? " active" : ""}`}
+            aria-pressed={hasTag(active, tag)}
             aria-label={`Filter by tag ${tag}`}
             onClick={() => onSelect(tag)}
           >
@@ -134,6 +149,129 @@ function TagList({
         </li>
       ))}
     </ul>
+  );
+}
+
+const SORTS: readonly PostSort[] = [
+  "relevance",
+  "recent_activity",
+  "newest",
+  "oldest",
+];
+const SORT_LABELS: Record<PostSort, string> = {
+  relevance: "Best match",
+  recent_activity: "Last updated",
+  newest: "Newest",
+  oldest: "Oldest",
+};
+
+/** Sidebar sections open on wide screens and start closed on phones, decided once per visit. */
+function initiallyOpen() {
+  return !(
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    !window.matchMedia("(min-width: 851px)").matches
+  );
+}
+
+/** An accordion section of the filter sidebar; a closed header also names the current choice. */
+function FilterSection({
+  name,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  name: string;
+  summary: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const panelId = useId();
+  return (
+    <section className={`filter-section${open ? " open" : ""}`}>
+      <h2 className="filter-section-heading">
+        <button
+          type="button"
+          className="filter-section-toggle"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={onToggle}
+        >
+          <span>
+            {name}
+            {!open && (
+              <>
+                {" "}
+                <span className="filter-section-summary">· {summary}</span>
+              </>
+            )}
+          </span>
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+      </h2>
+      <div id={panelId} className="filter-section-panel" hidden={!open}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** Single-choice rows built on native radios, so arrow keys and disabling work as usual. */
+function ChoiceGroup({
+  name,
+  value,
+  choices,
+  disabled,
+  showLegend,
+  className,
+  onChange,
+}: {
+  name: string;
+  value: string;
+  choices: { value: string; label: string; nested?: boolean }[];
+  disabled?: boolean;
+  showLegend?: boolean;
+  className?: string;
+  onChange: (value: string) => void;
+}) {
+  const inputName = useId();
+  return (
+    <fieldset
+      className={`filter-choices${className ? ` ${className}` : ""}`}
+      disabled={disabled}
+    >
+      <legend className={showLegend ? undefined : "visually-hidden"}>
+        {name}
+      </legend>
+      {choices.map((choice) => (
+        <label
+          key={choice.value}
+          className={`filter-choice${choice.nested ? " nested" : ""}`}
+        >
+          <input
+            type="radio"
+            className="visually-hidden"
+            name={inputName}
+            value={choice.value}
+            checked={choice.value === value}
+            onChange={() => onChange(choice.value)}
+          />
+          <span>{choice.label}</span>
+        </label>
+      ))}
+    </fieldset>
   );
 }
 
@@ -626,6 +764,17 @@ function DiscussionContent({
   const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [tagLimitReached, setTagLimitReached] = useState(false);
+  const [openSections, setOpenSections] = useState(() => {
+    const open = initiallyOpen();
+    return { show: open, sort: open, tags: open };
+  });
+  function toggleSection(section: keyof typeof openSections) {
+    setOpenSections((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
+  }
   const [desktopFilters, setDesktopFilters] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -754,7 +903,15 @@ function DiscussionContent({
     (item) => item.key === activeFilters.filter,
   );
   const filter = activeFilter?.key ?? "all";
-  const tag = activeFilters.tag;
+  // Filters may arrive as fresh objects on each render, so tags keep their identity by content.
+  const tagKey = JSON.stringify([
+    activeFilters.tags ?? [],
+    activeFilters.tagMatch ?? null,
+  ]);
+  const [tags, tagMatch] = useMemo(() => {
+    const [list, match] = JSON.parse(tagKey) as [string[], "any" | null];
+    return [list, match ?? undefined] as const;
+  }, [tagKey]);
   const chosenSort =
     onFiltersChange || localSortQuery === query
       ? activeFilters.sort
@@ -768,8 +925,22 @@ function DiscussionContent({
   const search = feedSearch(query, activeFilters);
   const searchRef = useRef(search);
   searchRef.current = search;
+  function changeTags(nextTags: string[]) {
+    const next = { ...activeFilters };
+    if (nextTags.length) next.tags = nextTags;
+    else delete next.tags;
+    if (nextTags.length < 2) delete next.tagMatch;
+    setTagLimitReached(false);
+    changeFilters(next);
+  }
+  /** A tag chip adds its tag, or removes it when it is already active. */
   function selectTag(next: string) {
-    changeFilters({ ...activeFilters, tag: next });
+    if (hasTag(tags, next))
+      changeTags(
+        tags.filter((tag) => tag.toLowerCase() !== next.toLowerCase()),
+      );
+    else if (tags.length >= MAX_FEED_TAGS) setTagLimitReached(true);
+    else changeTags([...tags, next]);
   }
   useEffect(() => {
     const generation = ++currentFeed.current;
@@ -791,7 +962,8 @@ function DiscussionContent({
             query,
             feedFilters(userId).find((item) => item.key === filter),
             sort,
-            tag,
+            tags,
+            tagMatch,
           )),
       signal: controller.signal,
     };
@@ -820,7 +992,17 @@ function DiscussionContent({
       if (currentFeed.current === generation)
         currentFeed.current = generation + 1;
     };
-  }, [courseId, query, feedCycle, postView, filter, sort, tag, userId]);
+  }, [
+    courseId,
+    query,
+    feedCycle,
+    postView,
+    filter,
+    sort,
+    tags,
+    tagMatch,
+    userId,
+  ]);
   useEffect(() => {
     if (!postId) {
       setDetail(undefined);
@@ -897,7 +1079,7 @@ function DiscussionContent({
         ? query
           ? { q: query, sort: "relevance" as const }
           : {}
-        : feedOptions(query, activeFilter, sort, tag)),
+        : feedOptions(query, activeFilter, sort, tags, tagMatch)),
       cursor,
     };
     void (
@@ -1073,63 +1255,110 @@ function DiscussionContent({
           aria-hidden={desktopFilters && filtersCollapsed ? true : undefined}
           inert={desktopFilters && filtersCollapsed}
         >
-          <fieldset disabled={postView === "duplicates"}>
-            <label className="sidebar-show">
-              Show
-              <select
-                value={filter}
-                onChange={(event) => {
-                  const key = event.target.value;
-                  const next = { ...activeFilters };
-                  if (key === "all") delete next.filter;
-                  else next.filter = key;
-                  changeFilters(next);
-                }}
-              >
-                {filterOptions.map((item) => (
-                  <option key={item.key} value={item.key}>
-                    {item.ariaLabel ?? item.label}
-                  </option>
+          <FilterSection
+            name="Show"
+            summary={
+              activeFilter?.ariaLabel ?? activeFilter?.label ?? "All posts"
+            }
+            open={openSections.show}
+            onToggle={() => toggleSection("show")}
+          >
+            <ChoiceGroup
+              name="Show"
+              value={filter}
+              disabled={postView === "duplicates"}
+              choices={filterOptions.map((item) => ({
+                value: item.key,
+                label: item.ariaLabel ?? item.label,
+                nested: item.nested,
+              }))}
+              onChange={(key) => {
+                const next = { ...activeFilters };
+                if (key === "all") delete next.filter;
+                else next.filter = key;
+                changeFilters(next);
+              }}
+            />
+          </FilterSection>
+          <FilterSection
+            name="Sort by"
+            summary={SORT_LABELS[sort]}
+            open={openSections.sort}
+            onToggle={() => toggleSection("sort")}
+          >
+            <ChoiceGroup
+              name="Sort by"
+              value={sort}
+              disabled={postView === "duplicates"}
+              choices={(query ? SORTS : SORTS.slice(1)).map((value) => ({
+                value,
+                label: SORT_LABELS[value],
+              }))}
+              onChange={(value) => {
+                if (!onFiltersChange) setLocalSortQuery(query);
+                changeFilters({ ...activeFilters, sort: value as PostSort });
+              }}
+            />
+          </FilterSection>
+          {tags.length > 0 && (
+            <FilterSection
+              name="Tags"
+              summary={String(tags.length)}
+              open={openSections.tags}
+              onToggle={() => toggleSection("tags")}
+            >
+              <ul className="active-tags" aria-label="Active tags">
+                {tags.map((tag) => (
+                  <li key={tag}>
+                    <button
+                      type="button"
+                      className="tag-chip active"
+                      aria-label={`Remove tag filter ${tag}`}
+                      disabled={postView === "duplicates"}
+                      onClick={() =>
+                        changeTags(tags.filter((item) => item !== tag))
+                      }
+                    >
+                      #{tag}
+                      <span aria-hidden="true"> ×</span>
+                    </button>
+                  </li>
                 ))}
-              </select>
-            </label>
-            <label className="sidebar-sort">
-              Sort by
-              <select
-                value={sort}
-                onChange={(event) => {
-                  if (!onFiltersChange) setLocalSortQuery(query);
-                  changeFilters({
-                    ...activeFilters,
-                    sort: event.target.value as PostSort,
-                  });
-                }}
-              >
-                {query && <option value="relevance">Best match</option>}
-                <option value="recent_activity">Last updated</option>
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-              </select>
-            </label>
-          </fieldset>
-          {tag && postView === "posts" && (
-            <div className="active-tag">
-              <span>Tag</span>
+              </ul>
+              {tags.length > 1 && (
+                <ChoiceGroup
+                  name="Match"
+                  showLegend
+                  className="tag-match"
+                  value={tagMatch ?? "all"}
+                  disabled={postView === "duplicates"}
+                  choices={[
+                    { value: "any", label: "Any" },
+                    { value: "all", label: "All" },
+                  ]}
+                  onChange={(value) => {
+                    const next = { ...activeFilters };
+                    if (value === "any") next.tagMatch = "any";
+                    else delete next.tagMatch;
+                    changeFilters(next);
+                  }}
+                />
+              )}
               <button
                 type="button"
-                className="tag-chip active"
-                aria-label={`Remove tag filter ${tag}`}
-                onClick={() => {
-                  const next = { ...activeFilters };
-                  delete next.tag;
-                  changeFilters(next);
-                }}
+                className="text-button"
+                disabled={postView === "duplicates"}
+                onClick={() => changeTags([])}
               >
-                #{tag}
-                <span aria-hidden="true"> ×</span>
+                Clear all
               </button>
-            </div>
+            </FilterSection>
           )}
+          <p role="status" className="tag-limit">
+            {tagLimitReached
+              ? `At most ${MAX_FEED_TAGS} tags can be combined.`
+              : ""}
+          </p>
         </aside>
         {desktopFilters && (
           <button
@@ -1349,7 +1578,7 @@ function DiscussionContent({
                     </a>
                     <TagList
                       tags={post.tags}
-                      active={tag}
+                      active={tags}
                       onSelect={selectTag}
                     />
                   </li>
@@ -1529,7 +1758,7 @@ function DiscussionContent({
                     </p>
                     <TagList
                       tags={detail.tags}
-                      active={tag}
+                      active={tags}
                       onSelect={selectTag}
                     />
                     <div className="post-markdown">

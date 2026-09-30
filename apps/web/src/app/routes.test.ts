@@ -132,7 +132,7 @@ describe("routes", () => {
       courseId: "abc",
       postId: "p1",
       query: "cutoff",
-      filters: { filter: "question", tag: "midterm", sort: "oldest" },
+      filters: { filter: "question", tags: ["midterm"], sort: "oldest" },
     });
     expect(feedSearch(route.query, route.filters)).toBe(
       "?q=cutoff&filter=question&tag=midterm&sort=oldest",
@@ -169,6 +169,42 @@ describe("routes", () => {
       });
   });
 
+  it("reads repeated tags in order, normalized and capped at ten", () => {
+    const tags = Array.from({ length: 12 }, (_, index) => `tag=t${index}`);
+    expect(
+      filtersFromSearch(
+        new URLSearchParams(
+          `tag=%20Recursion%20&tag=exam-2&tag=recursion&tag=${"x".repeat(45)}&tag=`,
+        ),
+      ),
+    ).toEqual({ tags: ["Recursion", "exam-2", "x".repeat(40)] });
+    expect(filtersFromSearch(new URLSearchParams(tags.join("&"))).tags).toEqual(
+      Array.from({ length: 10 }, (_, index) => `t${index}`),
+    );
+  });
+
+  it("keeps tagMatch=any only with two or more tags and round-trips it", () => {
+    expect(
+      filtersFromSearch(new URLSearchParams("tag=a&tag=b&tagMatch=any")),
+    ).toEqual({ tags: ["a", "b"], tagMatch: "any" });
+    for (const search of [
+      "tag=a&tagMatch=any",
+      "tag=a&tag=b&tagMatch=all",
+      "tag=a&tag=b&tagMatch=both",
+      "tagMatch=any",
+    ])
+      expect(
+        filtersFromSearch(new URLSearchParams(search)).tagMatch,
+      ).toBeUndefined();
+    expect(
+      feedSearch("q", { tags: ["a", "b"], tagMatch: "any", sort: "newest" }),
+    ).toBe("?q=q&tag=a&tag=b&tagMatch=any&sort=newest");
+    expect(feedSearch(undefined, { tags: ["a"], tagMatch: "any" })).toBe(
+      "?tag=a",
+    );
+    expect(feedSearch(undefined, { tags: [] })).toBe("");
+  });
+
   it("replaces filters in the current entry while keeping the search query", () => {
     window.history.replaceState(null, "", "/courses/abc?q=cutoff&filter=note");
     const listener = vi.fn();
@@ -180,6 +216,8 @@ describe("routes", () => {
     );
     expect(window.history.length).toBe(length);
     expect(listener).toHaveBeenCalledOnce();
+    replaceCurrentFilters({ tags: ["a", "b"], tagMatch: "any" });
+    expect(window.location.search).toBe("?q=cutoff&tag=a&tag=b&tagMatch=any");
     replaceCurrentFilters({});
     expect(window.location.search).toBe("?q=cutoff");
     window.removeEventListener("popstate", listener);

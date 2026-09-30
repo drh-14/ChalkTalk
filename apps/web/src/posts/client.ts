@@ -53,7 +53,9 @@ export type PostListOptions = {
   pinned?: boolean;
   authorId?: string;
   authorRole?: "instructor" | "ta";
-  tag?: string;
+  tags?: string[];
+  /** How several tags combine; the feed matches all of them unless told otherwise. */
+  tagMatch?: "any" | "all";
   limit?: number;
   signal?: AbortSignal;
 };
@@ -88,7 +90,9 @@ export async function listPosts(
   if (options.pinned !== undefined) query.set("pinned", String(options.pinned));
   if (options.authorId) query.set("authorId", options.authorId);
   if (options.authorRole) query.set("authorRole", options.authorRole);
-  if (options.tag) query.set("tag", options.tag);
+  const tags = options.tags ?? [];
+  for (const tag of tags) query.append("tag", tag);
+  if (tags.length > 1) query.set("tagMatch", options.tagMatch ?? "all");
   if (options.limit) query.set("limit", String(options.limit));
   const suffix = query.size ? `?${query}` : "";
   return receive<Page<Post>>(

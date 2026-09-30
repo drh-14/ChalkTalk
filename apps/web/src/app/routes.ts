@@ -11,12 +11,17 @@ export type RouteName =
   | "course-resources";
 
 export type FeedSort = "relevance" | "newest" | "oldest" | "recent_activity";
-/** Feed state kept in the URL: a sidebar filter key, a tag, and a chosen sort. */
+/** Feed state kept in the URL: a sidebar filter key, tags, a tag match, and a chosen sort. */
 export type FeedFilters = {
   filter?: string;
-  tag?: string;
+  tags?: string[];
+  /** Only the non-default choice is kept; several tags otherwise match all. */
+  tagMatch?: "any";
   sort?: FeedSort;
 };
+
+/** The API accepts at most this many tags in one feed request. */
+export const MAX_FEED_TAGS = 10;
 
 export type Route = {
   name: RouteName;
@@ -27,7 +32,7 @@ export type Route = {
   filters?: FeedFilters;
 };
 
-const FILTER_KEYS = ["filter", "tag", "sort"] as const;
+const FILTER_KEYS = ["filter", "tag", "tagMatch", "sort"] as const;
 const FILTER_VALUES = new Set([
   "mine",
   "instructors",
@@ -46,16 +51,31 @@ export function filtersFromSearch(params: URLSearchParams): FeedFilters {
   const filters: FeedFilters = {};
   const filter = params.get("filter");
   if (filter && FILTER_VALUES.has(filter)) filters.filter = filter;
-  const tag = params.get("tag")?.trim();
-  if (tag) filters.tag = tag.slice(0, 40);
+  const tags: string[] = [];
+  for (const raw of params.getAll("tag")) {
+    const tag = raw.trim().slice(0, 40);
+    if (tag && !hasTag(tags, tag) && tags.length < MAX_FEED_TAGS)
+      tags.push(tag);
+  }
+  if (tags.length) filters.tags = tags;
+  if (tags.length > 1 && params.get("tagMatch") === "any")
+    filters.tagMatch = "any";
   const sort = params.get("sort");
   if (sort && (SORTS as readonly string[]).includes(sort))
     filters.sort = sort as FeedSort;
   return filters;
 }
 
+/** Tags compare case-insensitively, as the API does. */
+export function hasTag(tags: readonly string[] | undefined, tag: string) {
+  const key = tag.toLowerCase();
+  return Boolean(tags?.some((item) => item.toLowerCase() === key));
+}
+
 export function hasFilters(filters: FeedFilters | undefined): boolean {
-  return Boolean(filters && (filters.filter || filters.tag || filters.sort));
+  return Boolean(
+    filters && (filters.filter || filters.tags?.length || filters.sort),
+  );
 }
 
 /** Serializes a search query and feed filters as a URL search string. */
@@ -63,7 +83,9 @@ export function feedSearch(query?: string, filters?: FeedFilters): string {
   const params = new URLSearchParams();
   if (query) params.set("q", query);
   if (filters?.filter) params.set("filter", filters.filter);
-  if (filters?.tag) params.set("tag", filters.tag);
+  for (const tag of filters?.tags ?? []) params.append("tag", tag);
+  if (filters?.tagMatch === "any" && (filters.tags?.length ?? 0) > 1)
+    params.set("tagMatch", "any");
   if (filters?.sort) params.set("sort", filters.sort);
   return params.size ? `?${params}` : "";
 }
@@ -139,7 +161,7 @@ export function replaceCurrentFilters(filters: FeedFilters): void {
   for (const [key, value] of new URLSearchParams(
     feedSearch(undefined, filters),
   ))
-    url.searchParams.set(key, value);
+    url.searchParams.append(key, value);
   window.history.replaceState(
     null,
     "",

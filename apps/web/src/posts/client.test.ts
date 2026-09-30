@@ -96,6 +96,23 @@ it("sends type, answered, and sort filters for the course feed", async () => {
   ]);
 });
 
+it("sends repeated tags and matches all of them by default", async () => {
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+    json({ data: [], page: { nextCursor: null, hasMore: false } }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { tags: ["recursion", "exam 2"] });
+  await listPosts("course-1", { tags: ["recursion", "exam"], tagMatch: "any" });
+  await listPosts("course-1", { tags: ["recursion"], tagMatch: "any" });
+  await listPosts("course-1", { tags: [] });
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/v1/courses/course-1/posts?tag=recursion&tag=exam+2&tagMatch=all",
+    "/api/v1/courses/course-1/posts?tag=recursion&tag=exam&tagMatch=any",
+    "/api/v1/courses/course-1/posts?tag=recursion",
+    "/api/v1/courses/course-1/posts",
+  ]);
+});
+
 it("sends the author filter for the course feed", async () => {
   const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
     json({ data: [], page: { nextCursor: null, hasMore: false } }),

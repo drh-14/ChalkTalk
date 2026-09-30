@@ -753,13 +753,6 @@ function CourseSwitcher({
                   : "Load more courses"}
             </button>
           )}
-          <a
-            className="switcher-home"
-            href="/home"
-            onClick={(event) => choose(event, "/home")}
-          >
-            All courses
-          </a>
         </div>
       )}
     </div>

@@ -341,7 +341,9 @@ Lists or searches the posts in a course. Confirmed duplicates are excluded from 
 
 `type` (enum: question, note, poll, optional; values question, note, poll): Filter by post type.
 
-`tag` (list of string, optional): Filter by one or more tags; repeated query parameters use OR semantics.
+`tag` (list of string, optional; at most 10 values, each 1–40 characters): Filter by one or more tags. Tags are trimmed and compared case-insensitively, and repeated values count once. More than 10 values return `400 invalid_request`.
+
+`tagMatch` (enum: any, all, optional; values any, all): How repeated `tag` values combine. `any`, the default, returns posts carrying at least one requested tag; `all` returns only posts carrying every requested tag. With fewer than two distinct tags both values return the same results. Any other value returns `400 invalid_request`.
 
 `authorId` (string, optional; minimum length 1, maximum length 255): Filter by author identifier. Staff may match all content; students may match nonanonymous content and their own anonymous content, except that a deleted author's content never matches a student `authorId` filter. Items whose identity is hidden from the viewer are removed before ranking, pagination, `hasMore`, and counts; no visible matches return an empty `200 OK` collection.
 

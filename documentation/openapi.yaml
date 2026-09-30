@@ -3344,7 +3344,7 @@ paths:
         - name: tag
           in: query
           required: false
-          description: Filter by one or more tags; repeated query parameters use OR semantics.
+          description: Filter by one or more tags, trimmed and compared case-insensitively; repeated values count once. tagMatch controls how several tags combine. More than 10 values return 400 invalid_request.
           schema:
             type: array
             items:
@@ -3355,6 +3355,16 @@ paths:
             maxItems: 10
           style: form
           explode: true
+        - name: tagMatch
+          in: query
+          required: false
+          description: How repeated tag values combine. any returns posts carrying at least one requested tag; all returns only posts carrying every requested tag. With fewer than two distinct tags both values return the same results.
+          schema:
+            type: string
+            enum:
+              - any
+              - all
+            default: any
         - name: authorId
           in: query
           required: false
