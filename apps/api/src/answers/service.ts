@@ -113,14 +113,7 @@ export class AnswerService {
     return result.rows[0];
   }
   private async project(db: Db, row: AnswerRow, role: Role): Promise<Answer> {
-    let contributors: Contributor[] | null = null;
-    if (!row.anonymous || STAFF.has(role)) {
-      const result = await db.query<Contributor>(
-        'SELECT u.id,u.display_name AS "displayName" FROM answer_contributors c JOIN users u ON u.id=c.user_id WHERE c.answer_id=$1 AND u.deleted_at IS NULL ORDER BY u.display_name,u.id',
-        [row.id],
-      );
-      contributors = result.rows;
-    }
+    const contributors = await this.contributors(db, row.id, row.anonymous, role);
     return {
       id: row.id,
       postId: row.post_id,
@@ -136,6 +129,22 @@ export class AnswerService {
       updatedAt: row.updated_at.toISOString(),
       version: Number(row.version),
     };
+  }
+  private async contributors(
+    db: Db,
+    answerId: string,
+    anonymous: boolean,
+    role: Role,
+  ) {
+    let contributors: Contributor[] | null = null;
+    if (!anonymous || STAFF.has(role)) {
+      const result = await db.query<Contributor>(
+        'SELECT u.id,u.display_name AS "displayName" FROM answer_contributors c JOIN users u ON u.id=c.user_id WHERE c.answer_id=$1 AND u.deleted_at IS NULL ORDER BY u.display_name,u.id',
+        [answerId],
+      );
+      contributors = result.rows;
+    }
+    return contributors;
   }
   async create(
     postId: string,
@@ -171,7 +180,15 @@ export class AnswerService {
                 "Idempotency key was reused",
               );
             return {
-              value: old.rows[0].response_body,
+              value: {
+                ...old.rows[0].response_body,
+                contributors: await this.contributors(
+                  db,
+                  old.rows[0].response_body.id,
+                  old.rows[0].response_body.anonymous,
+                  member.role,
+                ),
+              },
               status: old.rows[0].response_status,
             };
           }

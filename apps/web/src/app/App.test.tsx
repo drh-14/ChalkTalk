@@ -473,6 +473,54 @@ describe("ChalkTalk auth entry", () => {
     expect(screen.queryByRole("link", { name: /Calculus II/ })).toBeNull();
   });
 
+  it("loads later course pages in the switcher and retries a failed page", async () => {
+    setPath(`/courses/${course.id}`);
+    const firstPage = [
+      course,
+      ...Array.from({ length: 24 }, (_, index) => ({
+        ...course,
+        id: `extra_${index}`,
+        name: `Course ${index + 2}`,
+      })),
+    ];
+    const laterCourse = { ...course, id: "course_026", name: "Course 26" };
+    const baseFetch = courseRoutesFetch();
+    let nextAttempts = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/courses")
+        return jsonResponse({
+          data: firstPage,
+          page: { nextCursor: "page-2", hasMore: true },
+        });
+      if (url === "/api/v1/courses?cursor=page-2") {
+        nextAttempts += 1;
+        return nextAttempts === 1
+          ? jsonResponse(
+              { error: { code: "unavailable", message: "Try later" } },
+              503,
+            )
+          : jsonResponse({
+              data: [laterCourse],
+              page: { nextCursor: null, hasMore: false },
+            });
+      }
+      return baseFetch(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    await user.click(screen.getByRole("button", { name: /Switch course/ }));
+    expect(await screen.findByRole("link", { name: /Course 25/ })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Course 26/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Load more courses" }));
+    expect(await screen.findByText("Try later")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await user.click(await screen.findByRole("link", { name: /Course 26/ }));
+    expect(window.location.pathname).toBe("/courses/course_026");
+    expect(nextAttempts).toBe(2);
+  });
+
   it("keeps the course and draft when switching course is declined", async () => {
     setPath(`/courses/${course.id}`);
     vi.stubGlobal("fetch", courseRoutesFetch());

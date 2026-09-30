@@ -602,7 +602,10 @@ function CourseSwitcher({
 }) {
   const [open, setOpen] = useState(false);
   const [courses, setCourses] = useState<Course[]>();
+  const [nextCursor, setNextCursor] = useState<string | null>();
   const [error, setError] = useState<string>();
+  const [pageError, setPageError] = useState<string>();
+  const [pagePending, setPagePending] = useState(false);
   const [cycle, setCycle] = useState(0);
   const root = useRef<HTMLDivElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -611,9 +614,13 @@ function CourseSwitcher({
     if (!open) return;
     let active = true;
     setError(undefined);
+    setPageError(undefined);
     void listCourses()
       .then((page) => {
-        if (active) setCourses(page.data);
+        if (active) {
+          setCourses(page.data);
+          setNextCursor(page.page.nextCursor);
+        }
       })
       .catch((caught) => {
         if (active) setError(errorMessage(caught));
@@ -622,6 +629,18 @@ function CourseSwitcher({
       active = false;
     };
   }, [open, cycle]);
+  function loadMore() {
+    if (!nextCursor || pagePending) return;
+    setPagePending(true);
+    setPageError(undefined);
+    void listCourses(nextCursor)
+      .then((page) => {
+        setCourses((current) => [...(current ?? []), ...page.data]);
+        setNextCursor(page.page.nextCursor);
+      })
+      .catch((caught) => setPageError(errorMessage(caught)))
+      .finally(() => setPagePending(false));
+  }
   useEffect(() => {
     if (!open) return;
     const dismiss = (event: PointerEvent) => {
@@ -701,6 +720,25 @@ function CourseSwitcher({
             <p className="switcher-message">
               You have not joined a course yet.
             </p>
+          )}
+          {pageError && (
+            <p className="switcher-message" role="alert">
+              {pageError}
+            </p>
+          )}
+          {courses && nextCursor && !error && (
+            <button
+              type="button"
+              className="text-button"
+              disabled={pagePending}
+              onClick={loadMore}
+            >
+              {pagePending
+                ? "Loading…"
+                : pageError
+                  ? "Try again"
+                  : "Load more courses"}
+            </button>
           )}
           <a
             className="switcher-home"

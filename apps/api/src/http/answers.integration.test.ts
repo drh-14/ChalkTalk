@@ -239,6 +239,50 @@ integration("answers HTTP contract: create and read", () => {
     expect(rows.rows[0]).toEqual({ answers: 1, contributors: 1 });
   });
 
+  it("uses the current role to project anonymous contributors on replay", async () => {
+    const postId = await insertPost();
+    const key = "anonymous-role-change";
+    const body = { bodyMarkdown: "Staff response.", anonymous: true };
+    const first = await answer(ids.staff, postId, body).set(
+      "Idempotency-Key",
+      key,
+    );
+    expect(first.status).toBe(201);
+    expect(first.body.data.contributors).toEqual([
+      { id: ids.staff, displayName: "Staff" },
+    ]);
+    await pool.query(
+      "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+      [ids.course, ids.staff],
+    );
+    try {
+      const replay = await answer(ids.staff, postId, body).set(
+        "Idempotency-Key",
+        key,
+      );
+      expect(replay.status).toBe(201);
+      expect(replay.body.data).toEqual({
+        ...first.body.data,
+        contributors: null,
+      });
+      await pool.query(
+        "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.staff],
+      );
+      const restored = await answer(ids.staff, postId, body).set(
+        "Idempotency-Key",
+        key,
+      );
+      expect(restored.status).toBe(201);
+      expect(restored.body.data).toEqual(first.body.data);
+    } finally {
+      await pool.query(
+        "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.staff],
+      );
+    }
+  });
+
   it("validates the request body and media type", async () => {
     const postId = await insertPost();
     for (const body of [
