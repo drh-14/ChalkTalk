@@ -28,6 +28,9 @@ import {
   type PostStatus,
 } from "./types.js";
 
+// Temporarily disable answer panels and their fetches in post detail.
+const ANSWERS_ENABLED = false;
+
 /** Builds the course feed request; a search always sends its sort, otherwise only a non-default one. */
 function feedOptions(
   query: string | undefined,
@@ -49,10 +52,7 @@ function feedOptions(
 function PostTypeBadge({ type }: { type: string }) {
   const config = postTypeOf(type);
   return (
-    <span className={`post-type-badge ${config.tone}`}>
-      <span aria-hidden="true">{config.icon}</span>
-      {config.label}
-    </span>
+    <span className={`post-type-badge ${config.tone}`}>{config.label}</span>
   );
 }
 
@@ -477,7 +477,7 @@ function MergeControl({
     <div className="post-merge-control">
       <button
         type="button"
-        className="button secondary"
+        className="button secondary compact"
         onClick={() => setOpen((value) => !value)}
       >
         Merge as duplicate
@@ -571,6 +571,13 @@ function DiscussionContent({
   const [staff, setStaff] = useState(false);
   const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [desktopFilters, setDesktopFilters] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(min-width: 851px)").matches,
+  );
   const [localFilters, setLocalFilters] = useState<FeedFilters>({});
   // Locally, a chosen sort belongs to the search it was chosen for; the URL drops it on a new search.
   const [localSortQuery, setLocalSortQuery] = useState<string>();
@@ -597,6 +604,14 @@ function DiscussionContent({
   const composerState = useRef({ dirty: false, pending: false });
   const listScroll = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const viewport = window.matchMedia("(min-width: 851px)");
+    const update = () => setDesktopFilters(viewport.matches);
+    viewport.addEventListener("change", update);
+    update();
+    return () => viewport.removeEventListener("change", update);
+  }, []);
   // "/" focuses search unless the reader is typing somewhere.
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -934,13 +949,7 @@ function DiscussionContent({
     try {
       const next = await setPostPinned(post, !post.pinned, csrfToken);
       setDetail(next);
-      setItems((prior) =>
-        prior.map((item) =>
-          item.id === next.id
-            ? { ...item, pinned: next.pinned, version: next.version }
-            : item,
-        ),
-      );
+      setFeedCycle((value) => value + 1);
     } catch (caught) {
       setPinError(message(caught));
       setDetailCycle((value) => value + 1);
@@ -1000,30 +1009,35 @@ function DiscussionContent({
       )}
       {courseError && <p role="alert">{courseError}</p>}
       <div
-        className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}`}
+        className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}${desktopFilters && filtersCollapsed ? " filters-collapsed" : ""}`}
       >
-        <aside className="discussion-sidebar" aria-label="Post filters">
+        <aside
+          id="post-filters"
+          className="discussion-sidebar"
+          aria-label="Post filters"
+          aria-hidden={desktopFilters && filtersCollapsed ? true : undefined}
+          inert={desktopFilters && filtersCollapsed}
+        >
           <fieldset disabled={postView === "duplicates"}>
-            <legend>Show</legend>
-            <div className="sidebar-filters">
-              {filterOptions.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={item.nested ? "nested" : undefined}
-                  aria-label={item.ariaLabel}
-                  aria-pressed={filter === item.key}
-                  onClick={() => {
-                    const next = { ...activeFilters };
-                    if (item.key === "all") delete next.filter;
-                    else next.filter = item.key;
-                    changeFilters(next);
-                  }}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            <label className="sidebar-show">
+              Show
+              <select
+                value={filter}
+                onChange={(event) => {
+                  const key = event.target.value;
+                  const next = { ...activeFilters };
+                  if (key === "all") delete next.filter;
+                  else next.filter = key;
+                  changeFilters(next);
+                }}
+              >
+                {filterOptions.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.ariaLabel ?? item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="sidebar-sort">
               Sort by
               <select
@@ -1062,24 +1076,70 @@ function DiscussionContent({
             </div>
           )}
         </aside>
+        {desktopFilters && (
+          <button
+            type="button"
+            className="filter-collapse-toggle"
+            aria-label={
+              filtersCollapsed ? "Expand filters" : "Collapse filters"
+            }
+            aria-controls="post-filters"
+            aria-expanded={!filtersCollapsed}
+            onClick={() => setFiltersCollapsed((collapsed) => !collapsed)}
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {filtersCollapsed ? (
+                <>
+                  <path d="m6 7 5 5-5 5" />
+                  <path d="m12 7 5 5-5 5" />
+                </>
+              ) : (
+                <>
+                  <path d="m12 7-5 5 5 5" />
+                  <path d="m18 7-5 5 5 5" />
+                </>
+              )}
+            </svg>
+          </button>
+        )}
         <section className="discussion-feed" aria-label="Posts">
           {staff && (
-            <label className="post-view-picker">
-              Post view
-              <select
-                aria-label="Post view"
-                value={postView}
-                onChange={(event) => {
-                  setSelectedReviewId(undefined);
-                  setReviewDetail(undefined);
-                  setReviewDetailError("");
-                  setPostView(event.target.value as "posts" | "duplicates");
-                }}
-              >
-                <option value="posts">Posts</option>
-                <option value="duplicates">Duplicate posts</option>
-              </select>
-            </label>
+            <div
+              className="post-view-picker"
+              role="group"
+              aria-label="Post view"
+            >
+              <div className="post-view-segments">
+                {(
+                  [
+                    ["posts", "Active"],
+                    ["duplicates", "Duplicate"],
+                  ] as const
+                ).map(([view, label]) => (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-pressed={postView === view}
+                    onClick={() => {
+                      setSelectedReviewId(undefined);
+                      setReviewDetail(undefined);
+                      setReviewDetailError("");
+                      setPostView(view);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           <div className="discussion-toolbar">
             <div role="search" className="search-field">
@@ -1103,7 +1163,7 @@ function DiscussionContent({
                 }}
                 placeholder="Search posts"
               />
-              {draftQuery ? (
+              {draftQuery && (
                 <button
                   type="button"
                   className="search-clear"
@@ -1112,10 +1172,6 @@ function DiscussionContent({
                 >
                   <span aria-hidden="true">×</span>
                 </button>
-              ) : (
-                <kbd className="search-key" aria-hidden="true">
-                  /
-                </kbd>
               )}
             </div>
             <button
@@ -1424,7 +1480,7 @@ function DiscussionContent({
                     <div className="post-markdown">
                       <ReactMarkdown>{detail.bodyMarkdown}</ReactMarkdown>
                     </div>
-                    {detail.type === "question" && (
+                    {ANSWERS_ENABLED && detail.type === "question" && (
                       <AnswerSections
                         postId={detail.id}
                         role={role}

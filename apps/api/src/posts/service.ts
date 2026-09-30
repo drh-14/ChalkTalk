@@ -298,7 +298,8 @@ export class PostService {
     const binding = createHash("sha256")
       .update(JSON.stringify({ courseId, userId, filters }))
       .digest("hex");
-    let after: { value: number | string; id: string } | undefined;
+    let after:
+      { pinned: boolean; value: number | string; id: string } | undefined;
     if (cursor) {
       try {
         const parsed = JSON.parse(
@@ -306,6 +307,7 @@ export class PostService {
         );
         if (
           parsed.binding !== binding ||
+          typeof parsed.pinned !== "boolean" ||
           typeof parsed.id !== "string" ||
           !UUID_PATTERN.test(parsed.id) ||
           (options.sort === "relevance"
@@ -378,11 +380,15 @@ export class PostService {
           : `round(ts_rank_cd(p.search_vector,websearch_to_tsquery('english',${add(options.q)}))::numeric,6)`;
     const sortValue = options.sort === "relevance" ? "numeric" : "timestamptz";
     const ascending = options.sort === "oldest";
-    const cursorClause = after
-      ? `AND (rank_value,p.id)${ascending ? ">" : "<"}(${add(after.value)}::${sortValue},${add(after.id)}::uuid)`
-      : "";
+    let cursorClause = "";
+    if (after) {
+      const pinned = add(after.pinned);
+      const rank = add(after.value);
+      const id = add(after.id);
+      cursorClause = `AND (listed.pinned < ${pinned}::boolean OR (listed.pinned = ${pinned}::boolean AND (listed.rank_value,listed.id)${ascending ? ">" : "<"}(${rank}::${sortValue},${id}::uuid)))`;
+    }
     const direction = ascending ? "ASC" : "DESC";
-    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause.replaceAll("p.id", "listed.id")} ORDER BY rank_value ${direction},id ${direction} LIMIT ${add(limit + 1)}`;
+    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause} ORDER BY listed.pinned DESC,listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}`;
     const result = await this.pool.query<Row & { rank_value: number | Date }>(
       query,
       values,
@@ -406,6 +412,7 @@ export class PostService {
         ? Buffer.from(
             JSON.stringify({
               binding,
+              pinned: tail.pinned,
               value:
                 tail.rank_value instanceof Date
                   ? tail.rank_value.toISOString()

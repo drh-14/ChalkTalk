@@ -3411,7 +3411,7 @@ paths:
         - name: sort
           in: query
           required: false
-          description: Ordering. newest and oldest order by creation time, descending and ascending; recent_activity orders by the latest activity. Defaults to relevance when q is present and recent_activity otherwise.
+          description: Pinned posts appear before unpinned posts for every sort. Within each group, newest and oldest order by creation time, descending and ascending; recent_activity orders by the latest activity. Defaults to relevance when q is present and recent_activity otherwise.
           schema:
             type: string
             enum:

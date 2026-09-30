@@ -223,22 +223,19 @@ Post cards in the left-hand list, including staff duplicate review cards, SHALL 
 
 ### Requirement: Members can filter and sort the course feed
 
-The discussion route SHALL show a filter sidebar, a landmark named "Post filters", with single-choice filters exposed as pressed and unpressed buttons. All posts SHALL come first and be the default, with no filter parameter. Three filters that apply to every type SHALL be nested beneath All posts:
+The discussion route SHALL show a filter sidebar, a landmark named "Post filters", with a single-choice dropdown named "Show". All posts SHALL come first and be the default, with no filter parameter. The dropdown SHALL offer these author filters:
 
 - **My posts:** `authorId` set to the signed-in member; shown only when the signed-in member is known.
 - **Instructor posts:** `authorRole=instructor`.
 - **TA posts:** `authorRole=ta`.
 
-The remaining filters SHALL be generated from the frontend's list of known post types. Each known type SHALL follow, using that type's list filter, and a filter that applies only to one type SHALL be listed directly beneath that type as a nested filter. For the current types, the order SHALL be:
+The remaining choices SHALL be generated from the frontend's list of known post types. For the current types, the order SHALL be:
 
-- **All posts**, then **My posts**, **Instructor posts**, and **TA posts** nested beneath it.
-- **Questions** (`type=question`), then nested beneath it:
-  - **Answered** (`answered=true`).
-  - **Unanswered** (`answered=false`).
-  - **Pinned** (`type=question&pinned=true`).
-- **Notes** (`type=note`), then **Pinned** (`type=note&pinned=true`) nested beneath it.
+- **All posts**, **My posts** when signed in, **Instructor posts**, and **TA posts**.
+- **Questions** (`type=question`).
+- **Notes** (`type=note`).
 
-Filters that share a visible label SHALL have distinct accessible names, such as "Pinned questions" and "Pinned notes". A type SHALL be added to the list only once the API accepts it as a list filter. The sidebar SHALL also offer a Sort by control with these options:
+A type SHALL be added to the list only once the API accepts it as a list filter. The sidebar SHALL also offer a Sort by control with these options:
 
 - **Last updated:** `sort=recent_activity`; the default when no search is applied, and then the browser omits `sort` from the request.
 - **Newest:** `sort=newest`.
@@ -251,27 +248,27 @@ A sort chosen during one applied search SHALL apply only to that query; a new or
 
 On the course discussion and post routes, the active sidebar filter, tag, and chosen sort SHALL be stored in the URL as `filter`, `tag`, and `sort` query parameters, beside `q`. They SHALL be updated by replacing the current history entry rather than adding one, restored when the page loads or the member navigates Back or Forward, and preserved on post links. Unknown or invalid values SHALL be ignored.
 
-On screens at or below 850px, the filters SHALL appear as a wrapping row of buttons above the feed, with nested filters shown as ordinary buttons, and SHALL be hidden while a post is selected.
+On screens at or below 850px, the Show and Sort by dropdowns SHALL appear above the feed and SHALL be hidden while a post is selected.
 
 #### Scenario: A member sees filters for each post type
 
 - **WHEN** a signed-in member opens the discussion route
-- **THEN** the sidebar lists All posts, My posts, Instructor posts, TA posts, Questions, Answered, Unanswered, Pinned, Notes, and Pinned in that order, with All posts pressed
+- **THEN** Show offers All posts, My posts, Instructor posts, TA posts, Questions, and Notes in that order, with All posts selected
 
-#### Scenario: A member shows unanswered questions
+#### Scenario: A member shows questions
 
-- **WHEN** a member selects Unanswered
-- **THEN** the browser requests the course feed with `answered=false`, marks Unanswered as pressed and All posts as not pressed, and replaces the list with the returned questions
+- **WHEN** a member selects Questions
+- **THEN** the browser requests the course feed with `type=question`, selects Questions in Show, and replaces the list with the returned questions
 
 #### Scenario: A member shows posts by instructors or TAs
 
 - **WHEN** a member selects Instructor posts, then TA posts
 - **THEN** the browser requests the course feed with `authorRole=instructor`, then with `authorRole=ta`
 
-#### Scenario: A member shows pinned notes
+#### Scenario: A member shows notes
 
-- **WHEN** a member selects the Pinned filter beneath Notes
-- **THEN** the browser requests the course feed with `type=note` and `pinned=true`, and only that Pinned filter is pressed
+- **WHEN** a member selects Notes
+- **THEN** the browser requests the course feed with `type=note` and selects Notes in Show
 
 #### Scenario: A member sorts oldest first
 
@@ -290,7 +287,7 @@ On screens at or below 850px, the filters SHALL appear as a wrapping row of butt
 
 #### Scenario: Staff review duplicates
 
-- **WHEN** a TA or instructor switches the post view to Duplicate posts
+- **WHEN** a TA or instructor switches the post view to Duplicate
 - **THEN** the sidebar's filters and sort are disabled
 
 #### Scenario: A member filters by a tag
@@ -300,8 +297,8 @@ On screens at or below 850px, the filters SHALL appear as a wrapping row of butt
 
 #### Scenario: A member shares a filtered view
 
-- **WHEN** a member selects Unanswered and Newest, then opens a post
-- **THEN** the URL reads `?filter=question%3Aunanswered&sort=newest` without new history entries, the post link keeps those parameters, and Unanswered stays pressed
+- **WHEN** a member selects Questions and Newest, then opens a post
+- **THEN** the URL reads `?filter=question&sort=newest` without new history entries, the post link keeps those parameters, and Questions stays selected
 
 ### Requirement: Course resources has a placeholder page
 

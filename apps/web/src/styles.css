@@ -141,6 +141,7 @@ h2[tabindex="-1"]:focus {
 .app-bar.course .app-bar-inner {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  padding-left: clamp(0.5rem, 1.5vw, 1.25rem);
 }
 .app-bar.course .app-bar-start {
   min-width: 0;
@@ -155,17 +156,10 @@ h2[tabindex="-1"]:focus {
   gap: 0.6rem;
   min-width: 0;
 }
-.app-bar-course::before {
-  color: rgba(255, 253, 247, 0.45);
-  content: "›" / "";
-  flex: none;
-  font-size: 1.5rem;
-  line-height: 1;
-}
 .app-bar-course h1 {
   color: #fffdf7;
   font-family: Fraunces, Georgia, serif;
-  font-size: 1.35rem;
+  font-size: 1.25rem;
   letter-spacing: -0.03em;
   line-height: 1.1;
   margin: 0;
@@ -283,7 +277,6 @@ h2[tabindex="-1"]:focus {
 }
 .course-tabs a[aria-current] {
   background: rgba(255, 253, 247, 0.16);
-  box-shadow: inset 0 -2px 0 #f6bd60;
   color: #fffdf7;
 }
 .course-placeholder {
@@ -392,17 +385,55 @@ h2[tabindex="-1"]:focus {
   color: var(--ink);
 }
 .discussion-columns {
+  --filter-track-width: clamp(11.5rem, 13%, 13rem);
   display: grid;
   grid-template-columns:
-    clamp(11.5rem, 13%, 13rem) clamp(18rem, 26%, 24rem)
+    var(--filter-track-width) clamp(18rem, 26%, 24rem)
     minmax(0, 1fr);
+  position: relative;
+  transition: grid-template-columns 220ms ease;
+}
+.discussion-columns.filters-collapsed {
+  --filter-track-width: 0px;
 }
 .discussion-sidebar {
   background: var(--surface-sunken);
   border-right: 1px solid #dde3d9;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding: 1.25rem 0.9rem;
+}
+.discussion-columns.filters-collapsed .discussion-sidebar {
+  border-right: 0;
+  overflow: hidden;
+  padding-inline: 0;
+}
+.filter-collapse-toggle {
+  align-items: center;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--accent-ink);
+  cursor: pointer;
+  display: flex;
+  height: 2rem;
+  justify-content: center;
+  left: max(0px, calc(var(--filter-track-width) - 1rem));
+  padding: 0.25rem;
+  position: absolute;
+  top: 0.75rem;
+  transition: left 220ms ease;
+  width: 2rem;
+  z-index: 2;
+}
+.filter-collapse-toggle svg {
+  height: 1rem;
+  width: 1rem;
+}
+.filter-collapse-toggle:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }
 .discussion-sidebar fieldset {
   border: 0;
@@ -413,50 +444,17 @@ h2[tabindex="-1"]:focus {
 .discussion-sidebar fieldset:disabled {
   opacity: 0.5;
 }
-.discussion-sidebar legend {
-  color: #bb6334;
-  font-family: "DM Mono", monospace;
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  margin-bottom: 0.6rem;
-  padding: 0 0.7rem;
-  text-transform: uppercase;
-}
-.sidebar-filters {
-  display: grid;
-  gap: 0.2rem;
-}
-.sidebar-filters button {
-  background: none;
-  border: 0;
-  border-radius: 0.5rem;
-  color: #3b4a43;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-  padding: 0.55rem 0.7rem;
-  text-align: left;
-}
-.sidebar-filters button:hover:not(:disabled) {
-  background: #e7e4d8;
-}
-.sidebar-filters button.nested {
-  font-size: 0.92rem;
-  font-weight: 500;
-  padding-left: 1.6rem;
-}
-.sidebar-filters button[aria-pressed="true"] {
-  background: var(--surface-raised);
-  box-shadow: inset 3px 0 0 var(--accent);
-  color: var(--accent);
-}
+.sidebar-show,
 .sidebar-sort {
   display: grid;
   font-weight: 600;
   gap: 0.35rem;
-  margin-top: 1.75rem;
   padding: 0 0.2rem;
 }
+.sidebar-sort {
+  margin-top: 1.75rem;
+}
+.sidebar-show select,
 .sidebar-sort select {
   background: #fff;
   border: 1px solid #c8d2c7;
@@ -478,6 +476,14 @@ h2[tabindex="-1"]:focus {
 .discussion-feed > .discussion-toolbar,
 .discussion-feed > [role="alert"] {
   margin-inline: 1.25rem;
+}
+.discussion-feed > .post-view-picker,
+.discussion-feed > .discussion-toolbar {
+  transition: margin-left 220ms ease;
+}
+.discussion-columns.filters-collapsed .discussion-feed > .post-view-picker,
+.discussion-columns.filters-collapsed .discussion-feed > .discussion-toolbar {
+  margin-left: 2.5rem;
 }
 .discussion-detail {
   background: var(--surface-raised);
@@ -515,12 +521,12 @@ h2[tabindex="-1"]:focus {
   margin-bottom: 1rem;
 }
 .post-view-picker {
-  display: grid;
-  gap: 0.35rem;
-  margin-bottom: 0.9rem;
-  font-weight: 600;
+  margin: 0.5rem 0 1.4rem;
 }
-.post-view-picker select,
+.post-view-picker + .discussion-toolbar {
+  margin-bottom: 1.5rem;
+  row-gap: 1.4rem;
+}
 .post-merge-control input {
   width: 100%;
   border: 1px solid #c8d2c7;
@@ -528,6 +534,38 @@ h2[tabindex="-1"]:focus {
   padding: 0.65rem;
   background: #fff;
   font: inherit;
+}
+.post-view-segments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.post-view-segments button {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.675rem;
+}
+.post-view-segments button:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+.post-view-segments button:last-child {
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.post-view-segments button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.post-view-segments button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  position: relative;
+  z-index: 1;
 }
 .search-field {
   display: flex;
@@ -580,18 +618,6 @@ h2[tabindex="-1"]:focus {
   outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
-.search-key {
-  border: 1px solid var(--line-strong);
-  border-radius: 0.3rem;
-  color: var(--ink-subtle);
-  font-family: ui-monospace, monospace;
-  font-size: 0.72rem;
-  line-height: 1;
-  padding: 0.2rem 0.4rem;
-}
-.search-field:focus-within .search-key {
-  visibility: hidden;
-}
 .feed-empty,
 .ask-footer {
   display: grid;
@@ -628,9 +654,16 @@ h2[tabindex="-1"]:focus {
 }
 .post-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 .post-list > li {
   border-bottom: 1px solid var(--line);
+}
+.post-list > li:has(> a.post-card) {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 9.5rem;
 }
 .post-list > li:hover,
 .post-list > li:focus-within {
@@ -642,11 +675,27 @@ h2[tabindex="-1"]:focus {
 }
 .post-list > li > .tag-list {
   margin-top: -0.35rem;
+  overflow: hidden;
   padding: 0 1.25rem 0.9rem;
+  white-space: nowrap;
+  flex-wrap: nowrap;
+}
+.post-list > li > .tag-list li {
+  flex: none;
+  max-width: 100%;
+  min-width: 0;
+}
+.post-list > li > .tag-list .tag-chip {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .post-card {
   display: grid;
   gap: 0.45rem;
+  grid-template-columns: minmax(0, 1fr);
   padding: 1rem 1.25rem;
   position: relative;
   text-decoration: none;
@@ -676,6 +725,9 @@ h2[tabindex="-1"]:focus {
 .post-card-title {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .post-type-badge {
   align-items: center;
@@ -704,7 +756,7 @@ h2[tabindex="-1"]:focus {
 .post-statuses {
   display: flex;
   flex: none;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.3rem;
   justify-content: flex-end;
   max-width: 45%;
@@ -736,13 +788,11 @@ h2[tabindex="-1"]:focus {
   color: #4d5a53;
 }
 .post-card-preview {
-  -webkit-box-orient: vertical;
   color: #5b6862;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
   line-height: 1.45;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .post-card-foot {
   align-items: center;
@@ -750,9 +800,16 @@ h2[tabindex="-1"]:focus {
   gap: 0.75rem;
   justify-content: space-between;
 }
+.post-card-foot small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .post-card-extras {
   color: #5b6862;
   font-size: 0.82rem;
+  white-space: nowrap;
 }
 .post-card small,
 .post-author {
@@ -817,11 +874,12 @@ h2[tabindex="-1"]:focus {
   padding-top: var(--space-4);
 }
 .staff-actions > .form-message,
-.staff-actions > .post-merge-control {
+.staff-actions > .post-merge-control > div {
   flex-basis: 100%;
 }
 .staff-actions > .post-merge-control {
   border-top: 0;
+  display: contents;
   margin-top: 0;
   padding-top: 0;
 }
@@ -833,10 +891,21 @@ h2[tabindex="-1"]:focus {
   border: 0;
   padding: 0;
   background: none;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font: inherit;
   color: inherit;
   cursor: pointer;
+}
+.post-card > span:not([class]) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .post-card-title-button::after {
   content: "";
@@ -1064,10 +1133,20 @@ h2[tabindex="-1"]:focus {
   color: #66756d;
   font-size: 0.82rem;
 }
+.related-questions a strong,
+.related-questions a span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .narrow-back {
   display: none;
 }
 @media (max-width: 850px) {
+  .filter-collapse-toggle {
+    display: none;
+  }
   .discussion-header {
     display: block;
   }
@@ -1088,38 +1167,20 @@ h2[tabindex="-1"]:focus {
     overflow: visible;
     padding: 0.9rem 1rem;
   }
-  .discussion-sidebar legend {
-    clip: rect(0, 0, 0, 0);
-    height: 1px;
-    overflow: hidden;
-    position: absolute;
-    width: 1px;
+  .discussion-columns.filters-collapsed .discussion-sidebar {
+    overflow: visible;
+    padding: 0.9rem 1rem;
   }
-  .sidebar-filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
+  .discussion-columns.filters-collapsed .discussion-feed > .post-view-picker,
+  .discussion-columns.filters-collapsed .discussion-feed > .discussion-toolbar {
+    margin-left: 1.25rem;
   }
-  .sidebar-filters button {
-    border: 1px solid #d9ddd3;
-    border-radius: 999px;
-    font-size: 0.9rem;
-    padding: 0.35rem 0.8rem;
-  }
-  .sidebar-filters button.nested {
-    font-size: 0.9rem;
-    font-weight: 600;
-    padding-left: 0.8rem;
-  }
-  .sidebar-filters button[aria-pressed="true"] {
-    background: var(--accent);
-    border-color: var(--accent);
-    box-shadow: none;
-    color: #fffdf7;
-  }
+  .sidebar-show,
   .sidebar-sort {
     align-items: center;
     grid-template-columns: auto minmax(0, 1fr);
+  }
+  .sidebar-sort {
     margin-top: 0.75rem;
   }
   .discussion-columns:not(.has-selection) .discussion-detail {

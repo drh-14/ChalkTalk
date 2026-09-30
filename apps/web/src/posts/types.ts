@@ -9,20 +9,11 @@ export type PostStatus = {
 export type PostTypeConfig = {
   label: string;
   plural: string;
-  icon: string;
   /** CSS modifier for the type badge. */
   tone: string;
   /** Course feed filter that lists only this type. */
   options: PostListOptions;
   statuses?: (post: Post) => PostStatus[];
-  /** Filters that only make sense for this type, listed under it in the sidebar. */
-  filters?: {
-    key: string;
-    label: string;
-    /** Spoken name when the visible label repeats under another type. */
-    ariaLabel?: string;
-    options: PostListOptions;
-  }[];
   /** Short type-specific summary for the card footer, such as a vote count. */
   extras?: (post: Post) => string | undefined;
 };
@@ -36,7 +27,6 @@ export const POST_TYPES: Record<string, PostTypeConfig> = {
   question: {
     label: "Question",
     plural: "Questions",
-    icon: "?",
     tone: "question",
     options: { type: "question" },
     statuses: (post) =>
@@ -47,37 +37,17 @@ export const POST_TYPES: Record<string, PostTypeConfig> = {
               ? { label: "Answered", tone: "positive" }
               : { label: "Unanswered", tone: "attention" },
           ],
-    filters: [
-      { key: "answered", label: "Answered", options: { answered: true } },
-      { key: "unanswered", label: "Unanswered", options: { answered: false } },
-      {
-        key: "pinned",
-        label: "Pinned",
-        ariaLabel: "Pinned questions",
-        options: { type: "question", pinned: true },
-      },
-    ],
   },
   note: {
     label: "Note",
     plural: "Notes",
-    icon: "#",
     tone: "note",
     options: { type: "note" },
-    filters: [
-      {
-        key: "pinned",
-        label: "Pinned",
-        ariaLabel: "Pinned notes",
-        options: { type: "note", pinned: true },
-      },
-    ],
   },
 };
 export const FALLBACK_POST_TYPE: PostTypeConfig = {
   label: "Post",
   plural: "Posts",
-  icon: "•",
   tone: "other",
   options: {},
 };
@@ -101,7 +71,7 @@ export type FeedFilter = {
   options: PostListOptions;
   nested: boolean;
 };
-/** Sidebar filters: everything and its author filters, then each post type with its own filters. */
+/** Sidebar filters: all posts, author filters, then each supported post type. */
 export const feedFilters = (userId?: string): FeedFilter[] => [
   { key: "all", label: "All posts", options: {}, nested: false },
   ...(userId
@@ -126,14 +96,10 @@ export const feedFilters = (userId?: string): FeedFilter[] => [
     options: { authorRole: "ta" },
     nested: true,
   },
-  ...Object.entries(POST_TYPES).flatMap(([key, type]) => [
-    { key, label: type.plural, options: type.options, nested: false },
-    ...(type.filters ?? []).map((filter) => ({
-      key: `${key}:${filter.key}`,
-      label: filter.label,
-      ariaLabel: filter.ariaLabel,
-      options: filter.options,
-      nested: true,
-    })),
-  ]),
+  ...Object.entries(POST_TYPES).map(([key, type]) => ({
+    key,
+    label: type.plural,
+    options: type.options,
+    nested: false,
+  })),
 ];

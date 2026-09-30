@@ -634,6 +634,126 @@ integration("text posts HTTP contract", () => {
       expect(response.body.error.code).toBe("invalid_request");
     }
   });
+  it("rejects missing and non-boolean pinned cursor values", async () => {
+    for (const title of ["Pinned cursor one", "Pinned cursor two"]) {
+      await unsafe(request(app()).post(`/api/v1/courses/${ids.course}/posts`))
+        .send({
+          type: "note",
+          title,
+          bodyMarkdown: "Cursor body",
+          tags: ["pinned-cursor"],
+        })
+        .expect(201);
+    }
+    const path = `/api/v1/courses/${ids.course}/posts?tag=pinned-cursor&sort=newest&limit=1`;
+    const first = await request(app()).get(path).set("Cookie", cookie);
+    expect(first.status).toBe(200);
+    const cursor = JSON.parse(
+      Buffer.from(first.body.page.nextCursor, "base64url").toString("utf8"),
+    );
+    expect(cursor.pinned).toBeTypeOf("boolean");
+    for (const badPinned of [undefined, null, "true", 1]) {
+      const tampered = { ...cursor, pinned: badPinned };
+      const encoded = Buffer.from(JSON.stringify(tampered)).toString(
+        "base64url",
+      );
+      const response = await request(app())
+        .get(`${path}&cursor=${encodeURIComponent(encoded)}`)
+        .set("Cookie", cookie);
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("invalid_request");
+    }
+  });
+  it("reorders All posts after staff pin and unpin across every sort", async () => {
+    const courseId = uuidv7();
+    await pool.query(
+      "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,'Pin ordering','PINORDER')",
+      [courseId, ids.organization, ids.author],
+    );
+    await pool.query(
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'ta')",
+      [courseId, ids.author, ids.staff],
+    );
+    const older = await unsafe(
+      request(app()).post(`/api/v1/courses/${courseId}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Toggle older",
+        bodyMarkdown: "toggle",
+      })
+      .expect(201);
+    const newer = await unsafe(
+      request(app()).post(`/api/v1/courses/${courseId}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Toggle newer",
+        bodyMarkdown: "toggle toggle toggle",
+      })
+      .expect(201);
+    for (const [id, date] of [
+      [older.body.data.id, "2026-01-01T00:00:00.000Z"],
+      [newer.body.data.id, "2026-01-02T00:00:00.000Z"],
+    ]) {
+      await pool.query(
+        "UPDATE posts SET created_at=$2,last_activity_at=$2 WHERE id=$1",
+        [id, date],
+      );
+    }
+    const sorts = ["oldest", "newest", "recent_activity", "relevance"] as const;
+    const listToggle = async (
+      sort: (typeof sorts)[number],
+      cursor?: string,
+    ) => {
+      const params = new URLSearchParams({ sort, limit: "1" });
+      if (sort === "relevance") params.set("q", "toggle");
+      if (cursor) params.set("cursor", cursor);
+      return request(app())
+        .get(`/api/v1/courses/${courseId}/posts?${params}`)
+        .set("Cookie", cookie);
+    };
+    const titleOrder = async (sort: (typeof sorts)[number]) => {
+      const first = await listToggle(sort);
+      expect(first.status).toBe(200);
+      const second = await listToggle(sort, first.body.page.nextCursor);
+      expect(second.status).toBe(200);
+      expect(second.body.page.nextCursor).toBeNull();
+      const posts = [...first.body.data, ...second.body.data];
+      expect(new Set(posts.map((post: { id: string }) => post.id)).size).toBe(
+        2,
+      );
+      return posts.map((post: { title: string }) => post.title);
+    };
+    for (const sort of sorts) {
+      expect(await titleOrder(sort)).toEqual(
+        sort === "oldest"
+          ? ["Toggle older", "Toggle newer"]
+          : ["Toggle newer", "Toggle older"],
+      );
+    }
+    const pinned = await unsafe(
+      request(app(ids.staff)).patch(`/api/v1/posts/${older.body.data.id}`),
+    )
+      .set("If-Match", older.headers.etag)
+      .send({ pinned: true })
+      .expect(200);
+    for (const sort of sorts)
+      expect(await titleOrder(sort)).toEqual(["Toggle older", "Toggle newer"]);
+    await unsafe(
+      request(app(ids.staff)).patch(`/api/v1/posts/${older.body.data.id}`),
+    )
+      .set("If-Match", pinned.headers.etag)
+      .send({ pinned: false })
+      .expect(200);
+    for (const sort of sorts) {
+      expect(await titleOrder(sort)).toEqual(
+        sort === "oldest" || sort === "recent_activity"
+          ? ["Toggle older", "Toggle newer"]
+          : ["Toggle newer", "Toggle older"],
+      );
+    }
+  });
   it("keeps idempotent concurrent retries to one post and allows an expired key to be reused", async () => {
     const path = `/api/v1/courses/${ids.course}/posts`;
     const body = { type: "note", title: "Concurrent", bodyMarkdown: "Body" };
@@ -1104,10 +1224,10 @@ integration("text posts HTTP contract", () => {
       expect(titles(all)).toEqual([
         "Instructor note",
         "TA question",
+        "Pinned student note",
         "Anonymous instructor",
         "Student question",
         "Leaver question",
-        "Pinned student note",
       ]);
       const seen: string[] = [];
       let cursor: string | null = null;
@@ -1134,6 +1254,96 @@ integration("text posts HTTP contract", () => {
         )
         .set("Cookie", cookie);
       expect(replayed.status).toBe(400);
+    });
+
+    it("orders pinned posts first for every sort and pages across the pin boundary", async () => {
+      const orders = [
+        [
+          "oldest",
+          [
+            "Instructor note",
+            "TA question",
+            "Pinned student note",
+            "Anonymous instructor",
+            "Student question",
+            "Leaver question",
+          ],
+        ],
+        [
+          "newest",
+          [
+            "Pinned student note",
+            "TA question",
+            "Instructor note",
+            "Leaver question",
+            "Student question",
+            "Anonymous instructor",
+          ],
+        ],
+        [
+          "recent_activity",
+          [
+            "Pinned student note",
+            "TA question",
+            "Instructor note",
+            "Leaver question",
+            "Student question",
+            "Anonymous instructor",
+          ],
+        ],
+      ] as const;
+      for (const [sort, expected] of orders) {
+        const full = await list(ids.author, `sort=${sort}`);
+        expect(full.status).toBe(200);
+        expect(titles(full)).toEqual(expected);
+        const seen: string[] = [];
+        let cursor: string | null = null;
+        do {
+          const pageResponse = await request(app(ids.author))
+            .get(
+              `/api/v1/courses/${listCourse}/posts?sort=${sort}&limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+            )
+            .set("Cookie", cookie);
+          expect(pageResponse.status).toBe(200);
+          seen.push(...titles(pageResponse));
+          cursor = pageResponse.body.page.nextCursor;
+        } while (cursor);
+        expect(seen).toEqual(expected);
+        expect(new Set(seen).size).toBe(expected.length);
+      }
+      const relevant = await list(ids.author, "q=filters&sort=relevance");
+      expect(relevant.status).toBe(200);
+      const pinTitles = [
+        "Instructor note",
+        "TA question",
+        "Pinned student note",
+      ];
+      const otherTitles = [
+        "Anonymous instructor",
+        "Student question",
+        "Leaver question",
+      ];
+      const byId = (a: string, b: string) =>
+        seeded[b]!.localeCompare(seeded[a]!);
+      const expectedRelevance = [
+        ...pinTitles.sort(byId),
+        ...otherTitles.sort(byId),
+      ];
+      expect(titles(relevant)).toEqual(expectedRelevance);
+      const relevantSeen: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const pageResponse = await request(app(ids.author))
+          .get(
+            `/api/v1/courses/${listCourse}/posts?q=filters&sort=relevance&limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+          )
+          .set("Cookie", cookie);
+        expect(pageResponse.status).toBe(200);
+        relevantSeen.push(...titles(pageResponse));
+        cursor = pageResponse.body.page.nextCursor;
+      } while (cursor);
+      expect(relevantSeen).toEqual(expectedRelevance);
+      expect(new Set(relevantSeen).size).toBe(expectedRelevance.length);
     });
 
     it("filters by pinned state alone and with a type", async () => {
