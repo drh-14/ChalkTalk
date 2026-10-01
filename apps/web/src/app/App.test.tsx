@@ -475,10 +475,67 @@ describe("ChalkTalk auth entry", () => {
       name: /Linear Algebra II/,
     });
     expect(current.getAttribute("aria-current")).toBe("page");
+    const panel = current.closest("#course-switcher-panel") as HTMLElement;
+    expect(
+      within(panel).queryByRole("link", { name: "All courses" }),
+    ).toBeNull();
+    expect(screen.getAllByRole("link", { name: "All courses" })).toHaveLength(
+      1,
+    );
     await user.click(screen.getByRole("link", { name: /Calculus II/ }));
     expect(window.location.pathname).toBe("/courses/course_456");
     await screen.findByRole("heading", { name: "Calculus II" });
     expect(screen.queryByRole("link", { name: /Calculus II/ })).toBeNull();
+  });
+
+  it("moves the course tabs to their own row only when one row no longer fits", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal("fetch", courseRoutesFetch());
+    const resized: (() => void)[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resized.push(callback);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const rowWidth = 1240;
+    let barWidth = 1500;
+    const scrollWidth = vi
+      .spyOn(Element.prototype, "scrollWidth", "get")
+      .mockImplementation(function (this: Element) {
+        return this.classList.contains("measuring") ? rowWidth : 0;
+      });
+    const clientWidth = vi
+      .spyOn(Element.prototype, "clientWidth", "get")
+      .mockImplementation(function (this: Element) {
+        return this.classList.contains("app-bar") ? barWidth : 0;
+      });
+    const resize = (width: number) => {
+      barWidth = width;
+      act(() => resized.forEach((callback) => callback()));
+    };
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: course.name });
+      const bar = document.querySelector("header.app-bar")!;
+      expect(bar.classList.contains("tabs-stacked")).toBe(false);
+      resize(1200);
+      expect(bar.classList.contains("tabs-stacked")).toBe(true);
+      expect(
+        document
+          .querySelector(".app-bar-inner")!
+          .classList.contains("measuring"),
+      ).toBe(false);
+      resize(1240);
+      expect(bar.classList.contains("tabs-stacked")).toBe(false);
+    } finally {
+      scrollWidth.mockRestore();
+      clientWidth.mockRestore();
+    }
   });
 
   it("loads later course pages in the switcher and retries a failed page", async () => {
@@ -724,15 +781,12 @@ describe("ChalkTalk auth entry", () => {
     render(<App />);
     await screen.findByText("Kept question");
     const length = window.history.length;
-    const show = screen.getByRole("combobox", {
-      name: "Show",
-    }) as HTMLSelectElement;
-    await user.selectOptions(show, "question");
+    const questions = screen.getByRole("radio", {
+      name: "Questions",
+    }) as HTMLInputElement;
+    await user.click(questions);
     expect(window.location.search).toBe("?filter=question");
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Sort by" }),
-      "Newest",
-    );
+    await user.click(screen.getByRole("radio", { name: "Newest" }));
     expect(window.location.search).toBe("?filter=question&sort=newest");
     expect(window.history.length).toBe(length);
     await user.click(
@@ -740,7 +794,7 @@ describe("ChalkTalk auth entry", () => {
     );
     expect(window.location.pathname).toBe(`/courses/${course.id}/posts/p1`);
     expect(window.location.search).toBe("?filter=question&sort=newest");
-    expect(show.value).toBe("question");
+    expect(questions.checked).toBe(true);
   });
 
   it("keeps Notes Show selection with search, tag, and sort through post navigation", async () => {
@@ -777,10 +831,10 @@ describe("ChalkTalk auth entry", () => {
     await screen.findByRole("link", {
       name: /Kept pinned note/,
     });
-    const show = screen.getByRole("combobox", {
-      name: "Show",
-    }) as HTMLSelectElement;
-    await user.selectOptions(show, "note");
+    const notes = screen.getByRole("radio", {
+      name: "Notes",
+    }) as HTMLInputElement;
+    await user.click(notes);
     const expected = {
       q: "cutoff",
       filter: "note",
@@ -797,7 +851,7 @@ describe("ChalkTalk auth entry", () => {
     expect(
       Object.fromEntries(new URLSearchParams(window.location.search)),
     ).toEqual(expected);
-    expect(show.value).toBe("note");
+    expect(notes.checked).toBe(true);
   });
 
   it("updates the active course view on browser Back and Forward", async () => {

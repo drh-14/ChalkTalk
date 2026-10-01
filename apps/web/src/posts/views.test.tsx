@@ -96,6 +96,27 @@ function mockDesktopViewport(initial = true) {
   };
 }
 
+type FilterSection = "Show" | "Sort by";
+/** The single-choice group inside an open sidebar section. */
+function filterSection(name: FilterSection) {
+  return screen.getByRole("group", { name });
+}
+function filterChoices(name: FilterSection) {
+  return within(filterSection(name)).getAllByRole(
+    "radio",
+  ) as HTMLInputElement[];
+}
+function filterChoice(name: FilterSection, value: string) {
+  const choice = filterChoices(name).find((input) => input.value === value);
+  if (!choice) throw new Error(`${name} has no ${value} choice`);
+  return choice;
+}
+function chosenFilter(name: FilterSection) {
+  return filterChoices(name).find((input) => input.checked)?.value;
+}
+const choiceLabels = (name: FilterSection) =>
+  filterChoices(name).map((input) => input.closest("label")?.textContent);
+
 it("collapses desktop filters with an accessible boundary control without fetching", async () => {
   mockDesktopViewport();
   const fetchMock = vi.fn(async () => page([post("p1", "First post")]));
@@ -144,10 +165,8 @@ it("keeps the selected filter and post detail while desktop filters collapse", a
       onNavigate={vi.fn()}
     />,
   );
-  const show = screen.getByRole("combobox", {
-    name: "Show",
-  }) as HTMLSelectElement;
-  await user.selectOptions(show, "note");
+  const noteChoice = filterChoice("Show", "note");
+  await user.click(noteChoice);
   await waitFor(() =>
     expect(feedRequests(fetchMock).at(-1)?.searchParams.get("type")).toBe(
       "note",
@@ -156,11 +175,11 @@ it("keeps the selected filter and post detail while desktop filters collapse", a
   await screen.findByRole("heading", { name: "Kept note" });
   const requests = fetchMock.mock.calls.length;
   await user.click(screen.getByRole("button", { name: "Collapse filters" }));
-  expect(show.value).toBe("note");
+  expect(noteChoice.checked).toBe(true);
   expect(screen.getByRole("heading", { name: "Kept note" })).toBeTruthy();
   expect(fetchMock.mock.calls.length).toBe(requests);
   await user.click(screen.getByRole("button", { name: "Expand filters" }));
-  expect(show.value).toBe("note");
+  expect(noteChoice.checked).toBe(true);
 });
 
 it("starts desktop filters expanded on each discussion mount", async () => {
@@ -212,7 +231,7 @@ it("shows mobile filters after resize and restores desktop collapse state", asyn
   expect(
     document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
   ).toBe(false);
-  expect(screen.getByRole("combobox", { name: "Show" })).toBeTruthy();
+  expect(filterSection("Show")).toBeTruthy();
   resize(true);
   expect(screen.getByRole("button", { name: "Expand filters" })).toBeTruthy();
   expect(
@@ -2968,9 +2987,6 @@ it("maps every Show option to its exact feed request parameters", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  const show = screen.getByRole("combobox", {
-    name: "Show",
-  }) as HTMLSelectElement;
   const cases = [
     ["all", {}],
     ["mine", { authorId: "user-me" }],
@@ -2981,13 +2997,14 @@ it("maps every Show option to its exact feed request parameters", async () => {
     ["all", {}],
   ] as const;
   for (const [key, expected] of cases) {
-    if (show.value !== key) await user.selectOptions(show, key);
+    if (chosenFilter("Show") !== key)
+      await user.click(filterChoice("Show", key));
     await waitFor(() =>
       expect(
         Object.fromEntries(feedRequests(fetchMock).at(-1)?.searchParams ?? []),
       ).toEqual(expected),
     );
-    expect(show.value).toBe(key);
+    expect(chosenFilter("Show")).toBe(key);
   }
 });
 
@@ -3016,10 +3033,8 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
   const sidebar = await screen.findByRole("complementary", {
     name: "Post filters",
   });
-  const filter = within(sidebar).getByRole("combobox", {
-    name: "Show",
-  }) as HTMLSelectElement;
-  expect([...filter.options].map((option) => option.textContent)).toEqual([
+  expect(within(sidebar).getByRole("group", { name: "Show" })).toBeTruthy();
+  expect(choiceLabels("Show")).toEqual([
     "All posts",
     "My posts",
     "Instructor posts",
@@ -3027,32 +3042,32 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
     "Questions",
     "Notes",
   ]);
-  expect(filter.value).toBe("all");
+  expect(chosenFilter("Show")).toBe("all");
   await screen.findByText("Feed");
   expect(feedRequests(fetchMock).at(-1)!.search).toBe("");
 
-  await user.selectOptions(filter, "question");
+  await user.click(filterChoice("Show", "question"));
   await screen.findByText("Feed type=question");
-  expect(filter.value).toBe("question");
-  await user.selectOptions(filter, "note");
+  expect(chosenFilter("Show")).toBe("question");
+  await user.click(filterChoice("Show", "note"));
   await screen.findByText("Feed type=note");
   expect(screen.queryByText("Feed type=question")).toBeNull();
-  await user.selectOptions(filter, "mine");
+  await user.click(filterChoice("Show", "mine"));
   await screen.findByText("Feed authorId=user-me");
-  await user.selectOptions(filter, "instructors");
+  await user.click(filterChoice("Show", "instructors"));
   await screen.findByText("Feed authorRole=instructor");
-  await user.selectOptions(filter, "tas");
+  await user.click(filterChoice("Show", "tas"));
   await screen.findByText("Feed authorRole=ta");
-  await user.selectOptions(filter, "question");
+  await user.click(filterChoice("Show", "question"));
   await screen.findByText("Feed type=question");
   await user.click(screen.getByRole("button", { name: "Load more posts" }));
   await screen.findByText("Later question");
   const more = feedRequests(fetchMock).at(-1)!.searchParams;
   expect(more.get("cursor")).toBe("next");
   expect(more.get("type")).toBe("question");
-  await user.selectOptions(filter, "all");
+  await user.click(filterChoice("Show", "all"));
   await screen.findByText("Feed");
-  expect(filter.value).toBe("all");
+  expect(chosenFilter("Show")).toBe("all");
 });
 
 it("retains a type filter on pagination and resets the cursor when Show changes", async () => {
@@ -3067,11 +3082,8 @@ it("retains a type filter on pagination and resets the cursor when Show changes"
   render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  const show = screen.getByRole("combobox", {
-    name: "Show",
-  }) as HTMLSelectElement;
   await screen.findByText("First question");
-  await user.selectOptions(show, "question");
+  await user.click(filterChoice("Show", "question"));
   await waitFor(() =>
     expect(
       Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
@@ -3087,7 +3099,7 @@ it("retains a type filter on pagination and resets the cursor when Show changes"
     type: "question",
     cursor: "next",
   });
-  await user.selectOptions(show, "note");
+  await user.click(filterChoice("Show", "note"));
   await waitFor(() =>
     expect(
       Object.fromEntries(feedRequests(fetchMock).at(-1)!.searchParams),
@@ -3108,35 +3120,27 @@ it("sorts the feed and offers best match only while searching", async () => {
   const view = render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  expect(
-    [
-      ...(screen.getByRole("combobox", { name: "Show" }) as HTMLSelectElement)
-        .options,
-    ].some((option) => option.textContent === "My posts"),
-  ).toBe(false);
-  const sort = (await screen.findByRole("combobox", {
-    name: "Sort by",
-  })) as HTMLSelectElement;
-  expect(sort.value).toBe("recent_activity");
-  expect([...sort.options].map((option) => option.value)).toEqual([
+  expect(choiceLabels("Show")).not.toContain("My posts");
+  expect(chosenFilter("Sort by")).toBe("recent_activity");
+  expect(filterChoices("Sort by").map((input) => input.value)).toEqual([
     "recent_activity",
     "newest",
     "oldest",
   ]);
-  await user.selectOptions(sort, "oldest");
+  await user.click(filterChoice("Sort by", "oldest"));
   await waitFor(() =>
     expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
       "oldest",
     ),
   );
-  await user.selectOptions(sort, "newest");
+  await user.click(filterChoice("Sort by", "newest"));
   await waitFor(() =>
     expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
       "newest",
     ),
   );
 
-  await user.selectOptions(sort, "recent_activity");
+  await user.click(filterChoice("Sort by", "recent_activity"));
   view.rerender(
     <Discussion
       courseId={course.id}
@@ -3150,8 +3154,8 @@ it("sorts the feed and offers best match only while searching", async () => {
       "cutoff",
     ),
   );
-  await waitFor(() => expect(sort.value).toBe("relevance"));
-  expect([...sort.options].map((option) => option.textContent)).toEqual([
+  await waitFor(() => expect(chosenFilter("Sort by")).toBe("relevance"));
+  expect(choiceLabels("Sort by")).toEqual([
     "Best match",
     "Last updated",
     "Newest",
@@ -3160,7 +3164,7 @@ it("sorts the feed and offers best match only while searching", async () => {
   expect(feedRequests(fetchMock).at(-1)!.searchParams.get("sort")).toBe(
     "relevance",
   );
-  await user.selectOptions(sort, "newest");
+  await user.click(filterChoice("Sort by", "newest"));
   await waitFor(() => {
     const params = feedRequests(fetchMock).at(-1)!.searchParams;
     expect(params.get("q")).toBe("cutoff");
@@ -3197,8 +3201,7 @@ it("keeps the newest selected sort and cursor when an older sort request finishe
   );
   const listings = screen.getByRole("region", { name: "Post listings" });
   await within(listings).findByText("Baseline");
-  const sort = screen.getByRole("combobox", { name: "Sort by" });
-  await user.selectOptions(sort, "newest");
+  await user.click(filterChoice("Sort by", "newest"));
   await waitFor(() =>
     expect(
       feedRequests(fetchMock).some(
@@ -3206,7 +3209,7 @@ it("keeps the newest selected sort and cursor when an older sort request finishe
       ),
     ).toBe(true),
   );
-  await user.selectOptions(sort, "oldest");
+  await user.click(filterChoice("Sort by", "oldest"));
   await within(listings).findByText("Second oldest");
   await act(async () => {
     releaseNewest(page([post("late", "Late newest")], "newest-next"));
@@ -3228,6 +3231,100 @@ it("keeps the newest selected sort and cursor when an older sort request finishe
   ).toEqual({ sort: "oldest", cursor: "oldest-next" });
 });
 
+it("keeps a section open while choosing and summarizes it when closed without fetching", async () => {
+  mockDesktopViewport();
+  const fetchMock = vi.fn(async () => page([]));
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts yet.");
+  const show = screen.getByRole("button", { name: "Show" });
+  expect(show.getAttribute("aria-expanded")).toBe("true");
+  await user.click(filterChoice("Show", "question"));
+  await waitFor(() =>
+    expect(feedRequests(fetchMock).at(-1)?.searchParams.get("type")).toBe(
+      "question",
+    ),
+  );
+  expect(show.getAttribute("aria-expanded")).toBe("true");
+  expect(chosenFilter("Show")).toBe("question");
+  const requests = fetchMock.mock.calls.length;
+  await user.click(show);
+  expect(show.getAttribute("aria-expanded")).toBe("false");
+  expect(show.textContent).toBe("Show · Questions");
+  expect(screen.queryByRole("group", { name: "Show" })).toBeNull();
+  expect(
+    screen
+      .getByRole("button", { name: "Sort by" })
+      .getAttribute("aria-expanded"),
+  ).toBe("true");
+  await user.click(show);
+  expect(show.getAttribute("aria-expanded")).toBe("true");
+  expect(chosenFilter("Show")).toBe("question");
+  expect(fetchMock.mock.calls.length).toBe(requests);
+});
+
+it("starts sections open on wide screens or without media queries and keeps that state on resize", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const props = {
+    courseId: course.id,
+    course,
+    csrfToken: "csrf",
+    onNavigate: vi.fn(),
+  };
+  const view = render(<Discussion {...props} />);
+  await screen.findByText("No posts yet.");
+  expect(filterSection("Show")).toBeTruthy();
+  expect(filterSection("Sort by")).toBeTruthy();
+  view.unmount();
+  const resize = mockDesktopViewport();
+  render(<Discussion {...props} />);
+  await screen.findByText("No posts yet.");
+  resize(false);
+  expect(
+    screen.getByRole("button", { name: "Show" }).getAttribute("aria-expanded"),
+  ).toBe("true");
+  expect(filterSection("Sort by")).toBeTruthy();
+});
+
+it("starts sections closed on phones with the current choices in their headers", async () => {
+  const resize = mockDesktopViewport(false);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("No posts yet.");
+  const show = screen.getByRole("button", { name: "Show · All posts" });
+  const sort = screen.getByRole("button", { name: "Sort by · Last updated" });
+  expect(show.getAttribute("aria-expanded")).toBe("false");
+  expect(sort.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("radio")).toBeNull();
+  resize(true);
+  expect(show.getAttribute("aria-expanded")).toBe("false");
+  await user.click(sort);
+  expect(sort.getAttribute("aria-expanded")).toBe("true");
+  expect(chosenFilter("Sort by")).toBe("recent_activity");
+});
+
 it("falls back to All posts for an unknown Show filter", async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
@@ -3243,11 +3340,8 @@ it("falls back to All posts for an unknown Show filter", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  const show = screen.getByRole("combobox", {
-    name: "Show",
-  }) as HTMLSelectElement;
-  expect(show.value).toBe("all");
-  expect([...show.options].some((option) => option.value === "mine")).toBe(
+  expect(chosenFilter("Show")).toBe("all");
+  expect(filterChoices("Show").some((input) => input.value === "mine")).toBe(
     false,
   );
   await waitFor(() => expect(feedRequests(fetchMock)).not.toHaveLength(0));
@@ -3282,16 +3376,15 @@ it("disables the sidebar filters in the staff duplicate view", async () => {
     ),
   );
   const sidebar = screen.getByRole("complementary", { name: "Post filters" });
-  expect(
-    within(sidebar)
-      .getByRole("combobox", { name: "Show" })
-      .matches(":disabled"),
-  ).toBe(true);
-  expect(
-    within(sidebar)
-      .getByRole("combobox", { name: "Sort by" })
-      .matches(":disabled"),
-  ).toBe(true);
+  for (const section of ["Show", "Sort by"] as const) {
+    expect(
+      filterChoices(section).every((input) => input.matches(":disabled")),
+    ).toBe(true);
+    const header = within(sidebar).getByRole("button", { name: section });
+    expect(header.matches(":disabled")).toBe(false);
+    await user.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+  }
 });
 
 it("lays out each card with a type badge, status, preview, and byline from the post type list", async () => {
@@ -3410,7 +3503,7 @@ it("restores filters from props and keeps them on post links", async () => {
       query="cutoff"
       filters={{
         filter: "question",
-        tag: "midterm",
+        tags: ["midterm"],
         sort: "oldest",
       }}
       onFiltersChange={onFiltersChange}
@@ -3426,15 +3519,11 @@ it("restores filters from props and keeps them on post links", async () => {
   expect(link.getAttribute("href")).toBe(
     "/courses/course-1/posts/p1?q=cutoff&filter=question&tag=midterm&sort=oldest",
   );
-  const sidebar = screen.getByRole("complementary", { name: "Post filters" });
-  const show = within(sidebar).getByRole("combobox", {
-    name: "Show",
-  }) as HTMLSelectElement;
-  expect(show.value).toBe("question");
-  await userEvent.setup().selectOptions(show, "note");
+  expect(chosenFilter("Show")).toBe("question");
+  await userEvent.setup().click(filterChoice("Show", "note"));
   expect(onFiltersChange).toHaveBeenCalledWith({
     filter: "note",
-    tag: "midterm",
+    tags: ["midterm"],
     sort: "oldest",
   });
 });
@@ -3480,6 +3569,158 @@ it("filters by a tag from a row or the post, keeps the selected post, and remove
   expect(
     screen.queryByRole("button", { name: "Remove tag filter midterm" }),
   ).toBeNull();
+});
+
+it("combines tags, matches all by default, and switches to any or clears them", async () => {
+  const both = { ...post("p1", "Selected"), tags: ["recursion", "exam-2"] };
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    if (url === "/api/v1/posts/p1") return json({ data: both });
+    const params = new URL(url, "https://example.edu").searchParams;
+    if (params.get("cursor")) return page([post("p3", "Later tagged")]);
+    return page([both], "next");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Selected" });
+  const row = () =>
+    screen.getByRole("link", { name: /Selected/ }).closest("li")!;
+  const lastParams = () => feedRequests(fetchMock).at(-1)!.searchParams;
+  await user.click(
+    within(row()).getByRole("button", { name: "Filter by tag recursion" }),
+  );
+  await waitFor(() =>
+    expect(lastParams().getAll("tag")).toEqual(["recursion"]),
+  );
+  expect(lastParams().has("tagMatch")).toBe(false);
+  expect(screen.queryByRole("group", { name: "Match" })).toBeNull();
+  await user.click(
+    within(row()).getByRole("button", { name: "Filter by tag exam-2" }),
+  );
+  await waitFor(() =>
+    expect(lastParams().getAll("tag")).toEqual(["recursion", "exam-2"]),
+  );
+  expect(lastParams().get("tagMatch")).toBe("all");
+  const match = screen.getByRole("group", { name: "Match" });
+  expect(
+    (within(match).getByRole("radio", { name: "All" }) as HTMLInputElement)
+      .checked,
+  ).toBe(true);
+  expect(
+    screen.getByRole("button", { name: "Remove tag filter recursion" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Remove tag filter exam-2" }),
+  ).toBeTruthy();
+  await user.click(within(match).getByRole("radio", { name: "Any" }));
+  await waitFor(() => expect(lastParams().get("tagMatch")).toBe("any"));
+  expect(
+    screen.getByRole("link", { name: /Selected/ }).getAttribute("href"),
+  ).toBe("/courses/course-1/posts/p1?tag=recursion&tag=exam-2&tagMatch=any");
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await screen.findByText("Later tagged");
+  expect(Object.fromEntries(lastParams())).toMatchObject({
+    cursor: "next",
+    tagMatch: "any",
+  });
+  expect(lastParams().getAll("tag")).toEqual(["recursion", "exam-2"]);
+  const active = within(row()).getByRole("button", {
+    name: "Filter by tag recursion",
+  });
+  expect(active.getAttribute("aria-pressed")).toBe("true");
+  await user.click(active);
+  await waitFor(() => expect(lastParams().getAll("tag")).toEqual(["exam-2"]));
+  expect(lastParams().has("tagMatch")).toBe(false);
+  expect(screen.queryByRole("group", { name: "Match" })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Selected" })).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Clear all" }));
+  await waitFor(() => expect(lastParams().has("tag")).toBe(false));
+  expect(screen.queryByRole("button", { name: /^Tags/ })).toBeNull();
+  expect(screen.getByRole("heading", { name: "Selected" })).toBeTruthy();
+});
+
+it("announces the tag limit and leaves ten active tags unchanged", async () => {
+  const tags = Array.from({ length: 10 }, (_, index) => `t${index}`);
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    return page([{ ...post("p1", "Eleventh"), tags: ["eleventh"] }]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const onFiltersChange = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      filters={{ tags }}
+      onFiltersChange={onFiltersChange}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("link", { name: /Eleventh/ });
+  expect(screen.getByRole("button", { name: "Tags" })).toBeTruthy();
+  const requests = feedRequests(fetchMock).length;
+  await user.click(
+    screen.getByRole("button", { name: "Filter by tag eleventh" }),
+  );
+  expect(onFiltersChange).not.toHaveBeenCalled();
+  const limit = await screen.findByText("At most 10 tags can be combined.");
+  expect(limit.getAttribute("role")).toBe("status");
+  expect(feedRequests(fetchMock)).toHaveLength(requests);
+  await user.click(screen.getByRole("button", { name: "Tags" }));
+  expect(screen.getByRole("button", { name: "Tags · 10" })).toBeTruthy();
+});
+
+it("disables tag chips and the tag match in the staff duplicate view", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/members/user-staff"))
+        return json({ data: { role: "ta" } });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      filters={{ tags: ["a", "b"] }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(
+    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
+      "button",
+      { name: "Duplicate" },
+    ),
+  );
+  expect(
+    screen
+      .getByRole("button", { name: "Remove tag filter a" })
+      .matches(":disabled"),
+  ).toBe(true);
+  expect(
+    screen.getByRole("button", { name: "Clear all" }).matches(":disabled"),
+  ).toBe(true);
+  for (const radio of within(
+    screen.getByRole("group", { name: "Match" }),
+  ).getAllByRole("radio"))
+    expect(radio.matches(":disabled")).toBe(true);
+  expect(
+    screen.getByRole("button", { name: "Tags" }).matches(":disabled"),
+  ).toBe(false);
 });
 
 function pinFixture(options: {
@@ -3726,7 +3967,7 @@ it("keeps a newly pinned detail in the matching Questions feed", async () => {
       userId="user-1"
       postId="p1"
       query="cutoff"
-      filters={{ filter: "question", tag: "midterm" }}
+      filters={{ filter: "question", tags: ["midterm"] }}
       onFiltersChange={vi.fn()}
       onNavigate={vi.fn()}
     />,
@@ -3771,7 +4012,7 @@ it("keeps a newly pinned detail out of a Questions feed whose tag does not match
       csrfToken="csrf"
       userId="user-1"
       postId="p1"
-      filters={{ filter: "question", tag: "different" }}
+      filters={{ filter: "question", tags: ["different"] }}
       onFiltersChange={vi.fn()}
       onNavigate={vi.fn()}
     />,
@@ -3908,17 +4149,13 @@ it("distinguishes an empty course from filters that match nothing and clears the
   expect(
     screen.queryByRole("button", { name: "Clear search and filters" }),
   ).toBeNull();
-  const sidebar = screen.getByRole("complementary", { name: "Post filters" });
-  const show = within(sidebar).getByRole("combobox", {
-    name: "Show",
-  }) as HTMLSelectElement;
-  await user.selectOptions(show, "note");
+  await user.click(filterChoice("Show", "note"));
   await screen.findByText("Nothing matches this search or these filters.");
   await user.click(
     screen.getByRole("button", { name: "Clear search and filters" }),
   );
   await screen.findByText("No posts yet.");
-  expect(show.value).toBe("all");
+  expect(chosenFilter("Show")).toBe("all");
 });
 
 it("returns from a post to the list with the same search and filters", async () => {
@@ -3939,7 +4176,7 @@ it("returns from a post to the list with the same search and filters", async () 
       csrfToken="csrf"
       postId="p1"
       query="cutoff"
-      filters={{ tag: "midterm" }}
+      filters={{ tags: ["midterm"] }}
       onFiltersChange={vi.fn()}
       onNavigate={navigate}
     />,

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -535,9 +536,34 @@ function AppBar({
   tabs?: ReactNode;
   children?: ReactNode;
 }) {
+  const inner = useRef<HTMLDivElement>(null);
+  const [tabsStacked, setTabsStacked] = useState(false);
+  // Tabs leave the one-row layout only when that row's natural width no longer fits the bar.
+  const measure = useRef(() => {});
+  measure.current = () => {
+    const row = inner.current;
+    const bar = row?.parentElement;
+    if (!tabs || !row || !bar) return;
+    row.classList.add("measuring");
+    const needed = row.scrollWidth;
+    row.classList.remove("measuring");
+    setTabsStacked(needed > bar.clientWidth);
+  };
+  // Course names and fonts change the row's width, so measure after every render too.
+  useLayoutEffect(() => measure.current());
+  useEffect(() => {
+    const bar = inner.current?.parentElement;
+    if (!bar || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measure.current());
+    observer.observe(bar);
+    void document.fonts?.ready.then(() => measure.current());
+    return () => observer.disconnect();
+  }, []);
   return (
-    <header className={`app-bar ${variant}`}>
-      <div className="app-bar-inner">
+    <header
+      className={`app-bar ${variant}${tabsStacked ? " tabs-stacked" : ""}`}
+    >
+      <div className="app-bar-inner" ref={inner}>
         <div className="app-bar-start">
           <a className="wordmark" href="/home" onClick={onHomeClick}>
             Chalk<span>Talk</span>
@@ -753,13 +779,6 @@ function CourseSwitcher({
                   : "Load more courses"}
             </button>
           )}
-          <a
-            className="switcher-home"
-            href="/home"
-            onClick={(event) => choose(event, "/home")}
-          >
-            All courses
-          </a>
         </div>
       )}
     </div>

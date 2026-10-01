@@ -1139,6 +1139,110 @@ integration("text posts HTTP contract", () => {
     ]);
   });
 
+  describe("tag matching", () => {
+    const list = (query: string) =>
+      request(app(ids.student))
+        .get(`/api/v1/courses/${ids.course}/posts?sort=oldest&${query}`)
+        .set("Cookie", cookie);
+    const titles = (response: request.Response) =>
+      response.body.data.map((item: { title: string }) => item.title);
+    beforeAll(async () => {
+      const posts: [string, string[]][] = [
+        ["Recursion only", ["tm-recursion"]],
+        ["Exam only", ["tm-exam"]],
+        ["Both tags", ["tm-recursion", "tm-exam"]],
+        ["Neither tag", ["tm-other"]],
+      ];
+      for (const [title, tags] of posts)
+        await unsafe(request(app()).post(`/api/v1/courses/${ids.course}/posts`))
+          .send({ type: "note", title, bodyMarkdown: "Body", tags })
+          .expect(201);
+    });
+
+    it("matches any requested tag by default and with tagMatch=any", async () => {
+      for (const query of [
+        "tag=tm-recursion&tag=tm-exam",
+        "tag=tm-recursion&tag=tm-exam&tagMatch=any",
+      ]) {
+        const response = await list(query);
+        expect(response.status).toBe(200);
+        expect(titles(response)).toEqual([
+          "Recursion only",
+          "Exam only",
+          "Both tags",
+        ]);
+      }
+    });
+
+    it("matches every requested tag with tagMatch=all", async () => {
+      expect(
+        titles(await list("tag=tm-recursion&tag=tm-exam&tagMatch=all")),
+      ).toEqual(["Both tags"]);
+      expect(
+        titles(
+          await list(
+            "tag=TM-Recursion&tag=tm-exam&tag=%20tm-exam&tagMatch=all",
+          ),
+        ),
+      ).toEqual(["Both tags"]);
+    });
+
+    it("returns the same results for one tag under either match", async () => {
+      for (const match of ["any", "all"])
+        expect(
+          titles(await list(`tag=tm-recursion&tagMatch=${match}`)),
+        ).toEqual(["Recursion only", "Both tags"]);
+    });
+
+    it("pages through all-tag matches and binds the cursor to the match", async () => {
+      await unsafe(request(app()).post(`/api/v1/courses/${ids.course}/posts`))
+        .send({
+          type: "note",
+          title: "Both tags again",
+          bodyMarkdown: "Body",
+          tags: ["tm-exam", "tm-recursion"],
+        })
+        .expect(201);
+      const path = "tag=tm-recursion&tag=tm-exam&tagMatch=all&limit=1";
+      const first = await list(path);
+      expect(first.status).toBe(200);
+      expect(titles(first)).toEqual(["Both tags"]);
+      expect(first.body.page.hasMore).toBe(true);
+      const cursor = encodeURIComponent(first.body.page.nextCursor);
+      const second = await list(`${path}&cursor=${cursor}`);
+      expect(second.status).toBe(200);
+      expect(titles(second)).toEqual(["Both tags again"]);
+      expect(second.body.page.hasMore).toBe(false);
+      const otherMatch = await list(
+        `tag=tm-recursion&tag=tm-exam&tagMatch=any&limit=1&cursor=${cursor}`,
+      );
+      expect(otherMatch.status).toBe(400);
+      expect(otherMatch.body.error.code).toBe("invalid_request");
+      const single = await list("tag=tm-exam&tagMatch=all&limit=1");
+      const singleCursor = encodeURIComponent(single.body.page.nextCursor);
+      const singleAny = await list(
+        `tag=tm-exam&limit=1&cursor=${singleCursor}`,
+      );
+      expect(singleAny.status).toBe(200);
+    });
+
+    it("rejects an unsupported tag match and more than ten tags", async () => {
+      const tags = (count: number) =>
+        Array.from({ length: count }, (_, index) => `tag=limit-${index}`).join(
+          "&",
+        );
+      expect((await list(tags(10))).status).toBe(200);
+      for (const query of [
+        "tag=tm-exam&tagMatch=both",
+        "tagMatch=",
+        tags(11),
+      ]) {
+        const invalid = await list(query);
+        expect(invalid.status).toBe(400);
+        expect(invalid.body.error.code).toBe("invalid_request");
+      }
+    });
+  });
   describe("sort and filter options", () => {
     const listCourse = "01a0e5cc-58ae-7009-9f43-f1ba75831a01";
     const leaver = "01a0e5cc-58ae-7009-9f43-f1ba75831a02";

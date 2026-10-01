@@ -380,6 +380,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "q",
     "type",
     "tag",
+    "tagMatch",
     "authorId",
     "createdAfter",
     "createdBefore",
@@ -413,6 +414,7 @@ function postListQuery(query: Request["query"]): ListPosts {
         ? query.tag
         : [query.tag];
   if (
+    rawTags.length > 10 ||
     rawTags.some(
       (tag) => typeof tag !== "string" || !tag.trim() || tag.trim().length > 40,
     )
@@ -421,6 +423,9 @@ function postListQuery(query: Request["query"]): ListPosts {
   const tags = [
     ...new Set((rawTags as string[]).map((tag) => tag.trim().toLowerCase())),
   ];
+  const tagMatch = one("tagMatch");
+  if (tagMatch !== undefined && tagMatch !== "any" && tagMatch !== "all")
+    throw new AuthError(400, "invalid_request", "Tag match is invalid");
   const authorId = one("authorId");
   if (authorId !== undefined && !UUID_PATTERN.test(authorId))
     throw new AuthError(400, "invalid_request", "Author is invalid");
@@ -475,6 +480,8 @@ function postListQuery(query: Request["query"]): ListPosts {
     q,
     type: type as ListPosts["type"],
     tags,
+    // Any and all agree below two tags, so only a distinct all-match binds cursors.
+    tagMatch: tagMatch === "all" && tags.length > 1 ? "all" : undefined,
     authorId,
     createdAfter,
     createdBefore,

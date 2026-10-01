@@ -56,6 +56,7 @@ export type ListPosts = {
   q?: string;
   type?: "question" | "note";
   tags?: string[];
+  tagMatch?: "all";
   authorId?: string;
   createdAfter?: string;
   createdBefore?: string;
@@ -341,10 +342,15 @@ export class PostService {
         `p.search_vector @@ websearch_to_tsquery('english', ${add(options.q)})`,
       );
     if (options.type) clauses.push(`p.type=${add(options.type)}`);
-    if (options.tags?.length)
+    if (options.tags?.length) {
+      const tags = add(options.tags);
+      // Tag names are unique per course and the list is deduplicated, so a full count means every tag.
       clauses.push(
-        `EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=ANY(${add(options.tags)}::text[]))`,
+        options.tagMatch === "all"
+          ? `(SELECT count(*) FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=ANY(${tags}::text[]))=cardinality(${tags}::text[])`
+          : `EXISTS (SELECT 1 FROM post_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.post_id=p.id AND t.name=ANY(${tags}::text[]))`,
       );
+    }
     if (options.authorId) {
       clauses.push(`p.author_user_id=${add(options.authorId)}`);
       if (!STAFF.has(member.role)) {
