@@ -472,6 +472,353 @@ integration("text posts HTTP contract", () => {
       ),
     ).toBe(true);
   });
+  it("finds ordinary-query misspellings in both titles and bodies", async () => {
+    const exact = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Galvanometer calibration",
+        bodyMarkdown: "Check the instrument before lab.",
+        tags: ["fuzzy-typo-slice"],
+      })
+      .expect(201);
+    const title = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Galvanomter calibration",
+        bodyMarkdown: "Check the instrument before lab.",
+        tags: ["fuzzy-typo-slice"],
+      })
+      .expect(201);
+    const body = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Lab instrument",
+        bodyMarkdown: "The galvanomter needle needs calibration.",
+        tags: ["fuzzy-typo-slice"],
+      })
+      .expect(201);
+    const results = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({ q: "galvanometer", tag: "fuzzy-typo-slice", sort: "relevance" })
+      .set("Cookie", cookie);
+    expect(results.status).toBe(200);
+    expect(results.body.data.map((post: { id: string }) => post.id)).toEqual([
+      exact.body.data.id,
+      title.body.data.id,
+      body.body.data.id,
+    ]);
+    const fullTextOnly = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({
+        q: '"galvanometer"',
+        tag: "fuzzy-typo-slice",
+        sort: "relevance",
+      })
+      .set("Cookie", cookie);
+    expect(fullTextOnly.status).toBe(200);
+    expect(
+      fullTextOnly.body.data.map((post: { id: string }) => post.id),
+    ).toEqual([exact.body.data.id]);
+  });
+  it("ranks exact matches first, favors fuzzy titles, and pages the complete union", async () => {
+    const create = async (title: string, bodyMarkdown: string) => {
+      const response = await unsafe(
+        request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+      )
+        .send({
+          type: "note",
+          title,
+          bodyMarkdown,
+          tags: ["fused-rank-slice"],
+        })
+        .expect(201);
+      return response.body.data.id as string;
+    };
+    const exact = await create("Galvanometer reference", "Instrument notes.");
+    const fuzzyTitle = await create(
+      "Galvanomter reference",
+      "Instrument notes.",
+    );
+    const fuzzyBody = await create(
+      "Instrument reference",
+      "Use the galvanomter.",
+    );
+    const path = `/api/v1/courses/${ids.course}/posts?q=galvanometer&tag=fused-rank-slice&sort=relevance&limit=1`;
+    const found: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await request(app(ids.student))
+        .get(`${path}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)
+        .set("Cookie", cookie);
+      expect(page.status).toBe(200);
+      found.push(...page.body.data.map((post: { id: string }) => post.id));
+      cursor = page.body.page.nextCursor;
+      expect(page.body.page.hasMore).toBe(Boolean(cursor));
+    } while (cursor);
+    expect(found).toEqual([exact, fuzzyTitle, fuzzyBody]);
+  });
+  it("keeps every full-text body match ahead of a stronger fuzzy-only title match", async () => {
+    const fuzzy = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Electroencephalograpy reference",
+        bodyMarkdown: "Instrument notes.",
+        tags: ["tier-boundary-slice"],
+      })
+      .expect(201);
+    const tag = await pool.query<{ id: string }>(
+      "SELECT id FROM tags WHERE course_id=$1 AND name=$2",
+      [ids.course, "tier-boundary-slice"],
+    );
+    const exact = await pool.query<{ post_id: string }>(
+      `WITH inserted AS (
+        INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown)
+        SELECT gen_random_uuid(),$1,$2,'note','Body match ' || n,'electroencephalography'
+        FROM generate_series(1,100) AS n RETURNING id
+      ) INSERT INTO post_tags (post_id,tag_id)
+        SELECT id,$3 FROM inserted RETURNING post_id`,
+      [ids.course, ids.author, tag.rows[0].id],
+    );
+    expect(exact.rows).toHaveLength(100);
+    const path = `/api/v1/courses/${ids.course}/posts?q=electroencephalography&tag=tier-boundary-slice&sort=relevance&limit=100`;
+    const first = await request(app(ids.student))
+      .get(path)
+      .set("Cookie", cookie);
+    expect(first.status).toBe(200);
+    expect(first.body.page.hasMore).toBe(true);
+    expect(first.body.data.map((post: { id: string }) => post.id)).toEqual(
+      expect.arrayContaining(exact.rows.map((row) => row.post_id)),
+    );
+    const second = await request(app(ids.student))
+      .get(`${path}&cursor=${encodeURIComponent(first.body.page.nextCursor)}`)
+      .set("Cookie", cookie);
+    expect(second.status).toBe(200);
+    expect(second.body.data.map((post: { id: string }) => post.id)).toEqual([
+      fuzzy.body.data.id,
+    ]);
+    expect(second.body.page).toEqual({ nextCursor: null, hasMore: false });
+  }, 30_000);
+  it("favors a title over a body when both exactly match an ordinary query", async () => {
+    const title = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Diffractometer",
+        bodyMarkdown: "Laboratory instrument.",
+        tags: ["lexical-title-slice"],
+      })
+      .expect(201);
+    const body = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Laboratory instrument",
+        bodyMarkdown: "Diffractometer",
+        tags: ["lexical-title-slice"],
+      })
+      .expect(201);
+    const result = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({ q: "diffractometer", tag: "lexical-title-slice" })
+      .set("Cookie", cookie);
+    expect(result.status).toBe(200);
+    expect(result.body.data.map((post: { id: string }) => post.id)).toEqual([
+      title.body.data.id,
+      body.body.data.id,
+    ]);
+  });
+  it("uses timestamp ordering for an ordinary fuzzy search with a non-relevance sort", async () => {
+    const exact = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Spectrometer calibration",
+        bodyMarkdown: "Measure the spectrum.",
+        tags: ["fuzzy-time-slice"],
+      })
+      .expect(201);
+    const typo = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Spectromter notes",
+        bodyMarkdown: "Measure the spectrum.",
+        tags: ["fuzzy-time-slice"],
+      })
+      .expect(201);
+    const result = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({ q: "spectrometer", tag: "fuzzy-time-slice", sort: "newest" })
+      .set("Cookie", cookie);
+    expect(result.status).toBe(200);
+    expect(result.body.data.map((post: { id: string }) => post.id)).toEqual([
+      typo.body.data.id,
+      exact.body.data.id,
+    ]);
+  });
+  it("ignores short fuzzy terms while retaining the longer misspelled term", async () => {
+    const created = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Spectromter instructions",
+        bodyMarkdown: "Read before the lab.",
+        tags: ["fuzzy-short-slice"],
+      })
+      .expect(201);
+    const result = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({ q: "x spectrometer", tag: "fuzzy-short-slice" })
+      .set("Cookie", cookie);
+    expect(result.status).toBe(200);
+    expect(result.body.data.map((post: { id: string }) => post.id)).toEqual([
+      created.body.data.id,
+    ]);
+  });
+  it("uses full-text ranking when no query term qualifies for fuzzy search", async () => {
+    const create = async (title: string, bodyMarkdown: string) => {
+      const response = await unsafe(
+        request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+      )
+        .send({
+          type: "note",
+          title,
+          bodyMarkdown,
+          tags: ["short-terms-slice"],
+        })
+        .expect(201);
+      return response.body.data.id as string;
+    };
+    const first = await create("ab cd reference", "Lab notes.");
+    const second = await create("Lab reference", "ab cd ab cd ab cd");
+    const third = await create("Lab details", "ab cd measurements");
+    const typo = await create("abb cdd reference", "Lab notes.");
+    for (const [id, date] of [
+      [first, "2026-01-01T00:00:00.000Z"],
+      [second, "2026-01-02T00:00:00.000Z"],
+      [third, "2026-01-03T00:00:00.000Z"],
+      [typo, "2026-01-04T00:00:00.000Z"],
+    ]) {
+      await pool.query(
+        "UPDATE posts SET created_at=$2,last_activity_at=$2 WHERE id=$1",
+        [id, date],
+      );
+    }
+    const collect = async (q: string, sort: string) => {
+      const found: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const params = new URLSearchParams({
+          q,
+          sort,
+          tag: "short-terms-slice",
+          limit: "1",
+        });
+        if (cursor) params.set("cursor", cursor);
+        const page = await request(app(ids.student))
+          .get(`/api/v1/courses/${ids.course}/posts?${params}`)
+          .set("Cookie", cookie);
+        expect(page.status).toBe(200);
+        found.push(...page.body.data.map((post: { id: string }) => post.id));
+        cursor = page.body.page.nextCursor;
+        expect(page.body.page.hasMore).toBe(Boolean(cursor));
+      } while (cursor);
+      return found;
+    };
+    for (const sort of ["relevance", "newest", "oldest", "recent_activity"]) {
+      const actual = await collect("ab cd", sort);
+      expect(actual).toEqual(await collect('"ab" "cd"', sort));
+      expect(new Set(actual)).toEqual(new Set([first, second, third]));
+      if (sort !== "relevance")
+        expect(actual).toEqual(
+          sort === "oldest" ? [first, second, third] : [third, second, first],
+        );
+    }
+    expect(await collect("the ab", "relevance")).toEqual(
+      await collect('"the" "ab"', "relevance"),
+    );
+  });
+  it("keeps operator queries and short queries on the full-text-only path", async () => {
+    await unsafe(request(app()).post(`/api/v1/courses/${ids.course}/posts`))
+      .send({
+        type: "note",
+        title: "Spectromter cat",
+        bodyMarkdown: "Calibration notes.",
+        tags: ["operator-fuzzy-slice"],
+      })
+      .expect(201);
+    for (const q of [
+      '"spectrometer"',
+      "spectrometer OR wavelength",
+      "spectrometer -wavelength",
+      "at",
+    ]) {
+      const result = await request(app(ids.student))
+        .get(`/api/v1/courses/${ids.course}/posts`)
+        .query({ q, tag: "operator-fuzzy-slice" })
+        .set("Cookie", cookie);
+      expect(result.status).toBe(200);
+      expect(result.body.data).toEqual([]);
+    }
+  });
+  it("filters hidden fuzzy matches before paging and hasMore", async () => {
+    await unsafe(request(app()).post(`/api/v1/courses/${ids.course}/posts`))
+      .send({
+        type: "note",
+        title: "Diffractomter hidden",
+        bodyMarkdown: "Instrument notes.",
+        anonymous: true,
+        tags: ["fuzzy-visibility-slice"],
+      })
+      .expect(201);
+    const visible = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Diffractomter visible",
+        bodyMarkdown: "Instrument notes.",
+        tags: ["fuzzy-visibility-slice"],
+      })
+      .expect(201);
+    await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.otherCourse}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Diffractomter elsewhere",
+        bodyMarkdown: "Instrument notes.",
+        tags: ["fuzzy-visibility-slice"],
+      })
+      .expect(201);
+    const result = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({
+        q: "diffractometer",
+        tag: "fuzzy-visibility-slice",
+        authorId: ids.author,
+        limit: 1,
+      })
+      .set("Cookie", cookie);
+    expect(result.status).toBe(200);
+    expect(result.body.data.map((post: { id: string }) => post.id)).toEqual([
+      visible.body.data.id,
+    ]);
+    expect(result.body.page).toEqual({ nextCursor: null, hasMore: false });
+  });
   it("finds question text that appears only in the body", async () => {
     const created = await unsafe(
       request(app()).post(`/api/v1/courses/${ids.course}/posts`),

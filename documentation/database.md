@@ -123,6 +123,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `last_activity_at`, `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
 - `search_vector`: generated `tsvector`, nullable.
+- Active post titles and bodies have separate GIN trigram indexes (`posts_title_trgm_idx`, `posts_body_trgm_idx`) for ordinary fuzzy search. Migration `007_post_fuzzy_search.sql` installs `pg_trgm` in `public` and qualifies its functions, operators, and operator classes because API tests use isolated schemas in their search paths. The extension must be available and installable in each deployment database; the migration fails if it is not.
 
 ### `tags`
 

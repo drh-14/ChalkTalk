@@ -297,7 +297,14 @@ export class PostService {
       );
     const { cursor, limit, ...filters } = options;
     const binding = createHash("sha256")
-      .update(JSON.stringify({ courseId, userId, filters }))
+      .update(
+        JSON.stringify({
+          courseId,
+          userId,
+          filters,
+          searchVersion: options.sort === "relevance" ? 2 : undefined,
+        }),
+      )
       .digest("hex");
     let after:
       { pinned: boolean; value: number | string; id: string } | undefined;
@@ -335,12 +342,30 @@ export class PostService {
       return `$${values.length}`;
     };
     const clauses = ["p.course_id=$1", "p.deleted_at IS NULL"];
+    const possibleFuzzyTerms = (
+      options.q?.match(/[\p{L}\p{N}]+/gu) ?? []
+    ).filter((term) => [...term].length >= 3);
+    const ordinarySearch =
+      options.duplicateStatus !== "confirmed" &&
+      !/["\u201c\u201d]|\bOR\b|(^|\s)-\S/i.test(options.q ?? "");
+    const searchTerms =
+      ordinarySearch && possibleFuzzyTerms.length
+        ? (
+            await this.pool.query<{ term: string }>(
+              `SELECT DISTINCT lower(term) AS term FROM unnest($1::text[]) AS input(term)
+               WHERE length(term)>=3 AND to_tsvector('english',term) <> ''::tsvector`,
+              [possibleFuzzyTerms],
+            )
+          ).rows.map((row) => row.term)
+        : [];
+    const fuzzySearch = searchTerms.length > 0;
+    const searchQuery = options.q
+      ? `websearch_to_tsquery('english',${add(options.q)})`
+      : undefined;
     if (options.duplicateStatus !== "confirmed")
       clauses.push("p.duplicate_status <> 'confirmed'");
-    if (options.q)
-      clauses.push(
-        `p.search_vector @@ websearch_to_tsquery('english', ${add(options.q)})`,
-      );
+    if (searchQuery && !fuzzySearch)
+      clauses.push(`p.search_vector @@ ${searchQuery}`);
     if (options.type) clauses.push(`p.type=${add(options.type)}`);
     if (options.tags?.length) {
       const tags = add(options.tags);
@@ -383,7 +408,7 @@ export class PostService {
         ? "date_trunc('milliseconds',p.created_at)"
         : options.sort === "recent_activity"
           ? "date_trunc('milliseconds',p.last_activity_at)"
-          : `round(ts_rank_cd(p.search_vector,websearch_to_tsquery('english',${add(options.q)}))::numeric,6)`;
+          : `round(ts_rank_cd(p.search_vector,${searchQuery})::numeric,6)`;
     const sortValue = options.sort === "relevance" ? "numeric" : "timestamptz";
     const ascending = options.sort === "oldest";
     let cursorClause = "";
@@ -394,7 +419,49 @@ export class PostService {
       cursorClause = `AND (listed.pinned < ${pinned}::boolean OR (listed.pinned = ${pinned}::boolean AND (listed.rank_value,listed.id)${ascending ? ">" : "<"}(${rank}::${sortValue},${id}::uuid)))`;
     }
     const direction = ascending ? "ASC" : "DESC";
-    const query = `SELECT listed.* FROM (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}) listed WHERE true ${cursorClause} ORDER BY listed.pinned DESC,listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}`;
+    const source = `FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}`;
+    const listed = fuzzySearch
+      ? (() => {
+          const terms = add(searchTerms);
+          return `WITH search_terms AS (
+            SELECT unnest(${terms}::text[]) AS term
+          ), fuzzy_ids AS (
+            SELECT p.id FROM posts p JOIN search_terms t
+              ON t.term OPERATOR(public.<<%) p.title OR t.term OPERATOR(public.<<%) p.body_markdown
+            WHERE p.course_id=$1 AND p.deleted_at IS NULL
+            GROUP BY p.id HAVING count(*)=(SELECT count(*) FROM search_terms)
+          ), candidate_ids AS (
+            SELECT p.id FROM posts p WHERE p.course_id=$1 AND p.deleted_at IS NULL AND p.search_vector @@ ${searchQuery}
+            UNION SELECT id FROM fuzzy_ids
+          ), ${
+            options.sort === "relevance"
+              ? `candidates AS (
+            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,
+              ${ANSWERED} AS answered,canonical.title AS canonical_title,
+              p.search_vector @@ ${searchQuery} AS lexical_match,
+              (ts_rank_cd(p.search_vector,${searchQuery})
+                + ts_rank_cd(to_tsvector('english',p.title),${searchQuery})) AS lexical_score,
+              COALESCE((SELECT avg(greatest(
+                public.strict_word_similarity(t.term,coalesce(p.title,'')),
+                0.75*public.strict_word_similarity(t.term,coalesce(p.body_markdown,''))
+              )) FROM search_terms t),0) AS fuzzy_score
+            ${source} AND p.id IN (SELECT id FROM candidate_ids)
+          ), ranked AS (
+            SELECT candidates.*,
+              row_number() OVER (PARTITION BY lexical_match ORDER BY lexical_score DESC,id DESC) AS lexical_position,
+              row_number() OVER (ORDER BY fuzzy_score DESC,id DESC) AS fuzzy_position
+            FROM candidates
+          ), listed AS (
+            SELECT ranked.*,round(CASE WHEN lexical_match THEN 1.0+1.5/(60+lexical_position)+1.0/(60+fuzzy_position) ELSE 1.0/(60+fuzzy_position) END,12) AS rank_value FROM ranked
+          )`
+              : `listed AS (
+            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value
+            ${source} AND p.id IN (SELECT id FROM candidate_ids)
+          )`
+          }`;
+        })()
+      : `WITH listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
+    const query = `${listed} SELECT listed.* FROM listed WHERE true ${cursorClause} ORDER BY listed.pinned DESC,listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}`;
     const result = await this.pool.query<Row & { rank_value: number | Date }>(
       query,
       values,

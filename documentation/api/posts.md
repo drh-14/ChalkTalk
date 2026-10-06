@@ -8,7 +8,7 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 
 Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false` and includes the content fields documented below. A tombstone sets it to `true` and contains only `id`, `courseId`, `type`, `deleted`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and ordinary update responses contain an active post; merge confirmation is the exception described below.
 
-Confirmed duplicates are retained in storage but removed from ordinary lists, full-text search, and Related questions. The old direct URL returns `303 See Other` to the canonical post for a current course member; it never returns the duplicate's content. Staff can retrieve a restricted duplicate-review list, read the retained source through a staff-only review endpoint, and unmerge it. Confirming a merge returns a minimal canonical reference rather than an active post.
+Confirmed duplicates are retained in storage but removed from ordinary lists, search, and Related questions. The old direct URL returns `303 See Other` to the canonical post for a current course member; it never returns the duplicate's content. Staff can retrieve a restricted duplicate-review list, read the retained source through a staff-only review endpoint, and unmerge it. Confirming a merge returns a minimal canonical reference rather than an active post.
 
 #### Tombstone example
 
@@ -317,7 +317,7 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 ### **`GET /api/v1/courses/{courseId}/posts`**
 
-Lists or searches the posts in a course. Confirmed duplicates are excluded from all ordinary lists and searches, including Related questions, before pagination and ranking. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+Lists or searches the posts in a course. Ordinary search text combines English full-text matches with word-level fuzzy matches in titles and bodies. Fuzzy matching requires at least one query term of three or more searchable characters, ignores shorter terms and English stopwords, and requires every remaining term to match in either field. Queries with no eligible fuzzy terms use full-text matching and ranking alone. Under relevance sorting, exact full-text matches precede fuzzy-only matches within each pinned group; title similarity contributes more than body similarity within the groups. Quoted phrases, `OR`, and excluded-term queries retain full-text-only matching and relevance. Confirmed duplicates are excluded from ordinary lists and searches, including Related questions, before ranking and pagination. Related questions queries containing `OR` therefore remain full-text-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -337,7 +337,7 @@ Lists or searches the posts in a course. Confirmed duplicates are excluded from 
 
 #### Query parameters
 
-`q` (string, optional; minimum length 1, maximum length 500): Trimmed non-empty search text. Omit to list without full-text search.
+`q` (string, optional; minimum length 1, maximum length 500): Trimmed non-empty search text; matching rules are described above. Omit to list without search.
 
 `type` (enum: question, note, poll, optional; values question, note, poll): Filter by post type.
 
