@@ -330,9 +330,7 @@ integration("answer Yjs document persistence", () => {
     const initial = await store.load(id);
     const metadataEditor = new Y.Doc();
     Y.applyUpdate(metadataEditor, initial.state);
-    metadataEditor
-      .getMap("metadata")
-      .set("history", "x".repeat(1024 * 1024));
+    metadataEditor.getMap("metadata").set("history", "x".repeat(1024 * 1024));
     const largeUpdate = Y.encodeStateAsUpdate(metadataEditor);
     expect(largeUpdate.length).toBeGreaterThan(1024 * 1024);
     expect(largeUpdate.length).toBeLessThanOrEqual(16 * 1024 * 1024);
