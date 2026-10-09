@@ -1,6 +1,7 @@
 # answer-document-core Specification
 
 ## Purpose
+
 Provides a private, durable CRDT document boundary for an active answer so a future authenticated editing transport can load and persist concurrent text changes safely.
 
 ## Requirements

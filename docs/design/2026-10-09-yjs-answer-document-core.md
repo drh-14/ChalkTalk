@@ -46,12 +46,12 @@ The store performs durable writes before returning success. There is no in-memor
 
 ## Technology choices
 
-| Concern | Choice | Why | Runner-up |
-| --- | --- | --- | --- |
-| CRDT | `yjs` 13.x, `Y.Text('content')` | Matches the documented text projection and allows independent binary updates to merge | Plain text overwrites lose concurrent edits |
-| Persistence | Existing PostgreSQL answer document and answer rows | Transactionally keeps CRDT state and REST projection together | File or in-memory storage bypasses existing answer lifecycle |
-| Merge boundary | Internal TypeScript document store | Testable without transport; one owner of encoding and projection | Put Yjs logic in REST handlers or a future socket hook |
-| Verification | Headless Yjs documents with PostgreSQL integration tests | Exercises real binary merge and restart/load behavior | Mock-only tests cannot prove state survives or concurrent updates converge |
+| Concern        | Choice                                                   | Why                                                                                   | Runner-up                                                                  |
+| -------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| CRDT           | `yjs` 13.x, `Y.Text('content')`                          | Matches the documented text projection and allows independent binary updates to merge | Plain text overwrites lose concurrent edits                                |
+| Persistence    | Existing PostgreSQL answer document and answer rows      | Transactionally keeps CRDT state and REST projection together                         | File or in-memory storage bypasses existing answer lifecycle               |
+| Merge boundary | Internal TypeScript document store                       | Testable without transport; one owner of encoding and projection                      | Put Yjs logic in REST handlers or a future socket hook                     |
+| Verification   | Headless Yjs documents with PostgreSQL integration tests | Exercises real binary merge and restart/load behavior                                 | Mock-only tests cannot prove state survives or concurrent updates converge |
 
 Version and maintenance checked 2026-10-09: the npm registry lists Yjs 13.x as stable; this change installs a 13.x release. Source: [Yjs package](https://www.npmjs.com/package/yjs). This slice does not add Hocuspocus or its provider.
 
@@ -71,14 +71,14 @@ Version and maintenance checked 2026-10-09: the npm registry lists Yjs 13.x as s
 
 ## Failure modes
 
-| Failure | Response |
-| --- | --- |
-| PostgreSQL unavailable or transaction fails | The update reports failure; no partial binary/projection write is committed. |
-| Malformed Yjs update or decoded document | Reject it without changing stored state and report a diagnostic error. |
-| Answer endorsed or deleted, parent post deleted or confirmed duplicate, course inactive, or document closed | Reject the load or update without modifying binary state, projection, or contributors. |
-| Two callers edit from the same earlier state | Serialize database writes; Yjs merges each update against the latest saved state. Both edits survive if valid. |
-| Initial seed attempted concurrently | Row lock allows one seed; later loads use the persisted binary state. |
-| Projection differs from binary state | Report an integrity error without modifying either representation. |
+| Failure                                                                                                     | Response                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL unavailable or transaction fails                                                                 | The update reports failure; no partial binary/projection write is committed.                                   |
+| Malformed Yjs update or decoded document                                                                    | Reject it without changing stored state and report a diagnostic error.                                         |
+| Answer endorsed or deleted, parent post deleted or confirmed duplicate, course inactive, or document closed | Reject the load or update without modifying binary state, projection, or contributors.                         |
+| Two callers edit from the same earlier state                                                                | Serialize database writes; Yjs merges each update against the latest saved state. Both edits survive if valid. |
+| Initial seed attempted concurrently                                                                         | Row lock allows one seed; later loads use the persisted binary state.                                          |
+| Projection differs from binary state                                                                        | Report an integrity error without modifying either representation.                                             |
 
 ## Reversibility
 

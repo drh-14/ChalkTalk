@@ -1,6 +1,7 @@
 # question-answers Specification
 
 ## Purpose
+
 Lets course members answer question posts through one shared students' answer and one shared instructors' answer per question, which staff can endorse or delete, with identity-safe contributor projections.
 
 ## Requirements
