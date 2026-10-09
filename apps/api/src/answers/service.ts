@@ -54,7 +54,7 @@ const STAFF = new Set<Role>(["ta", "instructor"]);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // Yjs encodes an empty document as zero structs followed by an empty delete set.
-// Phase 2 seeds the editor's document shape from body_markdown when it finds this state.
+// The private Yjs document store seeds this marker from body_markdown on first load.
 const EMPTY_YJS_UPDATE = Buffer.from([0, 0]);
 
 export class AnswerService {
