@@ -218,6 +218,51 @@ integration("answer Yjs document persistence", () => {
     ]);
   });
 
+  it("rejects documents when their question is deleted or merged", async () => {
+    const targetId = await answer("Target");
+    const targetPostId = (
+      await pool.query("SELECT post_id FROM answers WHERE id=$1", [targetId])
+    ).rows[0].post_id;
+    for (const state of ["deleted", "confirmed"] as const) {
+      const id = await answer("Base");
+      const initial = await store.load(id);
+      const editor = new Y.Doc();
+      Y.applyUpdate(editor, initial.state);
+      editor.getText("content").insert(4, " edit");
+      const update = Y.encodeStateAsUpdate(editor);
+      const postId = (
+        await pool.query("SELECT post_id FROM answers WHERE id=$1", [id])
+      ).rows[0].post_id;
+      if (state === "deleted") {
+        await pool.query(
+          "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now() WHERE id=$1",
+          [postId],
+        );
+      } else {
+        await pool.query(
+          "UPDATE posts SET duplicate_status='confirmed',duplicate_of_post_id=$2 WHERE id=$1",
+          [postId, targetPostId],
+        );
+      }
+      await expect(store.load(id)).rejects.toMatchObject({
+        code: "not_available",
+      });
+      await expect(store.applyUpdate(id, update)).rejects.toMatchObject({
+        code: "not_available",
+      });
+      const persisted = await pool.query(
+        "SELECT a.body_markdown,a.version,d.yjs_state,d.persistence_revision FROM answers a JOIN answer_collaboration_documents d ON d.answer_id=a.id WHERE a.id=$1",
+        [id],
+      );
+      expect(persisted.rows[0]).toMatchObject({
+        body_markdown: initial.text,
+        version: String(initial.answerVersion),
+        yjs_state: Buffer.from(initial.state),
+        persistence_revision: String(initial.persistenceRevision),
+      });
+    }
+  });
+
   it("orders endorsement and deletion after durable updates and blocks later writes", async () => {
     const id = await answer("Base");
     const initial = await store.load(id);

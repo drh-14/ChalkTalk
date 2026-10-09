@@ -11,6 +11,8 @@ type AnswerRow = {
   endorsed_at: Date | null;
   version: string;
   course_status: string;
+  post_deleted_at: Date | null;
+  post_duplicate_status: string;
 };
 type DocumentRow = {
   yjs_state: Buffer;
@@ -68,9 +70,10 @@ export class AnswerDocumentStore {
     answerId: string,
   ): Promise<LockedDocument> {
     const answer = await db.query<AnswerRow>(
-      `SELECT a.body_markdown,a.deleted_at,a.endorsed_at,a.version,c.status AS course_status
-       FROM answers a JOIN courses c ON c.id=a.course_id WHERE a.id=$1
-       FOR UPDATE OF a FOR SHARE OF c`,
+      `SELECT a.body_markdown,a.deleted_at,a.endorsed_at,a.version,c.status AS course_status,
+              p.deleted_at AS post_deleted_at,p.duplicate_status AS post_duplicate_status
+       FROM answers a JOIN courses c ON c.id=a.course_id JOIN posts p ON p.id=a.post_id
+       WHERE a.id=$1 FOR UPDATE OF a FOR SHARE OF c,p`,
       [answerId],
     );
     const row = answer.rows[0];
@@ -78,6 +81,8 @@ export class AnswerDocumentStore {
       !row ||
       row.deleted_at ||
       row.endorsed_at ||
+      row.post_deleted_at ||
+      row.post_duplicate_status === "confirmed" ||
       row.course_status !== "active"
     )
       throw new AnswerDocumentError("not_available");
