@@ -76,9 +76,9 @@ Lets course members answer question posts through one shared students' answer an
 - **WHEN** an instructor deletes an unendorsed answer with its current ETag
 - **THEN** the API returns `204`, the answer disappears from the list, and a new answer of that kind can be created
 
-### Requirement: Collaborative editing and attachments remain outside phase 1
+### Requirement: Public collaborative editing and attachments remain unavailable
 
-In this phase, `PATCH /api/v1/answers/{answerId}`, answer collaboration connection tickets, answer followup routes, and multipart answer requests SHALL not be live. Their routes SHALL not be registered, and a multipart create request SHALL return `422 validation_failed`. Answer text SHALL not change after creation. `documentation/api/answers.md` SHALL carry an implementation-status note naming what is live and what remains the target contract, while the target definitions are kept.
+`PATCH /api/v1/answers/{answerId}`, answer collaboration connection tickets, answer followup routes, and multipart answer requests SHALL not be live. Their routes SHALL not be registered, and a multipart create request SHALL return `422 validation_failed`. Public clients SHALL have no way to edit answer text after creation; the private answer document core MAY persist Yjs updates and project their text to the existing answer read API. `documentation/api/answers.md` SHALL carry an implementation-status note naming what is live and what remains the target contract, while the target definitions are kept.
 
 #### Scenario: A client tries to edit an answer
 
