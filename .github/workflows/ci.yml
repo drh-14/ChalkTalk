@@ -104,6 +104,9 @@ jobs:
           docker compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '005_text_posts.sql')" | grep -qx t
           docker compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM organizations WHERE domain = 'ams161.mock.chalktalk.invalid')" | grep -qx f
 
+      - name: Verify SeaweedFS object storage
+        run: sh docker/test-seaweedfs-s3.sh
+
       - name: Verify stale application dependencies self-repair
         env:
           WEB_PORT: 5174

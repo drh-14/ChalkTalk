@@ -7,7 +7,7 @@ The system SHALL provide documented commands to start the browser application, H
 #### Scenario: Developer starts dependency services only
 
 - **WHEN** a developer runs `docker compose up -d` without the `app` profile
-- **THEN** PostgreSQL and Mailpit start
+- **THEN** PostgreSQL and Mailpit start alongside the SeaweedFS service described in `openspec/specs/local-object-storage/spec.md`
 - **AND** the migration, API, and browser application services do not start
 
 #### Scenario: Developer starts the local foundation
