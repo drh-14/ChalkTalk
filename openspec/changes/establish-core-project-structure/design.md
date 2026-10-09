@@ -37,7 +37,7 @@ Migrations live in `database/migrations` as ordered `.sql` files. The runner cre
 
 ### Run PostgreSQL in Docker Compose and application processes directly
 
-Docker Compose runs only PostgreSQL and a named local data volume. Vite and Express run directly with npm scripts for fast reload and clear debugging. Containerizing all application processes can be added with the managed/self-hosted deployment change.
+At the time of this proposal, Docker Compose ran only PostgreSQL and a named local data volume. Vite and Express ran directly with npm scripts for fast reload and clear debugging. Containerizing all application processes was deferred to the managed/self-hosted deployment change.
 
 ### Proxy `/api` from Vite to Express in development
 

@@ -45,7 +45,7 @@ Prerequisites: Node.js 22 or later, npm, and Docker with Docker Compose.
 
 ### Direct application development
 
-Use this workflow for the fastest edit loop: Docker runs PostgreSQL and Mailpit, while the API and Vite development server run directly on your machine.
+Use this workflow for the fastest edit loop: Docker runs PostgreSQL, Mailpit, and SeaweedFS, while the API and Vite development server run directly on your machine.
 
 1. Install dependencies:
 
@@ -53,7 +53,7 @@ Use this workflow for the fastest edit loop: Docker runs PostgreSQL and Mailpit,
    npm install
    ```
 
-2. Create a trusted development certificate, configure your local environment, and start PostgreSQL plus Mailpit. The tracked `.env.example` is a safe local template; the copied `.env` and `.cert/` remain private to your checkout. Install [`mkcert`](https://github.com/FiloSottile/mkcert#installation) and run `mkcert -install` once before generating the certificate:
+2. Create a trusted development certificate, configure your local environment, and start PostgreSQL, Mailpit, and SeaweedFS. The tracked `.env.example` is a safe local template; the copied `.env` and `.cert/` remain private to your checkout. Install [`mkcert`](https://github.com/FiloSottile/mkcert#installation) and run `mkcert -install` once before generating the certificate:
 
    ```bash
    mkdir -p .cert
@@ -75,11 +75,11 @@ Use this workflow for the fastest edit loop: Docker runs PostgreSQL and Mailpit,
    npm run dev
    ```
 
-The React client runs at `https://localhost:5173`. Its `/api` requests are forwarded unchanged to the Express API at `http://localhost:3000`; use `https://localhost:5173/api/v1/...` for browser auth requests. Mailpit receives local SMTP mail at `localhost:1025` and displays it at [http://localhost:8025](http://localhost:8025). Keep `.cert/` private and configure a random `AUTH_TOKEN_SECRET` plus your real allowed school domains before deployment.
+The React client runs at `https://localhost:5173`. Its `/api` requests are forwarded unchanged to the Express API at `http://localhost:3000`; use `https://localhost:5173/api/v1/...` for browser auth requests. Mailpit receives local SMTP mail at `localhost:1025` and displays it at [http://localhost:8025](http://localhost:8025). SeaweedFS provides a local S3-compatible endpoint at `http://127.0.0.1:8333`. Use `chalktalk-local` as the access key and `chalktalk-local-secret` as the secret key, or override `SEAWEEDFS_ACCESS_KEY_ID` and `SEAWEEDFS_SECRET_ACCESS_KEY` in your ignored `.env`. These keys authenticate only to local SeaweedFS; no AWS account is needed. The `seaweedfs-data` Docker volume preserves objects across `docker compose stop`, `start`, and `down`. `docker compose down --volumes` deletes that data. Keep `.cert/` private and configure a random `AUTH_TOKEN_SECRET` plus your real allowed school domains before deployment.
 
 ### Full-stack Docker development
 
-After completing the certificate and `.env` setup above, start the hot-reloading web application, API, migrations, PostgreSQL, and Mailpit together:
+After completing the certificate and `.env` setup above, start the hot-reloading web application, API, migrations, PostgreSQL, Mailpit, and SeaweedFS together:
 
 ```bash
 docker compose --profile app up --build
@@ -96,6 +96,6 @@ docker compose --profile app logs migrate
 docker compose --profile app run --rm migrate
 ```
 
-Stop the full stack with `docker compose --profile app down`. The default `docker compose up -d` continues to start only PostgreSQL and Mailpit.
+Stop the full stack with `docker compose --profile app down`. The default `docker compose up -d` starts PostgreSQL, Mailpit, and SeaweedFS.
 
 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before submitting changes.

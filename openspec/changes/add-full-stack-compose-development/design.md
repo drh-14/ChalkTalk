@@ -1,6 +1,6 @@
 ## Context
 
-The current project uses Docker Compose for PostgreSQL and Mailpit, while the API and Vite server run directly on the host. Authentication uses secure browser cookies, so the local browser entry point must remain HTTPS with a certificate trusted by the host browser. The approved design keeps the existing direct-development workflow and adds an opt-in full-stack profile.
+When this change was proposed, the project used Docker Compose for PostgreSQL and Mailpit, while the API and Vite server ran directly on the host. Authentication uses secure browser cookies, so the local browser entry point must remain HTTPS with a certificate trusted by the host browser. The approved design keeps the existing direct-development workflow and adds an opt-in full-stack profile.
 
 ## Goals / Non-Goals
 

@@ -20,6 +20,17 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    command: ["mini", "-dir=/data"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:-chalktalk-local}
+      AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - seaweedfs-data:/data
+
   migrate:
     profiles: ["app"]
     build: &development-build
@@ -125,5 +136,6 @@ services:
 
 volumes:
   postgres-data:
+  seaweedfs-data:
   api-node-modules:
   web-node-modules:
