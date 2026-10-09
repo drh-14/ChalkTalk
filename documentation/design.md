@@ -56,9 +56,9 @@ Channels can be manually archived or deleted by an instructor or TA. When archiv
 
 ### **Search**
 
-Posts are indexed for full-text and fuzzy search, with results ranked so that titles, endorsed answers, and more recent activity are weighted more heavily. Results can be filtered by tag, author, date range, and answered/unanswered status.
+Posts are indexed for full-text and fuzzy search. The current matching, ranking, and filtering rules are documented in the [course posts API reference](api/posts.md).
 
-When a user drafts a new question, related existing posts are surfaced live, using the same underlying search index. Any user can mark a post as a duplicate of another; a TA or instructor can confirm the merge, consolidating engagement onto the canonical post.
+When a user drafts a new question, related existing posts are surfaced live through course post search. Any user can mark a post as a duplicate of another; a TA or instructor can confirm the merge, consolidating engagement onto the canonical post.
 
 ### **Course Resources**
 
@@ -147,7 +147,7 @@ Because ChalkTalk offers both a managed cloud deployment and a self-managed depl
 
 AI features,  such as AI responses to student questions, are accessed through a single AI provider interface in the backend, so the rest of the system never calls a specific AI service directly. The web server uses it for requests that need an immediate response, and the worker uses it for slower tasks such as generating embeddings for new posts. Each deployment selects one of three modes through configuration:
 
-* No AI: AI features are hidden, and search uses PostgreSQL full-text search only. ChalkTalk remains fully functional in this mode, which is the default for self-hosted instances.
+* No AI: AI features are hidden, and post search uses PostgreSQL full-text and fuzzy matching. ChalkTalk remains fully functional in this mode, which is the default for self-hosted instances.
 * Bring your own key (BYOK): The instance calls a hosted AI provider using an API key supplied by the operator and stored as a server-side secret. In the managed deployment, the ChalkTalk team provides this key; in a self-hosted deployment, the administrator supplies their own.
 * Local model: The instance calls a model running on the operator's own hardware through an OpenAI-compatible endpoint. The model can run as an additional container in the Docker Compose deployment, so no data leaves the self-hoster's infrastructure.
 
@@ -213,7 +213,7 @@ The self-hosted deployment uses exactly the same schema as the managed deploymen
 
 ## Key Flow: Posting a Question
 
-While the student types a title and body, the frontend waits for a short pause in typing and then sends the current draft to the web server as a search query (`GET /api/v1/courses/{courseId}/posts?q=…&type=question`). Waiting for a pause keeps the frontend from sending a request on every keystroke. The web server checks the student's session and course membership, then runs a ranked full-text search in PostgreSQL. The search is limited to the student's course and weights titles, endorsed answers, and recent activity more heavily. The top matches are shown in a related-questions panel next to the draft, and this repeats as the student keeps typing.
+While the student types a title and body, the frontend waits for a short pause in typing and then queries the course posts API for related questions. Waiting for a pause keeps the frontend from sending a request on every keystroke. The API checks the student's session and course membership, then returns matching questions from that course in relevance order. The panel shows the top matches and updates as the student keeps typing. The query and ranking rules are documented in the [course posts API reference](api/posts.md).
 
 If a related post already answers the question, the student can open it and no new post is created, which is the main way ChalkTalk cuts down on duplicate questions. Otherwise, the student submits the question. The frontend sends a `POST` request with the session's CSRF token and an idempotency key, so retrying after a network error can't create a duplicate post. The web server checks the session, CSRF token, the student's role, and that the course isn't archived. It then inserts the post, its search vector, and the idempotency key in a single database transaction. Because the search vector is written in the same transaction as the post, the new question is searchable right away, so the next student drafting a similar question will see it in their related-questions panel.
 

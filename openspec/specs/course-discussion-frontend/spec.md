@@ -121,7 +121,7 @@ Rendered React interaction tests SHALL cover feed cards, creation and field limi
 - **WHEN** a course member searches for `A cutoff` after a post titled `Cutoffs for the course` exists
 - **THEN** the HTTP API includes that post in the search results
 
-### Requirement: Live search uses the documented course full-text interface
+### Requirement: Live search uses the documented course search interface
 
 Search SHALL update after approximately 300 ms without input changes, with no Search button or Enter submission requirement. The browser SHALL trim a nonempty query at its edges, limit it to the API's 500-character `q` maximum, store the applied query as `q` in the URL by replacing the current history entry, and send it to the course posts API with `sort=relevance` unless the member has chosen a different sort for the current applied query. Clearing the input SHALL immediately remove `q` and restore the unfiltered feed. The browser SHALL pass PostgreSQL web-search syntax through without its own parser, preserve API result order, and reset pagination when the applied query changes. Live search SHALL not close a selected post or composer, discard an unsent draft, or trigger draft-discard confirmation. Search controls SHALL describe words, quoted phrases, `OR`, and excluded terms to assistive technology.
 
@@ -353,6 +353,7 @@ Invalid complete LaTeX SHALL remain source with its existing red underline and a
 
 - **WHEN** formula analysis is unavailable
 - **THEN** raw text remains editable, and no stale formula covers it
+
 ### Requirement: Posts are listed as flat rows and read at full width
 
 Post cards in the left-hand list, including staff duplicate review cards, SHALL appear as full-width rows separated by dividers rather than individually bordered, rounded boxes. The selected row SHALL be distinguished by a tinted background and a leading accent bar in addition to its existing current-item state, so selection is not conveyed by color alone. Hover and keyboard focus SHALL remain visible on every row. In the detail pane, post content and the post composer SHALL use the full width of the pane, apart from its padding. The home page and course settings route SHALL keep their existing presentation.

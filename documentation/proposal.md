@@ -121,9 +121,9 @@ A channel is a group of discussion spaces called subchannels. Channels can only 
 Channels can be manually archived or deleted by an instructor or TA. When archived, all subchannels become read-only and new subchannels cannot be created. Channels are automatically archived after a configurable period of inactivity, defined as no new subchannels being created and no new activity within any subchannel.
 
 **Search**  
-Posts are indexed for full-text and fuzzy search, with results ranked so that titles, endorsed answers, and more recent activity are weighted more heavily. Results can be filtered by tag, author, date range, and answered/unanswered status.
+Posts are indexed for full-text and fuzzy search. Current matching, ranking, and filtering rules are documented in the [course posts API reference](api/posts.md).
 
-When a user drafts a new question, related existing posts are surfaced live, using the same underlying search index. Any user can mark a post as a duplicate of another; a TA or instructor can confirm the merge, consolidating engagement onto the canonical post.
+When a user drafts a new question, related existing posts are surfaced live through course post search. Any user can mark a post as a duplicate of another; a TA or instructor can confirm the merge, consolidating engagement onto the canonical post.
 
 **Course Resources**  
 Instructors can upload or link resources relating to the course, such as syllabus documents, lecture notes, assignments, course policies, and external links.

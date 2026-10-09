@@ -60,7 +60,7 @@ Post responses SHALL follow `documentation/api/identity-visibility.md`. Anonymou
 
 ### Requirement: Search and pagination cannot reveal hidden identities
 
-Course lists SHALL implement the documented full-text query, type, repeated-tag OR, author, author-role, date, answered, pinned, duplicate-status, sorting, limit, and cursor rules for supported text posts. Deleted posts SHALL be absent from every course list, whether unfiltered or filtered, and SHALL not influence ranking, pagination, `hasMore`, or counts. An `authorId` filter SHALL remove items whose author identity is hidden from the viewer before ranking, pagination, `hasMore`, or counts. Cursors SHALL be stable and bound to course, viewer, sort, and normalized filters.
+Course lists SHALL implement the documented search query, type, repeated-tag OR, author, author-role, date, answered, pinned, duplicate-status, sorting, limit, and cursor rules for supported text posts. Deleted posts SHALL be absent from every course list, whether unfiltered or filtered, and SHALL not influence ranking, pagination, `hasMore`, or counts. An `authorId` filter SHALL remove items whose author identity is hidden from the viewer before ranking, pagination, `hasMore`, or counts. Cursors SHALL be stable and bound to course, viewer, sort, and normalized filters.
 
 When the author account is deleted, student `authorId` filters SHALL exclude that author's posts even when the posts were nonanonymous. Staff MAY still match them, with a deleted-author projection. Invalid cursor sort values SHALL return `400 invalid_request` rather than reaching a database cast error.
 
@@ -164,7 +164,7 @@ HTTP tests backed by isolated PostgreSQL schemas SHALL be derived from the appli
 
 Course lists SHALL exclude confirmed duplicate sources from ordinary listings and searches before ranking and pagination, including Related questions searches. Suggested duplicates SHALL remain visible. Only TAs and instructors MAY request `duplicateStatus=confirmed`; this staff review list SHALL contain only source ID, course ID, type, title, canonical ID and title, status, and version, not source body or author identity.
 
-#### Scenario: Confirmed source matches full-text search
+#### Scenario: Confirmed source matches search
 
 - **WHEN** a member searches for terms found in a confirmed duplicate source
 - **THEN** that source is absent from results and does not affect pagination or `hasMore`
@@ -189,3 +189,32 @@ The staff-only `GET /api/v1/posts/{postId}/duplicate-review` SHALL return the fu
 
 - **WHEN** staff clear the duplicate fields with the current ETag
 - **THEN** the original title and body become visible again in direct reads and course search
+
+### Requirement: Ordinary text search fuses full-text and fuzzy post matches
+
+Course lists SHALL support ordinary `q` searches across post titles and bodies using the union of English full-text matches and PostgreSQL trigram word-similarity matches. Fuzzy matching SHALL require at least one non-stopword query term of three or more searchable characters; queries without an eligible term SHALL use full-text matching and ranking alone. Exact full-text matches SHALL precede fuzzy-only matches within each pinned group for `sort=relevance`; fuzzy score SHALL influence ordering within each group, with title matches favored over body matches. Quoted phrases, `OR`, and excluded-term queries SHALL retain the existing full-text-only matching and ranking behavior. Other sorts SHALL include the same complete ordinary-query match set and use their existing ordering. Course membership, deleted and confirmed-duplicate exclusions, viewer-aware author filters, other list filters, pinned-first ordering, and cursor pagination SHALL apply to the complete match set before pagination. Cursors SHALL be bound to course, viewer, sort, filters, and the relevance ranking version.
+
+#### Scenario: A typo matches a title or body
+
+- **WHEN** a member searches ordinary text with at least three searchable characters and the term is misspelled in a visible post title or body
+- **THEN** the post is included even if English full-text search alone does not match it
+
+#### Scenario: Exact and fuzzy matches share a result set
+
+- **WHEN** an ordinary query has exact full-text matches and fuzzy-only matches
+- **THEN** all eligible matches can be paged without gaps, exact matches precede fuzzy-only matches within each pinned group, and title similarity is favored over body similarity
+
+#### Scenario: Operator syntax retains full-text semantics
+
+- **WHEN** a query contains a quoted phrase, `OR`, or an excluded term
+- **THEN** only the existing English full-text matching and relevance rules apply
+
+#### Scenario: A query without eligible terms cannot fuzzy match
+
+- **WHEN** every query term has fewer than three searchable characters or is an English stopword
+- **THEN** it uses full-text matching and ranking without fuzzy expansion
+
+#### Scenario: Hidden matches cannot influence a search page
+
+- **WHEN** a fuzzy match is deleted, a confirmed duplicate, in another course, or excluded by a viewer-aware filter
+- **THEN** it is absent from the response and does not affect ranking or `hasMore`

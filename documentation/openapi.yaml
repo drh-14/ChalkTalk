@@ -3204,7 +3204,7 @@ paths:
       tags:
         - Posts
       summary: List or search posts in course
-      description: List or search active question/note posts in course. Deleted and confirmed duplicate posts are excluded before ranking and pagination. Staff-only duplicateStatus=confirmed returns restricted source-title and canonical-target review entries. Poll filtering is future-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+      description: List or search active question/note posts in course. Search matching and ranking follow the [course posts API reference](api/posts.md). Deleted and confirmed duplicate posts are excluded before ranking and pagination. Staff-only duplicateStatus=confirmed returns restricted source-title and canonical-target review entries. Poll filtering is future-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
       x-implementation-status: text-posts-live
       operationId: listCoursePosts
       security:
@@ -3326,7 +3326,7 @@ paths:
         - name: q
           in: query
           required: false
-          description: Trimmed non-empty search text. Omit to list without full-text search.
+          description: Trimmed non-empty search text; see the [course posts API reference](api/posts.md) for matching rules. Omit to list without search.
           schema:
             type: string
             minLength: 1
