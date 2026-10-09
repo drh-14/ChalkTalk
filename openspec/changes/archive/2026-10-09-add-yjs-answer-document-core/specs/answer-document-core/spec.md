@@ -39,7 +39,7 @@ The core SHALL apply a valid encoded Yjs update against the latest stored state 
 
 ### Requirement: Invalid or inactive writes cannot change answer content
 
-The core SHALL reject malformed, empty, or oversized encoded updates and any resulting Markdown that is blank, whitespace-only, or longer than 100,000 characters. It SHALL reject updates when the answer is deleted or endorsed, the document is not active, or the course is inactive. It SHALL detect a nonempty persisted binary state whose text disagrees with `answers.body_markdown` as an integrity error. Rejected operations SHALL leave binary state, projection, revisions, and contributors unchanged.
+The core SHALL reject encoded updates that are malformed, empty, or larger than 16 MiB and any resulting Markdown that is blank, whitespace-only, or longer than 100,000 characters. It SHALL reject updates when the answer is deleted or endorsed, the document is not active, or the course is inactive. It SHALL detect a nonempty persisted binary state whose text disagrees with `answers.body_markdown` as an integrity error. Rejected operations SHALL leave binary state, projection, revisions, and contributors unchanged.
 
 #### Scenario: Malformed update
 

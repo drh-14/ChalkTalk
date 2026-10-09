@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import * as Y from "yjs";
 
 const EMPTY_UPDATE = Buffer.from([0, 0]);
-const MAX_UPDATE_BYTES = 1024 * 1024;
+const MAX_UPDATE_BYTES = 16 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 100_000;
 
 type AnswerRow = {

@@ -1,6 +1,6 @@
 ## Context
 
-The answer creation path stores `body_markdown` and an empty Yjs marker `[0,0]` in one transaction. See [the approved design](../../../docs/design/2026-10-09-yjs-answer-document-core.md) and the new capability spec for behavior.
+The answer creation path stores `body_markdown` and an empty Yjs marker `[0,0]` in one transaction. See [the approved design](../../../../docs/design/2026-10-09-yjs-answer-document-core.md) and the new capability spec for behavior.
 
 ## Goals / Non-Goals
 
@@ -14,7 +14,7 @@ The answer creation path stores `body_markdown` and an empty Yjs marker `[0,0]` 
 - Lock the answer row before its document row in one transaction; staff endorsement/deletion already locks the answer first. Decode the latest saved state inside the lock and persist before returning.
 - Treat only the legacy `[0,0]` marker as unseeded. Seed from `body_markdown` once; a nonempty binary/projection mismatch is an integrity error, avoiding silent loss of CRDT history.
 - Do not modify answer contributors, because this private seam has no authenticated editor identity.
-- Reject empty, malformed, or oversized updates at the boundary and validate the projected text against the answer content contract.
+- Reject encoded updates that are empty, malformed, or larger than 16 MiB at the boundary and validate the projected text against the answer content contract.
 
 ## Risks / Trade-offs
 

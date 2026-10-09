@@ -325,18 +325,32 @@ integration("answer Yjs document persistence", () => {
     });
   });
 
-  it("rejects oversized binary and projected text", async () => {
+  it("accepts binary updates above 1 MiB and rejects updates above 16 MiB or oversized text", async () => {
     const id = await answer("Base");
     const initial = await store.load(id);
+    const metadataEditor = new Y.Doc();
+    Y.applyUpdate(metadataEditor, initial.state);
+    metadataEditor
+      .getMap("metadata")
+      .set("history", "x".repeat(1024 * 1024));
+    const largeUpdate = Y.encodeStateAsUpdate(metadataEditor);
+    expect(largeUpdate.length).toBeGreaterThan(1024 * 1024);
+    expect(largeUpdate.length).toBeLessThanOrEqual(16 * 1024 * 1024);
+    const accepted = await store.applyUpdate(id, largeUpdate);
+    expect(accepted).toMatchObject({
+      text: "Base",
+      answerVersion: 1,
+      persistenceRevision: initial.persistenceRevision + 1,
+    });
     await expect(
-      store.applyUpdate(id, new Uint8Array(1024 * 1024 + 1)),
+      store.applyUpdate(id, new Uint8Array(16 * 1024 * 1024 + 1)),
     ).rejects.toMatchObject({ code: "invalid_update" });
     const editor = new Y.Doc();
-    Y.applyUpdate(editor, initial.state);
+    Y.applyUpdate(editor, accepted.state);
     editor.getText("content").insert(4, "x".repeat(100_000));
     await expect(
       store.applyUpdate(id, Y.encodeStateAsUpdate(editor)),
     ).rejects.toMatchObject({ code: "invalid_content" });
-    expect(await store.load(id)).toEqual(initial);
+    expect(await store.load(id)).toEqual(accepted);
   });
 });
