@@ -189,7 +189,7 @@ The application must verify that a post and tag belong to the same course before
 - `persisted_at`: `timestamptz`.
 - `persistence_revision`: `bigint`.
 
-The private answer document store treats `yjs_state` as authoritative after it has been seeded from the existing empty `[0, 0]` marker. It stores answer text in `Y.Text('content')`; `answers.body_markdown` is the read projection. A transaction locks the answer row before its document row, merges against the latest binary state, and saves a changed binary state with its persistence revision and timestamp. If the text projection changes, the same transaction updates `body_markdown`, answer version, and answer timestamp. Replaying an update that changes no binary state does not advance revisions or timestamps. The store rejects inactive answer, document, or course lifecycle; malformed updates; invalid projected content; and mismatch between a nonempty binary state and the answer projection. The store has no network route and does not add contributors without an authenticated editor identity.
+The private answer document store stores answer text in `Y.Text('content')` within `yjs_state`; `answers.body_markdown` is its read projection. The initial empty `[0, 0]` marker is seeded on first access. See the [answer document core specification](../openspec/specs/answer-document-core/spec.md) for lifecycle and persistence behavior.
 
 ### `followups`
 

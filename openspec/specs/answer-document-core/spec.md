@@ -7,7 +7,7 @@ Provides a private, durable CRDT document boundary for an active answer so a fut
 
 ### Requirement: Active answers have a durable Yjs text document
 
-The core SHALL load an active answer's document as encoded Yjs state with `Y.Text('content')`, its Markdown text, answer version, and persistence revision. It SHALL seed an existing empty state from `answers.body_markdown` once. A later load SHALL preserve stored CRDT history and SHALL not reseed. An absent, deleted, endorsed, closed, finalizing, or inactive-course answer SHALL not be loadable.
+The core SHALL load an active answer's document as encoded Yjs state with `Y.Text('content')`, its Markdown text, answer version, and persistence revision. It SHALL seed an existing empty state from `answers.body_markdown` once. A later load SHALL preserve stored CRDT history and SHALL not reseed. An absent, deleted, endorsed, closed, finalizing, or inactive-course answer, or an answer whose parent post is deleted or a confirmed duplicate, SHALL not be loadable.
 
 #### Scenario: Existing answer is loaded twice
 
@@ -40,7 +40,7 @@ The core SHALL apply a valid encoded Yjs update against the latest stored state 
 
 ### Requirement: Invalid or inactive writes cannot change answer content
 
-The core SHALL reject malformed, empty, or oversized encoded updates and any resulting Markdown that is blank, whitespace-only, or longer than 100,000 characters. It SHALL reject updates when the answer is deleted or endorsed, the document is not active, or the course is inactive. It SHALL detect a nonempty persisted binary state whose text disagrees with `answers.body_markdown` as an integrity error. Rejected operations SHALL leave binary state, projection, revisions, and contributors unchanged.
+The core SHALL reject malformed, empty, or oversized encoded updates and any resulting Markdown that is blank, whitespace-only, or longer than 100,000 characters. It SHALL reject updates when the answer or its parent post is deleted, the parent post is a confirmed duplicate, the answer is endorsed, the document is not active, or the course is inactive. It SHALL detect a nonempty persisted binary state whose text disagrees with `answers.body_markdown` as an integrity error. Rejected operations SHALL leave binary state, projection, revisions, and contributors unchanged.
 
 #### Scenario: Malformed update
 
