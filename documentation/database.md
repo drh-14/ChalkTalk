@@ -189,6 +189,8 @@ The application must verify that a post and tag belong to the same course before
 - `persisted_at`: `timestamptz`.
 - `persistence_revision`: `bigint`.
 
+The private answer document store keeps `answers.body_markdown` as the text projection of `yjs_state`. See the [answer document core specification](../openspec/specs/answer-document-core/spec.md) for seeding, lifecycle, and persistence behavior.
+
 ### `followups`
 
 - `id`: `uuid_v7`; primary key.
