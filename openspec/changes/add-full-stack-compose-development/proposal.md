@@ -1,11 +1,11 @@
 ## Why
 
-The local Compose file currently starts only PostgreSQL and Mailpit. Developers who want the entire application running must start migrations, the API, and Vite independently. A full-stack, hot-reloading Compose workflow makes a fresh local environment runnable with one command while retaining the existing dependency-only workflow.
+When this change was proposed, the local Compose file started only PostgreSQL and Mailpit. Developers who wanted the entire application running had to start migrations, the API, and Vite independently. A full-stack, hot-reloading Compose workflow makes a fresh local environment runnable with one command while retaining the existing dependency-only workflow.
 
 ## What Changes
 
 - Add an opt-in `app` Compose profile for the Vite web server, Express API, and an idempotent one-shot migration service.
-- Keep the default Compose invocation limited to PostgreSQL and Mailpit.
+- Keep the default Compose invocation limited to dependency services.
 - Run the web and API source through development watchers in Node 22 containers, using source mounts and named dependency volumes.
 - Make the Vite API-proxy target configurable so the web container can reach the internal API service without publishing the API port.
 - Document the two local workflows and add CI smoke coverage for the containerized HTTPS proxy and migrations.
