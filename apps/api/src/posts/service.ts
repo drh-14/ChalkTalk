@@ -234,8 +234,8 @@ export class PostService {
       }
       this.writable(member.status);
       const id = uuidv7();
-      await db.query(
-        "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      const created = await db.query<{ created_on: string }>(
+        "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on",
         [
           id,
           courseId,
@@ -246,6 +246,11 @@ export class PostService {
           body.anonymous ?? false,
         ],
       );
+      if (body.type === "question")
+        await db.query(
+          "INSERT INTO question_creation_daily_counts(course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1) ON CONFLICT (course_id,user_id,created_on) DO UPDATE SET question_count=question_creation_daily_counts.question_count+1",
+          [courseId, userId, created.rows[0]!.created_on],
+        );
       await this.replaceTags(db, id, courseId, body.tags ?? []);
       const row = await this.row(db, id);
       const value = await this.project(db, row!, userId, member.role);
@@ -262,7 +267,18 @@ export class PostService {
     if (!row) throw notFound();
     const member = await this.membership(this.pool, row.course_id, userId);
     if (row.duplicate_status === "confirmed") return this.mergedReference(row);
-    return this.project(this.pool, row, userId, member.role);
+    const value = await this.project(this.pool, row, userId, member.role);
+    if (!row.deleted_at) {
+      try {
+        await this.pool.query(
+          "INSERT INTO post_view_events (id,course_id,post_id,user_id,viewed_on) VALUES ($1,$2,$3,$4,(now() AT TIME ZONE 'UTC')::date) ON CONFLICT (course_id,post_id,user_id,viewed_on) DO NOTHING",
+          [uuidv7(), row.course_id, row.id, userId],
+        );
+      } catch (error) {
+        console.error("Could not record post view", error);
+      }
+    }
+    return value;
   }
   async getDuplicateReview(id: string, userId: string): Promise<Post> {
     const row = await this.row(this.pool, id);

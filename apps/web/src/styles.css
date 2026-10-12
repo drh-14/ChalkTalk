@@ -288,6 +288,177 @@ h2[tabindex="-1"]:focus {
   max-width: 44rem;
   padding: 2rem;
 }
+.statistics-page {
+  max-width: 76rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+  color: var(--ink, #29251f);
+}
+.statistics-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.statistics-heading h2 {
+  margin: 0;
+  font-size: 1.65rem;
+}
+.statistics-heading p {
+  margin: 0.3rem 0 0;
+  color: var(--muted, #6a655e);
+}
+.statistics-heading label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+.statistics-heading select {
+  min-width: 11rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: #fff;
+  color: inherit;
+}
+.statistics-note {
+  margin: 1.25rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid #c8d9ef;
+  border-radius: 0.6rem;
+  background: #f1f6fc;
+  color: #375573;
+}
+.statistics-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.statistics-metric,
+.statistics-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  padding: 1.2rem;
+  box-shadow: 0 2px 12px rgba(34, 31, 27, 0.04);
+}
+.statistics-metric h3,
+.statistics-card h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+}
+.statistics-metric p {
+  margin: 0.2rem 0;
+  color: #625e57;
+}
+.statistics-metric .statistics-metric-value {
+  font-size: 2rem;
+  font-weight: 750;
+  color: #25201b;
+}
+.statistics-card {
+  margin-top: 1rem;
+}
+.statistics-chart {
+  display: flex;
+  height: 14rem;
+  gap: 0.2rem;
+  overflow-x: auto;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.statistics-day {
+  display: flex;
+  flex: 1 0 0.9rem;
+  min-width: 0.9rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  font-size: 0.65rem;
+  color: #777;
+}
+.statistics-bars {
+  display: flex;
+  align-items: end;
+  width: 100%;
+  height: 10rem;
+  gap: 1px;
+}
+.statistics-bar {
+  width: 33%;
+  border-radius: 2px 2px 0 0;
+}
+.statistics-bar.questions,
+.statistics-legend .questions {
+  background: #5b79ca;
+}
+.statistics-bar.answers,
+.statistics-legend .answers {
+  background: #58a47e;
+}
+.statistics-bar.views,
+.statistics-legend .views {
+  background: #d5a754;
+}
+.statistics-day time {
+  white-space: nowrap;
+}
+.statistics-legend {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+  color: #625e57;
+  font-size: 0.83rem;
+}
+.statistics-legend span {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-left: 0.55rem;
+  border-radius: 0.15rem;
+}
+.statistics-table-wrap {
+  overflow-x: auto;
+}
+.statistics-card table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 36rem;
+}
+.statistics-card th,
+.statistics-card td {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.statistics-card thead th {
+  color: #68625b;
+  font-size: 0.83rem;
+}
+.statistics-card tbody th {
+  font-weight: 600;
+}
+.statistics-card button {
+  margin-top: 1rem;
+}
+@media (max-width: 650px) {
+  .statistics-page {
+    padding: 1rem;
+  }
+  .statistics-metrics {
+    grid-template-columns: 1fr;
+  }
+  .statistics-heading label {
+    width: 100%;
+  }
+  .statistics-heading select {
+    width: 100%;
+  }
+}
 .course-placeholder h2 {
   font-family: Fraunces, Georgia, serif;
   margin: 0 0 0.5rem;
@@ -349,7 +520,8 @@ h2[tabindex="-1"]:focus {
   .course-tabs {
     grid-column: 1 / -1;
     grid-row: 3;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    justify-content: center;
     justify-self: stretch;
   }
   .course-tabs a {

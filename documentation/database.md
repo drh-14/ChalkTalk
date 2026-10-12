@@ -226,6 +226,22 @@ The private answer document store keeps `answers.body_markdown` as the text proj
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`.
 - `user_id`: `uuid_v7`; foreign key to `users.id`.
 - `viewed_at`: `timestamptz`.
+- `viewed_on`: UTC `date`; `(course_id, post_id, user_id, viewed_on)` is unique, so same-day reloads count once.
+
+### `question_creation_daily_counts`
+
+- `(course_id, user_id, created_on)`: primary key; references the course and creator but contains no post identifier.
+- `created_on`: UTC `date` of question creation.
+- `question_count`: positive integer. Each successful question creation increments the bucket in the post transaction. Soft deletion leaves it intact; account deletion removes the user's buckets, and course deletion removes the course's buckets.
+- Migration backfills active questions only; questions deleted before deployment are not reconstructed in per-student counts. Course daily totals continue to use post creation timestamps.
+
+### `answer_contribution_events`
+
+- `id`: `uuid`; primary key.
+- `course_id`: `uuid_v7`; foreign key to `courses.id`.
+- `answer_id`: `uuid_v7`; with `course_id`, foreign key to `answers(course_id, id)`.
+- `user_id`: `uuid_v7`; foreign key to `users.id`.
+- `contributed_at`: `timestamptz`; a creation or content-changing edit event. A later answer editor must insert this in its successful content persistence transaction.
 
 ## Course digest
 

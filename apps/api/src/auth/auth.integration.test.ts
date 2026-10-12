@@ -820,6 +820,10 @@ integrationTest("AuthService PostgreSQL integration", () => {
       "INSERT INTO course_memberships (course_id, user_id, role) VALUES ($1, $2, 'instructor')",
       [courseId, replacement.id],
     );
+    await pool.query(
+      "INSERT INTO question_creation_daily_counts(course_id,user_id,created_on,question_count) VALUES ($1,$2,(now() AT TIME ZONE 'UTC')::date,1)",
+      [courseId, instructor.id],
+    );
     await service.deleteAccount(
       login.credential,
       userEtag(login.session.user),
@@ -843,6 +847,14 @@ integrationTest("AuthService PostgreSQL integration", () => {
       [instructor.id],
     );
     expect(memberships.rows[0]!.count).toBe("0");
+    expect(
+      (
+        await pool.query(
+          "SELECT 1 FROM question_creation_daily_counts WHERE user_id=$1",
+          [instructor.id],
+        )
+      ).rowCount,
+    ).toBe(0);
     await expect(service.session(login.credential)).rejects.toMatchObject({
       status: 401,
       code: "authentication_required",

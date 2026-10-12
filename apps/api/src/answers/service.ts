@@ -231,6 +231,10 @@ export class AnswerService {
           "INSERT INTO answer_contributors (answer_id,user_id) VALUES ($1,$2)",
           [id, userId],
         );
+        await db.query(
+          "INSERT INTO answer_contribution_events (course_id,answer_id,user_id) VALUES ($1,$2,$3)",
+          [post.course_id, id, userId],
+        );
         await db.query("UPDATE posts SET last_activity_at=now() WHERE id=$1", [
           postId,
         ]);

@@ -26,6 +26,7 @@ import {
   type ListPosts,
   type UpdatePost,
 } from "../posts/service.js";
+import { StatisticsService } from "../statistics/service.js";
 
 export interface AppDependencies {
   environment: Environment;
@@ -33,6 +34,7 @@ export interface AppDependencies {
   courseService?: CourseService;
   postService?: PostService;
   answerService?: AnswerService;
+  statisticsService?: StatisticsService;
 }
 type AuthContext = {
   credential: string;
@@ -537,6 +539,7 @@ export function createApp(
     courseService,
     postService,
     answerService,
+    statisticsService,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -656,6 +659,54 @@ export function createApp(
       );
     return postService;
   };
+  const statistics = (): StatisticsService => {
+    if (!statisticsService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Statistics service is unavailable",
+      );
+    return statisticsService;
+  };
+  app.get(
+    "/api/v1/courses/:courseId/statistics",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const period = StatisticsService.period(request.query.period);
+        const data = await statistics().summary(
+          param(request.params.courseId),
+          current.session.user.id,
+          period,
+        );
+        response.set("Cache-Control", "private, no-store").json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/statistics/students",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const period = StatisticsService.period(request.query.period);
+        const limit = StatisticsService.limit(request.query.limit);
+        const result = await statistics().students(
+          param(request.params.courseId),
+          current.session.user.id,
+          period,
+          limit,
+          request.query.cursor as string | undefined,
+        );
+        response.set("Cache-Control", "private, no-store").json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.post(
     "/api/v1/account-verification-requests",
     publicOrigin,
