@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  changePassword,
   createAccount,
   currentSession,
+  deleteAccount,
+  getProfile,
   login,
   logout,
   requestPasswordReset,
   requestVerification,
   resetPassword,
+  updateDisplayName,
 } from "./client.js";
 
 const session = {
@@ -33,6 +37,82 @@ function jsonResponse(body: unknown, status = 200) {
 
 describe("browser auth client", () => {
   afterEach(() => vi.unstubAllGlobals());
+
+  it("reads a versioned profile and sends preconditions for account changes", async () => {
+    const profile = session.user;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: profile }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ data: { ...profile, displayName: "Ada B" } }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json", ETag: '"v2"' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getProfile()).resolves.toEqual({
+      data: profile,
+      etag: '"v1"',
+    });
+    await expect(
+      updateDisplayName("Ada B", '"v1"', "csrf_token"),
+    ).resolves.toEqual({
+      data: { ...profile, displayName: "Ada B" },
+      etag: '"v2"',
+    });
+    await changePassword(
+      "old passphrase",
+      "new secure passphrase",
+      '"v2"',
+      "csrf_token",
+    );
+    await deleteAccount("new secure passphrase", '"v3"', "csrf_token");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/users/me",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.objectContaining({
+          "If-Match": '"v1"',
+          "X-CSRF-Token": "csrf_token",
+        }),
+        body: JSON.stringify({ displayName: "Ada B" }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/users/me/password",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.objectContaining({ "If-Match": '"v2"' }),
+        body: JSON.stringify({
+          currentPassword: "old passphrase",
+          newPassword: "new secure passphrase",
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/api/v1/users/me",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "If-Match": '"v3"' }),
+        body: JSON.stringify({ currentPassword: "new secure passphrase" }),
+      }),
+    );
+  });
 
   it("uses documented relative request details and returns a session", async () => {
     const fetchMock = vi

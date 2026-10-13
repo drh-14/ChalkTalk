@@ -28,6 +28,8 @@ Core features include:
 
 ChalkTalk's goal is to turn a semester's discussion history into a searchable and reusable course knowledge base rather than a collection of disconnected posts.
 
+To manage your account, select your name in the signed-in top bar. Account settings lets you change your display name or password, or delete your account after confirming with your current password. Deletion signs you out and leaves past contributions with your name removed. If you are a course's final instructor, assign another instructor before deleting your account.
+
 ## Team
 
 - **Nicholas Smirnov** — authentication, authorization, security, account management, permissions

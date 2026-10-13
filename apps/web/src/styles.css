@@ -132,6 +132,16 @@ h2[tabindex="-1"]:focus {
 }
 .app-bar .account-name {
   color: #fffdf7;
+  text-decoration-color: rgba(255, 253, 247, 0.55);
+  text-underline-offset: 0.25rem;
+}
+.app-bar .account-name:hover {
+  text-decoration-color: #fffdf7;
+}
+.app-bar .account-name:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
 }
 .app-bar .wordmark,
 .app-bar-back {
@@ -489,14 +499,21 @@ h2[tabindex="-1"]:focus {
     display: contents;
   }
   .app-bar.course .wordmark {
-    grid-column: 1 / 3;
+    grid-column: 1 / -1;
     grid-row: 1;
   }
   .app-bar.course .account-controls {
-    grid-column: 3;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+    width: 100%;
   }
   .app-bar.course .account-name {
-    display: none;
+    min-width: 0;
+  }
+  .app-bar.course .avatar,
+  .app-bar.course .text-button {
+    flex: none;
   }
   .switcher-panel {
     left: 1rem;
@@ -507,7 +524,7 @@ h2[tabindex="-1"]:focus {
   }
   .app-bar-back {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 3;
   }
   .app-bar-start .app-bar-back {
     border-left: 0;
@@ -515,11 +532,11 @@ h2[tabindex="-1"]:focus {
   }
   .app-bar-course {
     grid-column: 2 / -1;
-    grid-row: 2;
+    grid-row: 3;
   }
   .course-tabs {
     grid-column: 1 / -1;
-    grid-row: 3;
+    grid-row: 4;
     flex-wrap: wrap;
     justify-content: center;
     justify-self: stretch;
@@ -1884,6 +1901,132 @@ a:focus-visible {
   max-width: 64rem;
   min-height: calc(100vh - 4rem);
   padding: 0 var(--space-5) 4rem;
+}
+
+/* Account settings */
+.account-page {
+  margin: 0 auto;
+  max-width: 64rem;
+  min-height: calc(100vh - 4rem);
+  padding: 2.5rem var(--space-5) 4rem;
+}
+.account-page-intro {
+  margin-bottom: var(--space-8);
+}
+.account-page-intro .eyebrow {
+  color: var(--brand-warm);
+  font-weight: 700;
+}
+.account-page-intro h1 {
+  font-family: var(--font-serif);
+  font-size: clamp(2rem, 4vw, 3rem);
+  letter-spacing: -0.04em;
+  margin: 0.4rem 0;
+}
+.account-page-intro > p:last-child,
+.account-section > p {
+  color: var(--ink-muted);
+}
+.account-page-sections {
+  align-items: start;
+  display: grid;
+  gap: var(--space-5);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.account-section {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: clamp(1.25rem, 3vw, 2rem);
+}
+.account-section h2 {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  margin: 0 0 var(--space-3);
+}
+.account-section form,
+.account-dialog form {
+  display: flex;
+  flex-direction: column;
+}
+.account-section label,
+.account-dialog label {
+  font-size: 0.86rem;
+  font-weight: 700;
+  margin: var(--space-4) 0 var(--space-2);
+}
+.account-section input,
+.account-dialog input {
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font: inherit;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.8rem;
+  width: 100%;
+}
+.account-section input:focus-visible,
+.account-dialog input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.account-section .button {
+  align-self: flex-start;
+  margin-top: var(--space-5);
+}
+.account-email {
+  overflow-wrap: anywhere;
+}
+.account-danger {
+  border-color: #e5c7bf;
+  grid-column: 1 / -1;
+}
+.account-danger h2 {
+  color: var(--danger);
+}
+.account-dialog-backdrop {
+  align-items: center;
+  background: rgba(20, 32, 27, 0.68);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: var(--space-5);
+  position: fixed;
+  z-index: 100;
+}
+.account-dialog {
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.28);
+  max-height: calc(100dvh - 2 * var(--space-5));
+  max-width: 30rem;
+  overflow-y: auto;
+  padding: clamp(1.5rem, 4vw, 2rem);
+  width: 100%;
+}
+.account-dialog h2 {
+  color: var(--danger);
+  font-family: var(--font-serif);
+  margin: 0;
+}
+.account-dialog p {
+  line-height: 1.5;
+}
+.account-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: end;
+  margin-top: var(--space-5);
+}
+@media (max-width: 700px) {
+  .account-page-sections {
+    grid-template-columns: 1fr;
+  }
+  .account-danger {
+    grid-column: auto;
+  }
 }
 .account-controls {
   align-items: center;

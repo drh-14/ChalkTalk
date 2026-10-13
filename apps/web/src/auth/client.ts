@@ -42,7 +42,10 @@ function newIdempotencyKey(): string {
   return crypto.randomUUID();
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function requestDetailed<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ data: T; response: Response }> {
   const response = await fetch(`${apiBase}${path}`, {
     credentials: "include",
     ...init,
@@ -64,11 +67,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       error?.requestId,
     );
   }
-  return payload?.data as T;
+  return { data: payload?.data as T, response };
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return (await requestDetailed<T>(path, init)).data;
 }
 
 function jsonRequest(
-  method: "POST" | "DELETE",
+  method: "POST" | "PATCH" | "DELETE",
   body?: object,
   headers?: HeadersInit,
 ): RequestInit {
@@ -116,6 +123,74 @@ export function logout(csrfToken: string): Promise<void> {
   return request<void>(
     "/sessions/current",
     jsonRequest("DELETE", undefined, { "X-CSRF-Token": csrfToken }),
+  );
+}
+
+export type VersionedProfile = { data: User; etag: string };
+
+async function profileRequest(init?: RequestInit): Promise<VersionedProfile> {
+  const result = await requestDetailed<User>("/users/me", init);
+  const etag = result.response.headers.get("ETag");
+  if (!etag)
+    throw new Error("The account response did not include a revision.");
+  return { data: result.data, etag };
+}
+
+export function getProfile(): Promise<VersionedProfile> {
+  return profileRequest();
+}
+
+export function updateDisplayName(
+  displayName: string,
+  etag: string,
+  csrfToken: string,
+): Promise<VersionedProfile> {
+  return profileRequest(
+    jsonRequest(
+      "PATCH",
+      { displayName },
+      {
+        "If-Match": etag,
+        "X-CSRF-Token": csrfToken,
+      },
+    ),
+  );
+}
+
+export function changePassword(
+  currentPassword: string,
+  newPassword: string,
+  etag: string,
+  csrfToken: string,
+): Promise<void> {
+  return request<void>(
+    "/users/me/password",
+    jsonRequest(
+      "PATCH",
+      { currentPassword, newPassword },
+      {
+        "If-Match": etag,
+        "X-CSRF-Token": csrfToken,
+      },
+    ),
+  );
+}
+
+export function deleteAccount(
+  currentPassword: string,
+  etag: string,
+  csrfToken: string,
+): Promise<void> {
+  return request<void>(
+    "/users/me",
+    jsonRequest(
+      "DELETE",
+      { currentPassword },
+      {
+        "If-Match": etag,
+        "X-CSRF-Token": csrfToken,
+      },
+    ),
   );
 }
 
