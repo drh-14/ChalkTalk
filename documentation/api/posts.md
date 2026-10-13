@@ -1,6 +1,6 @@
 ## Posts
 
-**Implementation status (text-post phase):** JSON question and note creation, listing/search, retrieval, update, and deletion are implemented. Active text posts return `attachments: []`; questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. Poll creation, poll voting, multipart requests, attachments, download refresh, and view events below describe the future target contract and are not live. During this phase, poll creation and multipart create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
+**Implementation status (text-post phase):** JSON question and note creation, listing/search, retrieval, update, and deletion are implemented. Active text posts return `attachments: []`; questions return `answered: true` when at least one active answer card exists, and the `answered` list filter uses the same rule. Poll creation, poll voting, multipart requests, attachments, download refresh, and view events below describe the future target contract and are not live. During this phase, poll creation and multipart create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
 
@@ -214,7 +214,7 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 
 `data.version` (integer, required): Revision number used to construct the resource ETag.
 
-`data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+`data.answered` (boolean, required when `type` is `question`): Whether an active answer card exists.
 
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 
@@ -433,7 +433,7 @@ None specific to this operation.
 
 `data[].version` (integer, required): Revision number used to construct the resource ETag.
 
-`data[].answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+`data[].answered` (boolean, required when `type` is `question`): Whether an active answer card exists.
 
 ###### `data[].options` (list of objects, required when `type` is `poll`): Poll choices.
 
@@ -623,7 +623,7 @@ None.
 
 `data.version` (integer, required): Revision number used to construct the resource ETag.
 
-`data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+`data.answered` (boolean, required when `type` is `question`): Whether an active answer card exists.
 
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 
@@ -857,7 +857,7 @@ None.
 
 `data.version` (integer, required): Revision number used to construct the resource ETag.
 
-`data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+`data.answered` (boolean, required when `type` is `question`): Whether an active answer card exists.
 
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 

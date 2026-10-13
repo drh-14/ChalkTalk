@@ -489,7 +489,7 @@ export async function seedAms161(
           if (!answer) continue;
           const answerId = uuidv7();
           await client.query(
-            "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,endorsed_at,endorsed_by_user_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,CASE WHEN $6::uuid IS NULL THEN NULL ELSE now()-make_interval(mins=>$7) END,$6,now()-make_interval(mins=>$7),now()-make_interval(mins=>$7))",
+            "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,endorsed_at,endorsed_by_user_id,created_at,updated_at,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,$4,$5,CASE WHEN $6::uuid IS NULL THEN NULL ELSE now()-make_interval(mins=>$7) END,$6,now()-make_interval(mins=>$7),now()-make_interval(mins=>$7),$8,(SELECT role FROM course_memberships WHERE course_id=$2 AND user_id=$8))",
             [
               answerId,
               AMS161_DEMO.courseId,
@@ -498,6 +498,7 @@ export async function seedAms161(
               answer.body,
               answer.endorsedBy ? ids[answer.endorsedBy] : null,
               answer.age,
+              ids[answer.author],
             ],
           );
           await client.query(

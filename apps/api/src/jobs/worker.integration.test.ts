@@ -5,6 +5,7 @@ import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { JobWorker } from "./worker.js";
 import { PostService, postEtag } from "../posts/service.js";
 import { AnswerService, answerEtag } from "../answers/service.js";
+import { FollowupService } from "../followups/service.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
@@ -247,19 +248,34 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       bodyMarkdown: "Removed",
     });
     await answers.delete(removed.value.id, ownerId, answerEtag(removed.value));
+    const followups = new FollowupService(pool);
+    const root = await followups.create(post.value.id, ownerId, {
+      bodyMarkdown: "Question followup",
+    });
+    const reply = await followups.create(
+      post.value.id,
+      ownerId,
+      { bodyMarkdown: "Nested reply" },
+      root.id,
+    );
+    await followups.upvote(reply.id, ownerId, true);
+    await answers.upvote(kept.value.id, ownerId, true);
     await expect(worker.runOnce()).resolves.toBe(true);
     const job = await pool.query("SELECT status FROM jobs WHERE id=$1", [
       jobId,
     ]);
     expect(job.rows[0].status).toBe("succeeded");
     const left = await pool.query(
-      "SELECT (SELECT count(*) FROM answers WHERE course_id=$1)::int AS answers,(SELECT count(*) FROM answer_contributors WHERE answer_id IN ($2,$3))::int AS contributors,(SELECT count(*) FROM answer_collaboration_documents WHERE answer_id IN ($2,$3))::int AS documents,(SELECT count(*) FROM courses WHERE id=$1)::int AS courses",
-      [courseId, kept.value.id, removed.value.id],
+      "SELECT (SELECT count(*) FROM answers WHERE course_id=$1)::int AS answers,(SELECT count(*) FROM answer_contributors WHERE answer_id IN ($2,$3))::int AS contributors,(SELECT count(*) FROM answer_collaboration_documents WHERE answer_id IN ($2,$3))::int AS documents,(SELECT count(*) FROM followups WHERE course_id=$1)::int AS followups,(SELECT count(*) FROM answer_upvotes WHERE answer_id=$2)::int AS answer_votes,(SELECT count(*) FROM followup_upvotes WHERE followup_id=$4)::int AS followup_votes,(SELECT count(*) FROM courses WHERE id=$1)::int AS courses",
+      [courseId, kept.value.id, removed.value.id, reply.id],
     );
     expect(left.rows[0]).toEqual({
       answers: 0,
       contributors: 0,
       documents: 0,
+      followups: 0,
+      answer_votes: 0,
+      followup_votes: 0,
       courses: 0,
     });
   });

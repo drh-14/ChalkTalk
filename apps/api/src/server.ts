@@ -5,6 +5,7 @@ import { loadEnvironment, requireDatabaseUrl } from "./config/environment.js";
 import { createPool } from "./database/pool.js";
 import { CourseService } from "./courses/service.js";
 import { JobWorker } from "./jobs/worker.js";
+import { FollowupService } from "./followups/service.js";
 import { createApp } from "./http/app.js";
 import { PostService } from "./posts/service.js";
 
@@ -21,6 +22,7 @@ const app = createApp({
   courseService: new CourseService(pool),
   postService: new PostService(pool),
   answerService: new AnswerService(pool),
+  followupService: new FollowupService(pool),
 });
 const worker = new JobWorker(pool);
 let workerRunning = false;

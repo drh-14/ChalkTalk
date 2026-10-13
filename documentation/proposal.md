@@ -97,11 +97,11 @@ Classes can be archived or deleted. Archiving a class makes it read-only, preven
 Users can create posts on the main page. There are three types of posts: questions, notes, and polls.
 
 Questions  
-Questions can be posted by any user. When a user creates a question, similar existing posts are surfaced automatically. Any user may respond, creating a collaborative response: either the instructors' response or the students' response. If a TA or instructor responds, it becomes the instructors' response and may be edited by TAs and instructors. If a student responds, it becomes the students' response and may be edited by students.
+Questions can be posted by any user. When a user creates a question, similar existing posts are surfaced automatically. Current answer-card behavior and editing permissions are specified in the [answers API reference](api/answers.md).
 
 Responses can be endorsed by a TA or instructor. Once endorsed, a response can no longer be edited.
 
-Followups can be posted in response to answers, and followups can themselves be responded to, forming a nested structure.
+Question-level followups and replies form a nested discussion, as specified in the [answers API reference](api/answers.md).
 
 Notes  
 Notes can be posted by any user. Responses cannot be posted to notes.
@@ -109,7 +109,7 @@ Notes can be posted by any user. Responses cannot be posted to notes.
 Polls  
 Polls can be posted by instructors or TAs. A poll contains a list of options that any user can vote on. Polls cannot be responded to.
 
-Posts, responses, and followups support LaTeX and Markdown formatting, as well as image and document upload.
+Posts, responses, and followups support LaTeX and Markdown formatting. Current answer and followup media support is specified in the [answers API reference](api/answers.md).
 
 Posts, responses, and followups each have an author and timestamp; timestamps update on edit. Collaborative responses record every user who has edited them.
 

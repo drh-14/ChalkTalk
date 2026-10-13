@@ -1,11 +1,13 @@
 import { Pool } from "pg";
 import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
+import * as Y from "yjs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
 import type { AuthService } from "../auth/service.js";
 import { AnswerService } from "../answers/service.js";
+import { FollowupService } from "../followups/service.js";
 import { PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
 
@@ -61,6 +63,7 @@ function app(userId = ids.author) {
     } as AuthService,
     postService: new PostService(pool),
     answerService: new AnswerService(pool),
+    followupService: new FollowupService(pool),
   });
 }
 function unsafe(test: request.Test) {
@@ -91,6 +94,34 @@ function answer(
   return unsafe(
     request(app(userId)).post(`/api/v1/posts/${postId}/answers`),
   ).send(body);
+}
+
+function pauseAfterBegin() {
+  let started = () => {};
+  let resume = () => {};
+  const begun = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const pausedPool = {
+    connect: async () => {
+      const db = await pool.connect();
+      return {
+        query: async (sql: string, values?: unknown[]) => {
+          const result = await db.query(sql, values);
+          if (sql === "BEGIN") {
+            started();
+            await released;
+          }
+          return result;
+        },
+        release: () => db.release(),
+      };
+    },
+  } as unknown as Pool;
+  return { pausedPool, begun, resume };
 }
 
 integration("answers HTTP contract: create and read", () => {
@@ -140,6 +171,868 @@ integration("answers HTTP contract: create and read", () => {
     await admin?.end();
   });
 
+  it("creates independent answer cards from students and staff", async () => {
+    const postId = await insertPost();
+    const first = await answer(ids.author, postId, { bodyMarkdown: "First" });
+    const second = await answer(ids.student, postId, {
+      bodyMarkdown: "Second",
+    });
+    const third = await answer(ids.staff, postId, { bodyMarkdown: "Third" });
+    expect([first.status, second.status, third.status]).toEqual([
+      201, 201, 201,
+    ]);
+    const listed = await read(ids.author, `/api/v1/posts/${postId}/answers`);
+    expect(
+      listed.body.data.map(
+        (item: { bodyMarkdown: string }) => item.bodyMarkdown,
+      ),
+    ).toEqual(["First", "Second", "Third"]);
+    expect(listed.body.data[0]).toMatchObject({
+      canEdit: true,
+      upvoteCount: 0,
+      viewerUpvoted: false,
+    });
+    expect(listed.body.data[0]).not.toHaveProperty("kind");
+  });
+
+  it("edits an answer by current role with a versioned REST save", async () => {
+    const postId = await insertPost();
+    const created = await answer(ids.author, postId, { bodyMarkdown: "Old" });
+    const path = `/api/v1/answers/${created.body.data.id}`;
+    const saved = await unsafe(request(app(ids.student)).patch(path))
+      .set("If-Match", created.headers.etag)
+      .send({ bodyMarkdown: "New $x^2$" });
+    expect(saved.status).toBe(200);
+    expect(saved.headers.etag).toBe('"v2"');
+    expect(saved.body.data).toMatchObject({
+      bodyMarkdown: "New $x^2$",
+      version: 2,
+      contributors: [
+        { id: ids.author, displayName: "Author" },
+        { id: ids.student, displayName: "Student" },
+      ],
+    });
+    const stale = await unsafe(request(app(ids.author)).patch(path))
+      .set("If-Match", created.headers.etag)
+      .send({ bodyMarkdown: "Stale" });
+    expect(stale.status).toBe(412);
+    const persisted = await pool.query(
+      "SELECT body_markdown FROM answers WHERE id=$1",
+      [created.body.data.id],
+    );
+    expect(persisted.rows[0].body_markdown).toBe("New $x^2$");
+    const document = await pool.query(
+      "SELECT yjs_state FROM answer_collaboration_documents WHERE answer_id=$1",
+      [created.body.data.id],
+    );
+    const ydoc = new Y.Doc();
+    Y.applyUpdate(ydoc, document.rows[0].yjs_state);
+    expect(ydoc.getText("content").toString()).toBe("New $x^2$");
+  });
+
+  it("keeps the creator-role floor stable and uses the editor's current role", async () => {
+    const postId = await insertPost();
+    const studentCard = await answer(ids.author, postId, {
+      bodyMarkdown: "Student",
+    });
+    const instructorEdit = await unsafe(
+      request(app(ids.instructor)).patch(studentCard.headers.location),
+    )
+      .set("If-Match", studentCard.headers.etag)
+      .send({ bodyMarkdown: "Instructor edit" });
+    expect(instructorEdit.status).toBe(200);
+    const peerEdit = await unsafe(
+      request(app(ids.student)).patch(studentCard.headers.location),
+    )
+      .set("If-Match", instructorEdit.headers.etag)
+      .send({ bodyMarkdown: "Peer edit" });
+    expect(peerEdit.status).toBe(200);
+    const taCard = await answer(ids.staff, postId, { bodyMarkdown: "TA" });
+    const studentDenied = await unsafe(
+      request(app(ids.student)).patch(taCard.headers.location),
+    )
+      .set("If-Match", taCard.headers.etag)
+      .send({ bodyMarkdown: "No" });
+    expect(studentDenied.status).toBe(403);
+    await pool.query(
+      "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+      [ids.course, ids.staff],
+    );
+    try {
+      const downgraded = await read(ids.staff, taCard.headers.location);
+      expect(downgraded.body.data.canEdit).toBe(false);
+      const denied = await unsafe(
+        request(app(ids.staff)).patch(taCard.headers.location),
+      )
+        .set("If-Match", taCard.headers.etag)
+        .send({ bodyMarkdown: "Downgraded" });
+      expect(denied.status).toBe(403);
+    } finally {
+      await pool.query(
+        "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.staff],
+      );
+    }
+  });
+
+  it("creates question-level followups before answers and counts roots", async () => {
+    const postId = await insertPost();
+    const path = `/api/v1/posts/${postId}/followups`;
+    const empty = await read(ids.author, path);
+    expect(empty.status).toBe(200);
+    expect(empty.body.data).toEqual([]);
+    expect(empty.body.meta.total).toBe(0);
+    const created = await unsafe(request(app(ids.author)).post(path)).send({
+      bodyMarkdown: "What about $x$?",
+    });
+    expect(created.status).toBe(201);
+    expect(created.headers.location).toBe(
+      `/api/v1/followups/${created.body.data.id}`,
+    );
+    const listed = await read(ids.student, path);
+    expect(listed.body.meta.total).toBe(1);
+    expect(listed.body.data[0]).toMatchObject({
+      bodyMarkdown: "What about $x$?",
+      upvoteCount: 0,
+      viewerUpvoted: false,
+    });
+  });
+
+  it("rejects followup creation on notes with 409 while listing uses 422", async () => {
+    const note = await insertPost("note");
+    const path = `/api/v1/posts/${note}/followups`;
+    const created = await unsafe(request(app(ids.author)).post(path)).send({
+      bodyMarkdown: "Question on a note",
+    });
+    expect(created.status).toBe(409);
+    expect(created.body.error.code).toBe("not_a_question");
+    const listed = await read(ids.author, path);
+    expect(listed.status).toBe(422);
+    expect(listed.body.error.code).toBe("not_a_question");
+  });
+
+  it.each(["root", "reply"])(
+    "rejects invalid %s followup cursors instead of returning the first page",
+    async (kind) => {
+      const postId = await insertPost();
+      const root = await unsafe(
+        request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+      ).send({ bodyMarkdown: "Root" });
+      expect(root.status).toBe(201);
+      const path =
+        kind === "root"
+          ? `/api/v1/posts/${postId}/followups`
+          : `/api/v1/followups/${root.body.data.id}/replies`;
+      for (const query of [
+        "cursor=one&cursor=two",
+        "cursor=",
+        "cursor[]=one",
+      ]) {
+        const response = await read(ids.author, `${path}?${query}`);
+        expect(response.status).toBe(400);
+        expect(response.body.error.code).toBe("invalid_request");
+      }
+    },
+  );
+
+  it.each(["root", "reply"])(
+    "rejects impossible calendar dates in %s followup cursors",
+    async (kind) => {
+      const postId = await insertPost();
+      const root = await unsafe(
+        request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+      ).send({ bodyMarkdown: "Root" });
+      expect(root.status).toBe(201);
+      const path =
+        kind === "root"
+          ? `/api/v1/posts/${postId}/followups`
+          : `/api/v1/followups/${root.body.data.id}/replies`;
+      for (const timestamp of [
+        "2026-02-31T00:00:00.000000Z",
+        "2025-02-29T00:00:00.000000Z",
+        "0000-01-01T00:00:00.000000Z",
+      ]) {
+        const cursor = Buffer.from(
+          JSON.stringify([timestamp, root.body.data.id]),
+        ).toString("base64url");
+        const response = await read(ids.author, `${path}?cursor=${cursor}`);
+        expect(response.status).toBe(400);
+        expect(response.body.error.code).toBe("invalid_cursor");
+      }
+      const leapDay = Buffer.from(
+        JSON.stringify(["2024-02-29T00:00:00.000000Z", root.body.data.id]),
+      ).toString("base64url");
+      expect((await read(ids.author, `${path}?cursor=${leapDay}`)).status).toBe(
+        200,
+      );
+    },
+  );
+
+  it("batches visible reply counts for root and reply pages", async () => {
+    const postId = await insertPost();
+    const createAt = async (path: string, bodyMarkdown: string) => {
+      const response = await unsafe(request(app(ids.author)).post(path)).send({
+        bodyMarkdown,
+      });
+      expect(response.status).toBe(201);
+      return response.body.data.id as string;
+    };
+    const rootsPath = `/api/v1/posts/${postId}/followups`;
+    const firstRoot = await createAt(rootsPath, "First root");
+    const secondRoot = await createAt(rootsPath, "Second root");
+    const firstReply = await createAt(
+      `/api/v1/followups/${firstRoot}/replies`,
+      "First reply",
+    );
+    const secondReply = await createAt(
+      `/api/v1/followups/${firstRoot}/replies`,
+      "Second reply",
+    );
+    await createAt(`/api/v1/followups/${secondRoot}/replies`, "Other reply");
+    await createAt(`/api/v1/followups/${firstReply}/replies`, "Nested reply");
+
+    let recursiveQueries = 0;
+    const trackedPool = {
+      query: (sql: string, values?: unknown[]) => {
+        if (sql.startsWith("WITH RECURSIVE visible")) recursiveQueries++;
+        return pool.query(sql, values);
+      },
+    } as unknown as Pool;
+    const service = new FollowupService(trackedPool);
+    const roots = await service.list(
+      postId,
+      ids.author,
+      undefined,
+      undefined,
+      2,
+    );
+    expect(
+      roots.data.map(({ id, replyCount }) => ({ id, replyCount })),
+    ).toEqual([
+      { id: firstRoot, replyCount: 2 },
+      { id: secondRoot, replyCount: 1 },
+    ]);
+    expect(recursiveQueries).toBe(3);
+
+    recursiveQueries = 0;
+    const replies = await service.list(
+      postId,
+      ids.author,
+      firstRoot,
+      undefined,
+      2,
+    );
+    expect(
+      replies.data.map(({ id, replyCount }) => ({ id, replyCount })),
+    ).toEqual([
+      { id: firstReply, replyCount: 1 },
+      { id: secondReply, replyCount: 0 },
+    ]);
+    expect(recursiveQueries).toBe(3);
+  });
+
+  it.each(["root", "reply"])(
+    "retains microsecond creation order for %s pagination",
+    async (kind) => {
+      const postId = await insertPost();
+      const root =
+        kind === "reply"
+          ? await unsafe(
+              request(app(ids.author)).post(
+                `/api/v1/posts/${postId}/followups`,
+              ),
+            ).send({ bodyMarkdown: "Parent" })
+          : undefined;
+      const path = root
+        ? `/api/v1/followups/${root.body.data.id}/replies`
+        : `/api/v1/posts/${postId}/followups`;
+      const first = await unsafe(request(app(ids.author)).post(path)).send({
+        bodyMarkdown: "First",
+      });
+      const second = await unsafe(request(app(ids.author)).post(path)).send({
+        bodyMarkdown: "Second",
+      });
+      expect([first.status, second.status]).toEqual([201, 201]);
+      expect(first.body.data.createdAt).toMatch(/\.\d{6}Z$/);
+      await pool.query(
+        "UPDATE followups SET created_at=$2::timestamptz WHERE id=$1",
+        [first.body.data.id, "2026-10-01T00:00:00.000200Z"],
+      );
+      await pool.query(
+        "UPDATE followups SET created_at=$2::timestamptz WHERE id=$1",
+        [second.body.data.id, "2026-10-01T00:00:00.000100Z"],
+      );
+      const firstPage = await read(ids.student, `${path}?limit=1`);
+      expect(firstPage.body.data[0]).toMatchObject({
+        id: second.body.data.id,
+        createdAt: "2026-10-01T00:00:00.000100Z",
+      });
+      const secondPage = await read(
+        ids.student,
+        `${path}?limit=1&cursor=${encodeURIComponent(firstPage.body.meta.nextCursor)}`,
+      );
+      expect(secondPage.body.data[0]).toMatchObject({
+        id: first.body.data.id,
+        createdAt: "2026-10-01T00:00:00.000200Z",
+      });
+      expect(
+        (await read(ids.student, first.headers.location)).body.data.createdAt,
+      ).toBe("2026-10-01T00:00:00.000200Z");
+    },
+  );
+
+  it("keeps threaded replies after a parent is deleted and hides anonymous authors from students", async () => {
+    const postId = await insertPost();
+    const root = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "Root", anonymous: true });
+    expect(root.status).toBe(201);
+    const reply = await unsafe(
+      request(app(ids.student)).post(
+        `/api/v1/followups/${root.body.data.id}/replies`,
+      ),
+    ).send({ bodyMarkdown: "Reply" });
+    expect(reply.status).toBe(201);
+    const studentRoot = await read(
+      ids.student,
+      `/api/v1/followups/${root.body.data.id}`,
+    );
+    expect(studentRoot.body.data.author).toBeNull();
+    const staffRoot = await read(
+      ids.staff,
+      `/api/v1/followups/${root.body.data.id}`,
+    );
+    expect(staffRoot.body.data.author).toMatchObject({ id: ids.author });
+    const denied = await unsafe(
+      request(app(ids.student)).patch(`/api/v1/followups/${root.body.data.id}`),
+    )
+      .set("If-Match", root.headers.etag)
+      .send({ bodyMarkdown: "Hijack" });
+    expect(denied.status).toBe(403);
+    const deleted = await unsafe(
+      request(app(ids.author)).delete(`/api/v1/followups/${root.body.data.id}`),
+    ).set("If-Match", root.headers.etag);
+    expect(deleted.status).toBe(204);
+    const tree = await read(ids.student, `/api/v1/posts/${postId}/followups`);
+    expect(tree.body.data[0]).toMatchObject({
+      id: root.body.data.id,
+      bodyMarkdown: null,
+      deleted: true,
+    });
+    const replies = await read(
+      ids.student,
+      `/api/v1/followups/${root.body.data.id}/replies`,
+    );
+    expect(replies.body.data[0].id).toBe(reply.body.data.id);
+  });
+
+  it("paginates roots and replies without skipping after earlier items are deleted", async () => {
+    const postId = await insertPost();
+    const roots = [];
+    for (const bodyMarkdown of ["First", "Second", "Third"]) {
+      const created = await unsafe(
+        request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+      ).send({ bodyMarkdown });
+      expect(created.status).toBe(201);
+      roots.push(created);
+    }
+    const rootPath = `/api/v1/posts/${postId}/followups`;
+    const firstPage = await read(ids.author, `${rootPath}?limit=1`);
+    expect(firstPage.body.data.map((item: { id: string }) => item.id)).toEqual([
+      roots[0].body.data.id,
+    ]);
+    expect(firstPage.body.meta.nextCursor).toBeTruthy();
+    expect(
+      (
+        await unsafe(
+          request(app(ids.author)).delete(roots[0].headers.location),
+        ).set("If-Match", roots[0].headers.etag)
+      ).status,
+    ).toBe(204);
+    const secondPage = await read(
+      ids.author,
+      `${rootPath}?limit=1&cursor=${encodeURIComponent(firstPage.body.meta.nextCursor)}`,
+    );
+    expect(secondPage.body.data[0].id).toBe(roots[1].body.data.id);
+    expect(secondPage.body.meta.nextCursor).toBeTruthy();
+    const thirdPage = await read(
+      ids.author,
+      `${rootPath}?limit=1&cursor=${encodeURIComponent(secondPage.body.meta.nextCursor)}`,
+    );
+    expect(thirdPage.body.data[0].id).toBe(roots[2].body.data.id);
+
+    const replyPath = `/api/v1/followups/${roots[1].body.data.id}/replies`;
+    const replies = [];
+    for (const bodyMarkdown of ["A", "B", "C"]) {
+      const created = await unsafe(
+        request(app(ids.student)).post(replyPath),
+      ).send({ bodyMarkdown });
+      expect(created.status).toBe(201);
+      replies.push(created);
+    }
+    const firstReplyPage = await read(ids.author, `${replyPath}?limit=1`);
+    expect(firstReplyPage.body.data[0].id).toBe(replies[0].body.data.id);
+    expect(
+      (
+        await unsafe(
+          request(app(ids.student)).delete(replies[0].headers.location),
+        ).set("If-Match", replies[0].headers.etag)
+      ).status,
+    ).toBe(204);
+    const nextReplyPage = await read(
+      ids.author,
+      `${replyPath}?limit=1&cursor=${encodeURIComponent(firstReplyPage.body.meta.nextCursor)}`,
+    );
+    expect(nextReplyPage.body.data[0].id).toBe(replies[1].body.data.id);
+    expect(nextReplyPage.body.meta.nextCursor).toBeTruthy();
+  });
+
+  it("keeps deleted ancestors only while a live descendant remains", async () => {
+    const postId = await insertPost();
+    const root = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "Root" });
+    const child = await unsafe(
+      request(app(ids.author)).post(
+        `/api/v1/followups/${root.body.data.id}/replies`,
+      ),
+    ).send({ bodyMarkdown: "Child" });
+    const leaf = await unsafe(
+      request(app(ids.author)).post(
+        `/api/v1/followups/${child.body.data.id}/replies`,
+      ),
+    ).send({ bodyMarkdown: "Leaf" });
+    for (const item of [root, child])
+      expect(
+        (
+          await unsafe(
+            request(app(ids.author)).delete(item.headers.location),
+          ).set("If-Match", item.headers.etag)
+        ).status,
+      ).toBe(204);
+    const roots = await read(ids.author, `/api/v1/posts/${postId}/followups`);
+    expect(roots.body.data[0]).toMatchObject({
+      id: root.body.data.id,
+      replyCount: 1,
+    });
+    const children = await read(
+      ids.author,
+      `/api/v1/followups/${root.body.data.id}/replies`,
+    );
+    expect(children.body.data[0]).toMatchObject({
+      id: child.body.data.id,
+      replyCount: 1,
+    });
+    expect(
+      (
+        await unsafe(
+          request(app(ids.author)).delete(leaf.headers.location),
+        ).set("If-Match", leaf.headers.etag)
+      ).status,
+    ).toBe(204);
+    const emptyRoots = await read(
+      ids.author,
+      `/api/v1/posts/${postId}/followups`,
+    );
+    expect(emptyRoots.body).toMatchObject({ data: [], meta: { total: 0 } });
+    for (const item of [root, child, leaf])
+      expect((await read(ids.author, item.headers.location)).status).toBe(404);
+    expect(
+      (await read(ids.author, `/api/v1/followups/${root.body.data.id}/replies`))
+        .status,
+    ).toBe(404);
+  });
+
+  it("reuses expired idempotency keys for new roots and replies", async () => {
+    const postId = await insertPost();
+    const rootPath = `/api/v1/posts/${postId}/followups`;
+    const root = await unsafe(request(app(ids.author)).post(rootPath))
+      .set("Idempotency-Key", "expired-root")
+      .send({ bodyMarkdown: "Original root" });
+    expect(root.status).toBe(201);
+    const replyPath = `/api/v1/followups/${root.body.data.id}/replies`;
+    for (const [path, key] of [
+      [rootPath, "expired-root"],
+      [replyPath, "expired-reply"],
+    ]) {
+      const first =
+        path === rootPath
+          ? root
+          : await unsafe(request(app(ids.author)).post(path))
+              .set("Idempotency-Key", key)
+              .send({ bodyMarkdown: "Original reply" });
+      expect(first.status).toBe(201);
+      await pool.query(
+        "UPDATE idempotency_records SET expires_at=now()-interval '1 second' WHERE key=$1",
+        [key],
+      );
+      const second = await unsafe(request(app(ids.author)).post(path))
+        .set("Idempotency-Key", key)
+        .send({ bodyMarkdown: "Fresh content" });
+      expect(second.status).toBe(201);
+      expect(second.body.data.id).not.toBe(first.body.data.id);
+      expect(second.body.data.bodyMarkdown).toBe("Fresh content");
+      const records = await pool.query(
+        "SELECT count(*)::integer AS count FROM idempotency_records WHERE key=$1 AND expires_at>now()",
+        [key],
+      );
+      expect(records.rows[0].count).toBe(1);
+    }
+  });
+
+  it("replays created roots and replies after write eligibility changes", async () => {
+    const postId = await insertPost();
+    const rootPath = `/api/v1/posts/${postId}/followups`;
+    const rootBody = { bodyMarkdown: "Root" };
+    const root = await unsafe(request(app(ids.author)).post(rootPath))
+      .set("Idempotency-Key", "root-before-archive")
+      .send(rootBody);
+    expect(root.status).toBe(201);
+    const replyPath = `/api/v1/followups/${root.body.data.id}/replies`;
+    const replyBody = { bodyMarkdown: "Reply" };
+    const reply = await unsafe(request(app(ids.author)).post(replyPath))
+      .set("Idempotency-Key", "reply-before-delete")
+      .send(replyBody);
+    expect(reply.status).toBe(201);
+
+    expect(
+      (
+        await unsafe(
+          request(app(ids.author)).delete(root.headers.location),
+        ).set("If-Match", root.headers.etag)
+      ).status,
+    ).toBe(204);
+    const replayedReply = await unsafe(request(app(ids.author)).post(replyPath))
+      .set("Idempotency-Key", "reply-before-delete")
+      .send(replyBody);
+    expect(replayedReply.status).toBe(201);
+    expect(replayedReply.body.data.id).toBe(reply.body.data.id);
+    const newReply = await unsafe(
+      request(app(ids.author)).post(replyPath),
+    ).send({
+      bodyMarkdown: "Too late",
+    });
+    expect(newReply.status).toBe(404);
+
+    await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+      ids.course,
+    ]);
+    try {
+      const replayedRoot = await unsafe(request(app(ids.author)).post(rootPath))
+        .set("Idempotency-Key", "root-before-archive")
+        .send(rootBody);
+      expect(replayedRoot.status).toBe(201);
+      expect(replayedRoot.body.data.id).toBe(root.body.data.id);
+      const replayedArchivedReply = await unsafe(
+        request(app(ids.author)).post(replyPath),
+      )
+        .set("Idempotency-Key", "reply-before-delete")
+        .send(replyBody);
+      expect(replayedArchivedReply.status).toBe(201);
+      expect(replayedArchivedReply.body.data.id).toBe(reply.body.data.id);
+      const newRoot = await unsafe(
+        request(app(ids.author)).post(rootPath),
+      ).send({
+        bodyMarkdown: "Too late",
+      });
+      expect(newRoot.status).toBe(409);
+      expect(newRoot.body.error.code).toBe("course_archived");
+    } finally {
+      await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+        ids.course,
+      ]);
+    }
+  });
+
+  it("rejects replay when a question is deleted or merged", async () => {
+    for (const hidden of ["deleted", "merged"] as const) {
+      const postId = await insertPost();
+      const path = `/api/v1/posts/${postId}/followups`;
+      const body = { bodyMarkdown: "Root" };
+      const created = await unsafe(request(app(ids.author)).post(path))
+        .set("Idempotency-Key", `hidden-question-${hidden}`)
+        .send(body);
+      expect(created.status).toBe(201);
+      if (hidden === "deleted") {
+        await pool.query(
+          "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now() WHERE id=$1",
+          [postId],
+        );
+      } else {
+        await pool.query(
+          "UPDATE posts SET duplicate_status='confirmed',duplicate_of_post_id=$2 WHERE id=$1",
+          [postId, await insertPost()],
+        );
+      }
+      expect((await read(ids.author, created.headers.location)).status).toBe(
+        404,
+      );
+      const replay = await unsafe(request(app(ids.author)).post(path))
+        .set("Idempotency-Key", `hidden-question-${hidden}`)
+        .send(body);
+      expect(replay.status).toBe(404);
+      expect(replay.body.error.code).toBe("not_found");
+    }
+  });
+
+  it("rejects replay of deleted leaf roots and replies", async () => {
+    const postId = await insertPost();
+    const rootPath = `/api/v1/posts/${postId}/followups`;
+    const root = await unsafe(request(app(ids.author)).post(rootPath))
+      .set("Idempotency-Key", "deleted-root")
+      .send({ bodyMarkdown: "Root" });
+    expect(root.status).toBe(201);
+    const parent = await unsafe(request(app(ids.author)).post(rootPath)).send({
+      bodyMarkdown: "Parent",
+    });
+    expect(parent.status).toBe(201);
+    const replyPath = `/api/v1/followups/${parent.body.data.id}/replies`;
+    const reply = await unsafe(request(app(ids.author)).post(replyPath))
+      .set("Idempotency-Key", "deleted-reply")
+      .send({ bodyMarkdown: "Reply" });
+    expect(reply.status).toBe(201);
+
+    for (const [created, path, key, bodyMarkdown] of [
+      [root, rootPath, "deleted-root", "Root"],
+      [reply, replyPath, "deleted-reply", "Reply"],
+    ] as const) {
+      expect(
+        (
+          await unsafe(
+            request(app(ids.author)).delete(created.headers.location),
+          ).set("If-Match", created.headers.etag)
+        ).status,
+      ).toBe(204);
+      expect((await read(ids.author, created.headers.location)).status).toBe(
+        404,
+      );
+      const replay = await unsafe(request(app(ids.author)).post(path))
+        .set("Idempotency-Key", key)
+        .send({ bodyMarkdown });
+      expect(replay.status).toBe(404);
+      expect(replay.body.error.code).toBe("not_found");
+    }
+  });
+
+  it("serializes concurrent followup writes on the same question", async () => {
+    const postId = await insertPost();
+    const path = `/api/v1/posts/${postId}/followups`;
+    const first = await unsafe(request(app(ids.author)).post(path)).send({
+      bodyMarkdown: "First",
+    });
+    const second = await unsafe(request(app(ids.student)).post(path)).send({
+      bodyMarkdown: "Second",
+    });
+    expect([first.status, second.status]).toEqual([201, 201]);
+    await pool.query(`CREATE FUNCTION delay_followup_write() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_sleep(0.15); RETURN NEW; END
+    $$`);
+    await pool.query(`CREATE TRIGGER followup_write_delay BEFORE INSERT OR UPDATE ON followups
+      FOR EACH ROW EXECUTE FUNCTION delay_followup_write()`);
+    try {
+      const creations = await Promise.all([
+        unsafe(request(app(ids.author)).post(path)).send({
+          bodyMarkdown: "Third",
+        }),
+        unsafe(request(app(ids.student)).post(path)).send({
+          bodyMarkdown: "Fourth",
+        }),
+      ]);
+      expect(creations.map((result) => result.status)).toEqual([201, 201]);
+      const edits = await Promise.all([
+        unsafe(request(app(ids.author)).patch(first.headers.location))
+          .set("If-Match", first.headers.etag)
+          .send({ bodyMarkdown: "Edited" }),
+        unsafe(request(app(ids.student)).delete(second.headers.location)).set(
+          "If-Match",
+          second.headers.etag,
+        ),
+      ]);
+      expect(edits.map((result) => result.status)).toEqual([200, 204]);
+    } finally {
+      await pool.query("DROP TRIGGER followup_write_delay ON followups");
+      await pool.query("DROP FUNCTION delay_followup_write()");
+    }
+  });
+
+  it("orders followups by write time after a transaction waits", async () => {
+    const postId = await insertPost();
+    const { pausedPool, begun, resume } = pauseAfterBegin();
+    const waiting = new FollowupService(pausedPool).create(postId, ids.author, {
+      bodyMarkdown: "Waiting",
+    });
+    await begun;
+    const first = await new FollowupService(pool)
+      .create(postId, ids.student, {
+        bodyMarkdown: "First",
+      })
+      .finally(resume);
+    const second = await waiting;
+    const listed = await read(ids.author, `/api/v1/posts/${postId}/followups`);
+    expect(listed.body.data.map((item: { id: string }) => item.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+    const timestamps = await pool.query<{
+      first_created: Date;
+      second_created: Date;
+      activity: Date;
+    }>(
+      "SELECT a.created_at AS first_created,b.created_at AS second_created,p.last_activity_at AS activity FROM followups a,followups b,posts p WHERE a.id=$1 AND b.id=$2 AND p.id=$3",
+      [first.id, second.id, postId],
+    );
+    expect(timestamps.rows[0].second_created.getTime()).toBeGreaterThanOrEqual(
+      timestamps.rows[0].first_created.getTime(),
+    );
+    expect(timestamps.rows[0].activity.getTime()).toBeGreaterThanOrEqual(
+      timestamps.rows[0].second_created.getTime(),
+    );
+  });
+
+  it("orders answer creation and activity after a transaction waits", async () => {
+    const postId = await insertPost();
+    const { pausedPool, begun, resume } = pauseAfterBegin();
+    const waiting = new AnswerService(pausedPool).create(postId, ids.author, {
+      bodyMarkdown: "Waiting",
+    });
+    await begun;
+    const first = await new AnswerService(pool)
+      .create(postId, ids.student, {
+        bodyMarkdown: "First",
+      })
+      .finally(resume);
+    const second = await waiting;
+    const listed = await read(ids.author, `/api/v1/posts/${postId}/answers`);
+    expect(listed.body.data.map((item: { id: string }) => item.id)).toEqual([
+      first.value.id,
+      second.value.id,
+    ]);
+    const timestamps = await pool.query<{
+      first_created: Date;
+      second_created: Date;
+      activity: Date;
+    }>(
+      "SELECT a.created_at AS first_created,b.created_at AS second_created,p.last_activity_at AS activity FROM answers a,answers b,posts p WHERE a.id=$1 AND b.id=$2 AND p.id=$3",
+      [first.value.id, second.value.id, postId],
+    );
+    expect(timestamps.rows[0].second_created.getTime()).toBeGreaterThanOrEqual(
+      timestamps.rows[0].first_created.getTime(),
+    );
+    expect(timestamps.rows[0].activity.getTime()).toBeGreaterThanOrEqual(
+      timestamps.rows[0].second_created.getTime(),
+    );
+  });
+
+  it("keeps post activity increasing after delayed edits and deletes", async () => {
+    for (const action of ["edit", "delete"] as const) {
+      const postId = await insertPost();
+      const current = await read(ids.author, `/api/v1/posts/${postId}`);
+      expect(current.status).toBe(200);
+      const { pausedPool, begun, resume } = pauseAfterBegin();
+      const postService = new PostService(pausedPool);
+      const waiting =
+        action === "edit"
+          ? postService.update(postId, ids.author, current.headers.etag, {
+              title: "Edited title",
+            })
+          : postService.delete(postId, ids.author, current.headers.etag);
+      await begun;
+      const created = await new FollowupService(pool)
+        .create(postId, ids.student, { bodyMarkdown: "Discussion" })
+        .finally(resume);
+      expect(created.postId).toBe(postId);
+      const before = await pool.query<{ activity: string }>(
+        "SELECT last_activity_at::text AS activity FROM posts WHERE id=$1",
+        [postId],
+      );
+      await waiting;
+      const after = await pool.query<{ increased: boolean }>(
+        "SELECT last_activity_at > $2::timestamptz AS increased FROM posts WHERE id=$1",
+        [postId, before.rows[0].activity],
+      );
+      expect(after.rows[0].increased).toBe(true);
+    }
+  });
+
+  it("idempotently votes on followups without changing their ETag", async () => {
+    const postId = await insertPost();
+    const created = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "Discussion" });
+    const path = `/api/v1/followups/${created.body.data.id}/upvote`;
+    expect((await unsafe(request(app(ids.student)).put(path))).status).toBe(
+      200,
+    );
+    expect((await unsafe(request(app(ids.student)).put(path))).status).toBe(
+      200,
+    );
+    const fetched = await read(
+      ids.student,
+      `/api/v1/followups/${created.body.data.id}`,
+    );
+    expect(fetched.headers.etag).toBe(created.headers.etag);
+    expect(fetched.body.data).toMatchObject({
+      upvoteCount: 1,
+      viewerUpvoted: true,
+    });
+  });
+
+  it("requires a current followup ETag and lets the author or staff edit", async () => {
+    const postId = await insertPost();
+    const created = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "Original" });
+    const path = created.headers.location;
+    const missing = await unsafe(request(app(ids.author)).patch(path)).send({
+      bodyMarkdown: "Missing",
+    });
+    expect(missing.status).toBe(428);
+    const denied = await unsafe(request(app(ids.student)).patch(path))
+      .set("If-Match", created.headers.etag)
+      .send({ bodyMarkdown: "Hijack" });
+    expect(denied.status).toBe(403);
+    const edited = await unsafe(request(app(ids.staff)).patch(path))
+      .set("If-Match", created.headers.etag)
+      .send({ bodyMarkdown: "Staff edit" });
+    expect(edited.status).toBe(200);
+    expect(edited.headers.etag).toBe('"v2"');
+    const stale = await unsafe(request(app(ids.author)).patch(path))
+      .set("If-Match", created.headers.etag)
+      .send({ bodyMarkdown: "Stale" });
+    expect(stale.status).toBe(412);
+    expect((await read(ids.author, path)).body.data.bodyMarkdown).toBe(
+      "Staff edit",
+    );
+  });
+
+  it("idempotently upvotes answers and followups without changing content ETags", async () => {
+    const postId = await insertPost();
+    const created = await answer(ids.author, postId);
+    const path = `/api/v1/answers/${created.body.data.id}/upvote`;
+    expect((await unsafe(request(app(ids.student)).put(path))).status).toBe(
+      200,
+    );
+    expect((await unsafe(request(app(ids.student)).put(path))).status).toBe(
+      200,
+    );
+    const fetched = await read(
+      ids.student,
+      `/api/v1/answers/${created.body.data.id}`,
+    );
+    expect(fetched.headers.etag).toBe(created.headers.etag);
+    expect(fetched.body.data).toMatchObject({
+      upvoteCount: 1,
+      viewerUpvoted: true,
+    });
+    expect((await unsafe(request(app(ids.student)).delete(path))).status).toBe(
+      200,
+    );
+    expect(
+      (await read(ids.student, `/api/v1/answers/${created.body.data.id}`)).body
+        .data.upvoteCount,
+    ).toBe(0);
+  });
+
   it("creates a student answer with the documented headers and shape", async () => {
     const postId = await insertPost();
     const created = await answer(ids.author, postId);
@@ -151,7 +1044,6 @@ integration("answers HTTP contract: create and read", () => {
     expect(created.body.data).toEqual({
       id: created.body.data.id,
       postId,
-      kind: "student",
       deleted: false,
       bodyMarkdown: "Rayleigh scattering.",
       contributors: [{ id: ids.author, displayName: "Author" }],
@@ -162,6 +1054,9 @@ integration("answers HTTP contract: create and read", () => {
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
       version: 1,
+      canEdit: true,
+      upvoteCount: 0,
+      viewerUpvoted: false,
     });
     const document = await pool.query(
       "SELECT yjs_state,lifecycle_state,persistence_revision FROM answer_collaboration_documents WHERE answer_id=$1",
@@ -180,18 +1075,19 @@ integration("answers HTTP contract: create and read", () => {
     expect(fetched.body.data).toEqual(created.body.data);
   });
 
-  it("derives staff kind and lists the student answer before the staff answer", async () => {
+  it("lists independent answers in creation order", async () => {
     const postId = await insertPost();
     const staff = await answer(ids.staff, postId, { bodyMarkdown: "Staff." });
     expect(staff.status).toBe(201);
-    expect(staff.body.data.kind).toBe("staff");
+    expect(staff.body.data).not.toHaveProperty("kind");
     const student = await answer(ids.student, postId);
     expect(student.status).toBe(201);
     const listed = await read(ids.author, `/api/v1/posts/${postId}/answers`);
     expect(listed.status).toBe(200);
-    expect(listed.body.data.map((item: { kind: string }) => item.kind)).toEqual(
-      ["student", "staff"],
-    );
+    expect(listed.body.data.map((item: { id: string }) => item.id)).toEqual([
+      staff.body.data.id,
+      student.body.data.id,
+    ]);
     const empty = await read(
       ids.author,
       `/api/v1/posts/${await insertPost()}/answers`,
@@ -199,25 +1095,21 @@ integration("answers HTTP contract: create and read", () => {
     expect(empty.body).toEqual({ data: [] });
   });
 
-  it("allows one active answer of each kind, including concurrent attempts", async () => {
+  it("allows independent cards, including concurrent attempts", async () => {
     const postId = await insertPost();
     const results = await Promise.all([
       answer(ids.author, postId),
       answer(ids.student, postId),
     ]);
-    expect(results.map((result) => result.status).sort()).toEqual([201, 409]);
-    expect(
-      results.find((result) => result.status === 409)!.body.error.code,
-    ).toBe("answer_kind_exists");
+    expect(results.map((result) => result.status).sort()).toEqual([201, 201]);
     await answer(ids.staff, postId);
     const second = await answer(ids.instructor, postId);
-    expect(second.status).toBe(409);
-    expect(second.body.error.code).toBe("answer_kind_exists");
+    expect(second.status).toBe(201);
     const count = await pool.query(
       "SELECT count(*)::int AS n FROM answers WHERE post_id=$1",
       [postId],
     );
-    expect(count.rows[0].n).toBe(2);
+    expect(count.rows[0].n).toBe(4);
   });
 
   it("replays an idempotent create and rejects conflicting key reuse", async () => {
@@ -264,6 +1156,7 @@ integration("answers HTTP contract: create and read", () => {
       expect(replay.body.data).toEqual({
         ...first.body.data,
         contributors: null,
+        canEdit: false,
       });
       await pool.query(
         "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
@@ -467,6 +1360,40 @@ integration("answers HTTP contract: create and read", () => {
     expect(outdated.status).toBe(412);
   });
 
+  it("hides anonymous endorsement identity from students across answer reads", async () => {
+    const postId = await insertPost();
+    const created = await answer(ids.staff, postId, {
+      bodyMarkdown: "Anonymous staff answer",
+      anonymous: true,
+    });
+    expect(created.status).toBe(201);
+    const endorsed = await endorse(
+      ids.staff,
+      created.headers.location,
+      created.headers.etag,
+    );
+    expect(endorsed.status).toBe(200);
+    expect(endorsed.body.data.endorsedBy).toBe(ids.staff);
+    for (const viewer of [ids.author, ids.student]) {
+      const direct = await read(viewer, created.headers.location);
+      expect(direct.body.data).toMatchObject({
+        contributors: null,
+        endorsedBy: null,
+      });
+      const listed = await read(viewer, `/api/v1/posts/${postId}/answers`);
+      expect(listed.body.data[0]).toMatchObject({
+        contributors: null,
+        endorsedBy: null,
+      });
+    }
+    for (const viewer of [ids.staff, ids.instructor]) {
+      const direct = await read(viewer, created.headers.location);
+      expect(direct.body.data.endorsedBy).toBe(ids.staff);
+      const listed = await read(viewer, `/api/v1/posts/${postId}/answers`);
+      expect(listed.body.data[0].endorsedBy).toBe(ids.staff);
+    }
+  });
+
   it("lets staff delete an unendorsed answer and frees its kind", async () => {
     const postId = await insertPost();
     const created = await answer(ids.author, postId);
@@ -544,14 +1471,14 @@ integration("answers HTTP contract: create and read", () => {
     }
   });
 
-  it("does not offer answer text edits in this phase", async () => {
+  it("validates answer text edits", async () => {
     const created = await answer(ids.author, await insertPost());
     const patch = await unsafe(
       request(app(ids.author)).patch(created.headers.location),
     )
       .set("If-Match", '"v1"')
       .send({ anonymous: true });
-    expect(patch.status).toBe(404);
+    expect(patch.status).toBe(422);
     const after = await read(ids.author, created.headers.location);
     expect(after.body.data).toEqual(created.body.data);
   });

@@ -4,6 +4,7 @@ import { SESSION_COOKIE_NAME } from "../auth/crypto.js";
 import { AuthError } from "../auth/errors.js";
 import { type AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
+import type { FollowupService } from "../followups/service.js";
 import { createApp } from "./app.js";
 
 const environment = loadEnvironment({
@@ -31,6 +32,34 @@ const authenticatedService = {
   }),
   profile: async () => user,
 } as unknown as AuthService;
+
+describe("followup pagination contract", () => {
+  it.each([
+    "/api/v1/posts/01a0e5cc-58af-7467-8ab1-740de2b8c8e0/followups",
+    "/api/v1/followups/01a0e5cc-58af-7467-8ab1-740de2b8c8e0/replies",
+  ])("rejects repeated and non-string cursors on %s", async (path) => {
+    const followupService = {
+      get: async () => {
+        throw new Error("Unexpected lookup");
+      },
+      list: async () => {
+        throw new Error("Unexpected list");
+      },
+    } as unknown as FollowupService;
+    const app = createApp({
+      environment,
+      authService: authenticatedService,
+      followupService,
+    });
+    for (const query of ["cursor=one&cursor=two", "cursor[]=one", "cursor="]) {
+      const response = await request(app)
+        .get(`${path}?${query}`)
+        .set("Cookie", `${SESSION_COOKIE_NAME}=opaque-session-credential`);
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("invalid_request");
+    }
+  });
+});
 
 describe("authenticated read CORS contract", () => {
   it.each(["/api/v1/sessions/current", "/api/v1/users/me"])(
@@ -231,7 +260,7 @@ describe("session and browser-security HTTP contract", () => {
     expect(allowed.headers).toMatchObject({
       "access-control-allow-origin": environment.frontendBaseUrl,
       "access-control-allow-credentials": "true",
-      "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
+      "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
       "access-control-allow-headers":
         "Content-Type,If-Match,Idempotency-Key,X-CSRF-Token",
       vary: "Origin",

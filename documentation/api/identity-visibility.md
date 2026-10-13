@@ -4,7 +4,7 @@ Identity-bearing API fields are projections for the authenticated viewer. Client
 
 ## Author
 
-`Author` is used for posts, digest and search results, direct and nested followups, messages, introductory messages, and subchannel creators.
+`Author` is used for posts, digest and search results, messages, introductory messages, and subchannel creators. Direct and nested followups use the smaller `Followup.author` object described below.
 
 Nonanonymous content returns the author's real `userId` and `displayName`, with `anonymous: false` and `deleted: false`.
 
@@ -15,6 +15,10 @@ Anonymous content viewed by another student returns `userId: null`, `displayName
 Deleted authors return `userId: null`, `displayName: "Deleted user"`, and `deleted: true`. The `anonymous` value retains the content's original anonymity setting.
 
 Anonymous messages remain supported. Live collaboration presence is intentionally named and follows the separate [collaboration WebSocket contract](collaboration-websocket.md).
+
+## Followup authors
+
+`Followup.author` is `{id,displayName}` for a visible active author and `null` when the identity is hidden or the account was deleted. For an anonymous followup, the author and current staff see the identity; other students see `null` and the UI labels the item “Anonymous.” A bodyless tombstone does not expose the deleted text.
 
 ## Answer contributors
 

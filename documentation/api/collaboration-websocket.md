@@ -12,7 +12,7 @@ Request a one-use ticket before opening a connection.
 
 Configure the Hocuspocus provider with the returned credential-free `webSocketUrl`, `documentId` as its document name, and `ticket` as its token. A ticket expires five minutes after issuance and can be used once. Request a new ticket before reconnecting.
 
-The server accepts a connection only while the authenticated user retains access to the target. Students may edit student answers; TAs and instructors may edit staff answers. Ended sessions, deleted answers, and endorsed answers are unavailable for editing.
+The server accepts a connection only while the authenticated user retains access to the target. Answer editing follows the creator-role floor in the [answers API reference](answers.md). Ended sessions, deleted answers, and endorsed answers are unavailable for editing.
 
 ## Shared documents and presence
 

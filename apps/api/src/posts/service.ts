@@ -597,7 +597,7 @@ export class PostService {
           throw validation("Duplicate target is invalid");
       }
       await db.query(
-        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
+        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,updated_at=statement_timestamp(),last_activity_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [
           id,
           body.title ?? row.title,
@@ -657,7 +657,7 @@ export class PostService {
         );
       await db.query("DELETE FROM post_tags WHERE post_id=$1", [id]);
       await db.query(
-        "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
+        "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=statement_timestamp(),updated_at=statement_timestamp(),last_activity_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [id],
       );
     });

@@ -63,6 +63,9 @@ export class JobWorker {
 
   private async deleteCourse(courseId: string): Promise<void> {
     await this.transaction(async (client) => {
+      await client.query("DELETE FROM followups WHERE course_id=$1", [
+        courseId,
+      ]);
       const answers = "SELECT id FROM answers WHERE course_id=$1";
       await client.query(
         `DELETE FROM answer_contributors WHERE answer_id IN (${answers})`,

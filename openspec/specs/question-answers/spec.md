@@ -2,95 +2,118 @@
 
 ## Purpose
 
-Lets course members answer question posts through one shared students' answer and one shared instructors' answer per question, which staff can endorse or delete, with identity-safe contributor projections.
+Lets course members create and edit independent answer cards on question posts, with role-based edit thresholds, staff endorsement, upvotes, and identity-safe contributor projections.
 
 ## Requirements
 
 ### Requirement: Members create one shared answer of their kind per question
 
-`POST /api/v1/posts/{postId}/answers` SHALL accept the documented JSON `CreateContentRequest` from a current member of the question's course, derive `kind` as `student` for students and `staff` for TAs and instructors, and return `201` with `Location: /api/v1/answers/{answerId}`, an ETag, and the documented active answer (`version: 1`, `attachments: []`, `endorsedAt: null`, `endorsedBy: null`). In one transaction the server SHALL create the answer, its collaboration document record, and a contributor record for the caller, and SHALL roll back all three if any part fails. A question SHALL have at most one active answer of each kind, including under concurrent requests; a second attempt SHALL return `409 answer_kind_exists`. `bodyMarkdown` SHALL be a string of 1–100,000 characters that is not only whitespace, and `anonymous` SHALL be an optional boolean defaulting to `false`; other fields or invalid values SHALL return `422 validation_failed`. A matching `Idempotency-Key` retry within 24 hours SHALL return the original result without creating another answer, document, or contributor record, and reuse with a different body SHALL return `409 idempotency_key_reused`. Creating an answer on a note SHALL return `409 not_a_question`; on a deleted, merged-duplicate, absent, or other-course post, or for a non-member, it SHALL return `404 not_found`; in an archived or deleting course it SHALL return `409 course_archived`. Unsafe answer requests SHALL require an allowed `Origin` and the session CSRF token.
+`POST /api/v1/posts/{postId}/answers` SHALL let a current course member create an independent answer card on a visible active question. The JSON body SHALL contain `bodyMarkdown` of 1–100,000 non-whitespace characters and optional boolean `anonymous`; attachments and unknown fields SHALL fail with `422 validation_failed`. Every answer SHALL snapshot its creator's current role as an immutable edit floor, create its Yjs document and initial contributor atomically, and return `201`, `Location`, ETag, and version 1. A matching idempotency retry SHALL return the original answer and a changed payload with the same key SHALL return `409 idempotency_key_reused`. Multiple answers from members of any role SHALL be allowed. Authentication, CSRF and Origin checks SHALL apply. A note SHALL return `409 not_a_question`; absent, hidden, cross-course or nonmember questions SHALL return `404 not_found`; archived/deleting courses SHALL return `409 course_archived`.
+
+#### Scenario: Two students answer the same question
+- **WHEN** two students independently post valid answers to one question
+- **THEN** both requests succeed with distinct answer IDs and documents
 
 #### Scenario: A student answers a question
-
-- **WHEN** a student posts a valid answer to an unanswered question
-- **THEN** the API returns `201`, `Location`, an ETag, and a `student` answer whose contributors list the student
+- **WHEN** a student creates a valid answer on a visible question
+- **THEN** the API returns an independent card with its Location and ETag
 
 #### Scenario: Two students answer at once
-
-- **WHEN** two students concurrently create the students' answer to the same question
-- **THEN** exactly one succeeds and the other receives `409 answer_kind_exists`
+- **WHEN** two students create answers concurrently on one question
+- **THEN** both distinct cards are persisted
 
 #### Scenario: A TA answers after a student
-
-- **WHEN** a TA creates an answer to a question that already has a students' answer
-- **THEN** the API creates a separate `staff` answer
+- **WHEN** a TA creates an answer after a student has answered
+- **THEN** both cards remain visible
 
 #### Scenario: A member tries to answer a note
-
 - **WHEN** a member posts an answer to a note
-- **THEN** the API returns `409 not_a_question` and writes nothing
+- **THEN** the API returns `409 not_a_question` without writing an answer
+
+#### Scenario: The same creation is retried
+- **WHEN** an answer creation repeats with the same idempotency key and payload
+- **THEN** it returns the original answer without inserting another row
 
 ### Requirement: Members read a question's answers
 
-`GET /api/v1/posts/{postId}/answers` SHALL return `200` with a `data` array containing at most the active students' answer and the active staff answer, students' answer first. It SHALL return `422 not_a_question` for a note and `404 not_found` for an absent, deleted, merged-duplicate, or other-course post or a non-member. `GET /api/v1/answers/{answerId}` SHALL return `200` with the active answer and its ETag, and `404 not_found` for an absent or deleted answer, an answer whose question is deleted or a merged duplicate, or a non-member. Every read SHALL require a valid session.
+`GET /api/v1/posts/{postId}/answers` SHALL return every active answer card in deterministic creation order. `GET /api/v1/answers/{answerId}` SHALL return one active visible answer and ETag. Answers SHALL contain body Markdown, contributor projection, endorsement, version, `canEdit`, `upvoteCount`, and `viewerUpvoted`, without a student/staff kind slot. Hidden/deleted/merged/cross-course questions and nonmembers SHALL receive `404 not_found`; a note list SHALL receive `422 not_a_question`.
+
+#### Scenario: Legacy and new cards coexist
+- **WHEN** a question contains migrated student and staff answers and a newly created answer
+- **THEN** all three appear as separate cards with their original IDs and text
 
 #### Scenario: A member lists answers
-
-- **WHEN** a course member lists the answers to a question with both answer kinds
-- **THEN** the API returns the students' answer followed by the staff answer
+- **WHEN** a current member lists a question's answers
+- **THEN** every active card appears in creation order
 
 #### Scenario: A former member reads an answer
-
-- **WHEN** a user whose course membership was removed requests an answer by ID
+- **WHEN** a former member reads a card
 - **THEN** the API returns `404 not_found`
 
 ### Requirement: Answer contributors follow identity visibility
 
-`contributors` SHALL list `{id, displayName}` for each contributor of a nonanonymous answer. For an anonymous answer it SHALL list contributors to TAs and instructors and SHALL be `null` for every student, including the answer's own contributors. Contributors whose accounts are deleted SHALL be omitted, so no deleted account's ID is exposed. `endorsedBy` SHALL be the endorsing staff member's user ID.
+`contributors` SHALL list non-deleted `{id,displayName}` identities for a nonanonymous answer. For anonymous answers it SHALL be `null` for every student, including contributors, and SHALL list the contributors for TAs and instructors. The server SHALL project `canEdit` independently of identity visibility.
+
+#### Scenario: Student reads an anonymous answer
+- **WHEN** a student reads an anonymous answer they are allowed to edit
+- **THEN** `contributors` is null and `canEdit` is true
 
 #### Scenario: A student views an anonymous answer
-
-- **WHEN** a student, including the answer's author, reads an anonymous answer
-- **THEN** `anonymous` is `true` and `contributors` is `null`
+- **WHEN** any student views an anonymous answer
+- **THEN** its contributor list is null
 
 #### Scenario: Staff view an anonymous answer
-
-- **WHEN** a TA reads an anonymous answer
-- **THEN** `contributors` lists the answer's contributors
+- **WHEN** a current TA views an anonymous answer
+- **THEN** its active contributors are visible
 
 ### Requirement: Staff endorse and delete answers conditionally
 
-`PUT /api/v1/answers/{answerId}/endorsement` SHALL let a TA or instructor endorse an active answer of either kind, setting `endorsedAt`, `endorsedBy`, a new `version`, and ETag, and closing the answer's collaboration document. Repeating it with `If-Match` equal to the current endorsed revision SHALL return `200` with the unchanged answer. `DELETE /api/v1/answers/{answerId}` SHALL let a TA or instructor delete an unendorsed answer and return `204`. After deletion the answer SHALL be absent from reads, and a new answer of that kind MAY be created. Both operations SHALL require `If-Match` (`428 precondition_required` when missing, `412 version_conflict` when stale), SHALL return `403 permission_denied` to students, `409 course_archived` in an archived or deleting course, and `404 not_found` for absent, deleted, or hidden answers. Deleting an endorsed answer SHALL return `409 answer_endorsed`.
+`PUT /api/v1/answers/{answerId}/endorsement` SHALL let staff endorse an active answer with a current `If-Match`; the endorsed answer becomes immutable and its document closes. `DELETE /api/v1/answers/{answerId}` SHALL let staff delete an unendorsed answer with a current `If-Match`; it disappears from reads. Missing and stale ETags SHALL return `428 precondition_required` and `412 version_conflict`. Student requests SHALL return `403 permission_denied`; archived/deleting courses `409 course_archived`; hidden content `404 not_found`; deleting an endorsed answer `409 answer_endorsed`.
+
+#### Scenario: Staff endorses a card
+- **WHEN** a TA endorses an unendorsed card with the current ETag
+- **THEN** the answer version advances, its document closes, and subsequent edits fail
 
 #### Scenario: A TA endorses the students' answer
-
-- **WHEN** a TA endorses a students' answer with its current ETag
-- **THEN** the API returns `200` with `endorsedAt`, `endorsedBy`, and a new ETag
+- **WHEN** a TA endorses a legacy student-origin card
+- **THEN** the card is endorsed and its document closes
 
 #### Scenario: A student tries to endorse
-
-- **WHEN** a student sends an endorsement request
-- **THEN** the API returns `403 permission_denied` and the answer is unchanged
+- **WHEN** a student requests endorsement
+- **THEN** the API returns `403 permission_denied`
 
 #### Scenario: Staff delete an answer
-
-- **WHEN** an instructor deletes an unendorsed answer with its current ETag
-- **THEN** the API returns `204`, the answer disappears from the list, and a new answer of that kind can be created
+- **WHEN** staff delete an unendorsed card with its current ETag
+- **THEN** it is absent from subsequent lists
 
 ### Requirement: Public collaborative editing and attachments remain unavailable
 
-`PATCH /api/v1/answers/{answerId}`, answer collaboration connection tickets, answer followup routes, and multipart answer requests SHALL not be live. Their routes SHALL not be registered, and a multipart create request SHALL return `422 validation_failed`. Public clients SHALL have no way to edit answer text after creation; the private answer document core MAY persist Yjs updates and project their text to the existing answer read API. `documentation/api/answers.md` SHALL carry an implementation-status note naming what is live and what remains the target contract, while the target definitions are kept.
+`PATCH /api/v1/answers/{answerId}` SHALL accept a JSON `bodyMarkdown` edit with a current `If-Match` from a current member whose current role is at least the creator-role edit floor. The creator role snapshot SHALL not change as others contribute. The server SHALL update `Y.Text('content')`, persisted Yjs state, Markdown projection, version, timestamp, and distinct contributor atomically. Missing/stale ETags SHALL return `428`/`412`; insufficient role SHALL return `403`; endorsed/deleted/hidden answers and inactive courses SHALL reject edits. The route SHALL reject attachments and multipart requests. WebSocket tickets and public Hocuspocus editing SHALL remain unavailable.
+
+#### Scenario: Student edits student-origin answer
+- **WHEN** a current student edits a student-origin answer at its current version
+- **THEN** the edited Markdown and Yjs text match, the version advances, and the student appears once in contributors
+
+#### Scenario: Concurrent REST editors
+- **WHEN** two editors save against the same answer version
+- **THEN** one succeeds and the other receives `412 version_conflict` without changing its draft or persisted text
+
+#### Scenario: Role floor remains stable
+- **WHEN** an instructor edits a student-origin answer and a student edits it afterward
+- **THEN** the student's edit remains permitted because the creator-role floor is still student
 
 #### Scenario: A client tries to edit an answer
-
-- **WHEN** a client sends `PATCH /api/v1/answers/{answerId}`
-- **THEN** the route is unavailable and the answer is unchanged
+- **WHEN** an authorized member sends a valid versioned Markdown edit
+- **THEN** the answer text and Yjs state change atomically
 
 ### Requirement: Tests derive from the answers contract
 
-PostgreSQL-backed HTTP tests in isolated schemas SHALL be derived from `documentation/api/answers.md`, `documentation/openapi.yaml`, `documentation/database.md`, and `identity-visibility.md`. They SHALL cover each live operation's success response and headers, authentication and CSRF, validation, revision and conflict errors, archived courses, per-kind uniqueness under concurrency, idempotent replay, contributor visibility, cross-course isolation, the `answered` projection and filter, and course-deletion cleanup. Each behavior slice SHALL fail for the expected reason before its implementation.
+PostgreSQL-backed HTTP tests in isolated schemas SHALL cover success responses and headers, authentication and CSRF, validation, revisions, role floor and current-role checks, legacy migration, anonymity, idempotency, cross-course isolation, lifecycle constraints, and Yjs/Markdown transaction consistency. Each behavior slice SHALL fail for the expected reason before implementation.
+
+#### Scenario: Regression exposes private editor identity
+- **WHEN** a student response includes contributors for an anonymous answer
+- **THEN** an automated test fails
 
 #### Scenario: A regression exposes an anonymous contributor
-
-- **WHEN** a change returns contributor identities of an anonymous answer to a student
-- **THEN** an automated test fails
+- **WHEN** anonymous contributor IDs appear in a student's response
+- **THEN** an HTTP test fails

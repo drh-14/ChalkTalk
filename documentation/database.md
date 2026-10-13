@@ -166,8 +166,9 @@ The application must verify that a post and tag belong to the same course before
 - `course_id`: `uuid_v7`.
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`.
 - `(course_id, id)`: unique key used by same-course foreign keys.
-- `kind`: `text`; `student` or `staff`.
-- A partial unique index on `(post_id, kind)` where `deleted_at` is null allows at most one active answer of each kind per question. Deleted answers keep their row so later followups can reference them.
+- `kind`: `text`; retained internally for migrated student/staff answers. New answers populate it for compatibility, but the public API has no kind or per-kind uniqueness limit.
+- `created_by_user_id`: `uuid_v7`; creator account ID, preserved when membership later changes.
+- `edit_role_floor`: `text`; immutable role snapshot (`student`, `ta`, or `instructor`). A current editor's role must meet or exceed this floor.
 - `body_markdown`: `text`, nullable.
 - `anonymous`: `boolean`.
 - `endorsed_at`: `timestamptz`, nullable.
@@ -195,14 +196,30 @@ The private answer document store keeps `answers.body_markdown` as the text proj
 
 - `id`: `uuid_v7`; primary key.
 - `course_id`: `uuid_v7`.
-- `answer_id`: `uuid_v7`; with `course_id`, foreign key to `answers(course_id, id)`.
-- `(course_id, id)`: unique key used by parent validation.
-- `parent_followup_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `followups(course_id, id)`.
+- `post_id`: `uuid_v7`; with `course_id`, foreign key to question `posts(course_id, id)`.
+- `(course_id, id)` and `(course_id, post_id, id)`: unique keys used by same-course and same-question references.
+- `parent_followup_id`: `uuid_v7`, nullable; with `course_id` and `post_id`, foreign key to a followup on the same question. Deleting a course cascades through descendants.
 - `body_markdown`: `text`, nullable.
-- `author_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
+- `author_user_id`: `uuid_v7`; foreign key to `users.id`. A deleted account is hidden by response projection.
 - `anonymous`: `boolean`.
 - `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
+
+Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`. Deleted roots or replies with children retain a bodyless tombstone; deleted leaves are excluded from ordinary reads.
+
+### `answer_upvotes`
+
+- `answer_id`: `uuid_v7`; foreign key to `answers.id` with cascade on physical deletion.
+- `user_id`: `uuid_v7`; foreign key to `users.id`.
+- `(answer_id, user_id)`: primary key, enforcing one vote per member per answer.
+- `created_at`: `timestamptz`.
+
+### `followup_upvotes`
+
+- `followup_id`: `uuid_v7`; foreign key to `followups.id` with cascade on physical deletion.
+- `user_id`: `uuid_v7`; foreign key to `users.id`.
+- `(followup_id, user_id)`: primary key, enforcing one vote per member per followup.
+- `created_at`: `timestamptz`.
 
 ### `attachments`
 
