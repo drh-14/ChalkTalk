@@ -4,9 +4,9 @@ ChalkTalk is a course discussion platform for students, teaching assistants, and
 
 It is designed to make large course forums easier to search, organize, and maintain throughout a semester. Course post search combines full-text and fuzzy matching to help students find existing answers, including when a word is misspelled.
 
-Students can ask questions, participate in threaded discussions, contribute to shared answers, search previous posts, view course resources, vote in polls, and optionally post anonymously.
+Students can ask questions, participate in threaded discussions, create and edit answer cards, search previous posts, view course resources, vote in polls, and optionally post anonymously.
 
-Teaching assistants and instructors can collaboratively maintain answer cards, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
+Teaching assistants and instructors can edit eligible answers, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
 
 Core features include:
 
@@ -14,7 +14,7 @@ Core features include:
 - student, TA, and instructor roles,
 - full-text and fuzzy post search,
 - similar-question suggestions,
-- independent, collaboratively editable answer cards,
+- independent answer cards with contributor lists and upvotes,
 - threaded follow-up discussions,
 - endorsed answers,
 - anonymous posting,

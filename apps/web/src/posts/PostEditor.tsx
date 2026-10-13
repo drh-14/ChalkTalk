@@ -15,7 +15,7 @@ import {
   type DecorationSet,
 } from "@codemirror/view";
 import katex from "katex";
-import { useEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { formatBody, type FormatAction } from "./formatting.js";
 import {
   type MathAnalysis,
@@ -159,11 +159,14 @@ export function PostEditor({
   value,
   onChange,
   ref,
+  label = "Post body",
 }: {
   value: string;
   onChange: (value: string) => void;
   ref: Ref<PostEditorHandle>;
+  label?: string;
 }) {
+  const diagnosticsId = useId();
   const host = useRef<HTMLDivElement>(null);
   const initialValue = useRef(value);
   const view = useRef<EditorView | null>(null);
@@ -230,12 +233,12 @@ export function PostEditor({
       keymap.of([...defaultKeymap, ...historyKeymap]),
       markdown(),
       EditorView.lineWrapping,
-      placeholder("Write your post…"),
+      placeholder(`Write your ${label.toLowerCase()}…`),
       EditorView.contentAttributes.of({
         role: "textbox",
-        "aria-label": "Post body",
+        "aria-label": label,
         "aria-multiline": "true",
-        "aria-describedby": "post-body-diagnostics",
+        "aria-describedby": diagnosticsId,
       }),
       mathField,
       EditorView.updateListener.of((update) => {
@@ -265,7 +268,7 @@ export function PostEditor({
       worker.current = null;
       next.destroy();
     };
-  }, []);
+  }, [diagnosticsId, label]);
 
   const handle = {
     format(action: FormatAction) {
@@ -289,7 +292,7 @@ export function PostEditor({
     <>
       <div className="post-source-editor" ref={host} />
       <div
-        id="post-body-diagnostics"
+        id={diagnosticsId}
         className="post-math-diagnostics"
         aria-label="LaTeX diagnostics"
       >

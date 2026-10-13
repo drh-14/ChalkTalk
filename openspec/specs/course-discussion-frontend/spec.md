@@ -456,32 +456,6 @@ The protected `/courses/{courseId}/resources` route SHALL render inside the shar
 - **WHEN** a signed-in course member opens `/courses/{courseId}/resources`
 - **THEN** the shared course header shows the course name with the Course resources tab active, and the page shows the placeholder heading and explanation
 
-### Requirement: Question detail shows the students' and instructors' answers
-
-When the detail pane shows an active question, it SHALL show a Students' answer section and an Instructors' answer section below the question, loaded from the documented answers list for that post. Notes, deleted posts, and staff duplicate review SHALL not show answer sections. Each section SHALL show loading, error with retry, and empty states. An existing answer SHALL render its Markdown safely, like post bodies, together with its creation time and its viewer-projected contributors. An anonymous answer whose contributors are hidden SHALL show "Anonymous", and an answer with no visible contributors SHALL show "Deleted user". An endorsed answer SHALL show that it is endorsed.
-
-A member whose role matches an empty section (students for the students' answer; TAs and instructors for the instructors' answer) SHALL be able to write that answer with an optional anonymity choice. The composer SHALL require a trimmed nonempty body of at most 100,000 characters, send the documented create request with CSRF and an idempotency key, prevent duplicate submission while pending, keep the draft on failure, and explain that the answer cannot be edited after posting in this phase. A `409 answer_kind_exists` response SHALL reload the answers instead of showing a second composer. TAs and instructors SHALL be able to endorse an unendorsed answer and to delete an unendorsed answer after confirming, sending the answer's current ETag. Students SHALL not see endorse or delete controls. Answer controls SHALL be unavailable when the course is archived or deleting.
-
-#### Scenario: A student answers an unanswered question
-
-- **WHEN** a student opens a question with no students' answer and submits a valid answer
-- **THEN** the browser sends the documented create request and shows the created answer in the Students' answer section without a composer
-
-#### Scenario: Another student posted first
-
-- **WHEN** a student submits an answer but the API returns `409 answer_kind_exists`
-- **THEN** the browser reloads the answers and shows the existing students' answer
-
-#### Scenario: A TA endorses an answer
-
-- **WHEN** a TA endorses the students' answer
-- **THEN** the browser sends a conditional endorsement request and the section shows the answer as endorsed without endorse or delete controls
-
-#### Scenario: A student views a note
-
-- **WHEN** a student opens a note
-- **THEN** no answer sections or answer composers appear
-
 ### Requirement: Posts show when they were created
 
 Each ordinary feed card, the post detail pane, and the staff duplicate-review detail pane SHALL show the post's server-returned `createdAt` beside the displayed author. The visible text SHALL be relative to the viewer's current time: "just now" under one minute, then English minutes, hours, and days ago, such as "3 hours ago", for up to seven days. Posts older than seven days SHALL show a short English calendar date such as "Sep 20", including the year only when it differs from the current year. Dates and hover text SHALL use the viewer's local time zone. Every displayed time SHALL be a semantic time element whose machine-readable value is the original `createdAt` and whose hover text gives the full local date and time. A `createdAt` in the future SHALL display as "just now". If `createdAt` cannot be parsed as a date, the browser SHALL omit the time rather than show invalid text.
@@ -577,3 +551,22 @@ When a TA or instructor views an ordinary post, the post view SHALL show a "Staf
 
 - **WHEN** a student opens a post
 - **THEN** no Staff actions group or Pin control appears
+
+### Requirement: Question detail presents answer cards and followup discussions
+
+The question detail SHALL show all answer cards in a distinct colored area, rendered Markdown and LaTeX, visible editor names subject to anonymity, and an upvote control beneath each answer's text. It SHALL show a followup heading with the root count and a collapsed full-width compose prompt when there are no discussions. Opening answer or followup composition SHALL use the same Markdown/LaTeX editor toolbar and preview as post creation. Followups SHALL show replies and upvotes. Permitted actions SHALL reflect server-projected capability and keep local draft text on a failed save or version conflict. Answers and followups SHALL not upload or render images/documents in this phase.
+
+#### Scenario: Empty followups
+
+- **WHEN** a member opens a question with no discussions
+- **THEN** a zero count and prominent compose prompt are displayed
+
+#### Scenario: Author edits an answer
+
+- **WHEN** a member with edit capability opens an answer editor and saves valid Markdown
+- **THEN** the updated formatted text and editor byline appear in that card
+
+#### Scenario: Stale edit
+
+- **WHEN** an answer save receives a version conflict
+- **THEN** the editor remains open with the member's draft and a refresh action
