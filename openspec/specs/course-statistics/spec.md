@@ -74,7 +74,7 @@ The system SHALL paginate current student members in stable order, including tho
 
 ### Requirement: Statistics course tab
 
-The course navigation SHALL show Statistics only to staff and SHALL present period selection, daily activity, summary metrics, pagination, and loading, empty, and retry states. The UI SHALL explain that recorded view history starts at deployment.
+The course navigation SHALL show Statistics only to staff and SHALL present period selection, daily activity, summary metrics, pagination, and loading, empty, and retry states. The UI SHALL explain that recorded view history starts at deployment. The average response time caption SHALL read “Time from question to first endorsed answer.” When the selected period has no endorsed answer and the mean response time is null, the metric SHALL display `0` in the same size and bold weight as the other metric values.
 
 #### Scenario: No daily activity
 
@@ -90,3 +90,8 @@ The course navigation SHALL show Statistics only to staff and SHALL present peri
 
 - **WHEN** a student opens a course
 - **THEN** the Statistics tab is absent
+
+#### Scenario: No endorsed answer in the period
+
+- **WHEN** the selected period has no qualifying endorsed answer
+- **THEN** the average response time metric shows `0` in the same size and bold weight as other metric values

@@ -53,6 +53,9 @@ it("shows recorded activity and a zero-activity student, then changes period", a
   expect(
     screen.getByText("4", { selector: ".statistics-metric-value" }),
   ).toBeTruthy();
+  expect(
+    screen.getByText("Time from question to first endorsed answer"),
+  ).toBeTruthy();
   expect(screen.getByText(/recorded views begin/i)).toBeTruthy();
   await user.selectOptions(screen.getByLabelText("Period"), "7d");
   await waitFor(() =>
@@ -176,8 +179,11 @@ it("scopes an empty response-time metric to the selected period", async () => {
   );
   render(<CourseStatistics courseId="course_1" />);
   expect(
-    await screen.findByText("No endorsed answers in this period"),
+    await screen.findByText("0", {
+      selector: ".statistics-metric-value",
+    }),
   ).toBeTruthy();
+  expect(screen.queryByText("No endorsed answers in this period")).toBeNull();
 });
 
 it("shows no activity for a zero-filled daily series", async () => {

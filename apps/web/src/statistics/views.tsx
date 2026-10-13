@@ -15,7 +15,7 @@ const periodLabels: Record<Period, string> = {
 const asMessage = (error: unknown) =>
   error instanceof Error ? error.message : "Statistics are unavailable.";
 function responseTime(seconds: number | null) {
-  if (seconds === null) return "No endorsed answers in this period";
+  if (seconds === null) return "0";
   if (seconds < 3600) return `${Math.round(seconds / 60)} min`;
   if (seconds < 86400) return `${(seconds / 3600).toFixed(1)} hr`;
   return `${(seconds / 86400).toFixed(1)} days`;
@@ -141,7 +141,7 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
               <p className="statistics-metric-value">
                 {responseTime(summary.averageResponseTimeSeconds)}
               </p>
-              <p>Question to first endorsed answer</p>
+              <p>Time from question to first endorsed answer</p>
             </article>
           </div>
           <section
