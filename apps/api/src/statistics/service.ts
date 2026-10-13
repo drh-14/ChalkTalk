@@ -89,10 +89,11 @@ export class StatisticsService {
       ),
       this.query<{ average: number | null }>(
         `WITH first_endorsement AS (
-          SELECT DISTINCT ON (p.id) p.id,p.created_at AS question_at,a.created_at AS answer_at,a.endorsed_at
+          SELECT DISTINCT ON (p.id) p.id,p.created_at AS question_at,a.created_at AS answer_at,e.endorsed_at
           FROM posts p JOIN answers a ON a.post_id=p.id
-          WHERE p.course_id=$1 AND p.type='question' AND a.endorsed_at IS NOT NULL
-          ORDER BY p.id,a.endorsed_at,a.id
+          JOIN answer_endorsement_events e ON e.answer_id=a.id
+          WHERE p.course_id=$1 AND p.type='question'
+          ORDER BY p.id,e.endorsed_at,a.id
         )
         SELECT avg(GREATEST(0,extract(epoch FROM answer_at-question_at)))::float8 AS average
         FROM first_endorsement WHERE endorsed_at >= $2 AND endorsed_at <= $3`,

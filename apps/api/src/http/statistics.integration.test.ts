@@ -161,8 +161,12 @@ integration("course statistics API", () => {
       [postId, ids.course, ids.student],
     );
     await pool.query(
-      "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,created_at,endorsed_at,endorsed_by_user_id) VALUES ($1,$2,$3,'student','Answer',now()-interval '1 hour',now(),$4)",
-      [answerId, ids.course, postId, ids.staff],
+      "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,created_at,endorsed_at,endorsed_by_user_id,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,'student','Answer',now()-interval '1 hour',now(),$4,$5,'student')",
+      [answerId, ids.course, postId, ids.staff, ids.student],
+    );
+    await pool.query(
+      "INSERT INTO answer_endorsement_events (course_id,answer_id,endorsed_by_user_id,endorsed_at) SELECT course_id,id,endorsed_by_user_id,endorsed_at FROM answers WHERE id=$1",
+      [answerId],
     );
     await pool.query(
       "INSERT INTO answer_contribution_events (course_id,answer_id,user_id,contributed_at) VALUES ($1,$2,$3,now()-interval '1 hour')",
@@ -205,6 +209,37 @@ integration("course statistics API", () => {
       answersContributed: 0,
       postsViewed: 0,
     });
+  });
+
+  it("keeps first endorsement response time after an answer is edited", async () => {
+    const postId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES ($1,$2,$3,'question','History','Body',now()-interval '1 hour')",
+      [postId, ids.course, ids.student],
+    );
+    const answers = new AnswerService(pool);
+    const created = await answers.create(postId, ids.student, {
+      bodyMarkdown: "Initial",
+    });
+    const endorsed = await answers.endorse(created.value.id, ids.staff, '"v1"');
+    const revised = await answers.edit(
+      created.value.id,
+      ids.student,
+      `"v${endorsed.version}"`,
+      "Revised",
+    );
+    expect(revised.endorsedAt).toBeNull();
+    const summary = await new StatisticsService(pool).summary(
+      ids.course,
+      ids.staff,
+      "7d",
+    );
+    expect(summary.averageResponseTimeSeconds).toBeGreaterThan(3000);
+    const history = await pool.query(
+      "SELECT count(*)::int AS count FROM answer_endorsement_events WHERE answer_id=$1",
+      [created.value.id],
+    );
+    expect(history.rows[0].count).toBe(1);
   });
 
   it("retains a student's question count after soft deletion", async () => {

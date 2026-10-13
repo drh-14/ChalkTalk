@@ -1,10 +1,12 @@
 import { Pool } from "pg";
 import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
+import * as Y from "yjs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
 import type { AuthService } from "../auth/service.js";
+import { FollowupService } from "../followups/service.js";
 import { AnswerService } from "../answers/service.js";
 import { PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
@@ -61,6 +63,7 @@ function app(userId = ids.author) {
     } as AuthService,
     postService: new PostService(pool),
     answerService: new AnswerService(pool),
+    followupService: new FollowupService(pool),
   });
 }
 function unsafe(test: request.Test) {
@@ -162,6 +165,9 @@ integration("answers HTTP contract: create and read", () => {
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
       version: 1,
+      canEdit: true,
+      upvoteCount: 0,
+      viewerUpvoted: false,
     });
     const document = await pool.query(
       "SELECT yjs_state,lifecycle_state,persistence_revision FROM answer_collaboration_documents WHERE answer_id=$1",
@@ -239,6 +245,28 @@ integration("answers HTTP contract: create and read", () => {
     expect(rows.rows[0]).toEqual({ answers: 1, contributors: 1 });
   });
 
+  it("replays the original answer after a content edit", async () => {
+    const postId = await insertPost();
+    const body = { bodyMarkdown: "Original answer" };
+    const first = await answer(ids.author, postId, body).set(
+      "Idempotency-Key",
+      "edited-answer-retry",
+    );
+    const edited = await unsafe(
+      request(app(ids.student)).patch(first.headers.location),
+    )
+      .set("If-Match", first.headers.etag)
+      .send({ bodyMarkdown: "Revised answer" });
+    expect(edited.status).toBe(200);
+    const replay = await answer(ids.author, postId, body).set(
+      "Idempotency-Key",
+      "edited-answer-retry",
+    );
+    expect(replay.status).toBe(201);
+    expect(replay.headers.etag).toBe(first.headers.etag);
+    expect(replay.body.data).toEqual(first.body.data);
+  });
+
   it("uses the current role to project anonymous contributors on replay", async () => {
     const postId = await insertPost();
     const key = "anonymous-role-change";
@@ -264,6 +292,7 @@ integration("answers HTTP contract: create and read", () => {
       expect(replay.body.data).toEqual({
         ...first.body.data,
         contributors: null,
+        canEdit: false,
       });
       await pool.query(
         "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
@@ -544,14 +573,14 @@ integration("answers HTTP contract: create and read", () => {
     }
   });
 
-  it("does not offer answer text edits in this phase", async () => {
+  it("rejects unsupported answer edit fields", async () => {
     const created = await answer(ids.author, await insertPost());
     const patch = await unsafe(
       request(app(ids.author)).patch(created.headers.location),
     )
       .set("If-Match", '"v1"')
       .send({ anonymous: true });
-    expect(patch.status).toBe(404);
+    expect(patch.status).toBe(422);
     const after = await read(ids.author, created.headers.location);
     expect(after.body.data).toEqual(created.body.data);
   });
@@ -589,5 +618,357 @@ integration("answers HTTP contract: create and read", () => {
     await remove(ids.staff, answered.headers.location, '"v1"');
     expect((await read(ids.author, postPath)).body.data.answered).toBe(false);
     expect(await listed(false)).toContain(postId);
+  });
+
+  it("edits the student slot through REST and preserves historical endorsement events", async () => {
+    const postId = await insertPost();
+    const created = await answer(ids.author, postId, {
+      bodyMarkdown: "Original",
+    });
+    expect(created.status).toBe(201);
+    const endorsed = await endorse(ids.staff, created.headers.location, '"v1"');
+    expect(endorsed.status).toBe(200);
+    const edited = await unsafe(
+      request(app(ids.student)).patch(created.headers.location),
+    )
+      .set("If-Match", endorsed.headers.etag)
+      .send({ bodyMarkdown: "Revised" });
+    expect(edited.status).toBe(200);
+    expect(edited.headers.etag).toBe('"v3"');
+    expect(edited.body.data).toMatchObject({
+      kind: "student",
+      bodyMarkdown: "Revised",
+      endorsedAt: null,
+      canEdit: true,
+    });
+    const history = await pool.query(
+      "SELECT count(*)::int AS count FROM answer_endorsement_events WHERE answer_id=$1",
+      [created.body.data.id],
+    );
+    expect(history.rows[0].count).toBe(1);
+    const state = await pool.query(
+      "SELECT yjs_state FROM answer_collaboration_documents WHERE answer_id=$1",
+      [created.body.data.id],
+    );
+    const ydoc = new Y.Doc();
+    Y.applyUpdate(ydoc, state.rows[0].yjs_state);
+    expect(ydoc.getText("content").toString()).toBe("Revised");
+    expect(
+      (await endorse(ids.staff, created.headers.location, '"v3"')).status,
+    ).toBe(200);
+  });
+
+  it("keeps one slot per kind and enforces the staff creator role floor", async () => {
+    const postId = await insertPost();
+    const student = await answer(ids.author, postId, {
+      bodyMarkdown: "Student",
+    });
+    const duplicate = await answer(ids.student, postId, {
+      bodyMarkdown: "Duplicate",
+    });
+    expect(student.status).toBe(201);
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.error.code).toBe("answer_kind_exists");
+    const staff = await answer(ids.instructor, postId, {
+      bodyMarkdown: "Staff",
+    });
+    expect(staff.status).toBe(201);
+    const taEdit = await unsafe(
+      request(app(ids.staff)).patch(staff.headers.location),
+    )
+      .set("If-Match", '"v1"')
+      .send({ bodyMarkdown: "Forbidden" });
+    expect(taEdit.status).toBe(403);
+    const listed = await read(ids.author, `/api/v1/posts/${postId}/answers`);
+    expect(listed.body.data.map((item: { kind: string }) => item.kind)).toEqual(
+      ["student", "staff"],
+    );
+  });
+
+  it("keeps a TA-created staff slot editable by TAs after instructor edits", async () => {
+    const postId = await insertPost();
+    const created = await answer(ids.staff, postId, {
+      bodyMarkdown: "TA draft",
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data.kind).toBe("staff");
+    const instructor = await unsafe(
+      request(app(ids.instructor)).patch(created.headers.location),
+    )
+      .set("If-Match", '"v1"')
+      .send({ bodyMarkdown: "Instructor revision" });
+    expect(instructor.status).toBe(200);
+    const ta = await unsafe(
+      request(app(ids.staff)).patch(created.headers.location),
+    )
+      .set("If-Match", instructor.headers.etag)
+      .send({ bodyMarkdown: "TA revision" });
+    expect(ta.status).toBe(200);
+    expect(ta.body.data.bodyMarkdown).toBe("TA revision");
+    expect(
+      ta.body.data.contributors
+        .map((person: { id: string }) => person.id)
+        .sort(),
+    ).toEqual([ids.staff, ids.instructor].sort());
+    const stale = await unsafe(
+      request(app(ids.instructor)).patch(created.headers.location),
+    )
+      .set("If-Match", '"v1"')
+      .send({ bodyMarkdown: "Stale" });
+    expect(stale.status).toBe(412);
+    expect(
+      (await read(ids.student, created.headers.location)).body.data
+        .bodyMarkdown,
+    ).toBe("TA revision");
+  });
+
+  it("creates question-level threaded followups and toggles votes", async () => {
+    const postId = await insertPost();
+    const root = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "Question followup" });
+    expect(root.status).toBe(201);
+    expect(root.headers.location).toBe(
+      `/api/v1/followups/${root.body.data.id}`,
+    );
+    const reply = await unsafe(
+      request(app(ids.student)).post(
+        `/api/v1/followups/${root.body.data.id}/replies`,
+      ),
+    ).send({ bodyMarkdown: "Reply" });
+    expect(reply.status).toBe(201);
+    const voted = await unsafe(
+      request(app(ids.student)).put(
+        `/api/v1/followups/${root.body.data.id}/upvote`,
+      ),
+    );
+    expect(voted.status).toBe(200);
+    expect(voted.body.data).toMatchObject({
+      upvoteCount: 1,
+      viewerUpvoted: true,
+    });
+    const roots = await read(ids.author, `/api/v1/posts/${postId}/followups`);
+    expect(roots.status).toBe(200);
+    expect(roots.body.data).toHaveLength(1);
+    const children = await read(
+      ids.author,
+      `/api/v1/followups/${root.body.data.id}/replies`,
+    );
+    expect(children.body.data).toHaveLength(1);
+  });
+  it("keeps answer vote totals independent of content revisions", async () => {
+    const created = await answer(ids.author, await insertPost());
+    const path = created.headers.location;
+    const voted = await unsafe(request(app(ids.student)).put(`${path}/upvote`));
+    expect(voted.status).toBe(200);
+    expect(voted.headers.etag).toBe('"v1"');
+    expect(voted.body.data).toMatchObject({
+      upvoteCount: 1,
+      viewerUpvoted: true,
+    });
+    const repeated = await unsafe(
+      request(app(ids.student)).put(`${path}/upvote`),
+    );
+    expect(repeated.body.data.upvoteCount).toBe(1);
+    expect((await read(ids.author, path)).body.data).toMatchObject({
+      upvoteCount: 1,
+      viewerUpvoted: false,
+    });
+    const removed = await unsafe(
+      request(app(ids.student)).delete(`${path}/upvote`),
+    );
+    expect(removed.body.data).toMatchObject({
+      upvoteCount: 0,
+      viewerUpvoted: false,
+    });
+    expect(
+      (await unsafe(request(app(ids.student)).delete(`${path}/upvote`))).status,
+    ).toBe(200);
+    expect((await read(ids.author, path)).headers.etag).toBe('"v1"');
+  });
+
+  it("holds answer vote authorization until the transaction finishes", async () => {
+    const created = await answer(ids.author, await insertPost());
+    const blocker = await pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.student],
+      );
+      const vote = unsafe(
+        request(app(ids.student)).put(`${created.headers.location}/upvote`),
+      );
+      const pending = vote.then(() => "settled");
+      expect(
+        await Promise.race([
+          pending,
+          new Promise((resolve) => setTimeout(() => resolve("waiting"), 150)),
+        ]),
+      ).toBe("waiting");
+      await blocker.query("ROLLBACK");
+      expect((await vote).status).toBe(200);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+  });
+
+  it("holds followup vote authorization until the transaction finishes", async () => {
+    const postId = await insertPost();
+    const created = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "Followup" });
+    const blocker = await pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        ids.course,
+      ]);
+      const vote = unsafe(
+        request(app(ids.student)).put(`${created.headers.location}/upvote`),
+      );
+      const pending = vote.then(() => "settled");
+      expect(
+        await Promise.race([
+          pending,
+          new Promise((resolve) => setTimeout(() => resolve("waiting"), 150)),
+        ]),
+      ).toBe("waiting");
+      await blocker.query("ROLLBACK");
+      expect((await vote).status).toBe(200);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+  });
+
+  it("paginates roots, replays matching creates, and retains a deleted parent with replies", async () => {
+    const postId = await insertPost();
+    const path = `/api/v1/posts/${postId}/followups`;
+    const first = await unsafe(request(app(ids.author)).post(path))
+      .set("Idempotency-Key", "followup-root-retry")
+      .send({ bodyMarkdown: "First", anonymous: true });
+    expect(first.status).toBe(201);
+    const replay = await unsafe(request(app(ids.author)).post(path))
+      .set("Idempotency-Key", "followup-root-retry")
+      .send({ bodyMarkdown: "First", anonymous: true });
+    expect(replay.status).toBe(201);
+    expect(replay.body.data.id).toBe(first.body.data.id);
+    const conflict = await unsafe(request(app(ids.author)).post(path))
+      .set("Idempotency-Key", "followup-root-retry")
+      .send({ bodyMarkdown: "Changed", anonymous: true });
+    expect(conflict.status).toBe(409);
+    expect(conflict.body.error.code).toBe("idempotency_key_reused");
+    const second = await unsafe(request(app(ids.student)).post(path)).send({
+      bodyMarkdown: "Second",
+    });
+    expect(second.status).toBe(201);
+    const page1 = await read(ids.staff, `${path}?limit=1`);
+    expect(page1.body.meta).toMatchObject({
+      total: 2,
+      nextCursor: expect.any(String),
+    });
+    expect(page1.body.data.map((item: { id: string }) => item.id)).toEqual([
+      first.body.data.id,
+    ]);
+    const page2 = await read(
+      ids.staff,
+      `${path}?limit=1&cursor=${encodeURIComponent(page1.body.meta.nextCursor)}`,
+    );
+    expect(page2.body.meta).toEqual({ total: 2, nextCursor: null });
+    expect(page2.body.data.map((item: { id: string }) => item.id)).toEqual([
+      second.body.data.id,
+    ]);
+    expect(
+      (await read(ids.student, first.headers.location)).body.data.author,
+    ).toBeNull();
+    expect(
+      (await read(ids.staff, first.headers.location)).body.data.author.id,
+    ).toBe(ids.author);
+    const reply = await unsafe(
+      request(app(ids.student)).post(`${first.headers.location}/replies`),
+    ).send({ bodyMarkdown: "Child" });
+    expect(reply.status).toBe(201);
+    const deleted = await unsafe(
+      request(app(ids.author)).delete(first.headers.location),
+    ).set("If-Match", '"v1"');
+    expect(deleted.status).toBe(204);
+    const tombstone = await read(ids.student, first.headers.location);
+    expect(tombstone.body.data).toMatchObject({
+      deleted: true,
+      bodyMarkdown: null,
+      replyCount: 1,
+    });
+    expect(
+      (await read(ids.student, `${first.headers.location}/replies`)).body
+        .data[0].id,
+    ).toBe(reply.body.data.id);
+    expect(
+      (
+        await unsafe(
+          request(app(ids.student)).post(`${first.headers.location}/replies`),
+        ).send({ bodyMarkdown: "Late" })
+      ).status,
+    ).toBe(404);
+  });
+
+  it("replays the original followup after an edit and reply", async () => {
+    const postId = await insertPost();
+    const path = `/api/v1/posts/${postId}/followups`;
+    const body = { bodyMarkdown: "Original followup" };
+    const first = await unsafe(request(app(ids.author)).post(path))
+      .set("Idempotency-Key", "edited-followup-retry")
+      .send(body);
+    const edited = await unsafe(
+      request(app(ids.author)).patch(first.headers.location),
+    )
+      .set("If-Match", first.headers.etag)
+      .send({ bodyMarkdown: "Revised followup" });
+    expect(edited.status).toBe(200);
+    const reply = await unsafe(
+      request(app(ids.student)).post(`${first.headers.location}/replies`),
+    ).send({ bodyMarkdown: "A reply" });
+    expect(reply.status).toBe(201);
+    const replay = await unsafe(request(app(ids.author)).post(path))
+      .set("Idempotency-Key", "edited-followup-retry")
+      .send(body);
+    expect(replay.status).toBe(201);
+    expect(replay.headers.etag).toBe(first.headers.etag);
+    expect(replay.body.data).toEqual(first.body.data);
+  });
+
+  it("checks followup edit permissions, versions, and question-only creation", async () => {
+    const noteId = await insertPost("note");
+    const note = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${noteId}/followups`),
+    ).send({ bodyMarkdown: "No" });
+    expect(note.status).toBe(409);
+    expect(note.body.error.code).toBe("not_a_question");
+    const postId = await insertPost();
+    const created = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "Original" });
+    const path = created.headers.location;
+    const forbidden = await unsafe(request(app(ids.student)).patch(path))
+      .set("If-Match", '"v1"')
+      .send({ bodyMarkdown: "No" });
+    expect(forbidden.status).toBe(403);
+    const missing = await unsafe(request(app(ids.author)).patch(path)).send({
+      bodyMarkdown: "No",
+    });
+    expect(missing.status).toBe(428);
+    const edited = await unsafe(request(app(ids.staff)).patch(path))
+      .set("If-Match", '"v1"')
+      .send({ bodyMarkdown: "Staff edit" });
+    expect(edited.status).toBe(200);
+    expect(edited.headers.etag).toBe('"v2"');
+    const stale = await unsafe(request(app(ids.author)).patch(path))
+      .set("If-Match", '"v1"')
+      .send({ bodyMarkdown: "Stale" });
+    expect(stale.status).toBe(412);
+    expect((await read(ids.author, path)).body.data.bodyMarkdown).toBe(
+      "Staff edit",
+    );
   });
 });

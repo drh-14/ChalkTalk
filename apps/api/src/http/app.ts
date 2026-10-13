@@ -9,6 +9,7 @@ import {
   answerEtag,
   type CreateAnswer,
 } from "../answers/service.js";
+import { FollowupService, followupEtag } from "../followups/service.js";
 import { SESSION_COOKIE_NAME, sessionCookie } from "../auth/crypto.js";
 import { AuthError } from "../auth/errors.js";
 import {
@@ -34,6 +35,7 @@ export interface AppDependencies {
   courseService?: CourseService;
   postService?: PostService;
   answerService?: AnswerService;
+  followupService?: FollowupService;
   statisticsService?: StatisticsService;
 }
 type AuthContext = {
@@ -258,11 +260,12 @@ function accountDeletionBody(input: unknown): JsonObject {
 function listQuery(
   query: Request["query"],
   filter?: { key: "status" | "role"; values: readonly string[] },
+  defaultLimit = 25,
 ) {
   const rawLimit = query.limit;
   const limit =
     rawLimit === undefined
-      ? 25
+      ? defaultLimit
       : typeof rawLimit === "string"
         ? Number(rawLimit)
         : Number.NaN;
@@ -287,6 +290,11 @@ function listQuery(
     cursor: query.cursor as string | undefined,
     filter: typeof rawFilter === "string" ? rawFilter : undefined,
   };
+}
+function followupListQuery(query: Request["query"]) {
+  if (Object.keys(query).some((key) => key !== "cursor" && key !== "limit"))
+    throw new AuthError(400, "invalid_request", "Pagination is invalid");
+  return listQuery(query, undefined, 20);
 }
 function courseCreateBody(input: unknown): JsonObject {
   const body = strictBody(input, ["name"], ["name"]);
@@ -539,6 +547,7 @@ export function createApp(
     courseService,
     postService,
     answerService,
+    followupService,
     statisticsService,
   } = dependencies;
   const app = express();
@@ -560,7 +569,7 @@ export function createApp(
       .set({
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Credentials": "true",
-        "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+        "Access-Control-Allow-Methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
         "Access-Control-Allow-Headers":
           "Content-Type,If-Match,Idempotency-Key,X-CSRF-Token",
         Vary: "Origin",
@@ -649,6 +658,15 @@ export function createApp(
         "Answer service is unavailable",
       );
     return answerService;
+  };
+  const followups = (): FollowupService => {
+    if (!followupService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Followup service is unavailable",
+      );
+    return followupService;
   };
   const posts = (): PostService => {
     if (!postService)
@@ -1356,6 +1374,224 @@ export function createApp(
       }
     },
   );
+  app.patch(
+    "/api/v1/answers/:answerId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["bodyMarkdown"],
+          ["bodyMarkdown"],
+        );
+        const bodyMarkdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
+        if (!bodyMarkdown.trim()) throw validationError("Body is invalid");
+        const value = await answers().edit(
+          param(request.params.answerId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          bodyMarkdown,
+        );
+        response.set("ETag", answerEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const method of ["put", "delete"] as const) {
+    app[method](
+      "/api/v1/answers/:answerId/upvote",
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          const value = await answers().upvote(
+            param(request.params.answerId),
+            auth(response).session.user.id,
+            method === "put",
+          );
+          response.set("ETag", answerEtag(value)).json({ data: value });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  }
+  app.get(
+    "/api/v1/posts/:postId/followups",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { cursor, limit } = followupListQuery(request.query);
+        const page = await followups().list(
+          param(request.params.postId),
+          current.session.user.id,
+          undefined,
+          cursor,
+          limit,
+        );
+        response.json(page);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/posts/:postId/followups",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = answerCreateBody(request.body);
+        const value = await followups().create(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          body,
+          undefined,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set({
+            Location: `/api/v1/followups/${value.id}`,
+            ETag: followupEtag(value),
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/followups/:followupId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await followups().get(
+          param(request.params.followupId),
+          current.session.user.id,
+        );
+        response.set("ETag", followupEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/followups/:followupId/replies",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { cursor, limit } = followupListQuery(request.query);
+        const parent = await followups().get(
+          param(request.params.followupId),
+          current.session.user.id,
+        );
+        const page = await followups().list(
+          parent.postId,
+          current.session.user.id,
+          parent.id,
+          cursor,
+          limit,
+        );
+        response.json(page);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/followups/:followupId/replies",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const parent = await followups().get(
+          param(request.params.followupId),
+          auth(response).session.user.id,
+        );
+        const body = answerCreateBody(request.body);
+        const value = await followups().create(
+          parent.postId,
+          auth(response).session.user.id,
+          body,
+          parent.id,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set({
+            Location: `/api/v1/followups/${value.id}`,
+            ETag: followupEtag(value),
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/followups/:followupId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["bodyMarkdown"],
+          ["bodyMarkdown"],
+        );
+        const markdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
+        if (!markdown.trim()) throw validationError("Body is invalid");
+        const value = await followups().edit(
+          param(request.params.followupId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          markdown,
+        );
+        response.set("ETag", followupEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/followups/:followupId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await followups().delete(
+          param(request.params.followupId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const method of ["put", "delete"] as const) {
+    app[method](
+      "/api/v1/followups/:followupId/upvote",
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          const value = await followups().upvote(
+            param(request.params.followupId),
+            auth(response).session.user.id,
+            method === "put",
+          );
+          response.set("ETag", followupEtag(value)).json({ data: value });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  }
   app.put(
     "/api/v1/answers/:answerId/endorsement",
     ...authenticatedUnsafe,
