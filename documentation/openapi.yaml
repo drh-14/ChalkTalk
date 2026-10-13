@@ -17,7 +17,7 @@ info:
     revoking a session invalidates its CSRF token and unused WebSocket tickets.
     Implementation status: the posts API currently supports JSON questions and notes
     through create, list/search, get, update, and delete. Polls, voting, multipart,
-    attachments, download refresh, and view events remain future target definitions,
+    attachments and download refresh remain future target definitions,
     not live routes or media types. Text posts expose an empty attachments list and
     unanswered questions. Course lists omit deleted posts; direct member GET by ID
     returns a minimal tombstone. PATCH or DELETE of a tombstone returns 404 not_found.
@@ -6475,7 +6475,8 @@ paths:
         times for a course. Daily activity is grouped by UTC calendar date. Average
         response time includes questions that first received an endorsed answer during
         the selected period and measures the elapsed time from question creation to
-        endorsement.
+        creation of that first-endorsed answer. Recorded views are deduplicated by
+        member, post, and UTC date; view history begins at deployment.
       operationId: getCourseStatistics
       security:
         - session_cookie: []
@@ -6502,6 +6503,21 @@ paths:
                   postsViewed: 190
                   averageResponseTimeSeconds: 1320.5
                   generatedAt: "2026-09-20T14:30:00Z"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                invalid_request:
+                  summary: The period is invalid.
+                  value:
+                    error:
+                      code: invalid_request
+                      message: Statistics query is invalid.
+                      requestId: req_getCourseStatistics
+                      details: []
         "403":
           description: Forbidden
           content:
@@ -6598,7 +6614,8 @@ paths:
       description:
         List each student's question, answer, and post-view activity during
         the selected period. An answer contribution counts once per distinct answer
-        the student created or edited, regardless of the number of edits.
+        with a recorded contribution event. The current API records answer creation;
+        future answer editing must record content-changing edits to include them.
       operationId: listStudentStatistics
       security:
         - session_cookie: []
@@ -13139,7 +13156,7 @@ components:
             - number
             - "null"
           description:
-            Mean elapsed seconds from question creation to first endorsement
+            Mean elapsed seconds from question creation to creation of the first-endorsed answer
             for questions that first received an endorsed answer during the period;
             null when no question qualifies.
           minimum: 0
@@ -13191,11 +13208,11 @@ components:
           "$ref": "#/components/schemas/UserSummary"
         questionsCreated:
           type: integer
-          description: Questions created by the student during the period.
+          description: Questions created by the student during the period, including those later soft-deleted after this feature was deployed. Questions deleted before deployment are not reconstructed; account deletion removes the person's count buckets.
           minimum: 0
         answersContributed:
           type: integer
-          description: Distinct answers the student created or edited during the period.
+          description: Distinct answers with a recorded contribution event by the student during the period.
           minimum: 0
         postsViewed:
           type: integer

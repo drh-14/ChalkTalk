@@ -40,7 +40,7 @@ In the future target contract, answer and followup read responses can contain ac
 
 ### **`POST /api/v1/posts/{postId}/answers`**
 
-Creates an answer to a question post and initializes its persistent Yjs document. In one atomic operation, the server creates the answer, initializes its document, and records exactly one `created` contributor event for the caller; all three changes roll back if any part fails. The server derives kind as student or staff from the caller’s role. Each question has at most one student answer and one staff answer. An idempotent replay returns the original result and does not create another document or contributor event.
+Creates an answer to a question post and initializes its persistent Yjs document. In one atomic operation, the server creates the answer, initializes its document, and records one contribution event for the caller; all three changes roll back if any part fails. The server derives kind as student or staff from the caller’s role. Each question has at most one student answer and one staff answer. An idempotent replay returns the original result and does not create another document or contribution event.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

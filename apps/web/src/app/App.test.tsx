@@ -74,6 +74,35 @@ afterEach(() => {
 });
 
 describe("ChalkTalk auth entry", () => {
+  it("shows Statistics to staff and denies a student opening its direct route", async () => {
+    setPath(`/courses/${course.id}/statistics`);
+    const member = {
+      id: "membership_123",
+      courseId: course.id,
+      user: { id: session.user.id, displayName: session.user.displayName },
+      role: "student",
+      createdAt: course.createdAt,
+      updatedAt: course.updatedAt,
+      version: 1,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course });
+        if (url.endsWith(`/members/${session.user.id}`))
+          return jsonResponse({ data: member });
+        return jsonResponse({ data: [] });
+      }),
+    );
+    render(<App />);
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "course staff",
+    );
+    expect(screen.queryByRole("link", { name: "Statistics" })).toBeNull();
+  });
   it("keeps a shared course header while switching between discussion and settings", async () => {
     setPath(`/courses/${course.id}`);
     const member = {
@@ -1323,28 +1352,26 @@ describe("ChalkTalk auth entry", () => {
       updatedAt: course.updatedAt,
       version: 1,
     };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({ data: session }))
-      .mockResolvedValueOnce(
-        jsonResponse({ data: instructorCourse }, 200, { ETag: '"v4"' }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({ data: member }, 200, { ETag: '"v1"' }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          data: [member],
-          page: { nextCursor: null, hasMore: false },
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse(
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/sessions/current"))
+        return jsonResponse({ data: session });
+      if (url.endsWith(`/courses/${course.id}`) && init?.method === "DELETE")
+        return jsonResponse(
           { data: { ...instructorCourse, status: "deleting" } },
           202,
           { ETag: '"v5"' },
-        ),
-      );
+        );
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: instructorCourse }, 200, { ETag: '"v4"' });
+      if (url.endsWith(`/members/${session.user.id}`))
+        return jsonResponse({ data: member }, 200, { ETag: '"v1"' });
+      if (url.endsWith("/members"))
+        return jsonResponse({
+          data: [member],
+          page: { nextCursor: null, hasMore: false },
+        });
+      return jsonResponse({ data: [] });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -1355,8 +1382,7 @@ describe("ChalkTalk auth entry", () => {
     expect((await screen.findByRole("status")).textContent).toContain(
       "being deleted",
     );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      5,
+    expect(fetchMock).toHaveBeenCalledWith(
       `/api/v1/courses/${course.id}`,
       expect.objectContaining({
         method: "DELETE",

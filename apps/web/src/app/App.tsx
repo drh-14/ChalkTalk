@@ -21,10 +21,12 @@ import {
 import { CourseDetail, CourseHome } from "../courses/views.js";
 import {
   getCourse,
+  getMembership,
   listCourses,
   type Course,
   type Versioned,
 } from "../courses/client.js";
+import { CourseStatistics } from "../statistics/views.js";
 import { Discussion } from "../posts/views.js";
 import {
   initializeRoute,
@@ -812,6 +814,7 @@ function CourseFrame({
 }) {
   const courseId = route.courseId!;
   const [course, setCourse] = useState<Versioned<Course>>();
+  const [staff, setStaff] = useState<boolean>();
   const [error, setError] = useState<{ courseId: string; message: string }>();
   const [cycle, setCycle] = useState(0);
   const beforeLeave = useRef<() => boolean>(() => true);
@@ -833,6 +836,23 @@ function CourseFrame({
     };
   }, [courseId, cycle]);
   useEffect(() => {
+    let active = true;
+    setStaff(undefined);
+    void getMembership(courseId, session.user.id)
+      .then((member) => {
+        if (active)
+          setStaff(
+            member.data.role === "ta" || member.data.role === "instructor",
+          );
+      })
+      .catch(() => {
+        if (active) setStaff(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [courseId, session.user.id]);
+  useEffect(() => {
     if (visibleCourse) headingRef.current?.focus();
   }, [route.name, visibleCourse]);
   const section =
@@ -840,7 +860,9 @@ function CourseFrame({
       ? "settings"
       : route.name === "course-resources"
         ? "resources"
-        : "discussion";
+        : route.name === "course-statistics"
+          ? "statistics"
+          : "discussion";
   const discussionPath = `/courses/${encodeURIComponent(courseId)}`;
   const tabs = [
     { key: "discussion", label: "Discussion", path: discussionPath },
@@ -854,6 +876,15 @@ function CourseFrame({
       label: "Course settings",
       path: `${discussionPath}/settings`,
     },
+    ...(staff
+      ? [
+          {
+            key: "statistics",
+            label: "Statistics",
+            path: `${discussionPath}/statistics`,
+          },
+        ]
+      : []),
   ];
   function follow(event: MouseEvent<HTMLAnchorElement>, path: string) {
     if (
@@ -942,6 +973,14 @@ function CourseFrame({
             onBack={() => onNavigate("/home")}
             userId={session.user.id}
           />
+        ) : section === "statistics" ? (
+          staff === undefined ? (
+            <p role="status">Loading statistics…</p>
+          ) : staff ? (
+            <CourseStatistics courseId={courseId} />
+          ) : (
+            <p role="alert">Statistics are available to course staff.</p>
+          )
         ) : (
           <Discussion
             courseId={courseId}
@@ -1028,7 +1067,8 @@ export function App() {
           route.name === "course" ||
           route.name === "post" ||
           route.name === "course-settings" ||
-          route.name === "course-resources"
+          route.name === "course-resources" ||
+          route.name === "course-statistics"
         )
           move("/");
       })
@@ -1059,7 +1099,8 @@ export function App() {
     (route.name === "course" ||
       route.name === "post" ||
       route.name === "course-settings" ||
-      route.name === "course-resources") &&
+      route.name === "course-resources" ||
+      route.name === "course-statistics") &&
     route.courseId &&
     session
   )

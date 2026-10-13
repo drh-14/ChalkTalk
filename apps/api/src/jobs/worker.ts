@@ -65,6 +65,17 @@ export class JobWorker {
     await this.transaction(async (client) => {
       const answers = "SELECT id FROM answers WHERE course_id=$1";
       await client.query(
+        "DELETE FROM question_creation_daily_counts WHERE course_id=$1",
+        [courseId],
+      );
+      await client.query("DELETE FROM post_view_events WHERE course_id=$1", [
+        courseId,
+      ]);
+      await client.query(
+        "DELETE FROM answer_contribution_events WHERE course_id=$1",
+        [courseId],
+      );
+      await client.query(
         `DELETE FROM answer_contributors WHERE answer_id IN (${answers})`,
         [courseId],
       );

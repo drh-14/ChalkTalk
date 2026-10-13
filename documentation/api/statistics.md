@@ -4,7 +4,7 @@
 
 ### **`GET /api/v1/courses/{courseId}/statistics`**
 
-Retrieves daily activity, post views, and endorsed-answer response times for a course. Daily activity is grouped by UTC calendar date. Average response time includes questions that first received an endorsed answer during the selected period and measures the elapsed time from question creation to endorsement.
+Retrieves daily activity, recorded post views, and endorsed-answer response times for a course. Daily activity is grouped by UTC calendar date, includes zero-activity dates, and counts questions and answers at creation, even if later deleted. A recorded view is one successful active canonical post-detail read per signed-in member, post, and UTC date. View history starts when this feature is deployed. Average response time includes questions that first received an endorsed answer during the selected period and measures elapsed time from question creation to creation of that first-endorsed answer.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -62,7 +62,7 @@ None specific to this operation.
 
 `data.postsViewed` (integer, required): Recorded post views during the period.
 
-`data.averageResponseTimeSeconds` (number or null, required): Mean elapsed seconds from question creation to first endorsement for questions that first received an endorsed answer during the period; `null` when no question qualifies.
+`data.averageResponseTimeSeconds` (number or null, required): Mean elapsed seconds from question creation to creation of the answer first endorsed during the period; `null` when no question qualifies.
 
 `data.generatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
@@ -104,6 +104,10 @@ curl --request GET '/api/v1/courses/course_123/statistics' \
 
 #### Errors
 
+##### `400 Bad Request`
+
+`invalid_request`: The period is invalid.
+
 ##### `401 Unauthorized`
 
 `authentication_required`: Authentication is missing or invalid.
@@ -130,7 +134,7 @@ curl --request GET '/api/v1/courses/course_123/statistics' \
 
 ### **`GET /api/v1/courses/{courseId}/statistics/students`**
 
-Lists each student's question, answer, and post-view activity during the selected period. An answer contribution counts once per distinct answer the student created or edited, regardless of the number of edits.
+Lists current student members, including those with zero activity, and their question, answer, and recorded post-view activity during the selected period. Question counts survive later post soft deletion through a per-student UTC-day count with no post link. Active questions at deployment are backfilled; questions deleted before deployment are not reconstructed. Account deletion removes that user's question buckets. An answer contribution counts once per distinct answer with a recorded contribution event during the period. The current API records answer creation; future answer editing must record content-changing edits to include them. Historical activity remains in course totals after membership or role changes but does not create a roster row.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -178,9 +182,9 @@ None specific to this operation.
 
 `data.user` (object, required): User identity and profile summary.
 
-`data.questionsCreated` (integer, required): Questions created by the student during the period.
+`data.questionsCreated` (integer, required): Questions created by the student during the period, including those later soft-deleted after this feature was deployed; predeployment deleted questions are unavailable.
 
-`data.answersContributed` (integer, required): Distinct answers the student created or edited during the period.
+`data.answersContributed` (integer, required): Distinct answers with a recorded contribution event by the student during the period.
 
 `data.postsViewed` (integer, required): Recorded post views by the student during the period.
 

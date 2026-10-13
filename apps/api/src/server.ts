@@ -7,6 +7,7 @@ import { CourseService } from "./courses/service.js";
 import { JobWorker } from "./jobs/worker.js";
 import { createApp } from "./http/app.js";
 import { PostService } from "./posts/service.js";
+import { StatisticsService } from "./statistics/service.js";
 
 const environment = loadEnvironment();
 const { port } = environment;
@@ -21,6 +22,7 @@ const app = createApp({
   courseService: new CourseService(pool),
   postService: new PostService(pool),
   answerService: new AnswerService(pool),
+  statisticsService: new StatisticsService(pool),
 });
 const worker = new JobWorker(pool);
 let workerRunning = false;

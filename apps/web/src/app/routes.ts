@@ -8,7 +8,8 @@ export type RouteName =
   | "course"
   | "post"
   | "course-settings"
-  | "course-resources";
+  | "course-resources"
+  | "course-statistics";
 
 export type FeedSort = "relevance" | "newest" | "oldest" | "recent_activity";
 /** Feed state kept in the URL: a sidebar filter key, tags, a tag match, and a chosen sort. */
@@ -92,6 +93,8 @@ export function feedSearch(query?: string, filters?: FeedFilters): string {
 
 export function routeForPath(pathname: string): RouteName {
   if (/^\/courses\/[^/]+\/posts\/[^/]+$/.test(pathname)) return "post";
+  if (/^\/courses\/[^/]+\/statistics$/.test(pathname))
+    return "course-statistics";
   if (/^\/courses\/[^/]+\/settings$/.test(pathname)) return "course-settings";
   if (/^\/courses\/[^/]+\/resources$/.test(pathname)) return "course-resources";
   if (/^\/courses\/[^/]+$/.test(pathname)) return "course";
@@ -114,7 +117,11 @@ export function routeFromLocation(location: URL): Route {
     return { name, token: location.searchParams.get("token") || undefined };
   const parts = location.pathname.split("/");
   const courseId = parts[2];
-  if (name === "course-settings" || name === "course-resources")
+  if (
+    name === "course-settings" ||
+    name === "course-resources" ||
+    name === "course-statistics"
+  )
     return { name, courseId };
   const query = location.searchParams.get("q") || undefined;
   const filters = filtersFromSearch(location.searchParams);
