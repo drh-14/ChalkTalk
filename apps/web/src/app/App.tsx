@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -17,7 +18,9 @@ import {
   requestVerification,
   resetPassword,
   type Session,
+  type User,
 } from "../auth/client.js";
+import { AccountPage } from "../account/AccountPage.js";
 import { CourseDetail, CourseHome } from "../courses/views.js";
 import {
   getCourse,
@@ -484,10 +487,12 @@ const firstNameOf = (session: Session) =>
 function AccountControls({
   session,
   onSignOut,
+  onAccountClick,
   canLeave = () => true,
 }: {
   session: Session;
   onSignOut: () => Promise<void>;
+  onAccountClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   canLeave?: () => boolean;
 }) {
   const [pending, setPending] = useState(false);
@@ -508,7 +513,9 @@ function AccountControls({
       <span className="avatar" aria-hidden="true">
         {firstNameOf(session)[0]}
       </span>
-      <span className="account-name">{session.user.displayName}</span>
+      <a className="account-name" href="/account" onClick={onAccountClick}>
+        {session.user.displayName}
+      </a>
       <button className="text-button" onClick={signOut} disabled={pending}>
         {pending ? "Signing out…" : "Sign out"}
       </button>
@@ -525,6 +532,7 @@ function AppBar({
   variant,
   session,
   onSignOut,
+  onAccountClick,
   canLeave,
   onHomeClick,
   tabs,
@@ -533,6 +541,7 @@ function AppBar({
   variant: "home" | "course";
   session: Session;
   onSignOut: () => Promise<void>;
+  onAccountClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   canLeave?: () => boolean;
   onHomeClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   tabs?: ReactNode;
@@ -576,6 +585,7 @@ function AppBar({
         <AccountControls
           session={session}
           onSignOut={onSignOut}
+          onAccountClick={onAccountClick}
           canLeave={canLeave}
         />
       </div>
@@ -587,10 +597,12 @@ function Home({
   session,
   onSignOut,
   onOpenCourse,
+  onNavigate,
 }: {
   session: Session;
   onSignOut: () => Promise<void>;
   onOpenCourse: (courseId: string) => void;
+  onNavigate: (path: string) => void;
 }) {
   const firstName = firstNameOf(session);
   const today = new Intl.DateTimeFormat(undefined, {
@@ -600,7 +612,15 @@ function Home({
   }).format(new Date());
   return (
     <>
-      <AppBar variant="home" session={session} onSignOut={onSignOut} />
+      <AppBar
+        variant="home"
+        session={session}
+        onSignOut={onSignOut}
+        onAccountClick={(event) => {
+          event.preventDefault();
+          onNavigate("/account");
+        }}
+      />
       <main className="home-shell">
         <section className="home-intro">
           <p className="eyebrow">{today}</p>
@@ -906,6 +926,7 @@ function CourseFrame({
         variant="course"
         session={session}
         onSignOut={onSignOut}
+        onAccountClick={(event) => follow(event, "/account")}
         canLeave={() => beforeLeave.current()}
         onHomeClick={(event) => follow(event, "/home")}
         tabs={
@@ -1026,6 +1047,9 @@ export function App() {
     setSession(nextSession);
     move("/home");
   }
+  const updateSessionUser = useCallback((user: User) => {
+    setSession((current) => (current ? { ...current, user } : current));
+  }, []);
   useEffect(() => {
     const updateRoute = () => {
       const nextPath = `${window.location.pathname}${window.location.search}`;
@@ -1064,6 +1088,7 @@ export function App() {
       .catch(() => {
         if (
           route.name === "home" ||
+          route.name === "account" ||
           route.name === "course" ||
           route.name === "post" ||
           route.name === "course-settings" ||
@@ -1092,8 +1117,32 @@ export function App() {
       <Home
         session={session}
         onOpenCourse={(courseId) => move(`/courses/${courseId}`)}
+        onNavigate={move}
         onSignOut={signOut}
       />
+    );
+  if (route.name === "account" && session)
+    return (
+      <>
+        <AppBar
+          variant="home"
+          session={session}
+          onSignOut={signOut}
+          onHomeClick={(event) => {
+            event.preventDefault();
+            move("/home");
+          }}
+          onAccountClick={(event) => event.preventDefault()}
+        />
+        <AccountPage
+          session={session}
+          onUserChange={updateSessionUser}
+          onDeleted={() => {
+            setSession(undefined);
+            move("/");
+          }}
+        />
+      </>
     );
   if (
     (route.name === "course" ||

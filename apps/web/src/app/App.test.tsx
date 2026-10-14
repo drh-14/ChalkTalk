@@ -74,6 +74,72 @@ afterEach(() => {
 });
 
 describe("ChalkTalk auth entry", () => {
+  it("opens account settings from the signed-in header name", async () => {
+    setPath("/home");
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/sessions/current"))
+        return jsonResponse({ data: session });
+      if (url.endsWith("/users/me"))
+        return jsonResponse({ data: session.user }, 200, { ETag: '"v1"' });
+      return jsonResponse({
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome back, Ada" });
+    await user.click(screen.getByRole("link", { name: "Ada Lovelace" }));
+    expect(window.location.pathname).toBe("/account");
+    expect(
+      await screen.findByRole("heading", { name: "Account settings" }),
+    ).toBeTruthy();
+  });
+
+  it("preserves an unsaved course draft when opening account settings", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith(`/courses/${course.id}`))
+          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Post title" }),
+      "My draft",
+    );
+    await user.click(screen.getByRole("link", { name: "Ada Lovelace" }));
+    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    confirm.mockRestore();
+  });
+
+  it("protects a direct account route from unauthenticated visitors", async () => {
+    setPath("/account");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(unauthenticatedResponse()),
+    );
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: "Discuss the work that matters.",
+    });
+    expect(window.location.pathname).toBe("/");
+  });
+
   it("shows Statistics to staff and denies a student opening its direct route", async () => {
     setPath(`/courses/${course.id}/statistics`);
     const member = {

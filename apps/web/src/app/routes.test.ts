@@ -16,6 +16,7 @@ describe("routes", () => {
     expect(routeForPath("/verify-email")).toBe("verify-email");
     expect(routeForPath("/reset-password")).toBe("reset-password");
     expect(routeForPath("/home")).toBe("home");
+    expect(routeForPath("/account")).toBe("account");
     expect(routeForPath("/missing")).toBe("landing");
   });
 

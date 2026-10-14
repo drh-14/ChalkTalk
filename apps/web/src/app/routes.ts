@@ -5,6 +5,7 @@ export type RouteName =
   | "verify-email"
   | "reset-password"
   | "home"
+  | "account"
   | "course"
   | "post"
   | "course-settings"
@@ -105,6 +106,8 @@ export function routeForPath(pathname: string): RouteName {
       return "reset-password";
     case "/home":
       return "home";
+    case "/account":
+      return "account";
     default:
       return "landing";
   }
@@ -112,7 +115,8 @@ export function routeForPath(pathname: string): RouteName {
 
 export function routeFromLocation(location: URL): Route {
   const name = routeForPath(location.pathname);
-  if (name === "landing" || name === "home") return { name, token: undefined };
+  if (name === "landing" || name === "home" || name === "account")
+    return { name, token: undefined };
   if (name === "verify-email" || name === "reset-password")
     return { name, token: location.searchParams.get("token") || undefined };
   const parts = location.pathname.split("/");
