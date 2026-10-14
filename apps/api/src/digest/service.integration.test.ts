@@ -342,6 +342,135 @@ integration("daily course email digest", () => {
     ).toBe("2026-10-14");
   });
 
+  it("recovers activity committed after the midnight scan", async () => {
+    await pool.query(
+      "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",
+      [ids.alice],
+    );
+    const writer = await pool.connect();
+    try {
+      await writer.query("BEGIN");
+      await writer.query(
+        "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES ($1,$2,$3,'question','Late commit','Body','2026-10-14T23:59:59Z')",
+        [uuidv7(), ids.physics, ids.bob],
+      );
+      expect(await digest.schedule(new Date("2026-10-15T00:00:00Z"))).toBe(0);
+      await writer.query("COMMIT");
+      expect(await digest.schedule(new Date("2026-10-16T00:00:00Z"))).toBe(1);
+      await digest.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+      expect(sender.messages[0]?.text).toContain("Late commit");
+    } finally {
+      await writer.query("ROLLBACK");
+      writer.release();
+    }
+  });
+
+  it("holds consent and access through an in-flight SMTP handoff", async () => {
+    await pool.query(
+      "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",
+      [ids.alice],
+    );
+    const post = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Question",
+    );
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    let started!: () => void;
+    let release!: () => void;
+    const sending = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    sender.send = async (message) => {
+      started();
+      await held;
+      sender.messages.push(message);
+    };
+    const delivery = digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    await sending;
+    const changes = [
+      pool.query(
+        "UPDATE users SET daily_digest_enabled=false,daily_digest_enabled_date=NULL WHERE id=$1",
+        [ids.alice],
+      ),
+      pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        ids.physics,
+      ]),
+      pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [ids.physics, ids.alice],
+      ),
+      pool.query(
+        "UPDATE posts SET deleted_at=now(),title=NULL,body_markdown=NULL,author_user_id=NULL WHERE id=$1",
+        [post],
+      ),
+    ];
+    const completed = changes.map(() => false);
+    const revocations = Promise.all(
+      changes.map((change, index) =>
+        change.then(() => {
+          completed[index] = true;
+        }),
+      ),
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(completed).toEqual([false, false, false, false]);
+      expect(sender.messages).toHaveLength(0);
+    } finally {
+      release();
+    }
+    await delivery;
+    await revocations;
+    expect(sender.messages).toHaveLength(1);
+    expect(
+      (await pool.query("SELECT status FROM digest_outbox")).rows[0].status,
+    ).toBe("sent");
+  });
+
+  it("does not reclaim a slow active SMTP attempt after its lease expires", async () => {
+    await pool.query(
+      "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",
+      [ids.alice],
+    );
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    let started!: () => void;
+    let release!: () => void;
+    const sending = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    sender.send = async (message) => {
+      started();
+      await held;
+      sender.messages.push(message);
+    };
+    const delivery = digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    await sending;
+    const peer = new DigestService(
+      pool,
+      sender,
+      environment.frontendBaseUrl,
+      "peer",
+    );
+    try {
+      expect(await peer.deliverOnce(new Date("2026-10-15T00:03:01Z"))).toBe(
+        false,
+      );
+    } finally {
+      release();
+    }
+    await delivery;
+    expect(sender.messages).toHaveLength(1);
+  });
+
   it("rechecks opt-out, access and content before SMTP and retries failures", async () => {
     await pool.query(
       "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",

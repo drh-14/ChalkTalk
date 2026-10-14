@@ -707,6 +707,10 @@ export class AuthService {
         );
       }
       try {
+        if (input.dailyDigestEnabled === true)
+          await client.query(
+            "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
+          );
         const updated = await client.query<UserRow>(
           `UPDATE users SET email = $1, display_name = COALESCE($2, display_name),
              daily_digest_enabled = COALESCE($3, daily_digest_enabled),
@@ -714,7 +718,7 @@ export class AuthService {
                WHEN $3::boolean IS NULL THEN daily_digest_enabled_date
                WHEN $3::boolean = false THEN NULL
                WHEN daily_digest_enabled THEN daily_digest_enabled_date
-               ELSE (now() AT TIME ZONE 'UTC')::date END,
+               ELSE (clock_timestamp() AT TIME ZONE 'UTC')::date END,
              version = version + 1, updated_at = now()
            WHERE id = $4 AND version = $5
            RETURNING id, email, display_name, password_hash, created_at, updated_at, version, daily_digest_enabled`,
