@@ -231,7 +231,7 @@ describe("session and browser-security HTTP contract", () => {
     expect(allowed.headers).toMatchObject({
       "access-control-allow-origin": environment.frontendBaseUrl,
       "access-control-allow-credentials": "true",
-      "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
+      "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
       "access-control-allow-headers":
         "Content-Type,If-Match,Idempotency-Key,X-CSRF-Token",
       vary: "Origin",

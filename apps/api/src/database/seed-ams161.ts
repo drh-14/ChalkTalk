@@ -489,7 +489,7 @@ export async function seedAms161(
           if (!answer) continue;
           const answerId = uuidv7();
           await client.query(
-            "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,endorsed_at,endorsed_by_user_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,CASE WHEN $6::uuid IS NULL THEN NULL ELSE now()-make_interval(mins=>$7) END,$6,now()-make_interval(mins=>$7),now()-make_interval(mins=>$7))",
+            "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,endorsed_at,endorsed_by_user_id,created_at,updated_at,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,$4,$5,CASE WHEN $6::uuid IS NULL THEN NULL ELSE now()-make_interval(mins=>$7) END,$6,now()-make_interval(mins=>$7),now()-make_interval(mins=>$7),$8,$9)",
             [
               answerId,
               AMS161_DEMO.courseId,
@@ -498,6 +498,8 @@ export async function seedAms161(
               answer.body,
               answer.endorsedBy ? ids[answer.endorsedBy] : null,
               answer.age,
+              ids[answer.author],
+              members.find((member) => member.key === answer.author)!.role,
             ],
           );
           await client.query(
@@ -508,6 +510,11 @@ export async function seedAms161(
             "INSERT INTO answer_contributors (answer_id,user_id) VALUES ($1,$2)",
             [answerId, ids[answer.author]],
           );
+          if (answer.endorsedBy)
+            await client.query(
+              "INSERT INTO answer_endorsement_events (course_id,answer_id,endorsed_by_user_id,endorsed_at) SELECT course_id,id,endorsed_by_user_id,endorsed_at FROM answers WHERE id=$1",
+              [answerId],
+            );
         }
       }
       await client.query("COMMIT");

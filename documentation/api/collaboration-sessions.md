@@ -4,7 +4,7 @@
 
 ### **`POST /api/v1/courses/{courseId}/collaboration-sessions`**
 
-Creates a temporary collaboration session in a course. Provide exactly one postId or subchannelId. Answer editing uses the answer connection-ticket endpoint and is not a collaboration session. Create a separate one-use connection ticket before opening the collaboration WebSocket.
+**Future contract; this route is not implemented.** A proposed temporary collaboration session would use exactly one postId or subchannelId and a one-use connection ticket. Current answer editing uses version-checked REST requests; see the [answers API reference](answers.md).
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

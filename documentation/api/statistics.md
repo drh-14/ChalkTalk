@@ -4,7 +4,7 @@
 
 ### **`GET /api/v1/courses/{courseId}/statistics`**
 
-Retrieves daily activity, recorded post views, and endorsed-answer response times for a course. Daily activity is grouped by UTC calendar date, includes zero-activity dates, and counts questions and answers at creation, even if later deleted. A recorded view is one successful active canonical post-detail read per signed-in member, post, and UTC date. View history starts when this feature is deployed. Average response time includes questions that first received an endorsed answer during the selected period and measures elapsed time from question creation to creation of that first-endorsed answer.
+Retrieves daily activity, recorded post views, and endorsed-answer response times for a course. Daily activity is grouped by UTC calendar date, includes zero-activity dates, and counts questions and answers at creation, even if later deleted. A recorded view is one successful active canonical post-detail read per signed-in member, post, and UTC date. View history starts when this feature is deployed. Average response time includes questions that first received an endorsed answer during the selected period and measures elapsed time from question creation to creation of that first-endorsed answer. Endorsements are recorded as immutable events, so a later edit that clears the current endorsement does not change this historical measure.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -134,7 +134,7 @@ curl --request GET '/api/v1/courses/course_123/statistics' \
 
 ### **`GET /api/v1/courses/{courseId}/statistics/students`**
 
-Lists current student members, including those with zero activity, and their question, answer, and recorded post-view activity during the selected period. Question counts survive later post soft deletion through a per-student UTC-day count with no post link. Active questions at deployment are backfilled; questions deleted before deployment are not reconstructed. Account deletion removes that user's question buckets. An answer contribution counts once per distinct answer with a recorded contribution event during the period. The current API records answer creation; future answer editing must record content-changing edits to include them. Historical activity remains in course totals after membership or role changes but does not create a roster row.
+Lists current student members, including those with zero activity, and their question, answer, and recorded post-view activity during the selected period. Question counts survive later post soft deletion through a per-student UTC-day count with no post link. Active questions at deployment are backfilled; questions deleted before deployment are not reconstructed. Account deletion removes that user's question buckets. An answer contribution counts once per distinct answer with a recorded contribution event during the period. Answer creation and content-changing edits record contribution events; a no-op edit does not. Historical activity remains in course totals after membership or role changes but does not create a roster row.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

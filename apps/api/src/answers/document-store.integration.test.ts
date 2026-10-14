@@ -31,8 +31,8 @@ async function answer(text = "Original answer") {
     [postId, ids.course, ids.user],
   );
   await pool.query(
-    "INSERT INTO answers (id,course_id,post_id,kind,body_markdown) VALUES ($1,$2,$3,'student',$4)",
-    [id, ids.course, postId, text],
+    "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,'student',$4,$5,'student')",
+    [id, ids.course, postId, text, ids.user],
   );
   await pool.query(
     "INSERT INTO answer_collaboration_documents (answer_id,yjs_state) VALUES ($1,$2)",

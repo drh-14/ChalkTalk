@@ -76,6 +76,13 @@ export class JobWorker {
         [courseId],
       );
       await client.query(
+        "DELETE FROM answer_endorsement_events WHERE course_id=$1",
+        [courseId],
+      );
+      await client.query("DELETE FROM followups WHERE course_id=$1", [
+        courseId,
+      ]);
+      await client.query(
         `DELETE FROM answer_contributors WHERE answer_id IN (${answers})`,
         [courseId],
       );

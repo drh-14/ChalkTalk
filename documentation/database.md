@@ -166,14 +166,25 @@ The application must verify that a post and tag belong to the same course before
 - `course_id`: `uuid_v7`.
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`.
 - `(course_id, id)`: unique key used by same-course foreign keys.
-- `kind`: `text`; `student` or `staff`.
-- A partial unique index on `(post_id, kind)` where `deleted_at` is null allows at most one active answer of each kind per question. Deleted answers keep their row so later followups can reference them.
+- `kind`: `text`; `student` or `staff`, exposed by the API. A partial unique index allows only one active answer of each kind per question.
+- `created_by_user_id`: `uuid_v7`; creator account ID, preserved when membership later changes.
+- `edit_role_floor`: `text`; immutable role snapshot (`student`, `ta`, or `instructor`). Student answers have a student floor. Staff answers keep the creating TA or instructor floor; migrated staff answers infer it from their sole first contributor's current membership, using instructor if the membership is absent or demoted. Migration rejects ambiguous multi-contributor history. A current editor's role must meet or exceed this floor.
 - `body_markdown`: `text`, nullable.
 - `anonymous`: `boolean`.
 - `endorsed_at`: `timestamptz`, nullable.
 - `endorsed_by_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
 - `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
+
+Content-changing edits clear current endorsement and update the authoritative Yjs state and Markdown projection in the same transaction.
+
+### `answer_endorsement_events`
+
+- `id`: `uuid`; primary key.
+- `course_id`: `uuid_v7`; foreign key to `courses.id`.
+- `answer_id`: `uuid_v7`; with `course_id`, foreign key to `answers(course_id, id)`.
+- `endorsed_by_user_id`: `uuid_v7`; foreign key to `users.id`.
+- `endorsed_at`: `timestamptz`; append-only history of each endorsement. Legacy current endorsements are backfilled. Response-time statistics use the first event and remain stable after an edit clears the current endorsement.
 
 ### `answer_contributors`
 
@@ -195,14 +206,30 @@ The private answer document store keeps `answers.body_markdown` as the text proj
 
 - `id`: `uuid_v7`; primary key.
 - `course_id`: `uuid_v7`.
-- `answer_id`: `uuid_v7`; with `course_id`, foreign key to `answers(course_id, id)`.
-- `(course_id, id)`: unique key used by parent validation.
-- `parent_followup_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `followups(course_id, id)`.
+- `post_id`: `uuid_v7`; with `course_id`, foreign key to question `posts(course_id, id)`.
+- `(course_id, id)` and `(course_id, post_id, id)`: unique keys used by same-course and same-question references.
+- `parent_followup_id`: `uuid_v7`, nullable; with `course_id` and `post_id`, foreign key to a followup on the same question. Deleting a course cascades through descendants.
 - `body_markdown`: `text`, nullable.
-- `author_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
+- `author_user_id`: `uuid_v7`; foreign key to `users.id`. A deleted account is hidden by response projection.
 - `anonymous`: `boolean`.
 - `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
+
+Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`. Deleted roots or replies with children retain a bodyless tombstone; deleted leaves are excluded from ordinary reads.
+
+### `answer_upvotes`
+
+- `answer_id`: `uuid_v7`; foreign key to `answers.id` with cascade on physical deletion.
+- `user_id`: `uuid_v7`; foreign key to `users.id`.
+- `(answer_id, user_id)`: primary key, enforcing one vote per member per answer.
+- `created_at`: `timestamptz`.
+
+### `followup_upvotes`
+
+- `followup_id`: `uuid_v7`; foreign key to `followups.id` with cascade on physical deletion.
+- `user_id`: `uuid_v7`; foreign key to `users.id`.
+- `(followup_id, user_id)`: primary key, enforcing one vote per member per followup.
+- `created_at`: `timestamptz`.
 
 ### `attachments`
 
@@ -367,6 +394,8 @@ The private answer document store keeps `answers.body_markdown` as the text proj
 - `issued_at`, `expires_at`, `consumed_at`, `revoked_at`: `timestamptz`; final two are nullable.
 
 ### `answer_collaboration_connection_tickets`
+
+Future schema only; the current answer editor uses REST and does not issue connection tickets.
 
 - `id`: `uuid_v7`; primary key.
 - `token_hash`: `bytea`; unique.

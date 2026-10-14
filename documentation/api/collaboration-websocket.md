@@ -1,6 +1,6 @@
 # Collaboration WebSocket protocol
 
-ChalkTalk provides WebSocket connections for temporary post or subchannel collaboration sessions and editable answers. WebSocket frames use the standard Yjs/Hocuspocus protocol and are outside the OpenAPI description.
+This is a future WebSocket contract; its ticket endpoints and Hocuspocus connections are not implemented. Current answer editing uses version-checked REST requests described in the [answers API reference](answers.md).
 
 ## Connecting
 
@@ -8,11 +8,11 @@ Request a one-use ticket before opening a connection.
 
 `POST /api/v1/collaboration-sessions/{collaborationSessionId}/connection-tickets` returns credentials for a temporary post or subchannel session.
 
-`POST /api/v1/answers/{answerId}/collaboration-connection-tickets` returns credentials for an editable answer.
+The proposed `POST /api/v1/answers/{answerId}/collaboration-connection-tickets` endpoint would return credentials for an editable answer.
 
 Configure the Hocuspocus provider with the returned credential-free `webSocketUrl`, `documentId` as its document name, and `ticket` as its token. A ticket expires five minutes after issuance and can be used once. Request a new ticket before reconnecting.
 
-The server accepts a connection only while the authenticated user retains access to the target. Students may edit student answers; TAs and instructors may edit staff answers. Ended sessions, deleted answers, and endorsed answers are unavailable for editing.
+The proposed server accepts a connection only while the authenticated user retains access to the target. Current answer permissions and endorsement behavior are specified in the [answers API reference](answers.md).
 
 ## Shared documents and presence
 
