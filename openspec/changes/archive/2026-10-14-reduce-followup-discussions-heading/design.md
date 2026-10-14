@@ -10,7 +10,7 @@ The question detail renders its followup heading as a semantic `h2` inside `.fol
 
 ## Decisions
 
-Use a more specific selector for the followup heading and scale each term of its effective responsive size to 80%: `clamp(1.24rem, 2.08vw, 1.88rem)`. A scoped CSS change avoids altering component structure or shared heading styles.
+Use a direct-child selector for the followup section heading and scale each term of its effective responsive size to 80%: `clamp(1.24rem, 2.08vw, 1.88rem)`. This leaves headings rendered inside followup bodies and editors at their original size.
 
 The question responses originally have a 2rem top margin. Raise it to 2.2rem for about 10% more space. Put the staff action row immediately after the post body and before question responses. Restore the original `.button.compact` size and the existing flow layout for the merge search panel so it remains usable on narrow screens.
 

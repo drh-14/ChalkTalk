@@ -107,7 +107,7 @@ Notes can be posted by any user. Responses cannot be posted to notes.
 Polls  
 Polls can be posted by instructors or TAs. A poll contains a list of options that any user can vote on. Polls cannot be responded to.
 
-Posts, responses, and followups support LaTeX and Markdown formatting, as well as image and document upload.
+Posts, responses, and followups support LaTeX and Markdown formatting. For current answer and followup media support, see the [answers API reference](api/answers.md).
 
 Posts, responses, and followups each have an author and timestamp; timestamps update on edit. Collaborative responses record every user who has edited them.
 
