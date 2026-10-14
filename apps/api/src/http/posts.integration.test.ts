@@ -1179,6 +1179,96 @@ integration("text posts HTTP contract", () => {
       duplicateStatus: "none",
     });
   });
+  it("queues exactly one author email for a confirmed question, not for suggestions, notes, failed edits, or unmerge", async () => {
+    const canonical = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({ type: "question", title: "Canonical", bodyMarkdown: "Body" })
+      .expect(201);
+    const question = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Why does this happen?",
+        bodyMarkdown: "Body",
+      })
+      .expect(201);
+    const suggestion = await unsafe(
+      request(app(ids.student)).patch(question.headers.location),
+    )
+      .set("If-Match", question.headers.etag)
+      .send({
+        duplicateStatus: "suggested",
+        duplicateOfPostId: canonical.body.data.id,
+      })
+      .expect(200);
+    const none = () =>
+      pool.query(
+        "SELECT * FROM jobs WHERE kind='send_question_duplicate_email' AND payload->>'sourcePostId'=$1",
+        [question.body.data.id],
+      );
+    expect((await none()).rowCount).toBe(0);
+    const merged = await unsafe(
+      request(app(ids.staff)).patch(question.headers.location),
+    )
+      .set("If-Match", suggestion.headers.etag)
+      .send({
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: canonical.body.data.id,
+      })
+      .expect(200);
+    expect(merged.body.data).toEqual({
+      id: question.body.data.id,
+      courseId: ids.course,
+      duplicateOfPostId: canonical.body.data.id,
+      duplicateStatus: "confirmed",
+      version: 3,
+    });
+    expect(merged.headers.etag).toBe('"v3"');
+    const jobs = await none();
+    expect(jobs.rowCount).toBe(1);
+    expect(jobs.rows[0].payload).toEqual({
+      sourcePostId: question.body.data.id,
+      canonicalPostId: canonical.body.data.id,
+      staffUserId: ids.staff,
+      staffRole: "ta",
+    });
+    expect(jobs.rows[0].deduplication_key).toBe(`${question.body.data.id}:3`);
+    await unsafe(request(app(ids.staff)).patch(question.headers.location))
+      .set("If-Match", suggestion.headers.etag)
+      .send({
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: canonical.body.data.id,
+      })
+      .expect(412);
+    expect((await none()).rowCount).toBe(1);
+    await unsafe(request(app(ids.staff)).patch(question.headers.location))
+      .set("If-Match", merged.headers.etag)
+      .send({ duplicateStatus: "none", duplicateOfPostId: null })
+      .expect(200);
+    expect((await none()).rowCount).toBe(1);
+    const note = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({ type: "note", title: "Note", bodyMarkdown: "Body" })
+      .expect(201);
+    await unsafe(request(app(ids.staff)).patch(note.headers.location))
+      .set("If-Match", note.headers.etag)
+      .send({
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: canonical.body.data.id,
+      })
+      .expect(200);
+    expect(
+      (
+        await pool.query(
+          "SELECT * FROM jobs WHERE kind='send_question_duplicate_email' AND payload->>'sourcePostId'=$1",
+          [note.body.data.id],
+        )
+      ).rowCount,
+    ).toBe(0);
+  });
   it("hides confirmed duplicates from members and redirects old links to canonical posts", async () => {
     const source = await unsafe(
       request(app()).post(`/api/v1/courses/${ids.course}/posts`),

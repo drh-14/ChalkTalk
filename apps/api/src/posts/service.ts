@@ -627,6 +627,25 @@ export class PostService {
       if (body.tags !== undefined)
         await this.replaceTags(db, id, row.course_id, body.tags);
       const updated = (await this.row(db, id))!;
+      if (
+        row.type === "question" &&
+        row.duplicate_status !== "confirmed" &&
+        status === "confirmed"
+      ) {
+        await db.query(
+          "INSERT INTO jobs (id,kind,payload,deduplication_key) VALUES ($1,'send_question_duplicate_email',$2,$3) ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING",
+          [
+            uuidv7(),
+            {
+              sourcePostId: id,
+              canonicalPostId: targetId,
+              staffUserId: userId,
+              staffRole: member.role,
+            },
+            `${id}:${updated.version}`,
+          ],
+        );
+      }
       return status === "confirmed"
         ? this.mergedReference(updated)
         : this.project(db, updated, userId, member.role);
