@@ -82,7 +82,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `status`: `queued`, `running`, `sent`, or `canceled`.
 - `attempts`, `available_at`, `locked_by`, `locked_until`, `last_error`, `sent_at`, `created_at`, `updated_at`: claim, retry, and delivery state. A send is marked complete only after SMTP acceptance; a crash in between may cause a duplicate email on retry.
 
-The email body is rebuilt from currently visible questions, answers, and followups immediately before sending. Disabled opt-in, removed membership, archived courses, and newly hidden content cancel pending delivery.
+The email body is rebuilt from currently visible questions, answers, and followups immediately before sending. Disabled opt-in, removed membership, and archived courses cancel pending delivery. Newly hidden content is excluded; an intent is canceled if no eligible activity remains.
 
 ### `digest_schedule_state`
 

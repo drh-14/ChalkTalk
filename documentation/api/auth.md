@@ -638,7 +638,7 @@ curl --request GET '/api/v1/users/me' \
 
 ### **`PATCH /api/v1/users/me`**
 
-Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have the same canonical school domain as the account's current email. The server updates the account and consumes the proof atomically; its direct organization association and course memberships do not change. A failed transaction consumes nothing. `dailyDigestEnabled` is an account-wide opt-in for separate daily emails per course. Enabling it makes the current UTC activity date eligible at the next 00:00 UTC, including activity earlier that date. Disabling it cancels unsent messages; re-enabling does not backfill earlier dates.
+Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have the same canonical school domain as the account's current email. The server updates the account and consumes the proof atomically; its direct organization association and course memberships do not change. A failed transaction consumes nothing. `dailyDigestEnabled` controls the account-wide preference; see [daily course email digests](daily-course-email-digest.md) for delivery and eligibility behavior.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
