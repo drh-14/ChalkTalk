@@ -100,7 +100,7 @@ export class JobWorker {
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=u.id
        JOIN courses c ON c.id=p.course_id AND c.status='active'
        JOIN posts canonical ON canonical.id=$2 AND canonical.course_id=p.course_id
-         AND canonical.deleted_at IS NULL AND canonical.duplicate_status='none'
+         AND canonical.deleted_at IS NULL AND canonical.duplicate_status <> 'confirmed'
        WHERE p.id=$1 AND p.type='question' AND p.deleted_at IS NULL
          AND p.duplicate_status='confirmed' AND p.duplicate_of_post_id=$2`,
       [sourcePostId, canonicalPostId],

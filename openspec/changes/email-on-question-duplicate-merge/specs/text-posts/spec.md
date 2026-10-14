@@ -16,6 +16,11 @@ Only a successful confirmation of a question SHALL queue this notification. A su
 - **WHEN** the confirming TA or instructor account is deleted after a successful question merge but before notification delivery
 - **THEN** the author receives the email with an unnamed label for the confirming role, without retaining or exposing the deleted staff member's display name
 
+#### Scenario: Canonical target has a duplicate suggestion
+
+- **WHEN** staff confirm a question duplicate against an active same-course target whose own duplicate status is suggested
+- **THEN** the notification is queued and delivered while that target remains suggested
+
 #### Scenario: SMTP is temporarily unavailable
 
 - **WHEN** mail delivery fails after a question merge has committed

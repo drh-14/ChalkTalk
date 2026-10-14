@@ -77,7 +77,10 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     return { courseId, jobId };
   }
 
-  async function seedMerge(role: "ta" | "instructor" = "ta") {
+  async function seedMerge(
+    role: "ta" | "instructor" = "ta",
+    canonicalStatus: "none" | "suggested" = "none",
+  ) {
     sequence += 1;
     const authorId = uuidv7();
     const staffId = uuidv7();
@@ -106,6 +109,19 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       title: "Canonical",
       bodyMarkdown: "Body",
     });
+    if (canonicalStatus === "suggested") {
+      const other = await posts.create(courseId, authorId, {
+        type: "question",
+        title: "Other",
+        bodyMarkdown: "Body",
+      });
+      await posts.update(
+        canonical.value.id,
+        authorId,
+        postEtag(canonical.value),
+        { duplicateOfPostId: other.value.id, duplicateStatus: "suggested" },
+      );
+    }
     const source = await posts.create(courseId, authorId, {
       type: "question",
       title: "Why   does\n this happen?",
@@ -154,6 +170,44 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         ])
       ).rows,
     ).toEqual([{ status: "succeeded", attempts: 1 }]);
+  });
+
+  it("sends the email when the canonical target has a duplicate suggestion", async () => {
+    delivered.length = 0;
+    const { canonical, courseId, jobId, source } = await seedMerge(
+      "ta",
+      "suggested",
+    );
+    expect(
+      (
+        await pool.query(
+          "SELECT duplicate_status FROM posts WHERE id=$1",
+          [canonical.value.id],
+        )
+      ).rows[0],
+    ).toEqual({ duplicate_status: "suggested" });
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toEqual([
+      {
+        to: expect.stringMatching(/^author-\d+@jobs\.example\.edu$/),
+        subject: "Your post has been marked as a duplicate",
+        text: `Your question "Why does this happen?" was marked as a duplicate by Ada Staff (TA).\n\nhttps://app.example.edu/courses/${courseId}/posts/${canonical.value.id}`,
+      },
+    ]);
+    expect(
+      (
+        await pool.query(
+          "SELECT duplicate_status,duplicate_of_post_id FROM posts WHERE id=$1",
+          [source.value.id],
+        )
+      ).rows[0],
+    ).toEqual({
+      duplicate_status: "confirmed",
+      duplicate_of_post_id: canonical.value.id,
+    });
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId])).rows[0],
+    ).toEqual({ status: "succeeded" });
   });
 
   it("retries a temporary SMTP failure without undoing the merge", async () => {
