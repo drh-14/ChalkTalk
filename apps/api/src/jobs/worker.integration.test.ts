@@ -5,6 +5,7 @@ import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { JobWorker } from "./worker.js";
 import { PostService, postEtag } from "../posts/service.js";
 import { AnswerService, answerEtag } from "../answers/service.js";
+import type { EmailSender } from "../auth/service.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
@@ -15,6 +16,14 @@ let admin: Pool;
 let pool: Pool;
 let worker: JobWorker;
 let sequence = 0;
+const delivered: Array<{ to: string; subject: string; text: string }> = [];
+let smtpFails = false;
+const emailSender: EmailSender = {
+  send: async (message) => {
+    if (smtpFails) throw new Error("SMTP unavailable");
+    delivered.push(message);
+  },
+};
 
 type Seeded = { courseId: string; jobId: string };
 
@@ -35,7 +44,12 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,'owner@jobs.example.edu','Owner','x')",
       [ownerId, organizationId],
     );
-    worker = new JobWorker(pool, "test-worker");
+    worker = new JobWorker(
+      pool,
+      "test-worker",
+      emailSender,
+      "https://app.example.edu",
+    );
   });
 
   afterAll(async () => {
@@ -62,6 +76,207 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     );
     return { courseId, jobId };
   }
+
+  async function seedMerge(role: "ta" | "instructor" = "ta") {
+    sequence += 1;
+    const authorId = uuidv7();
+    const staffId = uuidv7();
+    const courseId = uuidv7();
+    await pool.query(
+      "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$3,$4,'Question Author','x'),($2,$3,$5,'Ada Staff','x')",
+      [
+        authorId,
+        staffId,
+        organizationId,
+        `author-${sequence}@jobs.example.edu`,
+        `staff-${sequence}@jobs.example.edu`,
+      ],
+    );
+    await pool.query(
+      "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,'ABCDEFGH')",
+      [courseId, organizationId, staffId, `Merge ${sequence}`],
+    );
+    await pool.query(
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,$4)",
+      [courseId, authorId, staffId, role],
+    );
+    const posts = new PostService(pool);
+    const canonical = await posts.create(courseId, authorId, {
+      type: "question",
+      title: "Canonical",
+      bodyMarkdown: "Body",
+    });
+    const source = await posts.create(courseId, authorId, {
+      type: "question",
+      title: "Why   does\n this happen?",
+      bodyMarkdown: "Body",
+    });
+    const merged = await posts.update(
+      source.value.id,
+      staffId,
+      postEtag(source.value),
+      {
+        duplicateOfPostId: canonical.value.id,
+        duplicateStatus: "confirmed",
+      },
+    );
+    const jobs = await pool.query<{ id: string }>(
+      "SELECT id FROM jobs WHERE kind='send_question_duplicate_email' AND payload->>'sourcePostId'=$1",
+      [source.value.id],
+    );
+    expect(jobs.rowCount).toBe(1);
+    return {
+      authorId,
+      staffId,
+      courseId,
+      canonical,
+      source,
+      merged,
+      jobId: jobs.rows[0]!.id,
+    };
+  }
+
+  it("sends the exact question-duplicate email with a canonical link", async () => {
+    delivered.length = 0;
+    const { canonical, jobId } = await seedMerge();
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toEqual([
+      {
+        to: expect.stringMatching(/^author-\d+@jobs\.example\.edu$/),
+        subject: "Your post has been marked as a duplicate",
+        text: `Your question "Why does this happen?" was marked as a duplicate by Ada Staff (TA).\n\nhttps://app.example.edu/courses/${(await pool.query<{ course_id: string }>("SELECT course_id FROM posts WHERE id=$1", [canonical.value.id])).rows[0]!.course_id}/posts/${canonical.value.id}`,
+      },
+    ]);
+    expect(
+      (
+        await pool.query("SELECT status,attempts FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows,
+    ).toEqual([{ status: "succeeded", attempts: 1 }]);
+  });
+
+  it("retries a temporary SMTP failure without undoing the merge", async () => {
+    delivered.length = 0;
+    const { jobId, source } = await seedMerge("instructor");
+    smtpFails = true;
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      smtpFails = false;
+    }
+    expect(delivered).toEqual([]);
+    expect(
+      (
+        await pool.query(
+          "SELECT status,attempts,last_error FROM jobs WHERE id=$1",
+          [jobId],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      status: "queued",
+      attempts: 1,
+      last_error: "SMTP unavailable",
+    });
+    expect(
+      (
+        await pool.query("SELECT duplicate_status FROM posts WHERE id=$1", [
+          source.value.id,
+        ])
+      ).rows[0],
+    ).toEqual({ duplicate_status: "confirmed" });
+    await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [jobId]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toContain("Ada Staff (instructor)");
+    expect(
+      (
+        await pool.query("SELECT status,attempts FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: "succeeded", attempts: 2 });
+  });
+
+  it("cancels a queued notification after unmerge or membership removal", async () => {
+    delivered.length = 0;
+    const unmerged = await seedMerge();
+    await new PostService(pool).update(
+      unmerged.source.value.id,
+      unmerged.staffId,
+      postEtag(unmerged.merged),
+      {
+        duplicateOfPostId: null,
+        duplicateStatus: "none",
+      },
+    );
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toEqual([]);
+    expect(
+      (
+        await pool.query("SELECT status FROM jobs WHERE id=$1", [
+          unmerged.jobId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: "succeeded" });
+    const removed = await seedMerge();
+    await pool.query(
+      "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+      [removed.courseId, removed.authorId],
+    );
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toEqual([]);
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [removed.jobId]))
+        .rows[0],
+    ).toEqual({ status: "succeeded" });
+  });
+
+  it("delivers only the new event after a question is unmerged and confirmed again", async () => {
+    delivered.length = 0;
+    const first = await seedMerge();
+    const posts = new PostService(pool);
+    const unmerged = await posts.update(
+      first.source.value.id,
+      first.staffId,
+      postEtag(first.merged),
+      { duplicateOfPostId: null, duplicateStatus: "none" },
+    );
+    await posts.update(
+      first.source.value.id,
+      first.staffId,
+      postEtag(unmerged),
+      {
+        duplicateOfPostId: first.canonical.value.id,
+        duplicateStatus: "confirmed",
+      },
+    );
+    const jobs = await pool.query<{ id: string }>(
+      "SELECT id FROM jobs WHERE kind='send_question_duplicate_email' AND payload->>'sourcePostId'=$1 ORDER BY created_at,id",
+      [first.source.value.id],
+    );
+    expect(jobs.rowCount).toBe(2);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toEqual([]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toHaveLength(1);
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [first.jobId]))
+        .rows[0],
+    ).toEqual({ status: "succeeded" });
+  });
+
+  it("uses a role-only byline when the confirming staff account was deleted", async () => {
+    delivered.length = 0;
+    const { staffId } = await seedMerge("instructor");
+    await pool.query("UPDATE users SET deleted_at=now() WHERE id=$1", [
+      staffId,
+    ]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]!.text).toContain("by an instructor.");
+    expect(delivered[0]!.text).not.toContain("Ada Staff");
+  });
 
   it("persists a failed cleanup attempt, then retries it successfully", async () => {
     const { courseId, jobId } = await seedJob();
