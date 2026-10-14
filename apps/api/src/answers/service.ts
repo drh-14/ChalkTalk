@@ -242,7 +242,10 @@ export class AnswerService {
         if (existing.rowCount) throw kindExists();
         const id = uuidv7();
         await db.query(
-          "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,anonymous,created_by_user_id,edit_role_floor,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,statement_timestamp(),statement_timestamp())",
+          "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
+        );
+        await db.query(
+          "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,anonymous,created_by_user_id,edit_role_floor,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp(),clock_timestamp())",
           [
             id,
             post.course_id,

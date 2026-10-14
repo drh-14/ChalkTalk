@@ -1,0 +1,7 @@
+# Daily course email digest
+
+Daily email delivery is automatic for every active member of an active course; there is no opt-in or account preference. Starting with the UTC activity date on which the database migration is deployed, the backend begins dispatching a separate plain-text email per course at or after 00:00 UTC for qualifying activity on the previous UTC calendar date. For example, deployment on October 14 makes the first eligible email due at midnight October 15 for October 14 activity. Earlier dates are not backfilled. If the worker is unavailable, it catches up eligible dates missed after deployment.
+
+Qualifying activity is creation of a question, shared answer, or root/reply followup by someone other than the recipient. The recipient must still be an active member, and the course must still be active. Notes, own activity, edits, votes, endorsements, deleted content, confirmed duplicate questions, followup tombstones, and hidden parent questions are excluded. Empty course days send no email. The message summarizes counts and links to visible posts without exposing anonymous contributors' identity.
+
+PostgreSQL stores one durable intent per `(recipient, course, UTC activity date)` and retries SMTP errors. The worker rebuilds content and checks membership, course status, and visibility immediately before sending. The database marks success after SMTP accepts the message. If the worker crashes between acceptance and recording success, a retry can rarely send the same email twice; SMTP does not provide a general exactly-once guarantee.

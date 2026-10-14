@@ -23,6 +23,7 @@ Core features include:
 - course resources,
 - polls,
 - notifications,
+- automatic daily email summaries for every active member of each active course,
 - moderation tools,
 - basic course statistics.
 

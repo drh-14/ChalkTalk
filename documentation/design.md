@@ -131,13 +131,13 @@ The system consists of a frontend, a backend made up of three processes (a web s
 
 **Collaboration engine.** The collaboration engine is a Hocuspocus server that holds active Yjs documents in memory. Clients send edits to it over a WebSocket, and it merges them and broadcasts them to everyone else in the same session. Before accepting a connection, it validates a one-use ticket issued by the web server. It loads each document from PostgreSQL when the first participant joins and saves the merged state back periodically.
 
-**Worker.** The worker is a separate Node.js process that claims queued jobs from PostgreSQL and runs them. Jobs include OCR on uploaded documents, which the worker reads from the object store, digest generation, and sending email. Because the queue is stored in the database, queued jobs aren't lost if the worker restarts.
+**Worker.** Background jobs are claimed from PostgreSQL. The daily course email digest is scheduled and delivered by the API process using a durable PostgreSQL outbox; see the [daily course email digest](api/daily-course-email-digest.md) for delivery behavior.
 
 **PostgreSQL.** PostgreSQL stores users, courses, memberships, posts, sessions, the job queue, and saved collaboration documents. Row-level security limits every query to the courses the current user belongs to.
 
 **Object store.** The object store holds uploaded images and documents. It is AWS S3 in the managed deployment and SeaweedFS in the self-hosted deployment. Both use the same S3 API, so the application code is identical in both.
 
-**Email provider.** The email provider delivers verification, password reset, and notification emails. It is AWS SES in the managed deployment and any SMTP server in the self-hosted deployment. Only the worker sends email.
+**Email provider.** The email provider delivers verification, password reset, and notification emails. It is AWS SES in the managed deployment and any SMTP server in the self-hosted deployment. The API process also sends daily course emails through SMTP.
 
 # Deployment
 
@@ -158,10 +158,9 @@ In the managed deployment, system metrics and request logs are collected with AW
  Slow or non-request-critical work is delegated to a background worker process. This work  includes:
 
 *  OCR and text extraction from documents
-*  Digest generation
 *  Email delivery
 
- The web server or scheduler queues a job by inserting a record into PostgreSQL with a queued status. Database storage ensures that queued work survives application and worker restarts.
+ Daily course emails are handled separately by the API process; see the [daily course email digest](api/daily-course-email-digest.md). The web server or scheduler queues a job by inserting a record into PostgreSQL with a queued status. Database storage ensures that queued work survives application and worker restarts.
 
   When the worker claims a job, it marks the record as running. After completing the work, it marks the job as successful. If processing fails temporarily, the job is returned to the queue for another attempt. Jobs  that exceed their retry limit are marked as dead. Completed job records are removed later by scheduled retention cleanup.
 

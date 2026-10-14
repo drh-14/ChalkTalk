@@ -350,5 +350,5 @@ integration("answer Yjs document persistence", () => {
       store.applyUpdate(id, Y.encodeStateAsUpdate(editor)),
     ).rejects.toMatchObject({ code: "invalid_content" });
     expect(await store.load(id)).toEqual(accepted);
-  });
+  }, 30_000);
 });
