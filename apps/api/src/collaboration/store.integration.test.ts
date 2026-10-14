@@ -438,4 +438,85 @@ integration("live collaboration persistence and authorization", () => {
     },
     30_000,
   );
+
+  (redisUrl ? it : it.skip)(
+    "rejects an embedded followup update before persistence or peer broadcast",
+    async () => {
+      const prefix = `chalktalk-embed-test-${randomUUID()}`;
+      const nodes = [0, 1].map(() =>
+        createCollaborationServer({
+          store,
+          redisUrl: redisUrl!,
+          redisPrefix: prefix,
+          allowedOrigins: new Set(["http://localhost"]),
+          port: 0,
+          address: "127.0.0.1",
+        }),
+      );
+      const providers: HocuspocusProvider[] = [];
+      const sockets: HocuspocusProviderWebsocket[] = [];
+      try {
+        await Promise.all(nodes.map((node) => node.listen()));
+        async function connect(
+          node: (typeof nodes)[number],
+          user: string,
+          session: string,
+        ) {
+          const ticket = await store.issueTicket(
+            "followup",
+            id.followup,
+            user,
+            session,
+          );
+          const socket = new HocuspocusProviderWebsocket({
+            url: node.webSocketURL,
+            WebSocketPolyfill: OriginWebSocket,
+          });
+          const document = new Y.Doc();
+          const provider = new HocuspocusProvider({
+            websocketProvider: socket,
+            document,
+            name: `followup:${id.followup}`,
+            awareness: null,
+            token: ticket,
+          });
+          sockets.push(socket);
+          providers.push(provider);
+          provider.attach();
+          return { provider, document };
+        }
+        const writer = await connect(nodes[0], id.student, id.studentSession);
+        const peer = await connect(nodes[1], id.ta, id.taSession);
+        await until(() => writer.provider.isSynced && peer.provider.isSynced);
+        const peerDelta = peer.document.getText("content").toDelta();
+        const before = await pool.query(
+          `SELECT f.body_markdown,f.version,d.yjs_state,d.persistence_revision
+           FROM followups f JOIN followup_collaboration_documents d ON d.followup_id=f.id
+           WHERE f.id=$1`,
+          [id.followup],
+        );
+        const map = new Y.Map();
+        map.set("nested", new Y.Array());
+        let rejected = false;
+        writer.provider.on("close", () => {
+          rejected = true;
+        });
+        writer.document.getText("content").insertEmbed(0, map);
+        await until(() => rejected);
+        const after = await pool.query(
+          `SELECT f.body_markdown,f.version,d.yjs_state,d.persistence_revision
+           FROM followups f JOIN followup_collaboration_documents d ON d.followup_id=f.id
+           WHERE f.id=$1`,
+          [id.followup],
+        );
+        expect(after.rows[0]).toEqual(before.rows[0]);
+        expect(peer.document.getText("content").toDelta()).toEqual(peerDelta);
+      } finally {
+        for (const provider of providers) provider.destroy();
+        for (const socket of sockets) socket.destroy();
+        await Promise.all(nodes.map((node) => node.destroy()));
+      }
+    },
+    30_000,
+  );
 });

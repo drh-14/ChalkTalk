@@ -52,6 +52,25 @@ describe("previewContentUpdate", () => {
     );
   });
 
+  it("rejects embedded and nested Yjs values in plain Markdown content", () => {
+    const state = base("Plain $x^2$ Markdown");
+    for (const embedded of [new Y.Map(), new Y.Array(), { nested: true }]) {
+      if (embedded instanceof Y.Map) embedded.set("nested", new Y.Array());
+      const update = changed(state, (doc) =>
+        doc.getText("content").insertEmbed(0, embedded),
+      );
+      expect(() => previewContentUpdate(state, update)).toThrow(
+        "invalid_content",
+      );
+      const unchanged = new Y.Doc();
+      Y.applyUpdate(unchanged, state);
+      expect(unchanged.getText("content").toString()).toBe(
+        "Plain $x^2$ Markdown",
+      );
+      unchanged.destroy();
+    }
+  });
+
   it("enforces the update and projected-text limits", () => {
     const state = base();
     expect(() =>

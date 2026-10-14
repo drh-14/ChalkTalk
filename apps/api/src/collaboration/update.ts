@@ -40,6 +40,14 @@ export function previewContentUpdate(
     }
     if (doc.share.size !== 1 || !doc.share.has("content"))
       throw new ContentUpdateError("invalid_content");
+    if (
+      content
+        .toDelta()
+        .some((part: { insert?: unknown; attributes?: unknown }) =>
+          typeof part.insert !== "string" || part.attributes !== undefined,
+        )
+    )
+      throw new ContentUpdateError("invalid_content");
     const text = content.toString();
     if (text.length > MAX_LIVE_TEXT_LENGTH)
       throw new ContentUpdateError("invalid_content");
