@@ -345,6 +345,12 @@ export class AnswerService {
     return this.tx(async (db) => {
       const { row, member } = await this.staffWrite(db, answerId, userId);
       this.checkRevision(row, etag);
+      if (!row.body_markdown?.trim())
+        throw new AuthError(
+          409,
+          "answer_empty",
+          "An empty answer cannot be endorsed",
+        );
       if (row.endorsed_at) return this.project(db, row, member.role, userId);
       await db.query(
         "UPDATE answers SET endorsed_at=statement_timestamp(),endorsed_by_user_id=$2,updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
@@ -354,7 +360,10 @@ export class AnswerService {
         "INSERT INTO answer_endorsement_events (course_id,answer_id,endorsed_by_user_id,endorsed_at) SELECT course_id,id,$2,endorsed_at FROM answers WHERE id=$1",
         [answerId, userId],
       );
-      await this.closeDocument(db, row);
+      await db.query(
+        "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
+        [row.post_id],
+      );
       return this.project(
         db,
         (await this.row(db, answerId))!,
@@ -382,6 +391,10 @@ export class AnswerService {
         [answerId],
       );
       await this.closeDocument(db, row);
+      await db.query(
+        "SELECT pg_notify('chalktalk_collaboration_revision',$1)",
+        [JSON.stringify({ kind: "answer", id: answerId })],
+      );
     });
   }
   async get(answerId: string, userId: string): Promise<Answer> {
@@ -465,6 +478,10 @@ export class AnswerService {
       await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
+      );
+      await db.query(
+        "SELECT pg_notify('chalktalk_collaboration_revision',$1)",
+        [JSON.stringify({ kind: "answer", id: answerId })],
       );
       return this.project(
         db,

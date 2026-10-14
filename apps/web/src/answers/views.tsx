@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "../auth/client.js";
 import { MarkdownEditorField } from "../posts/MarkdownEditorField.js";
+import { LiveBodyEditor } from "./LiveBodyEditor.js";
 import { PostBody } from "../posts/PostBody.js";
 import { formatPostTime } from "../posts/time.js";
 import {
@@ -187,7 +188,7 @@ function AnswerCard({
   onReplace: (answer: Answer) => void;
   onRemove: (id: string) => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState<"live" | "rest" | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const names =
@@ -249,16 +250,27 @@ function AnswerCard({
           </>
         )}
       </p>
-      {editing ? (
+      {editing === "live" ? (
+        <LiveBodyEditor
+          kind="answer"
+          id={answer.id}
+          csrfToken={props.csrfToken}
+          onDone={async () => {
+            onReplace(await getAnswer(answer.id));
+            setEditing(null);
+          }}
+          onFallback={() => setEditing("rest")}
+        />
+      ) : editing === "rest" ? (
         <TextComposer
           label="Answer"
           initial={answer.bodyMarkdown}
           submitLabel="Save answer"
-          onCancel={() => setEditing(false)}
+          onCancel={() => setEditing(null)}
           onRefresh={async () => onReplace(await getAnswer(answer.id))}
           onSubmit={async (body) => {
             onReplace(await editAnswer(answer, body, props.csrfToken));
-            setEditing(false);
+            setEditing(null);
           }}
         />
       ) : (
@@ -278,7 +290,7 @@ function AnswerCard({
           <button
             className="text-button"
             type="button"
-            onClick={() => setEditing(true)}
+            onClick={() => setEditing("live")}
           >
             Edit answer
           </button>
@@ -455,7 +467,7 @@ function FollowupItem({
   onReplace: (next: Followup) => void;
   onDelete: (id: string, hasReplies: boolean) => void;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState<"live" | "rest" | null>(null);
   const [replying, setReplying] = useState(false);
   const [children, setChildren] = useState<FollowupPage>();
   const [repliesLoaded, setRepliesLoaded] = useState(false);
@@ -508,16 +520,27 @@ function FollowupItem({
       <p className="response-byline">{name}</p>
       {item.deleted ? (
         <p className="response-tombstone">This followup was deleted.</p>
-      ) : editing ? (
+      ) : editing === "live" ? (
+        <LiveBodyEditor
+          kind="followup"
+          id={item.id}
+          csrfToken={props.csrfToken}
+          onDone={async () => {
+            onReplace(await getFollowup(item.id));
+            setEditing(null);
+          }}
+          onFallback={() => setEditing("rest")}
+        />
+      ) : editing === "rest" ? (
         <TextComposer
           label="Followup"
           initial={item.bodyMarkdown ?? ""}
           submitLabel="Save followup"
-          onCancel={() => setEditing(false)}
+          onCancel={() => setEditing(null)}
           onRefresh={async () => onReplace(await getFollowup(item.id))}
           onSubmit={async (body) => {
             onReplace(await editFollowup(item, body, props.csrfToken));
-            setEditing(false);
+            setEditing(null);
           }}
         />
       ) : (
@@ -548,7 +571,7 @@ function FollowupItem({
               <button
                 className="text-button"
                 type="button"
-                onClick={() => setEditing(true)}
+                onClick={() => setEditing("live")}
               >
                 Edit followup
               </button>

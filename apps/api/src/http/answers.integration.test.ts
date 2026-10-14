@@ -7,6 +7,7 @@ import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
 import type { AuthService } from "../auth/service.js";
 import { FollowupService } from "../followups/service.js";
+import { CollaborationStore } from "../collaboration/store.js";
 import { AnswerService } from "../answers/service.js";
 import { PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
@@ -488,7 +489,7 @@ integration("answers HTTP contract: create and read", () => {
       endorsedBy: ids.staff,
       version: 2,
     });
-    expect(await lifecycle(created.body.data.id)).toBe("closed");
+    expect(await lifecycle(created.body.data.id)).toBe("active");
     const repeated = await endorse(ids.instructor, path, '"v2"');
     expect(repeated.status).toBe(200);
     expect(repeated.body.data).toEqual(endorsed.body.data);
@@ -970,5 +971,66 @@ integration("answers HTTP contract: create and read", () => {
     expect((await read(ids.author, path)).body.data.bodyMarkdown).toBe(
       "Staff edit",
     );
+  });
+
+  it("keeps followup REST creation and conditional edits in the live Yjs document", async () => {
+    const postId = await insertPost();
+    const created = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "First text" });
+    expect(created.status).toBe(201);
+    const followupId = created.body.data.id as string;
+    const store = new CollaborationStore(pool);
+    expect((await store.load("followup", followupId)).text).toBe("First text");
+    const edited = await unsafe(
+      request(app(ids.author)).patch(created.headers.location),
+    )
+      .set("If-Match", created.headers.etag)
+      .send({ bodyMarkdown: "Revised text" });
+    expect(edited.status).toBe(200);
+    const live = await store.load("followup", followupId);
+    expect(live.text).toBe("Revised text");
+    const decoded = new Y.Doc();
+    Y.applyUpdate(decoded, live.state);
+    expect(decoded.getText("content").toString()).toBe("Revised text");
+  });
+
+  it("keeps an endorsed answer open for corrections but rejects endorsement when live text is empty", async () => {
+    const postId = await insertPost();
+    const created = await answer(ids.author, postId, {
+      bodyMarkdown: "Initial",
+    });
+    expect(created.status).toBe(201);
+    const answerId = created.body.data.id as string;
+    const endorsed = await unsafe(
+      request(app(ids.staff)).put(`/api/v1/answers/${answerId}/endorsement`),
+    ).set("If-Match", created.headers.etag);
+    expect(endorsed.status).toBe(200);
+    const document = await pool.query<{ lifecycle_state: string }>(
+      "SELECT lifecycle_state FROM answer_collaboration_documents WHERE answer_id=$1",
+      [answerId],
+    );
+    expect(document.rows[0].lifecycle_state).toBe("active");
+    const corrected = await unsafe(
+      request(app(ids.author)).patch(`/api/v1/answers/${answerId}`),
+    )
+      .set("If-Match", endorsed.headers.etag)
+      .send({ bodyMarkdown: "Correction" });
+    expect(corrected.status).toBe(200);
+    expect(corrected.body.data.endorsedAt).toBeNull();
+    await pool.query("UPDATE answers SET body_markdown='' WHERE id=$1", [
+      answerId,
+    ]);
+    const empty = new Y.Doc();
+    await pool.query(
+      "UPDATE answer_collaboration_documents SET yjs_state=$2 WHERE answer_id=$1",
+      [answerId, Buffer.from(Y.encodeStateAsUpdate(empty))],
+    );
+    empty.destroy();
+    const rejected = await unsafe(
+      request(app(ids.staff)).put(`/api/v1/answers/${answerId}/endorsement`),
+    ).set("If-Match", corrected.headers.etag);
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.error.code).toBe("answer_empty");
   });
 });

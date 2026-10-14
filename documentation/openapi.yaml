@@ -17,9 +17,9 @@ info:
     revoking a session invalidates its CSRF token and unused WebSocket tickets.
     Implementation status: JSON question and note posts, shared student and staff
     answers, question-owned threaded followups, and answer/followup upvotes are live.
-    Answer editing uses versioned REST backed by durable Yjs state. Polls, multipart
-    content, attachments, download refresh, collaboration tickets, and Hocuspocus
-    remain unavailable.
+    Answer and followup bodies support both versioned REST and opt-in Hocuspocus/Yjs
+    editing backed by durable PostgreSQL state. Polls, multipart content,
+    attachments, download refresh, and temporary collaboration sessions remain unavailable.
   license:
     name: MIT
     identifier: MIT
@@ -4357,6 +4357,93 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  "/answers/{answerId}/collaboration-ticket":
+    post:
+      tags: [Answers]
+      summary: Create a one-use answer editing ticket
+      description: Requires a valid session, allowed Origin, CSRF token, current answer edit role, application/json, and an empty JSON object. The ticket is bound to this document, user, and session and expires after five minutes. Request a new ticket on every reconnect.
+      operationId: createAnswerCollaborationTicket
+      security:
+        - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/AnswerId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { type: object, properties: {}, additionalProperties: false }
+            example: {}
+      responses:
+        "201":
+          description: One-use ticket issued.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [ticket, documentName, expiresInSeconds]
+                    properties:
+                      ticket: { type: string }
+                      documentName: { type: string, pattern: "^answer:" }
+                      expiresInSeconds: { type: integer, const: 300 }
+              example:
+                data:
+                  ticket: opaque_one_use_ticket
+                  documentName: answer:01a0e5cc-58ae-7009-9f43-ea8bbebc2e08
+                  expiresInSeconds: 300
+        "401":
+          {
+            description: Session missing or expired,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "403":
+          {
+            description: CSRF or role rejected,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Answer hidden or missing,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Course archived,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "422":
+          {
+            description: Invalid JSON body or media type,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
   "/answers/{answerId}":
     get:
       tags: [Answers]
@@ -4988,6 +5075,93 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  "/followups/{followupId}/collaboration-ticket":
+    post:
+      tags: [Answers]
+      summary: Create a one-use followup editing ticket
+      description: Same session, Origin, CSRF, lifetime, and one-use rules as the answer ticket. Only the followup author or current course staff may edit.
+      operationId: createFollowupCollaborationTicket
+      security:
+        - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/FollowupId"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { type: object, properties: {}, additionalProperties: false }
+            example: {}
+      responses:
+        "201":
+          description: One-use ticket issued.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [ticket, documentName, expiresInSeconds]
+                    properties:
+                      ticket: { type: string }
+                      documentName: { type: string, pattern: "^followup:" }
+                      expiresInSeconds: { type: integer, const: 300 }
+              example:
+                data:
+                  ticket: opaque_one_use_ticket
+                  documentName: followup:01a0e5cc-58ae-7009-9f43-e237164911eb
+                  expiresInSeconds: 300
+        "401":
+          {
+            description: Session missing or expired,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "403":
+          {
+            description: CSRF or role rejected,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Followup hidden or missing,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Course archived,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "422":
+          {
+            description: Invalid JSON body or media type,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
   "/followups/{followupId}":
     get:
       tags: [Answers]

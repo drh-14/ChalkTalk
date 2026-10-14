@@ -5,6 +5,7 @@ import {
   deleteAnswer,
   endorseAnswer,
   listAnswers,
+  requestCollaborationTicket,
   type Answer,
 } from "./client.js";
 
@@ -123,4 +124,31 @@ it("maps API errors to ApiError with their code", async () => {
   ).catch((caught: unknown) => caught);
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({ status: 409, code: "answer_kind_exists" });
+});
+
+it("requests a one-use live editing ticket with CSRF and no cache", async () => {
+  const ticket = {
+    ticket: "one-use",
+    documentName: "answer:answer-1",
+    expiresInSeconds: 300,
+  };
+  const fetchMock = vi.fn().mockResolvedValue(json({ data: ticket }, 201));
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(
+    requestCollaborationTicket("answer", "answer-1", "csrf"),
+  ).resolves.toEqual(ticket);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/answers/answer-1/collaboration-ticket",
+    {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": "csrf",
+      },
+      body: "{}",
+    },
+  );
 });

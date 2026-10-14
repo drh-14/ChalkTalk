@@ -1,6 +1,7 @@
 import { createEmailSender } from "./auth/email.js";
 import { FollowupService } from "./followups/service.js";
 import { AnswerService } from "./answers/service.js";
+import { CollaborationStore } from "./collaboration/store.js";
 import { AuthService } from "./auth/service.js";
 import { loadEnvironment, requireDatabaseUrl } from "./config/environment.js";
 import { createPool } from "./database/pool.js";
@@ -23,6 +24,7 @@ const app = createApp({
   courseService: new CourseService(pool),
   postService: new PostService(pool),
   answerService: new AnswerService(pool),
+  collaborationStore: new CollaborationStore(pool),
   followupService: new FollowupService(pool),
   statisticsService: new StatisticsService(pool),
 });

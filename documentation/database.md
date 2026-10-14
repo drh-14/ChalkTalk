@@ -200,7 +200,7 @@ Content-changing edits clear current endorsement and update the authoritative Yj
 - `persisted_at`: `timestamptz`.
 - `persistence_revision`: `bigint`.
 
-The private answer document store keeps `answers.body_markdown` as the text projection of `yjs_state`. See the [answer document core specification](../openspec/specs/answer-document-core/spec.md) for seeding, lifecycle, and persistence behavior.
+The answer document store keeps `answers.body_markdown` as the text projection of `Y.Text('content')`. Live and conditional REST edits lock the same answer/document rows. Endorsement does not close the document; a subsequent text edit clears the current badge while historical endorsement events remain.
 
 ### `followups`
 
@@ -216,6 +216,15 @@ The private answer document store keeps `answers.body_markdown` as the text proj
 - `version`: `bigint`.
 
 Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`. Deleted roots or replies with children retain a bodyless tombstone; deleted leaves are excluded from ordinary reads.
+
+### `followup_collaboration_documents`
+
+- `followup_id`: `uuid_v7`; primary key and cascading foreign key to `followups.id`.
+- `yjs_state`: complete `Y.Text('content')` state in `bytea`, backfilled from existing Markdown at migration.
+- `persistence_revision`: `bigint`; increases for each changed Yjs state.
+- `persisted_at`: `timestamptz`.
+
+The non-deleted answer and followup body checks allow a temporarily empty live string; deleted rows still require `body_markdown IS NULL`. REST creation and PATCH continue requiring nonblank text.
 
 ### `answer_upvotes`
 
@@ -393,14 +402,11 @@ Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`.
 - `permission`: `text`; `read` or `write`.
 - `issued_at`, `expires_at`, `consumed_at`, `revoked_at`: `timestamptz`; final two are nullable.
 
-### `answer_collaboration_connection_tickets`
+### `collaboration_tickets`
 
-Future schema only; the current answer editor uses REST and does not issue connection tickets.
+- `token_hash`: `bytea`; primary key (the clear token is never stored).
+- `session_id`, `user_id`: UUID foreign keys to the authenticated session and user.
+- `document_type`: `answer` or `followup`; `document_id`: UUID target.
+- `expires_at`, `consumed_at`, `created_at`: `timestamptz`; consumption is one-use within five minutes.
 
-- `id`: `uuid_v7`; primary key.
-- `token_hash`: `bytea`; unique.
-- `answer_id`: `uuid_v7`; foreign key to `answers.id`.
-- `user_id`: `uuid_v7`.
-- `auth_session_id`: `uuid_v7`; with `user_id`, foreign key to `sessions(id, user_id)`.
-- `permission`: `text`; always `write`.
-- `issued_at`, `expires_at`, `consumed_at`, `revoked_at`: `timestamptz`; final two are nullable.
+Current membership, session validity, target visibility, and editing role are rechecked at consumption and on every live update. Expired ticket rows may be deleted without affecting document contents.

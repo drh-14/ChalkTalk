@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
+import * as Y from "yjs";
 import { AuthError } from "../auth/errors.js";
 
 type Db = Pool | PoolClient;
@@ -46,6 +47,15 @@ const uuid =
 const cursorTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const fullTimestamp = (column: string) =>
   `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+function yjsState(text: string): Buffer {
+  const doc = new Y.Doc();
+  try {
+    doc.getText("content").insert(0, text);
+    return Buffer.from(Y.encodeStateAsUpdate(doc));
+  } finally {
+    doc.destroy();
+  }
+}
 const visibleFollowups = `WITH RECURSIVE visible AS (
   SELECT id,parent_followup_id FROM followups WHERE post_id=$1 AND deleted_at IS NULL
   UNION
@@ -254,6 +264,10 @@ export class FollowupService {
         ],
       );
       await db.query(
+        "INSERT INTO followup_collaboration_documents (followup_id,yjs_state) VALUES ($1,$2)",
+        [id, yjsState(input.bodyMarkdown)],
+      );
+      await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [postId],
       );
@@ -405,6 +419,37 @@ export class FollowupService {
           "Author or staff role is required",
         );
       this.revision(row, etag);
+      const saved = await db.query<{ yjs_state: Buffer }>(
+        "SELECT yjs_state FROM followup_collaboration_documents WHERE followup_id=$1 FOR UPDATE",
+        [id],
+      );
+      if (!saved.rows[0])
+        throw new AuthError(
+          500,
+          "integrity_error",
+          "Followup document is missing",
+        );
+      const doc = new Y.Doc();
+      let nextState: Buffer;
+      try {
+        Y.applyUpdate(doc, saved.rows[0].yjs_state);
+        const content = doc.getText("content");
+        if (content.toString() !== row.body_markdown)
+          throw new AuthError(
+            500,
+            "integrity_error",
+            "Followup document disagrees with text",
+          );
+        content.delete(0, content.length);
+        content.insert(0, bodyMarkdown);
+        nextState = Buffer.from(Y.encodeStateAsUpdate(doc));
+      } finally {
+        doc.destroy();
+      }
+      await db.query(
+        "UPDATE followup_collaboration_documents SET yjs_state=$2,persistence_revision=persistence_revision+1,persisted_at=statement_timestamp() WHERE followup_id=$1",
+        [id, nextState],
+      );
       await db.query(
         "UPDATE followups SET body_markdown=$2,updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [id, bodyMarkdown],
@@ -412,6 +457,10 @@ export class FollowupService {
       await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
+      );
+      await db.query(
+        "SELECT pg_notify('chalktalk_collaboration_revision',$1)",
+        [JSON.stringify({ kind: "followup", id })],
       );
       return this.project(
         db,
@@ -446,8 +495,16 @@ export class FollowupService {
         [id],
       );
       await db.query(
+        "DELETE FROM followup_collaboration_documents WHERE followup_id=$1",
+        [id],
+      );
+      await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
+      );
+      await db.query(
+        "SELECT pg_notify('chalktalk_collaboration_revision',$1)",
+        [JSON.stringify({ kind: "followup", id })],
       );
     });
   }

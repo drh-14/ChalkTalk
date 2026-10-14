@@ -12,6 +12,37 @@ export type FormatAction =
 export type BodySelection = { from: number; to: number };
 export type FormatResult = { text: string; from: number; to: number };
 
+/** Keep CodeMirror/Yjs changes scoped to the modified span, not the whole body. */
+export function formatBodyChange(
+  text: string,
+  selection: BodySelection,
+  action: FormatAction,
+) {
+  const result = formatBody(text, selection, action);
+  let from = 0;
+  while (
+    from < text.length &&
+    from < result.text.length &&
+    text[from] === result.text[from]
+  )
+    from++;
+  let suffix = 0;
+  while (
+    suffix < text.length - from &&
+    suffix < result.text.length - from &&
+    text[text.length - 1 - suffix] ===
+      result.text[result.text.length - 1 - suffix]
+  )
+    suffix++;
+  return {
+    from,
+    to: text.length - suffix,
+    insert: result.text.slice(from, result.text.length - suffix),
+    anchor: result.from,
+    head: result.to,
+  };
+}
+
 export function formatBody(
   text: string,
   selection: BodySelection,

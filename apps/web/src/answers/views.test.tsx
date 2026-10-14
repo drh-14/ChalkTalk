@@ -353,6 +353,11 @@ it("preserves a stale answer edit draft after explicit refresh", async () => {
   await userEvent
     .setup()
     .click(within(student).getByRole("button", { name: "Edit answer" }));
+  await userEvent
+    .setup()
+    .click(
+      within(student).getByRole("button", { name: "Use standard editor" }),
+    );
   const editor = within(student).getByRole("textbox", { name: "Answer" });
   await userEvent.setup().type(editor, " Local draft");
   await userEvent
@@ -687,6 +692,9 @@ it("edits and deletes an owned followup with the projected controls", async () =
   await userEvent
     .setup()
     .click(within(parent).getByRole("button", { name: "Edit followup" }));
+  await userEvent
+    .setup()
+    .click(within(parent).getByRole("button", { name: "Use standard editor" }));
   const editor = within(parent).getByRole("textbox", { name: "Followup" });
   await userEvent.setup().click(editor);
   await userEvent.setup().keyboard("{Control>}a{/Control}Updated followup");

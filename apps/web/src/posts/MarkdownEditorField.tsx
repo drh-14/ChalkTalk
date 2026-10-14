@@ -2,6 +2,7 @@ import { useRef, useState, type Ref } from "react";
 import { PostBody } from "./PostBody.js";
 import { PostEditor, type PostEditorHandle } from "./PostEditor.js";
 import type { FormatAction } from "./formatting.js";
+import type * as Y from "yjs";
 
 export function MarkdownEditorField({
   label,
@@ -9,12 +10,14 @@ export function MarkdownEditorField({
   onChange,
   containerRef,
   disableImages = false,
+  liveText,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   containerRef?: Ref<HTMLDivElement>;
   disableImages?: boolean;
+  liveText?: Y.Text;
 }) {
   const [preview, setPreview] = useState(false);
   const editor = useRef<PostEditorHandle>(null);
@@ -72,6 +75,7 @@ export function MarkdownEditorField({
           label={label}
           value={value}
           onChange={onChange}
+          liveText={liveText}
         />
       </div>
       {preview && (

@@ -1,5 +1,15 @@
 import { expect, it } from "vitest";
-import { formatBody, type FormatAction } from "./formatting.js";
+import {
+  formatBody,
+  formatBodyChange,
+  type FormatAction,
+} from "./formatting.js";
+
+it("formats a selection without replacing unrelated document text", () => {
+  expect(
+    formatBodyChange("before ptr after", { from: 7, to: 10 }, "bold"),
+  ).toEqual({ from: 7, to: 10, insert: "**ptr**", anchor: 9, head: 12 });
+});
 
 it.each([
   ["bold", "**ptr**", 2, 5],

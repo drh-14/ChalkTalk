@@ -10,6 +10,7 @@ import {
   type CreateAnswer,
 } from "../answers/service.js";
 import { FollowupService, followupEtag } from "../followups/service.js";
+import { CollaborationStore } from "../collaboration/store.js";
 import { SESSION_COOKIE_NAME, sessionCookie } from "../auth/crypto.js";
 import { AuthError } from "../auth/errors.js";
 import {
@@ -36,6 +37,7 @@ export interface AppDependencies {
   postService?: PostService;
   answerService?: AnswerService;
   followupService?: FollowupService;
+  collaborationStore?: CollaborationStore;
   statisticsService?: StatisticsService;
 }
 type AuthContext = {
@@ -548,6 +550,7 @@ export function createApp(
     postService,
     answerService,
     followupService,
+    collaborationStore,
     statisticsService,
   } = dependencies;
   const app = express();
@@ -667,6 +670,15 @@ export function createApp(
         "Followup service is unavailable",
       );
     return followupService;
+  };
+  const collaboration = (): CollaborationStore => {
+    if (!collaborationStore)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Collaboration service is unavailable",
+      );
+    return collaborationStore;
   };
   const posts = (): PostService => {
     if (!postService)
@@ -1342,6 +1354,41 @@ export function createApp(
       }
     },
   );
+  for (const [kind, path, identifier] of [
+    ["answer", "/api/v1/answers/:answerId/collaboration-ticket", "answerId"],
+    [
+      "followup",
+      "/api/v1/followups/:followupId/collaboration-ticket",
+      "followupId",
+    ],
+  ] as const) {
+    app.post(path, ...authenticatedUnsafe, async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        strictBody(request.body, []);
+        const id = param(request.params[identifier]);
+        const current = auth(response).session;
+        const ticket = await collaboration().issueTicket(
+          kind,
+          id,
+          current.user.id,
+          current.id,
+        );
+        response
+          .status(201)
+          .set("Cache-Control", "no-store")
+          .json({
+            data: {
+              ticket,
+              documentName: `${kind}:${id}`,
+              expiresInSeconds: 300,
+            },
+          });
+      } catch (error) {
+        next(error);
+      }
+    });
+  }
   app.get(
     "/api/v1/posts/:postId/answers",
     optionalReadOrigin,
