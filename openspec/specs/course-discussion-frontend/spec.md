@@ -586,7 +586,7 @@ The title SHALL be the most prominent text on the card. The badge's label, icon,
 
 ### Requirement: Staff can pin and unpin a post from the post view
 
-When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group containing the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
+When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group immediately below the post body and before question answers. It SHALL contain the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
 
 #### Scenario: A TA pins a post
 
