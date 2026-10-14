@@ -617,6 +617,7 @@ function Home({
         session={session}
         onSignOut={onSignOut}
         onAccountClick={(event) => {
+          if (!isPlainClick(event)) return;
           event.preventDefault();
           onNavigate("/account");
         }}
@@ -1030,6 +1031,7 @@ export function App() {
     routeFromLocation(new URL(window.location.href)),
   );
   const [session, setSession] = useState<Session>();
+  const activeSessionId = useRef<string | undefined>(undefined);
   const [ready, setReady] = useState(false);
   const sessionRestoreStarted = useRef(false);
   const beforeCourseLeave = useRef<() => boolean>(() => true);
@@ -1044,12 +1046,21 @@ export function App() {
     setRoute(initializeRoute(new URL(window.location.href), window.history));
   }
   function startSession(nextSession: Session) {
+    activeSessionId.current = nextSession.id;
     setSession(nextSession);
     move("/home");
   }
-  const updateSessionUser = useCallback((user: User) => {
-    setSession((current) => (current ? { ...current, user } : current));
-  }, []);
+  const accountSessionId = session?.id;
+  const updateSessionUser = useCallback(
+    (user: User) => {
+      setSession((current) =>
+        current && current.id === accountSessionId
+          ? { ...current, user }
+          : current,
+      );
+    },
+    [accountSessionId],
+  );
   useEffect(() => {
     const updateRoute = () => {
       const nextPath = `${window.location.pathname}${window.location.search}`;
@@ -1082,6 +1093,7 @@ export function App() {
     sessionRestoreStarted.current = true;
     void currentSession()
       .then((restored) => {
+        activeSessionId.current = restored.id;
         setSession(restored);
         if (route.name === "landing") move("/home");
       })
@@ -1103,6 +1115,7 @@ export function App() {
   }, []);
   async function signOut() {
     if (session) await logout(session.csrfToken);
+    activeSessionId.current = undefined;
     setSession(undefined);
     move("/");
   }
@@ -1129,15 +1142,21 @@ export function App() {
           session={session}
           onSignOut={signOut}
           onHomeClick={(event) => {
+            if (!isPlainClick(event)) return;
             event.preventDefault();
             move("/home");
           }}
-          onAccountClick={(event) => event.preventDefault()}
+          onAccountClick={(event) => {
+            if (isPlainClick(event)) event.preventDefault();
+          }}
         />
         <AccountPage
+          key={session.id}
           session={session}
           onUserChange={updateSessionUser}
           onDeleted={() => {
+            if (activeSessionId.current !== session.id) return;
+            activeSessionId.current = undefined;
             setSession(undefined);
             move("/");
           }}

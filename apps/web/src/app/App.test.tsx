@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -96,6 +97,140 @@ describe("ChalkTalk auth entry", () => {
       await screen.findByRole("heading", { name: "Account settings" }),
     ).toBeTruthy();
   });
+
+  it("leaves modified account and home links to the browser", async () => {
+    setPath("/home");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith("/users/me"))
+          return jsonResponse({ data: session.user }, 200, { ETag: '"v1"' });
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Welcome back, Ada" });
+    expect(
+      fireEvent.click(screen.getByRole("link", { name: "Ada Lovelace" }), {
+        ctrlKey: true,
+      }),
+    ).toBe(true);
+    expect(window.location.pathname).toBe("/home");
+
+    await user.click(screen.getByRole("link", { name: "Ada Lovelace" }));
+    await screen.findByRole("heading", { name: "Account settings" });
+    expect(
+      fireEvent.click(screen.getByRole("link", { name: "ChalkTalk" }), {
+        metaKey: true,
+      }),
+    ).toBe(true);
+    expect(window.location.pathname).toBe("/account");
+  });
+
+  it.each(["name", "deletion"] as const)(
+    "ignores an old account %s response after another user signs in",
+    async (operation) => {
+      setPath("/account");
+      const secondUser = {
+        ...session.user,
+        id: "user_456",
+        email: "grace@example.edu",
+        displayName: "Grace Hopper",
+      };
+      const secondSession = {
+        ...session,
+        id: "session_456",
+        user: secondUser,
+        csrfToken: "second_csrf",
+      };
+      const pending = deferredResponse();
+      let activeUser = session.user;
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/sessions/current") && init?.method === "DELETE")
+          return new Response(null, { status: 204 });
+        if (url.endsWith("/sessions/current"))
+          return jsonResponse({ data: session });
+        if (url.endsWith("/sessions") && init?.method === "POST") {
+          activeUser = secondUser;
+          return jsonResponse({ data: secondSession }, 201);
+        }
+        if (url.endsWith("/users/me") && !init?.method)
+          return jsonResponse({ data: activeUser }, 200, { ETag: '"v1"' });
+        if (
+          url.endsWith("/users/me") &&
+          init?.method === (operation === "name" ? "PATCH" : "DELETE")
+        )
+          return pending.promise;
+        return jsonResponse({
+          data: [],
+          page: { nextCursor: null, hasMore: false },
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByText(session.user.email);
+
+      if (operation === "name") {
+        const name = screen.getByRole("textbox", { name: "Display name" });
+        await user.clear(name);
+        await user.type(name, "Ada Byron");
+        await user.click(screen.getByRole("button", { name: "Save name" }));
+      } else {
+        await user.click(
+          screen.getByRole("button", { name: "Delete account" }),
+        );
+        const dialog = screen.getByRole("dialog", { name: "Delete account" });
+        await user.type(
+          within(dialog).getByLabelText("Current password"),
+          "old password",
+        );
+        await user.click(
+          within(dialog).getByRole("button", { name: "Confirm deletion" }),
+        );
+      }
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            ([url, init]) =>
+              String(url).endsWith("/users/me") &&
+              init?.method === (operation === "name" ? "PATCH" : "DELETE"),
+          ),
+        ).toBe(true),
+      );
+      await user.click(screen.getByRole("button", { name: "Sign out" }));
+      await screen.findByRole("heading", {
+        name: "Discuss the work that matters.",
+      });
+      await user.type(screen.getByLabelText("Email address"), secondUser.email);
+      await user.type(screen.getByLabelText("Password"), "second password");
+      await user.click(screen.getByRole("button", { name: "Sign in" }));
+      await screen.findByRole("heading", { name: "Welcome back, Grace" });
+      await user.click(screen.getByRole("link", { name: "Grace Hopper" }));
+      await screen.findByText(secondUser.email);
+
+      await act(async () => {
+        pending.resolve(
+          operation === "name"
+            ? jsonResponse(
+                { data: { ...session.user, displayName: "Ada Byron" } },
+                200,
+                { ETag: '"v2"' },
+              )
+            : new Response(null, { status: 204 }),
+        );
+      });
+      expect(window.location.pathname).toBe("/account");
+      expect(screen.getByText(secondUser.email)).toBeTruthy();
+      expect(screen.getByRole("link", { name: "Grace Hopper" })).toBeTruthy();
+    },
+  );
 
   it("preserves an unsaved course draft when opening account settings", async () => {
     setPath(`/courses/${course.id}`);

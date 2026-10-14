@@ -71,7 +71,112 @@ describe("account page", () => {
     );
   });
 
-  it("requires matching new passwords and clears the fields on success", async () => {
+  it("submits the trimmed name that passed validation", async () => {
+    const trimmed = "A".repeat(100);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json({ data: profile }))
+      .mockResolvedValueOnce(
+        json({ data: { ...profile, displayName: trimmed } }, 200, '"v2"'),
+      );
+    const { user } = setup(fetchMock);
+    const name = await screen.findByRole("textbox", { name: "Display name" });
+    await user.clear(name);
+    await user.type(name, `${trimmed} `);
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+
+    expect(await screen.findByText("Name updated")).toBeTruthy();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/v1/users/me",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ displayName: trimmed }),
+      }),
+    );
+  });
+
+  it("places password under Profile and Delete account beneath it", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: profile }));
+    setup(fetchMock);
+    await screen.findByText(profile.email);
+
+    const profileSection = screen.getByRole("region", { name: "Profile" });
+    const deleteSection = screen.getByRole("region", {
+      name: "Delete account",
+    });
+    expect(
+      within(profileSection).getByRole("heading", { name: "Password" }),
+    ).toBeTruthy();
+    expect(within(profileSection).getByLabelText("New password")).toBeTruthy();
+    expect(
+      within(profileSection).queryByLabelText("Current password"),
+    ).toBeNull();
+    expect(
+      profileSection.compareDocumentPosition(deleteSection) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows a red field error for an empty display name", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: profile }));
+    const { user } = setup(fetchMock);
+    const name = await screen.findByRole("textbox", { name: "Display name" });
+    await user.clear(name);
+    await user.tab();
+
+    const error = await screen.findByText("Enter a display name");
+    expect(error.classList.contains("error")).toBe(true);
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(name.getAttribute("aria-describedby")).toBe(error.id);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a field error when the display name exceeds 100 characters", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: profile }));
+    const { user } = setup(fetchMock);
+    const name = await screen.findByRole("textbox", { name: "Display name" });
+    await user.clear(name);
+    await user.type(name, "A".repeat(101));
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+
+    expect(await screen.findByText("Use 1 to 100 characters")).toBeTruthy();
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a red field error for a short new password without opening confirmation", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: profile }));
+    const { user } = setup(fetchMock);
+    await screen.findByText(profile.email);
+    const newPassword = screen.getByLabelText("New password");
+    await user.type(newPassword, "short");
+    await user.click(screen.getByRole("button", { name: "Change password" }));
+
+    const error = await screen.findByText("Use 12 to 128 characters");
+    expect(error.classList.contains("error")).toBe(true);
+    expect(newPassword.getAttribute("aria-invalid")).toBe("true");
+    expect(newPassword.getAttribute("aria-describedby")).toBe(error.id);
+    expect(
+      screen.queryByRole("dialog", { name: "Confirm password change" }),
+    ).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a new password longer than 128 characters", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: profile }));
+    const { user } = setup(fetchMock);
+    await screen.findByText(profile.email);
+    await user.type(screen.getByLabelText("New password"), "x".repeat(129));
+    await user.click(screen.getByRole("button", { name: "Change password" }));
+
+    expect(await screen.findByText("Use 12 to 128 characters")).toBeTruthy();
+    expect(
+      screen.queryByRole("dialog", { name: "Confirm password change" }),
+    ).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for the current password in a dialog and clears both fields on success", async () => {
     const refreshed = { ...profile, displayName: "Ada Byron", version: 2 };
     const fetchMock = vi
       .fn()
@@ -81,31 +186,24 @@ describe("account page", () => {
     const { user } = setup(fetchMock);
     await screen.findByText(profile.email);
     await user.type(
-      screen.getByLabelText("Current password"),
-      "old passphrase",
-    );
-    await user.type(
       screen.getByLabelText("New password"),
       "new secure passphrase",
     );
-    await user.type(
-      screen.getByLabelText("Confirm new password"),
-      "different passphrase",
-    );
     await user.click(screen.getByRole("button", { name: "Change password" }));
-    expect(await screen.findByText("New passwords do not match")).toBeTruthy();
+    const dialog = screen.getByRole("dialog", {
+      name: "Confirm password change",
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-
-    await user.clear(screen.getByLabelText("Confirm new password"));
-    await user.type(
-      screen.getByLabelText("Confirm new password"),
-      "new secure passphrase",
+    const current = within(dialog).getByLabelText("Current password");
+    expect(document.activeElement).toBe(current);
+    await user.type(current, "old passphrase");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Confirm change" }),
     );
-    await user.click(screen.getByRole("button", { name: "Change password" }));
     expect(await screen.findByText("Password changed")).toBeTruthy();
     expect(
-      (screen.getByLabelText("Current password") as HTMLInputElement).value,
-    ).toBe("");
+      screen.queryByRole("dialog", { name: "Confirm password change" }),
+    ).toBeNull();
     expect(
       (screen.getByLabelText("New password") as HTMLInputElement).value,
     ).toBe("");
@@ -117,6 +215,105 @@ describe("account page", () => {
       ).value,
     ).toBe("Ada Byron");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/users/me/password",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          currentPassword: "old passphrase",
+          newPassword: "new secure passphrase",
+        }),
+      }),
+    );
+  });
+
+  it("cancels password confirmation without submitting or losing the new password", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: profile }));
+    const { user } = setup(fetchMock);
+    await screen.findByText(profile.email);
+    await user.type(
+      screen.getByLabelText("New password"),
+      "new secure passphrase",
+    );
+    const trigger = screen.getByRole("button", { name: "Change password" });
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", {
+      name: "Confirm password change",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(
+      screen.queryByRole("dialog", { name: "Confirm password change" }),
+    ).toBeNull();
+    expect(
+      (screen.getByLabelText("New password") as HTMLInputElement).value,
+    ).toBe("new secure passphrase");
+    expect(document.activeElement).toBe(trigger);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the dialog open and shows a red error under a wrong current password", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json({ data: profile }))
+      .mockResolvedValueOnce(
+        json(
+          {
+            error: {
+              code: "invalid_credentials",
+              message: "Current password is invalid",
+            },
+          },
+          401,
+        ),
+      );
+    const { user } = setup(fetchMock);
+    await screen.findByText(profile.email);
+    await user.type(
+      screen.getByLabelText("New password"),
+      "new secure passphrase",
+    );
+    await user.click(screen.getByRole("button", { name: "Change password" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Confirm password change",
+    });
+    const current = within(dialog).getByLabelText("Current password");
+    await user.type(current, "wrong password");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Confirm change" }),
+    );
+
+    const error = await within(dialog).findByText(
+      "Current password is invalid",
+    );
+    expect(error.classList.contains("error")).toBe(true);
+    expect(current.getAttribute("aria-invalid")).toBe("true");
+    expect(current.getAttribute("aria-describedby")).toBe(error.id);
+  });
+
+  it("shows a field error when password confirmation has no current password", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: profile }));
+    const { user } = setup(fetchMock);
+    await screen.findByText(profile.email);
+    await user.type(
+      screen.getByLabelText("New password"),
+      "new secure passphrase",
+    );
+    await user.click(screen.getByRole("button", { name: "Change password" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Confirm password change",
+    });
+    const current = within(dialog).getByLabelText("Current password");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Confirm change" }),
+    );
+
+    expect(
+      await within(dialog).findByText("Enter your current password"),
+    ).toBeTruthy();
+    expect(current.getAttribute("aria-invalid")).toBe("true");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a successful password change after profile refresh fails", async () => {
@@ -133,31 +330,30 @@ describe("account page", () => {
     const { user } = setup(fetchMock);
     await screen.findByText(profile.email);
     await user.type(
-      screen.getByLabelText("Current password"),
-      "old passphrase",
-    );
-    await user.type(
       screen.getByLabelText("New password"),
       "new secure passphrase",
     );
-    await user.type(
-      screen.getByLabelText("Confirm new password"),
-      "new secure passphrase",
-    );
     await user.click(screen.getByRole("button", { name: "Change password" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Confirm password change",
+    });
+    await user.type(
+      within(dialog).getByLabelText("Current password"),
+      "old passphrase",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Confirm change" }),
+    );
 
     expect(await screen.findByText("Password changed")).toBeTruthy();
     expect(
       await screen.findByText(/account information could not be refreshed/i),
     ).toBeTruthy();
     expect(
-      (screen.getByLabelText("Current password") as HTMLInputElement).value,
-    ).toBe("");
+      screen.queryByRole("dialog", { name: "Confirm password change" }),
+    ).toBeNull();
     expect(
       (screen.getByLabelText("New password") as HTMLInputElement).value,
-    ).toBe("");
-    expect(
-      (screen.getByLabelText("Confirm new password") as HTMLInputElement).value,
     ).toBe("");
     expect(screen.getByText(profile.email)).toBeTruthy();
     const name = screen.getByRole("textbox", { name: "Display name" });
@@ -275,6 +471,11 @@ describe("account page", () => {
     expect(
       await within(dialog).findByText("Current password is invalid"),
     ).toBeTruthy();
+    const password = within(dialog).getByLabelText("Current password");
+    expect(password.getAttribute("aria-invalid")).toBe("true");
+    expect(password.getAttribute("aria-describedby")).toBe(
+      "delete-password-error",
+    );
     expect(onDeleted).not.toHaveBeenCalled();
   });
 

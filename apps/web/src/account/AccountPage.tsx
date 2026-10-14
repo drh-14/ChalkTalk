@@ -37,16 +37,19 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
   const [nameError, setNameError] = useState<string>();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [confirmPasswordChange, setConfirmPasswordChange] = useState(false);
   const [passwordPending, setPasswordPending] = useState(false);
   const [passwordNotice, setPasswordNotice] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
+  const [currentPasswordError, setCurrentPasswordError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string>();
   const deleteTrigger = useRef<HTMLButtonElement>(null);
   const deletePasswordInput = useRef<HTMLInputElement>(null);
+  const passwordTrigger = useRef<HTMLButtonElement>(null);
+  const currentPasswordInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -69,6 +72,10 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
     if (confirmDelete) deletePasswordInput.current?.focus();
   }, [confirmDelete]);
 
+  useEffect(() => {
+    if (confirmPasswordChange) currentPasswordInput.current?.focus();
+  }, [confirmPasswordChange]);
+
   async function refreshAfterConflict(setError: (value: string) => void) {
     try {
       const latest = await getProfile();
@@ -86,12 +93,19 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
   async function saveName(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!profile || namePending) return;
-    setNamePending(true);
     setNameError(undefined);
     setNameNotice(undefined);
+    const trimmedName = name.trim();
+    if (!trimmedName || trimmedName.length > 100) {
+      setNameError(
+        !trimmedName ? "Enter a display name" : "Use 1 to 100 characters",
+      );
+      return;
+    }
+    setNamePending(true);
     try {
       const updated = await updateDisplayName(
-        name,
+        trimmedName,
         profile.etag,
         session.csrfToken,
       );
@@ -113,11 +127,24 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
     if (!profile || passwordPending) return;
     setPasswordError(undefined);
     setPasswordNotice(undefined);
-    if (newPassword !== confirmPassword) {
-      setPasswordError("New passwords do not match");
+    if (newPassword.length < 12 || newPassword.length > 128) {
+      setPasswordError("Use 12 to 128 characters");
+      return;
+    }
+    setConfirmPasswordChange(true);
+  }
+
+  async function confirmPasswordChangeSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+    if (!profile || passwordPending) return;
+    if (!currentPassword) {
+      setCurrentPasswordError("Enter your current password");
       return;
     }
     setPasswordPending(true);
+    setCurrentPasswordError(undefined);
     try {
       await changePassword(
         currentPassword,
@@ -127,14 +154,15 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
       );
     } catch (error) {
       if (error instanceof ApiError && error.code === "version_conflict")
-        await refreshAfterConflict(setPasswordError);
-      else setPasswordError(message(error));
+        await refreshAfterConflict(setCurrentPasswordError);
+      else setCurrentPasswordError(message(error));
       setPasswordPending(false);
       return;
     }
     setCurrentPassword("");
     setNewPassword("");
-    setConfirmPassword("");
+    setConfirmPasswordChange(false);
+    passwordTrigger.current?.focus();
     setPasswordNotice("Password changed");
     try {
       const updated = await getProfile();
@@ -155,6 +183,14 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
     }
   }
 
+  function closePasswordChange() {
+    if (passwordPending) return;
+    setConfirmPasswordChange(false);
+    setCurrentPassword("");
+    setCurrentPasswordError(undefined);
+    passwordTrigger.current?.focus();
+  }
+
   function closeDeletion() {
     if (deletePending) return;
     setConfirmDelete(false);
@@ -163,9 +199,12 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
     requestAnimationFrame(() => deleteTrigger.current?.focus());
   }
 
-  function handleDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+  function handleDialogKeyDown(
+    event: KeyboardEvent<HTMLDivElement>,
+    onClose: () => void,
+  ) {
     if (event.key === "Escape") {
-      closeDeletion();
+      onClose();
       return;
     }
     if (event.key !== "Tab") return;
@@ -188,6 +227,10 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
   async function confirmDeletion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!profile || deletePending) return;
+    if (!deletePassword) {
+      setDeleteError("Enter your current password");
+      return;
+    }
     setDeletePending(true);
     setDeleteError(undefined);
     try {
@@ -227,13 +270,25 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
               <label htmlFor="account-display-name">Display name</label>
               <input
                 id="account-display-name"
-                maxLength={100}
                 value={name}
-                onChange={(event) => setName(event.target.value)}
-                required
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setNameError(undefined);
+                }}
+                onBlur={() => {
+                  if (!name.trim()) setNameError("Enter a display name");
+                  else if (name.trim().length > 100)
+                    setNameError("Use 1 to 100 characters");
+                }}
+                aria-invalid={Boolean(nameError)}
+                aria-describedby={nameError ? "account-name-error" : undefined}
               />
               {nameError && (
-                <p className="form-message error" role="alert">
+                <p
+                  id="account-name-error"
+                  className="form-message error"
+                  role="alert"
+                >
                   {nameError}
                 </p>
               )}
@@ -247,70 +302,55 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
                 type="submit"
                 disabled={
                   namePending ||
-                  !name.trim() ||
-                  name.trim() === profile.data.displayName
+                  (name.trim() === profile.data.displayName && !nameError)
                 }
               >
                 {namePending ? "Saving…" : "Save name"}
               </button>
             </form>
-          </section>
-          <section
-            className="account-section"
-            aria-labelledby="account-password-heading"
-          >
-            <h2 id="account-password-heading">Password</h2>
-            <p>Use 12 to 128 characters for your new password.</p>
-            <form onSubmit={savePassword}>
-              <label htmlFor="account-current-password">Current password</label>
-              <input
-                id="account-current-password"
-                autoComplete="current-password"
-                type="password"
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-                required
-              />
-              <label htmlFor="account-new-password">New password</label>
-              <input
-                id="account-new-password"
-                autoComplete="new-password"
-                type="password"
-                minLength={12}
-                maxLength={128}
-                value={newPassword}
-                onChange={(event) => setNewPassword(event.target.value)}
-                required
-              />
-              <label htmlFor="account-confirm-password">
-                Confirm new password
-              </label>
-              <input
-                id="account-confirm-password"
-                autoComplete="new-password"
-                type="password"
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-                required
-              />
-              {passwordError && (
-                <p className="form-message error" role="alert">
-                  {passwordError}
-                </p>
-              )}
-              {passwordNotice && (
-                <p className="form-message success" role="status">
-                  {passwordNotice}
-                </p>
-              )}
-              <button
-                className="button primary"
-                type="submit"
-                disabled={passwordPending}
-              >
-                {passwordPending ? "Changing…" : "Change password"}
-              </button>
-            </form>
+            <div className="account-password-settings">
+              <h3 id="account-password-heading">Password</h3>
+              <p>Use 12 to 128 characters for your new password.</p>
+              <form onSubmit={savePassword}>
+                <label htmlFor="account-new-password">New password</label>
+                <input
+                  id="account-new-password"
+                  autoComplete="new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => {
+                    setNewPassword(event.target.value);
+                    setPasswordError(undefined);
+                  }}
+                  aria-invalid={Boolean(passwordError)}
+                  aria-describedby={
+                    passwordError ? "account-password-error" : undefined
+                  }
+                />
+                {passwordError && (
+                  <p
+                    id="account-password-error"
+                    className="form-message error"
+                    role="alert"
+                  >
+                    {passwordError}
+                  </p>
+                )}
+                {passwordNotice && (
+                  <p className="form-message success" role="status">
+                    {passwordNotice}
+                  </p>
+                )}
+                <button
+                  ref={passwordTrigger}
+                  className="button primary"
+                  type="submit"
+                  disabled={passwordPending}
+                >
+                  {passwordPending ? "Changing…" : "Change password"}
+                </button>
+              </form>
+            </div>
           </section>
           <section
             className="account-section account-danger"
@@ -332,14 +372,76 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
           </section>
         </div>
       )}
-      {confirmDelete && (
+      {confirmPasswordChange && (
         <div className="account-dialog-backdrop">
           <div
             className="account-dialog"
             role="dialog"
             aria-modal="true"
+            aria-labelledby="change-password-title"
+            onKeyDown={(event) =>
+              handleDialogKeyDown(event, closePasswordChange)
+            }
+          >
+            <h2 id="change-password-title">Confirm password change</h2>
+            <p>Enter your current password to confirm this change.</p>
+            <form onSubmit={confirmPasswordChangeSubmit}>
+              <label htmlFor="account-current-password">Current password</label>
+              <input
+                ref={currentPasswordInput}
+                id="account-current-password"
+                autoComplete="current-password"
+                type="password"
+                value={currentPassword}
+                onChange={(event) => {
+                  setCurrentPassword(event.target.value);
+                  setCurrentPasswordError(undefined);
+                }}
+                aria-invalid={Boolean(currentPasswordError)}
+                aria-describedby={
+                  currentPasswordError
+                    ? "account-current-password-error"
+                    : undefined
+                }
+              />
+              {currentPasswordError && (
+                <p
+                  id="account-current-password-error"
+                  className="form-message error"
+                  role="alert"
+                >
+                  {currentPasswordError}
+                </p>
+              )}
+              <div className="account-dialog-actions">
+                <button
+                  type="button"
+                  className="button"
+                  disabled={passwordPending}
+                  onClick={closePasswordChange}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="button primary"
+                  disabled={passwordPending}
+                >
+                  {passwordPending ? "Changing…" : "Confirm change"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {confirmDelete && (
+        <div className="account-dialog-backdrop">
+          <div
+            className="account-dialog account-dialog-danger"
+            role="dialog"
+            aria-modal="true"
             aria-labelledby="delete-account-title"
-            onKeyDown={handleDialogKeyDown}
+            onKeyDown={(event) => handleDialogKeyDown(event, closeDeletion)}
           >
             <h2 id="delete-account-title">Delete account</h2>
             <p>
@@ -354,11 +456,21 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
                 autoComplete="current-password"
                 type="password"
                 value={deletePassword}
-                onChange={(event) => setDeletePassword(event.target.value)}
-                required
+                onChange={(event) => {
+                  setDeletePassword(event.target.value);
+                  setDeleteError(undefined);
+                }}
+                aria-invalid={Boolean(deleteError)}
+                aria-describedby={
+                  deleteError ? "delete-password-error" : undefined
+                }
               />
               {deleteError && (
-                <p className="form-message error" role="alert">
+                <p
+                  id="delete-password-error"
+                  className="form-message error"
+                  role="alert"
+                >
                   {deleteError}
                 </p>
               )}
