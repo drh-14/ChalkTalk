@@ -623,7 +623,7 @@ paths:
       tags:
         - Authentication
       summary: Retrieve account profile
-      description: Retrieve account profile.
+      description: Retrieve account profile, including the account-wide daily course email digest opt-in (off by default).
       operationId: getCurrentUser
       security:
         - session_cookie: []
@@ -642,6 +642,7 @@ paths:
                   id: user_123
                   email: ada@example.edu
                   displayName: Ada Lovelace
+                  dailyDigestEnabled: false
                   createdAt: "2026-09-20T14:30:00Z"
                   updatedAt: "2026-09-20T14:30:00Z"
                   version: 3
@@ -698,7 +699,7 @@ paths:
         Update account profile. A replacement email requires a valid email-verification
         token and must have the same canonical school domain as the account's current
         email. Its direct organization association and course memberships do not change. At least one field
-        is required.
+        is required. dailyDigestEnabled opts the account into separate previous-UTC-day emails per active course. Enabling starts with the current UTC activity date at the next midnight; disabling cancels unsent digests.
       operationId: updateCurrentUser
       security:
         - session_cookie: []
@@ -734,6 +735,7 @@ paths:
                   id: user_123
                   email: ada.byron@example.edu
                   displayName: Ada Byron
+                  dailyDigestEnabled: false
                   createdAt: "2026-09-20T14:30:00Z"
                   updatedAt: "2026-09-20T14:40:00Z"
                   version: 4
@@ -10769,6 +10771,9 @@ components:
           description: Visible account name.
           minLength: 1
           maxLength: 100
+        dailyDigestEnabled:
+          type: boolean
+          description: Account-wide opt-in for separate daily emails per active course, default false.
         createdAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
@@ -10792,6 +10797,7 @@ components:
         - id
         - email
         - displayName
+        - dailyDigestEnabled
         - createdAt
         - updatedAt
         - version
@@ -13473,6 +13479,9 @@ components:
           description: Single-use opaque token proving control of a replacement email address in the account's current school domain.
           minLength: 1
           maxLength: 4096
+        dailyDigestEnabled:
+          type: boolean
+          description: Account-wide daily course email digest opt-in. Enabling begins with the current UTC activity date; disabling cancels unsent digests.
       additionalProperties: false
       minProperties: 1
     ChangePasswordRequest:

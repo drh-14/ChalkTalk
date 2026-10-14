@@ -19,6 +19,8 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `email`: `varchar(320)`; unique while active and stored normalized (trimmed and lowercased).
 - `display_name`: `varchar(100)`.
 - `password_hash`: `text`.
+- `daily_digest_enabled`: `boolean`; account-wide email opt-in, default `false`.
+- `daily_digest_enabled_date`: `date`, nullable; UTC activity date from which daily email becomes eligible. Present exactly when enabled.
 - `deleted_at`: `timestamptz`, nullable.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
@@ -69,6 +71,23 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `expires_at`: `timestamptz`.
 
 ## Background work
+
+### `digest_outbox`
+
+- `id`: `uuid`; primary key.
+- `recipient_user_id`: `uuid`; foreign key to `users.id`, cascading on deletion.
+- `course_id`: `uuid`; foreign key to `courses.id`, cascading on deletion.
+- `activity_date`: `date`; UTC date of the activity summarized.
+- `(recipient_user_id, course_id, activity_date)`: unique key preventing duplicate queued intents.
+- `status`: `queued`, `running`, `sent`, or `canceled`.
+- `attempts`, `available_at`, `locked_by`, `locked_until`, `last_error`, `sent_at`, `created_at`, `updated_at`: claim, retry, and delivery state. A send is marked complete only after SMTP acceptance; a crash in between may cause a duplicate email on retry.
+
+The email body is rebuilt from currently visible questions, answers, and followups immediately before sending. Disabled opt-in, removed membership, archived courses, and newly hidden content cancel pending delivery.
+
+### `digest_schedule_state`
+
+- `singleton`: fixed `true` primary key.
+- `last_scanned_date`: `date`; most recent UTC activity date considered for outbox generation. The scheduler locks and advances this row in the same transaction as the outbox insert, so concurrent replicas and restarts agree on catch-up progress.
 
 ### `jobs`
 

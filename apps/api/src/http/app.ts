@@ -205,16 +205,26 @@ function sessionCreationBody(input: unknown): JsonObject {
 }
 
 function profileUpdateBody(input: unknown): JsonObject {
-  const body = strictBody(input, ["displayName", "emailVerificationToken"]);
+  const body = strictBody(input, [
+    "displayName",
+    "emailVerificationToken",
+    "dailyDigestEnabled",
+  ]);
   if (
     body.displayName === undefined &&
-    body.emailVerificationToken === undefined
+    body.emailVerificationToken === undefined &&
+    body.dailyDigestEnabled === undefined
   )
     throw validationError("A profile field is required");
   if (body.displayName !== undefined)
     stringWithin(body.displayName, "Display name", 1, 100);
   if (body.emailVerificationToken !== undefined)
     stringWithin(body.emailVerificationToken, "Verification token", 1, 4096);
+  if (
+    body.dailyDigestEnabled !== undefined &&
+    typeof body.dailyDigestEnabled !== "boolean"
+  )
+    throw validationError("Daily digest preference must be a boolean");
   return body;
 }
 

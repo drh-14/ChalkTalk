@@ -35,6 +35,7 @@ export interface UserProfile {
   createdAt: string;
   updatedAt: string;
   version: number;
+  dailyDigestEnabled: boolean;
 }
 
 export interface AuthenticatedSession {
@@ -52,6 +53,7 @@ interface UserRow {
   created_at: Date;
   updated_at: Date;
   version: number;
+  daily_digest_enabled: boolean;
 }
 
 interface SessionRow extends UserRow {
@@ -94,6 +96,7 @@ function mapUser(row: UserRow): UserProfile {
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     version: row.version,
+    dailyDigestEnabled: row.daily_digest_enabled,
   };
 }
 
@@ -423,7 +426,7 @@ export class AuthService {
       const userResult = await client.query<UserRow>(
         `INSERT INTO users (id, organization_id, email, display_name, password_hash)
            VALUES ($1, $2, $3, $4, $5)
-           RETURNING id, email, display_name, password_hash, created_at, updated_at, version`,
+           RETURNING id, email, display_name, password_hash, created_at, updated_at, version, daily_digest_enabled`,
         [
           uuidv7(),
           organization.rows[0]!.id,
@@ -530,7 +533,7 @@ export class AuthService {
         "Email or password is invalid",
       );
     const userResult = await this.pool.query<UserRow>(
-      `SELECT id, email, display_name, password_hash, created_at, updated_at, version
+      `SELECT id, email, display_name, password_hash, created_at, updated_at, version, daily_digest_enabled
        FROM users WHERE email = $1 AND deleted_at IS NULL`,
       [email],
     );
@@ -567,7 +570,7 @@ export class AuthService {
   ): Promise<AuthenticatedSession> {
     const result = await this.pool.query<SessionRow>(
       `SELECT s.id AS session_id, s.expires_at, s.csrf_token_hash,
-              u.id, u.email, u.display_name, u.password_hash, u.created_at, u.updated_at, u.version
+              u.id, u.email, u.display_name, u.password_hash, u.created_at, u.updated_at, u.version, u.daily_digest_enabled
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.credential_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.deleted_at IS NULL`,
       [this.hash(credential)],
@@ -617,7 +620,11 @@ export class AuthService {
   async updateProfile(
     sessionCredential: string,
     ifMatch: string | undefined,
-    input: { displayName?: unknown; emailVerificationToken?: unknown },
+    input: {
+      displayName?: unknown;
+      emailVerificationToken?: unknown;
+      dailyDigestEnabled?: unknown;
+    },
   ): Promise<UserProfile> {
     const session = await this.session(sessionCredential);
     if (!ifMatch)
@@ -632,12 +639,23 @@ export class AuthService {
           : null;
     if (
       displayName === null ||
-      (displayName === undefined && input.emailVerificationToken === undefined)
+      (displayName === undefined &&
+        input.emailVerificationToken === undefined &&
+        input.dailyDigestEnabled === undefined)
     )
       throw new AuthError(
         422,
         "validation_failed",
         "A profile field is required",
+      );
+    if (
+      input.dailyDigestEnabled !== undefined &&
+      typeof input.dailyDigestEnabled !== "boolean"
+    )
+      throw new AuthError(
+        422,
+        "validation_failed",
+        "Daily digest preference must be a boolean",
       );
     return this.transaction(async (client) => {
       let email = session.user.email;
@@ -690,13 +708,31 @@ export class AuthService {
       }
       try {
         const updated = await client.query<UserRow>(
-          `UPDATE users SET email = $1, display_name = COALESCE($2, display_name), version = version + 1, updated_at = now()
-           WHERE id = $3 AND version = $4
-           RETURNING id, email, display_name, password_hash, created_at, updated_at, version`,
-          [email, displayName, session.user.id, session.user.version],
+          `UPDATE users SET email = $1, display_name = COALESCE($2, display_name),
+             daily_digest_enabled = COALESCE($3, daily_digest_enabled),
+             daily_digest_enabled_date = CASE
+               WHEN $3::boolean IS NULL THEN daily_digest_enabled_date
+               WHEN $3::boolean = false THEN NULL
+               WHEN daily_digest_enabled THEN daily_digest_enabled_date
+               ELSE (now() AT TIME ZONE 'UTC')::date END,
+             version = version + 1, updated_at = now()
+           WHERE id = $4 AND version = $5
+           RETURNING id, email, display_name, password_hash, created_at, updated_at, version, daily_digest_enabled`,
+          [
+            email,
+            displayName,
+            input.dailyDigestEnabled ?? null,
+            session.user.id,
+            session.user.version,
+          ],
         );
         if (!updated.rows[0])
           throw new AuthError(412, "version_conflict", "Profile has changed");
+        if (input.dailyDigestEnabled === false)
+          await client.query(
+            "UPDATE digest_outbox SET status='canceled',locked_by=NULL,locked_until=NULL,updated_at=now() WHERE recipient_user_id=$1 AND status IN ('queued','running')",
+            [session.user.id],
+          );
         return mapUser(updated.rows[0]!);
       } catch (error: unknown) {
         if (
@@ -914,11 +950,15 @@ export class AuthService {
           "Account is the final instructor for a course",
         );
       const deleted = await client.query(
-        "UPDATE users SET deleted_at = now(), email = concat('deleted+', id, '@invalid.local'), display_name = 'Deleted user', password_hash = '', version = version + 1, updated_at = now() WHERE id = $1 AND version = $2 RETURNING id",
+        "UPDATE users SET deleted_at = now(), email = concat('deleted+', id, '@invalid.local'), display_name = 'Deleted user', password_hash = '', daily_digest_enabled=false,daily_digest_enabled_date=NULL,version = version + 1, updated_at = now() WHERE id = $1 AND version = $2 RETURNING id",
         [session.user.id, session.user.version],
       );
       if (!deleted.rows[0])
         throw new AuthError(412, "version_conflict", "Profile has changed");
+      await client.query(
+        "DELETE FROM digest_outbox WHERE recipient_user_id=$1",
+        [session.user.id],
+      );
       await client.query(
         "DELETE FROM question_creation_daily_counts WHERE user_id = $1",
         [session.user.id],
