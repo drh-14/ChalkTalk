@@ -80,7 +80,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `attempts`, `max_attempts`: `integer`.
 - `available_at`, `locked_until`, `finished_at`, `created_at`, `updated_at`: `timestamptz`; lock and completion times are nullable.
 - `locked_by`, `last_error`: `text`, nullable.
-- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs are inserted in the successful question-merge transaction with a unique `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. The worker checks the current merge, active canonical post, author account, course membership, and active course before sending. Stale notifications complete without mail. Delivery failures return to the queue with bounded backoff and eventually become `dead`; SMTP acceptance followed by a crash can rarely result in a repeated email.
+- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost).
 
 ## Courses and membership
 

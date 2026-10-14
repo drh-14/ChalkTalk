@@ -180,10 +180,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     );
     expect(
       (
-        await pool.query(
-          "SELECT duplicate_status FROM posts WHERE id=$1",
-          [canonical.value.id],
-        )
+        await pool.query("SELECT duplicate_status FROM posts WHERE id=$1", [
+          canonical.value.id,
+        ])
       ).rows[0],
     ).toEqual({ duplicate_status: "suggested" });
     expect(await worker.runOnce()).toBe(true);
@@ -206,7 +205,8 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       duplicate_of_post_id: canonical.value.id,
     });
     expect(
-      (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId])).rows[0],
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId]))
+        .rows[0],
     ).toEqual({ status: "succeeded" });
   });
 
