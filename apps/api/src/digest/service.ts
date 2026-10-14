@@ -163,6 +163,11 @@ export class DigestService {
 
   private async deliver(row: OutboxRow, now: Date): Promise<void> {
     await this.transaction(async (client) => {
+      const user = await client.query(
+        "SELECT id FROM users WHERE id=$1 FOR SHARE",
+        [row.recipient_user_id],
+      );
+      if (!user.rows[0]) return;
       const claimed = await client.query(
         `SELECT id FROM digest_outbox WHERE id=$1 AND status='running'
           AND locked_by=$2 AND attempts=$3 FOR UPDATE`,
@@ -178,7 +183,7 @@ export class DigestService {
            JOIN courses c ON c.id=m.course_id
           WHERE u.id=$1 AND u.deleted_at IS NULL AND u.daily_digest_enabled
             AND u.daily_digest_enabled_date <= $3::date AND c.status='active'
-          FOR SHARE OF u,m,c`,
+          FOR SHARE OF m,c`,
         [row.recipient_user_id, row.course_id, row.activity_date],
       );
       if (!recipient.rows[0]) {

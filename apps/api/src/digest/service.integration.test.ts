@@ -432,6 +432,77 @@ integration("daily course email digest", () => {
     ).toBe("sent");
   });
 
+  it("completes opt-out while a claimed delivery waits for the user row", async () => {
+    await pool.query(
+      "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",
+      [ids.alice],
+    );
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    await pool.query(`CREATE FUNCTION digest_pause_opt_out() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(31415, 27182); RETURN NEW; END $$`);
+    await pool.query(`CREATE TRIGGER digest_pause_opt_out AFTER UPDATE OF daily_digest_enabled ON users
+      FOR EACH ROW WHEN (OLD.daily_digest_enabled AND NOT NEW.daily_digest_enabled)
+      EXECUTE FUNCTION digest_pause_opt_out()`);
+    const blocker = await pool.connect();
+    let optOut: Promise<{ status: number }> | undefined;
+    let delivery: Promise<boolean> | undefined;
+    try {
+      await blocker.query("SELECT pg_advisory_lock(31415, 27182)");
+      const app = createApp({ environment, authService: auth });
+      optOut = request(app)
+        .patch("/api/v1/users/me")
+        .set("Cookie", cookie)
+        .set("Origin", environment.frontendBaseUrl)
+        .set("X-CSRF-Token", csrf)
+        .set("If-Match", '"v1"')
+        .send({ dailyDigestEnabled: false })
+        .then((response) => response);
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const waiting = await pool.query<{ count: number }>(
+          `SELECT count(*)::integer AS count FROM pg_locks
+            WHERE locktype='advisory' AND classid=31415 AND objid=27182 AND NOT granted`,
+        );
+        if (waiting.rows[0]?.count) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const waiting = await pool.query<{ count: number }>(
+        `SELECT count(*)::integer AS count FROM pg_locks
+          WHERE locktype='advisory' AND classid=31415 AND objid=27182 AND NOT granted`,
+      );
+      expect(waiting.rows[0]?.count).toBe(1);
+      delivery = digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const claimed = await pool.query<{ status: string }>(
+          "SELECT status FROM digest_outbox WHERE recipient_user_id=$1",
+          [ids.alice],
+        );
+        if (claimed.rows[0]?.status === "running") break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(
+        (await pool.query("SELECT status FROM digest_outbox")).rows[0].status,
+      ).toBe("running");
+      await blocker.query("SELECT pg_advisory_unlock(31415, 27182)");
+      const results = await Promise.allSettled([optOut, delivery]);
+      expect(results[0]).toMatchObject({
+        status: "fulfilled",
+        value: { status: 200 },
+      });
+      expect(results[1]).toMatchObject({ status: "fulfilled", value: true });
+      expect(sender.messages).toHaveLength(0);
+      expect(
+        (await pool.query("SELECT status FROM digest_outbox")).rows[0].status,
+      ).toBe("canceled");
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock(31415, 27182)");
+      blocker.release();
+      if (optOut || delivery) await Promise.allSettled([optOut, delivery]);
+      await pool.query("DROP TRIGGER digest_pause_opt_out ON users");
+      await pool.query("DROP FUNCTION digest_pause_opt_out()");
+    }
+  }, 15_000);
+
   it("does not reclaim a slow active SMTP attempt after its lease expires", async () => {
     await pool.query(
       "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",
