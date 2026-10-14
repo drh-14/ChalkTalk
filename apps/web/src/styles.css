@@ -2395,7 +2395,7 @@ a:focus-visible {
   border-top: 1px solid var(--line);
   padding-top: 1.3rem;
 }
-.discussion-detail article .followup-sections h2 {
+.discussion-detail article .followup-sections > h2 {
   margin: 0;
   font-size: clamp(1.24rem, 2.08vw, 1.88rem);
 }
