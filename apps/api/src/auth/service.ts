@@ -920,6 +920,10 @@ export class AuthService {
       if (!deleted.rows[0])
         throw new AuthError(412, "version_conflict", "Profile has changed");
       await client.query(
+        "DELETE FROM digest_outbox WHERE recipient_user_id=$1",
+        [session.user.id],
+      );
+      await client.query(
         "DELETE FROM question_creation_daily_counts WHERE user_id = $1",
         [session.user.id],
       );

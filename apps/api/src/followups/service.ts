@@ -242,7 +242,10 @@ export class FollowupService {
       }
       const id = uuidv7();
       await db.query(
-        "INSERT INTO followups (id,course_id,post_id,parent_followup_id,author_user_id,body_markdown,anonymous,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,statement_timestamp(),statement_timestamp())",
+        "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
+      );
+      await db.query(
+        "INSERT INTO followups (id,course_id,post_id,parent_followup_id,author_user_id,body_markdown,anonymous,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,clock_timestamp(),clock_timestamp())",
         [
           id,
           question.course_id,
