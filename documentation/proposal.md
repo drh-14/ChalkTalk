@@ -97,11 +97,9 @@ Classes can be archived or deleted. Archiving a class makes it read-only, preven
 Users can create posts on the main page. There are three types of posts: questions, notes, and polls.
 
 Questions  
-Questions can be posted by any user. When a user creates a question, similar existing posts are surfaced automatically. Any user may respond, creating a collaborative response: either the instructors' response or the students' response. If a TA or instructor responds, it becomes the instructors' response and may be edited by TAs and instructors. If a student responds, it becomes the students' response and may be edited by students.
+Questions can be posted by any user. When a user creates a question, similar existing posts are surfaced automatically. For the current shared-answer model and editing permissions, see the [answers API reference](api/answers.md).
 
-Responses can be endorsed by a TA or instructor. Once endorsed, a response can no longer be edited.
-
-Followups can be posted in response to answers, and followups can themselves be responded to, forming a nested structure.
+For current endorsement and question-level followup behavior, see the [answers API reference](api/answers.md).
 
 Notes  
 Notes can be posted by any user. Responses cannot be posted to notes.

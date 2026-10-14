@@ -2896,7 +2896,7 @@ it("makes the post detail a focusable region beside the post listings and marks 
   expect(current[0]!.textContent).toContain("Second");
 });
 
-it("shows question content without answer sections or fetching answers", async () => {
+it("shows shared answer areas for questions and hides them for notes and tombstones", async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
     if (url.endsWith("/members/user-student"))
@@ -2914,6 +2914,8 @@ it("shows question content without answer sections or fetching answers", async (
         },
       });
     if (url.endsWith("/answers")) return json({ data: [] });
+    if (url.endsWith("/followups"))
+      return json({ data: [], meta: { total: 0, nextCursor: null } });
     return page([]);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -2935,14 +2937,14 @@ it("shows question content without answer sections or fetching answers", async (
     ),
   ).toBeTruthy();
   expect(
-    within(detail).queryByRole("region", { name: "Students' answer" }),
-  ).toBeNull();
+    await within(detail).findByRole("region", { name: "Students' answer" }),
+  ).toBeTruthy();
   expect(
-    within(detail).queryByRole("region", { name: "Instructors' answer" }),
-  ).toBeNull();
+    within(detail).getByRole("region", { name: "Instructors' answer" }),
+  ).toBeTruthy();
   expect(
     fetchMock.mock.calls.some(([url]) => String(url).endsWith("/answers")),
-  ).toBe(false);
+  ).toBe(true);
   for (const [postId, ready] of [
     ["n1", () => screen.findByRole("heading", { name: "Notice" })],
     ["d1", () => screen.findByText("This post was deleted.")],
