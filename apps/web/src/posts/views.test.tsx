@@ -3764,6 +3764,22 @@ function pinFixture(options: {
   return calls;
 }
 
+it("places staff actions after the post body and before answers", async () => {
+  pinFixture({});
+  const title = await screen.findByRole("heading", { name: "Pin me" });
+  const article = title.closest("article")!;
+  const body = article.querySelector(":scope > .post-markdown");
+  const actions = body?.nextElementSibling as HTMLElement | null;
+  expect(actions?.getAttribute("aria-label")).toBe("Staff actions");
+  expect(
+    actions?.nextElementSibling?.classList.contains("question-responses"),
+  ).toBe(true);
+  expect(within(actions!).getByRole("button", { name: "Pin" })).toBeTruthy();
+  expect(
+    within(actions!).getByRole("button", { name: "Merge as duplicate" }),
+  ).toBeTruthy();
+});
+
 it("lets staff pin and unpin a post with conditional requests and updates its row", async () => {
   const calls = pinFixture({});
   const user = userEvent.setup();

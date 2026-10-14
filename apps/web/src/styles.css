@@ -2268,7 +2268,7 @@ a:focus-visible {
 .question-responses {
   display: grid;
   gap: 1.8rem;
-  margin-top: 2rem;
+  margin-top: 2.2rem;
 }
 .answer-sections {
   border-top: 0;
@@ -2395,9 +2395,9 @@ a:focus-visible {
   border-top: 1px solid var(--line);
   padding-top: 1.3rem;
 }
-.followup-sections h2 {
+.discussion-detail article .followup-sections h2 {
   margin: 0;
-  font-size: 1.35rem;
+  font-size: clamp(1.24rem, 2.08vw, 1.88rem);
 }
 .followup-prompt {
   width: 100%;

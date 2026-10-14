@@ -1700,14 +1700,6 @@ function DiscussionContent({
                     <div className="post-markdown">
                       <PostBody bodyMarkdown={detail.bodyMarkdown} />
                     </div>
-                    {detail.type === "question" && (
-                      <QuestionResponses
-                        postId={detail.id}
-                        role={role}
-                        courseStatus={course?.status}
-                        csrfToken={csrfToken}
-                      />
-                    )}
                     {staff && postView === "posts" && (
                       <div
                         className="staff-actions"
@@ -1745,6 +1737,14 @@ function DiscussionContent({
                           }}
                         />
                       </div>
+                    )}
+                    {detail.type === "question" && (
+                      <QuestionResponses
+                        postId={detail.id}
+                        role={role}
+                        courseStatus={course?.status}
+                        csrfToken={csrfToken}
+                      />
                     )}
                   </article>
                 )}
