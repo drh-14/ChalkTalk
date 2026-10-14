@@ -106,17 +106,15 @@ export class DigestService {
           WHERE u.deleted_at IS NULL AND u.daily_digest_enabled
             AND a.author_user_id <> u.id
             AND (a.created_at AT TIME ZONE 'UTC')::date >= u.daily_digest_enabled_date
+            AND (a.created_at AT TIME ZONE 'UTC')::date > $2::date
             AND (a.created_at AT TIME ZONE 'UTC')::date < $1::date
        )
        INSERT INTO digest_outbox(recipient_user_id,course_id,activity_date,available_at)
        SELECT recipient_user_id,course_id,activity_date,
               (activity_date + 1)::timestamp AT TIME ZONE 'UTC'
          FROM eligible
-       ON CONFLICT (recipient_user_id,course_id,activity_date)
-       DO UPDATE SET status='queued',locked_by=NULL,locked_until=NULL,
-                     available_at=EXCLUDED.available_at,updated_at=now()
-         WHERE digest_outbox.status='canceled'`,
-        [today],
+       ON CONFLICT (recipient_user_id,course_id,activity_date) DO NOTHING`,
+        [today, lastScannedDate],
       );
       await client.query(
         "UPDATE digest_schedule_state SET last_scanned_date=$1 WHERE singleton=true",
@@ -149,19 +147,15 @@ export class DigestService {
     });
   }
 
-  private async cancel(
-    client: PoolClient,
-    row: OutboxRow,
-    now: Date,
-  ): Promise<void> {
+  private async cancel(client: PoolClient, row: OutboxRow): Promise<void> {
     await client.query(
-      `UPDATE digest_outbox SET status='canceled',locked_by=NULL,locked_until=NULL,updated_at=$4
+      `UPDATE digest_outbox SET status='canceled',locked_by=NULL,locked_until=NULL,updated_at=clock_timestamp()
         WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-      [row.id, this.workerId, row.attempts, now],
+      [row.id, this.workerId, row.attempts],
     );
   }
 
-  private async deliver(row: OutboxRow, now: Date): Promise<void> {
+  private async deliver(row: OutboxRow): Promise<void> {
     await this.transaction(async (client) => {
       const user = await client.query(
         "SELECT id FROM users WHERE id=$1 FOR SHARE",
@@ -187,7 +181,7 @@ export class DigestService {
         [row.recipient_user_id, row.course_id, row.activity_date],
       );
       if (!recipient.rows[0]) {
-        await this.cancel(client, row, now);
+        await this.cancel(client, row);
         return;
       }
       const items = await client.query<ActivityRow>(
@@ -219,7 +213,7 @@ export class DigestService {
         [row.course_id, row.recipient_user_id, row.activity_date],
       );
       if (items.rows.length === 0) {
-        await this.cancel(client, row, now);
+        await this.cancel(client, row);
         return;
       }
       const courseName = compact(recipient.rows[0].course_name);
@@ -248,9 +242,9 @@ export class DigestService {
         text: lines.join("\n"),
       });
       await client.query(
-        `UPDATE digest_outbox SET status='sent',sent_at=$4,locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=$4
+        `UPDATE digest_outbox SET status='sent',sent_at=clock_timestamp(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=clock_timestamp()
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-        [row.id, this.workerId, row.attempts, now],
+        [row.id, this.workerId, row.attempts],
       );
     });
   }
@@ -260,15 +254,15 @@ export class DigestService {
     const row = await this.claim(now);
     if (!row) return false;
     try {
-      await this.deliver(row, now);
+      await this.deliver(row);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown SMTP failure";
       await this.pool.query(
-        `UPDATE digest_outbox SET status='queued',available_at=$4::timestamptz + make_interval(secs => LEAST(3600, (2 ^ LEAST($3,10))::integer)),
-                locked_by=NULL,locked_until=NULL,last_error=$5,updated_at=$4
+        `UPDATE digest_outbox SET status='queued',available_at=clock_timestamp() + make_interval(secs => LEAST(3600, (2 ^ LEAST($3,10))::integer)),
+                locked_by=NULL,locked_until=NULL,last_error=$4,updated_at=clock_timestamp()
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-        [row.id, this.workerId, row.attempts, now, message.slice(0, 4000)],
+        [row.id, this.workerId, row.attempts, message.slice(0, 4000)],
       );
     }
     return true;

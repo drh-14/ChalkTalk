@@ -8,6 +8,7 @@ import { hashOpaqueToken } from "../auth/crypto.js";
 import { loadEnvironment } from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { createApp } from "../http/app.js";
+import { PostService } from "../posts/service.js";
 import { DigestService } from "./service.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -342,7 +343,7 @@ integration("daily course email digest", () => {
     ).toBe("2026-10-14");
   });
 
-  it("recovers activity committed after the midnight scan", async () => {
+  it("waits for a coordinated late content commit before advancing the cursor", async () => {
     await pool.query(
       "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",
       [ids.alice],
@@ -351,18 +352,165 @@ integration("daily course email digest", () => {
     try {
       await writer.query("BEGIN");
       await writer.query(
+        "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
+      );
+      await writer.query(
         "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES ($1,$2,$3,'question','Late commit','Body','2026-10-14T23:59:59Z')",
         [uuidv7(), ids.physics, ids.bob],
       );
-      expect(await digest.schedule(new Date("2026-10-15T00:00:00Z"))).toBe(0);
+      let scanned = false;
+      const scan = digest
+        .schedule(new Date("2026-10-15T00:00:00Z"))
+        .then((count) => {
+          scanned = true;
+          return count;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(scanned).toBe(false);
       await writer.query("COMMIT");
-      expect(await digest.schedule(new Date("2026-10-16T00:00:00Z"))).toBe(1);
-      await digest.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+      expect(await scan).toBe(1);
+      await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
       expect(sender.messages[0]?.text).toContain("Late commit");
     } finally {
       await writer.query("ROLLBACK");
       writer.release();
     }
+  });
+
+  it("does not revive a canceled historical digest after access returns", async () => {
+    await pool.query(
+      "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",
+      [ids.alice],
+    );
+    await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Old question",
+    );
+    expect(await digest.schedule(new Date("2026-10-15T00:00:00Z"))).toBe(1);
+    await pool.query(
+      "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+      [ids.physics, ids.alice],
+    );
+    const canceledAfter = (
+      await pool.query<{ at: Date }>("SELECT clock_timestamp() AS at")
+    ).rows[0]!.at;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    const canceled = await pool.query<{ updated_at: Date }>(
+      "SELECT updated_at FROM digest_outbox",
+    );
+    const canceledBefore = (
+      await pool.query<{ at: Date }>("SELECT clock_timestamp() AS at")
+    ).rows[0]!.at;
+    expect(canceled.rows[0]!.updated_at.getTime()).toBeGreaterThanOrEqual(
+      canceledAfter.getTime(),
+    );
+    expect(canceled.rows[0]!.updated_at.getTime()).toBeLessThanOrEqual(
+      canceledBefore.getTime(),
+    );
+    await pool.query(
+      "INSERT INTO course_memberships(course_id,user_id,role) VALUES ($1,$2,'student')",
+      [ids.physics, ids.alice],
+    );
+    await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-15T12:00:00Z",
+      "New question",
+    );
+    expect(await digest.schedule(new Date("2026-10-16T00:00:00Z"))).toBe(1);
+    const rows = await pool.query<{ date: string; status: string }>(
+      "SELECT activity_date::text AS date,status FROM digest_outbox ORDER BY activity_date",
+    );
+    expect(rows.rows).toEqual([
+      { date: "2026-10-14", status: "canceled" },
+      { date: "2026-10-15", status: "queued" },
+    ]);
+    await digest.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+    expect(sender.messages).toHaveLength(1);
+    expect(sender.messages[0]?.text).toContain("New question");
+    expect(sender.messages[0]?.text).not.toContain("Old question");
+  });
+
+  it("does not block note creation on the digest scheduling cursor", async () => {
+    const blocker = await pool.connect();
+    await blocker.query("BEGIN");
+    await blocker.query(
+      "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR UPDATE",
+    );
+    const posts = new PostService(pool);
+    const note = posts.create(ids.physics, ids.bob, {
+      type: "note",
+      title: "Not digest activity",
+      bodyMarkdown: "Body",
+    });
+    try {
+      const completed = await Promise.race([
+        note.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 200)),
+      ]);
+      expect(completed).toBe(true);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await note;
+    }
+  });
+
+  it("records SMTP completion and bases retries on completion time", async () => {
+    await pool.query(
+      "UPDATE users SET daily_digest_enabled=true,daily_digest_enabled_date='2026-10-14' WHERE id=$1",
+      [ids.alice],
+    );
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    let finishedAt!: Date;
+    sender.send = async () => {
+      finishedAt = (
+        await pool.query<{ at: Date }>("SELECT clock_timestamp() AS at")
+      ).rows[0]!.at;
+      throw new Error("SMTP down");
+    };
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    const retry = await pool.query<{ available_at: Date; updated_at: Date }>(
+      "SELECT available_at,updated_at FROM digest_outbox",
+    );
+    const retryBefore = (
+      await pool.query<{ at: Date }>("SELECT clock_timestamp() AS at")
+    ).rows[0]!.at;
+    expect(retry.rows[0]!.updated_at.getTime()).toBeGreaterThanOrEqual(
+      finishedAt.getTime(),
+    );
+    expect(retry.rows[0]!.updated_at.getTime()).toBeLessThanOrEqual(
+      retryBefore.getTime(),
+    );
+    expect(
+      retry.rows[0]!.available_at.getTime() -
+        retry.rows[0]!.updated_at.getTime(),
+    ).toBeGreaterThanOrEqual(1900);
+    sender.send = async (message) => {
+      finishedAt = (
+        await pool.query<{ at: Date }>("SELECT clock_timestamp() AS at")
+      ).rows[0]!.at;
+      sender.messages.push(message);
+    };
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+    const sent = await pool.query<{ sent_at: Date }>(
+      "SELECT sent_at FROM digest_outbox",
+    );
+    const sentBefore = (
+      await pool.query<{ at: Date }>("SELECT clock_timestamp() AS at")
+    ).rows[0]!.at;
+    expect(sent.rows[0]!.sent_at.getTime()).toBeGreaterThanOrEqual(
+      finishedAt.getTime(),
+    );
+    expect(sent.rows[0]!.sent_at.getTime()).toBeLessThanOrEqual(
+      sentBefore.getTime(),
+    );
   });
 
   it("holds consent and access through an in-flight SMTP handoff", async () => {
