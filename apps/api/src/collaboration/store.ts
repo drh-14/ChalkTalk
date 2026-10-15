@@ -95,11 +95,21 @@ export class CollaborationStore {
   }
 
   private async session(db: PoolClient, userId: string, sessionId: string) {
+    const user = await db.query(
+      "SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE",
+      [userId],
+    );
+    if (!user.rowCount)
+      throw new AuthError(
+        401,
+        "authentication_required",
+        "Session is no longer valid",
+      );
     const result = await db.query(
-      `SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id
+      `SELECT 1 FROM sessions s
        WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL
-         AND s.expires_at>statement_timestamp() AND u.deleted_at IS NULL
-       FOR SHARE OF s,u`,
+         AND s.expires_at>statement_timestamp()
+       FOR SHARE OF s`,
       [sessionId, userId],
     );
     if (!result.rowCount)
@@ -147,10 +157,21 @@ export class CollaborationStore {
     kind: LiveDocumentKind,
     id: string,
     userId: string,
-    lock: boolean,
+    lock: boolean | "read",
   ): Promise<DocumentMeta> {
     if (!UUID.test(id)) throw hidden();
     if (kind === "answer") {
+      let priorPostId: string | undefined;
+      let priorRole: Role | undefined;
+      if (lock === "read") {
+        const found = await db.query<{ post_id: string }>(
+          "SELECT post_id FROM answers WHERE id=$1",
+          [id],
+        );
+        priorPostId = found.rows[0]?.post_id;
+        if (!priorPostId) throw hidden();
+        priorRole = await this.postRole(db, priorPostId, userId, true);
+      }
       const result = await db.query<{
         id: string;
         course_id: string;
@@ -161,12 +182,20 @@ export class CollaborationStore {
         version: string;
       }>(
         `SELECT id,course_id,post_id,body_markdown,deleted_at,edit_role_floor,version
-         FROM answers WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
+         FROM answers WHERE id=$1${lock === "read" ? " FOR SHARE" : lock ? " FOR UPDATE" : ""}`,
         [id],
       );
       const row = result.rows[0];
-      if (!row || row.deleted_at || row.body_markdown === null) throw hidden();
-      const role = await this.postRole(db, row.post_id, userId, lock);
+      if (
+        !row ||
+        row.deleted_at ||
+        row.body_markdown === null ||
+        (priorPostId && priorPostId !== row.post_id)
+      )
+        throw hidden();
+      const role =
+        priorRole ??
+        (await this.postRole(db, row.post_id, userId, lock === true));
       if (rank[role] < rank[row.edit_role_floor])
         throw new AuthError(
           403,
@@ -188,7 +217,12 @@ export class CollaborationStore {
       [id],
     );
     if (!found.rows[0]) throw hidden();
-    const role = await this.postRole(db, found.rows[0].post_id, userId, lock);
+    const role = await this.postRole(
+      db,
+      found.rows[0].post_id,
+      userId,
+      lock !== false,
+    );
     const result = await db.query<{
       id: string;
       course_id: string;
@@ -199,7 +233,7 @@ export class CollaborationStore {
       version: string;
     }>(
       `SELECT id,course_id,post_id,body_markdown,author_user_id,deleted_at,version
-       FROM followups WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
+       FROM followups WHERE id=$1${lock === "read" ? " FOR SHARE" : lock ? " FOR UPDATE" : ""}`,
       [id],
     );
     const row = result.rows[0];
@@ -379,6 +413,39 @@ export class CollaborationStore {
         version: meta.version,
         persistenceRevision: saved.revision,
       };
+    });
+  }
+
+  async loadAuthorized(
+    kind: LiveDocumentKind,
+    id: string,
+    userId: string,
+    sessionId: string,
+  ): Promise<LiveDocument> {
+    return this.transaction(async (db) => {
+      await this.session(db, userId, sessionId);
+      const meta = await this.authorized(db, kind, id, userId, "read");
+      const saved = await this.document(db, meta);
+      return {
+        state: saved.state,
+        text: meta.body,
+        version: meta.version,
+        persistenceRevision: saved.revision,
+      };
+    });
+  }
+
+  async sendAuthorized(
+    kind: LiveDocumentKind,
+    id: string,
+    userId: string,
+    sessionId: string,
+    send: () => void,
+  ): Promise<void> {
+    await this.transaction(async (db) => {
+      await this.session(db, userId, sessionId);
+      await this.authorized(db, kind, id, userId, "read");
+      send();
     });
   }
 

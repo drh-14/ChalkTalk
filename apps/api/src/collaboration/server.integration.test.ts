@@ -44,7 +44,7 @@ integration("Hocuspocus pre-apply persistence", () => {
     for (const provider of providers) provider.destroy();
     for (const socket of sockets) socket.destroy();
     for (const server of servers) await server.destroy();
-  });
+  }, 30_000);
 
   it("does not broadcast either Update or initial SyncStep2 before the durable write resolves across two nodes", async () => {
     const seed = new Y.Doc();
@@ -55,6 +55,13 @@ integration("Hocuspocus pre-apply persistence", () => {
     let blocked = false;
     let rejectUpdates = false;
     let updateEntered = 0;
+    const loadState = async (): Promise<LiveDocument> => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, state);
+      const text = doc.getText("content").toString();
+      doc.destroy();
+      return { state, text, version: 1, persistenceRevision: 1 };
+    };
     const fakeStore = {
       consumeTicket: async () => ({
         kind: "answer",
@@ -63,14 +70,16 @@ integration("Hocuspocus pre-apply persistence", () => {
         sessionId,
       }),
       checkAccess: async () => {},
+      sendAuthorized: async (
+        _kind: string,
+        _id: string,
+        _user: string,
+        _session: string,
+        send: () => void,
+      ) => send(),
       listenForRevisions: async () => async () => {},
-      load: async (): Promise<LiveDocument> => {
-        const doc = new Y.Doc();
-        Y.applyUpdate(doc, state);
-        const text = doc.getText("content").toString();
-        doc.destroy();
-        return { state, text, version: 1, persistenceRevision: 1 };
-      },
+      load: loadState,
+      loadAuthorized: loadState,
       applyUpdate: async (
         _kind: string,
         _id: string,
@@ -143,6 +152,7 @@ integration("Hocuspocus pre-apply persistence", () => {
     a.doc.getText("content").insert(4, " A");
     await until(() => updateEntered > firstCount);
     expect(b.doc.getText("content").toString()).toBe("Base");
+    blocked = false;
     pending?.();
     await until(() => b.doc.getText("content").toString().includes(" A"));
 
@@ -155,6 +165,7 @@ integration("Hocuspocus pre-apply persistence", () => {
     const c = connect(left, offline);
     await until(() => updateEntered > secondCount);
     expect(b.doc.getText("content").toString()).not.toContain(" C");
+    blocked = false;
     pending?.();
     await until(() => b.doc.getText("content").toString().includes(" C"));
     expect(c.provider.isSynced).toBe(true);
@@ -254,6 +265,12 @@ integration("Hocuspocus pre-apply persistence", () => {
     state = Y.encodeStateAsUpdate(seed);
     seed.destroy();
     let writes = 0;
+    const loadState = async () => ({
+      state,
+      text: "Durable",
+      version: 1,
+      persistenceRevision: 1,
+    });
     const store = {
       consumeTicket: async () => ({
         kind: "answer",
@@ -262,13 +279,16 @@ integration("Hocuspocus pre-apply persistence", () => {
         sessionId,
       }),
       checkAccess: async () => {},
+      sendAuthorized: async (
+        _kind: string,
+        _id: string,
+        _user: string,
+        _session: string,
+        send: () => void,
+      ) => send(),
       listenForRevisions: async () => async () => {},
-      load: async () => ({
-        state,
-        text: "Durable",
-        version: 1,
-        persistenceRevision: 1,
-      }),
+      load: loadState,
+      loadAuthorized: loadState,
       applyUpdate: async (
         _kind: string,
         _id: string,
@@ -325,6 +345,7 @@ integration("Hocuspocus pre-apply persistence", () => {
     // A forced close intentionally invalidates the original document session.
     // Reattach with a fresh ticket; the local Y.Doc retains the unsent draft.
     provider.destroy();
+    websocketProvider.webSocket?.on("error", () => {});
     websocketProvider.destroy();
     const recoveredSocket = new HocuspocusProviderWebsocket({
       url: node.webSocketURL,

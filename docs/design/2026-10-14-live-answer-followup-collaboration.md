@@ -39,6 +39,8 @@ The API owns the authenticated browser session and CSRF check. It exposes distin
 
 Only members currently authorized to edit receive tickets. A student may edit the shared student answer; a TA may also edit a TA-created staff answer; an instructor may edit either. A followup author or current TA/instructor may edit that followup. The server checks session validity, active course membership, target visibility, and editing role again inside **every update transaction**. A five-minute ticket lifetime limits entry, not the lifetime of a connected editor. Role removal, account/session revocation, course archive, question merge/deletion, and target deletion close affected connections; the per-update check denies writes even before connection closure arrives. The WebSocket never accepts a client-claimed user ID or role.
 
+The bounded WebSocket adapter invokes public `Hocuspocus.handleConnection` and retains the official Redis extension. It binds exactly one ticket identity and document to each socket, rejects unknown or multiplexed frames, and serializes outbound frames. Immediately before each synchronous WebSocket send, it checks PostgreSQL authority while holding user, session, target, course, question, and membership locks that conflict with revocation. Read-side checks take user and session locks first, then shared question/course/membership locks before a shared answer or followup lock; taking the revocation-sensitive lock before the target avoids holding the target while waiting for a role change. Writers retain their existing target-lock order, and shared read locks do not conflict with their membership reads. A queued, REST-refreshed, or Redis-delivered frame cannot be handed to the socket after revocation commits; an earlier handed-off frame cannot be recalled. Database errors and queue or socket-buffer overflow close the socket. Initial loading checks authorization and reads state in one transaction, and inbound SyncStep1 is also checked.
+
 ### Document and persistence boundary
 
 PostgreSQL owns the complete Yjs update state and the public Markdown projection. Answer documents continue using `answer_collaboration_documents`; a corresponding followup document record is needed. Existing followup Markdown is seeded into `Y.Text('content')` without losing the text or revision. New followups initialize both representations in the creation transaction. Existing answer documents keep their Yjs history and lazy seed behavior. Document names are typed (`answer:<id>`, `followup:<id>`), preventing an ID from crossing resource kinds.
@@ -78,12 +80,12 @@ The answer and followup edit controls mount the existing Markdown/LaTeX CodeMirr
 
 ## Technology choices
 
-| Concern | Choice | Why | Runner-up |
-| --- | --- | --- | --- |
-| Live transport | Hocuspocus 4 server and provider | Existing design names Hocuspocus; its hooks support pre-apply checks, ticket authentication, and direct document updates. | Custom Yjs WebSocket server adds protocol and reconnect work. |
-| Cross-node sync | Official `@hocuspocus/extension-redis` | Supported fanout across nodes; Redis has no durable authority. | PostgreSQL `LISTEN/NOTIFY` with a custom durable update log would require replay and compaction logic. |
-| Durable state | Existing PostgreSQL Yjs bytes plus Markdown projection | Transactionally enforces roles, versioning, attribution, and content limits with existing records. | Debounced full-document snapshots can lose accepted edits on crash and race with REST. |
-| Editor binding | Stable `y-codemirror.next` for Yjs 13 and CodeMirror 6 | Matches the existing CodeMirror editor and `Y.Text` shape; supports collaborative undo. | Manual string-diff binding is easy to get wrong under concurrent edits. |
+| Concern         | Choice                                                 | Why                                                                                                                       | Runner-up                                                                                              |
+| --------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Live transport  | Hocuspocus 4 server and provider                       | Existing design names Hocuspocus; its hooks support pre-apply checks, ticket authentication, and direct document updates. | Custom Yjs WebSocket server adds protocol and reconnect work.                                          |
+| Cross-node sync | Official `@hocuspocus/extension-redis`                 | Supported fanout across nodes; Redis has no durable authority.                                                            | PostgreSQL `LISTEN/NOTIFY` with a custom durable update log would require replay and compaction logic. |
+| Durable state   | Existing PostgreSQL Yjs bytes plus Markdown projection | Transactionally enforces roles, versioning, attribution, and content limits with existing records.                        | Debounced full-document snapshots can lose accepted edits on crash and race with REST.                 |
+| Editor binding  | Stable `y-codemirror.next` for Yjs 13 and CodeMirror 6 | Matches the existing CodeMirror editor and `Y.Text` shape; supports collaborative undo.                                   | Manual string-diff binding is easy to get wrong under concurrent edits.                                |
 
 Version and maintenance status checked 2026-10-14 against the [Hocuspocus hooks](https://tiptap.dev/docs/hocuspocus/server/hooks), [Redis extension](https://tiptap.dev/docs/hocuspocus/server/extensions/redis), [provider configuration](https://tiptap.dev/docs/hocuspocus/provider/configuration), and [Yjs CodeMirror binding](https://github.com/yjs/y-codemirror.next/blob/main/README.md). Hocuspocus 4 requires Node.js 22 or newer, matching this project's container runtime. The Yjs binding repository advises current Yjs 13 users to use the stable `y-codemirror.next` package rather than its in-development Yjs 14 replacement.
 
@@ -104,15 +106,15 @@ Version and maintenance status checked 2026-10-14 against the [Hocuspocus hooks]
 
 ## Failure modes
 
-| Failure | Behavior |
-| --- | --- |
-| PostgreSQL slow or down | Update waits within a bounded timeout or is rejected before broadcast; local draft remains unsaved. No new ticket is issued while storage cannot verify it. |
-| Redis down or partitioned | Affected nodes fail closed for edits and disconnect; recovery reloads persisted documents and resynchronizes clients. A narrow in-flight propagation window can delay visibility across nodes, but committed text survives. |
-| Collaboration node crash | Its clients reconnect to another node with new tickets and load the last committed Yjs state. No accepted update depends solely on node memory. |
-| Session, role, or resource changes | Per-update transaction rejects stale authority; lifecycle notification closes the socket. Reads and ticket issuance use current visibility. |
-| Invalid or oversized Yjs update | Reject without committing or broadcasting; close the offending connection with a policy code. |
-| REST/live race | Shared row lock and REST `If-Match` serialize writes; all nodes reconcile from the committed revision. |
-| Revision notice missed | Active nodes compare persistence revision and reload/apply the missing state; reconnect always loads PostgreSQL. |
+| Failure                            | Behavior                                                                                                                                                                                                                    |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL slow or down            | Update waits within a bounded timeout or is rejected before broadcast; local draft remains unsaved. No new ticket is issued while storage cannot verify it.                                                                 |
+| Redis down or partitioned          | Affected nodes fail closed for edits and disconnect; recovery reloads persisted documents and resynchronizes clients. A narrow in-flight propagation window can delay visibility across nodes, but committed text survives. |
+| Collaboration node crash           | Its clients reconnect to another node with new tickets and load the last committed Yjs state. No accepted update depends solely on node memory.                                                                             |
+| Session, role, or resource changes | Per-update transaction rejects stale authority; lifecycle notification closes the socket. Reads and ticket issuance use current visibility.                                                                                 |
+| Invalid or oversized Yjs update    | Reject without committing or broadcasting; close the offending connection with a policy code.                                                                                                                               |
+| REST/live race                     | Shared row lock and REST `If-Match` serialize writes; all nodes reconcile from the committed revision.                                                                                                                      |
+| Revision notice missed             | Active nodes compare persistence revision and reload/apply the missing state; reconnect always loads PostgreSQL.                                                                                                            |
 
 ## Reversibility
 

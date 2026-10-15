@@ -1,6 +1,8 @@
 import { Redis } from "@hocuspocus/extension-redis";
 import { Server } from "@hocuspocus/server";
+import { WebSocketServer } from "ws";
 import * as Y from "yjs";
+import { AuthorizedEgress } from "./egress.js";
 import type {
   CollaborationStore,
   LiveDocumentKind,
@@ -52,6 +54,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   let recovering = false;
   let monitoring = false;
   let stopRevisions: (() => Promise<void>) | undefined;
+  const adapters = new WeakMap<Request, AuthorizedEgress>();
   async function waitRedisReady(client: typeof redis.pub) {
     if (client.status === "ready") return;
     await new Promise<void>((resolve, reject) => {
@@ -102,7 +105,6 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     address: options.address,
     stopOnSignals: false,
     quiet: true,
-    websocketOptions: { maxPayload: 16 * 1024 * 1024 + 1024 },
     extensions: [redis],
     async onConnect({ requestHeaders }) {
       const origin = requestHeaders.get("origin");
@@ -110,28 +112,40 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         throw new Error("Origin is not allowed");
       await requireRedis();
     },
-    async onAuthenticate({ token, documentName }) {
+    async onAuthenticate({ token, documentName, request }) {
       await requireRedis();
       const { kind, id } = target(documentName);
-      return options.store.consumeTicket(token, kind, id);
+      const identity = await options.store.consumeTicket(token, kind, id);
+      const adapter = adapters.get(request);
+      if (!adapter) throw new Error("Collaboration socket is unavailable");
+      adapter.bind(documentName, identity);
+      return identity;
     },
     async onLoadDocument({ documentName, context }) {
       const { kind, id } = target(documentName);
-      await options.store.checkAccess(
+      const loaded = await options.store.loadAuthorized(
         kind,
         id,
         context.userId,
         context.sessionId,
       );
-      const loaded = await options.store.load(kind, id);
       return loaded.state;
     },
     async beforeSync({ context, document, documentName, type, payload }) {
-      if (type !== 1 && type !== 2) return;
       await requireRedis();
       const { kind, id } = target(documentName);
       if (context.kind !== kind || context.documentId !== id)
         throw new Error("Ticket target changed");
+      if (type === 0) {
+        await options.store.checkAccess(
+          kind,
+          id,
+          context.userId,
+          context.sessionId,
+        );
+        return;
+      }
+      if (type !== 1 && type !== 2) throw new Error("Invalid sync type");
       const saved = await options.store.applyUpdate(
         kind,
         id,
@@ -156,17 +170,62 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     },
   });
 
+  server.httpServer.removeAllListeners("upgrade");
+  const sockets = new WebSocketServer({
+    noServer: true,
+    maxPayload: 16 * 1024 * 1024 + 1024,
+  });
+  server.httpServer.on("upgrade", (incoming, socket, head) => {
+    if (incoming.url?.split("?", 1)[0] !== "/collaboration") {
+      socket.destroy();
+      return;
+    }
+    sockets.handleUpgrade(incoming, socket, head, (webSocket) => {
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(incoming.headers)) {
+        if (Array.isArray(value))
+          for (const item of value) headers.append(key, item);
+        else if (value !== undefined) headers.set(key, value);
+      }
+      const request = new Request(`http://localhost${incoming.url}`, {
+        headers,
+      });
+      const adapter = new AuthorizedEgress(
+        webSocket,
+        options.store,
+        () => healthy && !recovering,
+      );
+      adapters.set(request, adapter);
+      const connection = server.hocuspocus.handleConnection(
+        adapter.transport,
+        request,
+      );
+      webSocket.on("message", (data, isBinary) => {
+        if (!isBinary || !(data instanceof Uint8Array)) {
+          webSocket.terminate();
+          return;
+        }
+        try {
+          connection.handleMessage(adapter.acceptInbound(data));
+        } catch {
+          webSocket.terminate();
+        }
+      });
+      webSocket.on("pong", () => connection.touch());
+      webSocket.on("close", (code, reason) => {
+        adapter.close();
+        connection.handleClose({ code, reason: reason.toString() });
+      });
+      webSocket.on("error", () => webSocket.terminate());
+    });
+  });
+
   async function refreshDocument(name: string) {
     if (!healthy || recovering) return;
     const document = server.hocuspocus.documents.get(name);
     if (!document) return;
     const { kind, id } = target(name);
     try {
-      const loaded = await options.store.load(kind, id);
-      Y.applyUpdate(document, loaded.state, {
-        source: "local",
-        skipStoreHooks: true,
-      });
       for (const connection of document.connections.keys()) {
         try {
           const { userId, sessionId } = connection.context;
@@ -175,6 +234,11 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
           connection.close();
         }
       }
+      const loaded = await options.store.load(kind, id);
+      Y.applyUpdate(document, loaded.state, {
+        source: "local",
+        skipStoreHooks: true,
+      });
     } catch {
       server.hocuspocus.closeConnections(name);
     }
@@ -219,7 +283,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   reconcile.unref();
   return {
     get webSocketURL() {
-      return server.webSocketURL;
+      return `${server.webSocketURL}/collaboration`;
     },
     get hocuspocus() {
       return server.hocuspocus;
@@ -242,6 +306,8 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       clearInterval(monitor);
       clearInterval(reconcile);
       await stopRevisions?.();
+      for (const socket of sockets.clients) socket.terminate();
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
       await server.destroy();
     },
   };

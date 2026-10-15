@@ -5,6 +5,7 @@ import {
   HocuspocusProviderWebsocket,
 } from "@hocuspocus/provider";
 import WebSocket from "ws";
+import { OutgoingMessage } from "@hocuspocus/server";
 import * as Y from "yjs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
@@ -56,9 +57,12 @@ class OriginWebSocket extends WebSocket {
     super(address, { origin: "http://localhost" });
   }
 }
-async function until(check: () => boolean, timeout = 10_000) {
+async function until(
+  check: () => boolean | Promise<boolean>,
+  timeout = 10_000,
+) {
   const start = Date.now();
-  while (!check()) {
+  while (!(await check())) {
     if (Date.now() - start > timeout)
       throw new Error("Timed out waiting for real-node collaboration");
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -397,6 +401,11 @@ integration("live collaboration persistence and authorization", () => {
           .getText("content")
           .insert(left.document.getText("content").length, " real nodes");
         await until(
+          async () =>
+            (await store.load("answer", id.answer)).text ===
+            `${before} real nodes`,
+        );
+        await until(
           () =>
             right.document.getText("content").toString() ===
             `${before} real nodes`,
@@ -434,6 +443,10 @@ integration("live collaboration persistence and authorization", () => {
         for (const provider of providers) provider.destroy();
         for (const socket of sockets) socket.destroy();
         await Promise.all([first.destroy(), second.destroy()]);
+        await pool.query(
+          "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,'student') ON CONFLICT DO NOTHING",
+          [id.course, id.student],
+        );
       }
     },
     30_000,
@@ -515,6 +528,276 @@ integration("live collaboration persistence and authorization", () => {
         for (const provider of providers) provider.destroy();
         for (const socket of sockets) socket.destroy();
         await Promise.all(nodes.map((node) => node.destroy()));
+      }
+    },
+    30_000,
+  );
+
+  (redisUrl ? it : it.skip)(
+    "withholds post-revocation Redis and REST updates from a connected editor",
+    async () => {
+      const prefix = `chalktalk-revocation-${randomUUID()}`;
+      const nodes = [0, 1].map(() =>
+        createCollaborationServer({
+          store,
+          redisUrl: redisUrl!,
+          redisPrefix: prefix,
+          allowedOrigins: new Set(["http://localhost"]),
+          port: 0,
+          address: "127.0.0.1",
+        }),
+      );
+      const providers: HocuspocusProvider[] = [];
+      const sockets: HocuspocusProviderWebsocket[] = [];
+      async function connect(
+        node: (typeof nodes)[number],
+        user: string,
+        session: string,
+      ) {
+        const ticket = await store.issueTicket(
+          "answer",
+          id.staffAnswer,
+          user,
+          session,
+        );
+        const socket = new HocuspocusProviderWebsocket({
+          url: node.webSocketURL,
+          WebSocketPolyfill: OriginWebSocket,
+        });
+        const document = new Y.Doc();
+        const provider = new HocuspocusProvider({
+          websocketProvider: socket,
+          document,
+          name: `answer:${id.staffAnswer}`,
+          awareness: null,
+          token: ticket,
+        });
+        sockets.push(socket);
+        providers.push(provider);
+        provider.attach();
+        await until(() => provider.isSynced);
+        return { provider, document, socket };
+      }
+      try {
+        await Promise.all(nodes.map((node) => node.listen()));
+        const writer = await connect(
+          nodes[1],
+          id.instructor,
+          id.instructorSession,
+        );
+        for (const mode of [
+          "membership",
+          "role",
+          "session",
+          "account",
+          "rest",
+          "queued",
+          "sync",
+        ] as const) {
+          const reader = await connect(nodes[0], id.ta, id.taSession);
+          const oldText = reader.document.getText("content").toString();
+          let closed = false;
+          reader.provider.on("close", () => {
+            closed = true;
+          });
+          const gate = mode === "queued" ? await pool.connect() : null;
+          try {
+            if (mode === "membership" || mode === "rest")
+              await pool.query(
+                "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+                [id.course, id.ta],
+              );
+            else if (mode === "role" || mode === "sync")
+              await pool.query(
+                "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+                [id.course, id.ta],
+              );
+            else if (mode === "queued") {
+              await gate!.query("BEGIN");
+              await gate!.query("SET LOCAL lock_timeout='3s'");
+              await gate!.query(
+                "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+                [id.course, id.ta],
+              );
+            } else if (mode === "session")
+              await pool.query(
+                "UPDATE sessions SET revoked_at=now() WHERE id=$1",
+                [id.taSession],
+              );
+            else if (mode === "account")
+              await pool.query(
+                "UPDATE users SET deleted_at=now() WHERE id=$1",
+                [id.ta],
+              );
+            if (mode === "sync") {
+              reader.socket.webSocket?.send(
+                new OutgoingMessage(`answer:${id.staffAnswer}`)
+                  .createSyncMessage()
+                  .writeFirstSyncStepFor(reader.document)
+                  .toUint8Array(),
+              );
+              await until(() => closed);
+            }
+            const next = `${oldText} ${mode}`;
+            if (mode === "rest") {
+              const service = new AnswerService(pool);
+              const current = await service.get(id.staffAnswer, id.instructor);
+              await service.edit(
+                id.staffAnswer,
+                id.instructor,
+                `"v${current.version}"`,
+                next,
+              );
+              await until(
+                () => writer.document.getText("content").toString() === next,
+              );
+            } else if (mode === "queued") {
+              const current = await store.load("answer", id.staffAnswer);
+              await store.applyUpdate(
+                "answer",
+                id.staffAnswer,
+                id.instructor,
+                id.instructorSession,
+                changed(current.state, " queued"),
+              );
+              await nodes[0].refreshDocument(`answer:${id.staffAnswer}`);
+              expect(
+                nodes[0].hocuspocus.documents
+                  .get(`answer:${id.staffAnswer}`)
+                  ?.getText("content")
+                  .toString(),
+              ).toBe(next);
+              expect(closed).toBe(false);
+              expect(reader.document.getText("content").toString()).toBe(
+                oldText,
+              );
+            } else {
+              writer.document
+                .getText("content")
+                .insert(oldText.length, ` ${mode}`);
+              await until(
+                () => writer.document.getText("content").toString() === next,
+              );
+              await until(
+                async () =>
+                  (
+                    await pool.query(
+                      "SELECT body_markdown FROM answers WHERE id=$1",
+                      [id.staffAnswer],
+                    )
+                  ).rows[0]?.body_markdown === next,
+              );
+            }
+            if (gate) await gate.query("COMMIT");
+            await until(
+              () => writer.document.getText("content").toString() === next,
+            );
+            await until(() => closed);
+            expect(reader.document.getText("content").toString()).toBe(oldText);
+          } finally {
+            if (gate) {
+              await gate.query("ROLLBACK");
+              gate.release();
+            }
+            reader.provider.destroy();
+            if (mode === "membership" || mode === "rest")
+              await pool.query(
+                "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,'ta')",
+                [id.course, id.ta],
+              );
+            else if (mode === "role" || mode === "queued" || mode === "sync")
+              await pool.query(
+                "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+                [id.course, id.ta],
+              );
+            else if (mode === "session")
+              await pool.query(
+                "UPDATE sessions SET revoked_at=NULL WHERE id=$1",
+                [id.taSession],
+              );
+            else if (mode === "account")
+              await pool.query("UPDATE users SET deleted_at=NULL WHERE id=$1", [
+                id.ta,
+              ]);
+          }
+        }
+      } finally {
+        for (const provider of providers) provider.destroy();
+        for (const socket of sockets) socket.destroy();
+        await Promise.all(nodes.map((node) => node.destroy()));
+      }
+    },
+    60_000,
+  );
+
+  (redisUrl ? it : it.skip)(
+    "does not load initial document content after a session revocation commits",
+    async () => {
+      let entered!: () => void;
+      let resume!: () => void;
+      const loading = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      const intercepted = Object.create(store) as CollaborationStore;
+      intercepted.loadAuthorized = async (...args) => {
+        entered();
+        await released;
+        return store.loadAuthorized(...args);
+      };
+      const node = createCollaborationServer({
+        store: intercepted,
+        redisUrl: redisUrl!,
+        redisPrefix: `chalktalk-load-race-${randomUUID()}`,
+        allowedOrigins: new Set(["http://localhost"]),
+        port: 0,
+        address: "127.0.0.1",
+      });
+      let provider: HocuspocusProvider | undefined;
+      let socket: HocuspocusProviderWebsocket | undefined;
+      try {
+        await node.listen();
+        const ticket = await store.issueTicket(
+          "answer",
+          id.staffAnswer,
+          id.ta,
+          id.taSession,
+        );
+        socket = new HocuspocusProviderWebsocket({
+          url: node.webSocketURL,
+          WebSocketPolyfill: OriginWebSocket,
+        });
+        const document = new Y.Doc();
+        let closed = false;
+        provider = new HocuspocusProvider({
+          websocketProvider: socket,
+          document,
+          name: `answer:${id.staffAnswer}`,
+          awareness: null,
+          token: ticket,
+        });
+        provider.on("close", () => {
+          closed = true;
+        });
+        provider.attach();
+        await loading;
+        await pool.query("UPDATE sessions SET revoked_at=now() WHERE id=$1", [
+          id.taSession,
+        ]);
+        resume();
+        await until(() => closed);
+        expect(provider.isSynced).toBe(false);
+        expect(document.getText("content").toString()).toBe("");
+      } finally {
+        resume?.();
+        provider?.destroy();
+        socket?.destroy();
+        await node.destroy();
+        await pool.query("UPDATE sessions SET revoked_at=NULL WHERE id=$1", [
+          id.taSession,
+        ]);
       }
     },
     30_000,
