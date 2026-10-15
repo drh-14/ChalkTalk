@@ -55,14 +55,18 @@ describe("authorized collaboration egress", () => {
     context.adapter.heartbeat();
     expect(context.sent).toEqual([Uint8Array.of(MessageType.Ping)]);
     expect(checks).toBe(0);
-    expect(context.adapter.acceptInbound(Uint8Array.of(MessageType.Pong))).toBeNull();
+    expect(
+      context.adapter.acceptInbound(Uint8Array.of(MessageType.Pong)),
+    ).toBeNull();
     expect(context.terminated).toBe(false);
     expect(() =>
       context.adapter.acceptInbound(Uint8Array.of(MessageType.Ping)),
     ).toThrow();
     expect(context.terminated).toBe(true);
 
-    const malformed = fixture(async (_kind, _id, _user, _session, send) => send());
+    const malformed = fixture(async (_kind, _id, _user, _session, send) =>
+      send(),
+    );
     expect(() =>
       malformed.adapter.acceptInbound(Uint8Array.of(MessageType.Pong, 1)),
     ).toThrow();

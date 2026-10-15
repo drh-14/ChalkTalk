@@ -43,8 +43,9 @@ export function previewContentUpdate(
     if (
       content
         .toDelta()
-        .some((part: { insert?: unknown; attributes?: unknown }) =>
-          typeof part.insert !== "string" || part.attributes !== undefined,
+        .some(
+          (part: { insert?: unknown; attributes?: unknown }) =>
+            typeof part.insert !== "string" || part.attributes !== undefined,
         )
     )
       throw new ContentUpdateError("invalid_content");

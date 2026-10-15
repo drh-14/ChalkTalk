@@ -198,12 +198,7 @@ export class CollaborationStore {
       [id],
     );
     if (!found.rows[0]) throw hidden();
-    const role = await this.postRole(
-      db,
-      found.rows[0].post_id,
-      userId,
-      lock,
-    );
+    const role = await this.postRole(db, found.rows[0].post_id, userId, lock);
     const result = await db.query<{
       id: string;
       course_id: string;

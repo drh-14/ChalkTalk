@@ -211,7 +211,9 @@ integration("live collaboration persistence and authorization", () => {
         const suffix = ` idle-${randomUUID()}`;
         const text = document.getText("content");
         text.insert(text.length, suffix);
-        await until(async () => (await store.load("answer", idleAnswer)).text.endsWith(suffix));
+        await until(async () =>
+          (await store.load("answer", idleAnswer)).text.endsWith(suffix),
+        );
         expect(socket.identifier).toBe(connectionId);
       } finally {
         provider?.destroy();
@@ -361,7 +363,9 @@ integration("live collaboration persistence and authorization", () => {
       id.student,
       id.studentSession,
     );
-    expect(await store.consumeTicket(token, "followup", reply.id)).toMatchObject({
+    expect(
+      await store.consumeTicket(token, "followup", reply.id),
+    ).toMatchObject({
       userId: id.student,
       documentId: reply.id,
     });
@@ -399,7 +403,9 @@ integration("live collaboration persistence and authorization", () => {
     Y.applyUpdate(doc, row.rows[0].yjs_state);
     expect(doc.getText("content").toString()).toBe("Reply text edited");
     doc.destroy();
-    expect((await store.load("followup", reply.id)).text).toBe("Reply text edited");
+    expect((await store.load("followup", reply.id)).text).toBe(
+      "Reply text edited",
+    );
     await expect(
       store.issueTicket("followup", reply.id, id.ta, id.taSession),
     ).resolves.toEqual(expect.any(String));
@@ -1125,7 +1131,8 @@ integration("live collaboration persistence and authorization", () => {
         await gate.query("COMMIT");
         gateOpen = false;
         const results = await Promise.all(edits);
-        for (const result of results) expect(result).not.toHaveProperty("error");
+        for (const result of results)
+          expect(result).not.toHaveProperty("error");
         for (const [index, target] of targets.entries()) {
           const current = await concurrentStore.load(target.kind, target.id);
           expect(current.text).toBe(initial[index].text + suffixes[index]);

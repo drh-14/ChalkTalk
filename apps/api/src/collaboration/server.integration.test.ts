@@ -57,10 +57,20 @@ integration("Hocuspocus pre-apply persistence", () => {
       Y.applyUpdate(doc, state);
       const text = doc.getText("content").toString();
       doc.destroy();
-      return { state, text, version: saves + 1, persistenceRevision: saves + 1 };
+      return {
+        state,
+        text,
+        version: saves + 1,
+        persistenceRevision: saves + 1,
+      };
     };
     const store = {
-      consumeTicket: async () => ({ kind: "answer", documentId, userId, sessionId }),
+      consumeTicket: async () => ({
+        kind: "answer",
+        documentId,
+        userId,
+        sessionId,
+      }),
       checkAccess: async () => {},
       sendAuthorized: async (
         _kind: string,

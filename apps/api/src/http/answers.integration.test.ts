@@ -1043,14 +1043,20 @@ integration("answers HTTP contract: create and read", () => {
 
   it("drives replies, votes, corrections and blank-live endorsement through an authenticated running API", async () => {
     const password = "test-password-12345";
-    await pool.query("UPDATE users SET password_hash=$1 WHERE id=ANY($2::uuid[])", [
-      await argon2.hash(password),
-      [ids.author, ids.student, ids.staff],
-    ]);
+    await pool.query(
+      "UPDATE users SET password_hash=$1 WHERE id=ANY($2::uuid[])",
+      [await argon2.hash(password), [ids.author, ids.student, ids.staff]],
+    );
     const auth = new AuthService(pool, environment, { send: async () => {} });
-    const sessions = new Map<string, Awaited<ReturnType<AuthService["login"]>>>();
+    const sessions = new Map<
+      string,
+      Awaited<ReturnType<AuthService["login"]>>
+    >();
     for (const id of [ids.author, ids.student, ids.staff])
-      sessions.set(id, await auth.login(`${names[id].toLowerCase()}@example.edu`, password));
+      sessions.set(
+        id,
+        await auth.login(`${names[id].toLowerCase()}@example.edu`, password),
+      );
     const api = createApp({
       environment,
       authService: auth,
@@ -1063,7 +1069,8 @@ integration("answers HTTP contract: create and read", () => {
     await new Promise<void>((resolve) => server.once("listening", resolve));
     try {
       const address = server.address();
-      if (!address || typeof address === "string") throw new Error("Missing API port");
+      if (!address || typeof address === "string")
+        throw new Error("Missing API port");
       const base = `http://127.0.0.1:${address.port}`;
       const call = async (
         user: string,
@@ -1084,26 +1091,64 @@ integration("answers HTTP contract: create and read", () => {
           },
           body: body ? JSON.stringify(body) : undefined,
         });
-        return { status: response.status, data: await response.json(), etag: response.headers.get("etag") };
+        return {
+          status: response.status,
+          data: await response.json(),
+          etag: response.headers.get("etag"),
+        };
       };
       const postId = await insertPost();
-      const answer = await call(ids.author, "POST", `/api/v1/posts/${postId}/answers`, { bodyMarkdown: "Initial" });
+      const answer = await call(
+        ids.author,
+        "POST",
+        `/api/v1/posts/${postId}/answers`,
+        { bodyMarkdown: "Initial" },
+      );
       expect(answer.status).toBe(201);
       const answerId = answer.data.data.id as string;
-      const root = await call(ids.author, "POST", `/api/v1/posts/${postId}/followups`, { bodyMarkdown: "Question followup" });
+      const root = await call(
+        ids.author,
+        "POST",
+        `/api/v1/posts/${postId}/followups`,
+        { bodyMarkdown: "Question followup" },
+      );
       expect(root.status).toBe(201);
-      const reply = await call(ids.student, "POST", `/api/v1/followups/${root.data.data.id}/replies`, { bodyMarkdown: "REST reply" });
+      const reply = await call(
+        ids.student,
+        "POST",
+        `/api/v1/followups/${root.data.data.id}/replies`,
+        { bodyMarkdown: "REST reply" },
+      );
       expect(reply.status).toBe(201);
       expect(reply.data.data.parentId).toBe(root.data.data.id);
-      const vote = await call(ids.student, "PUT", `/api/v1/followups/${root.data.data.id}/upvote`);
+      const vote = await call(
+        ids.student,
+        "PUT",
+        `/api/v1/followups/${root.data.data.id}/upvote`,
+      );
       expect(vote.status).toBe(200);
       expect(vote.data.data.upvoteCount).toBe(1);
-      const endorsed = await call(ids.staff, "PUT", `/api/v1/answers/${answerId}/endorsement`, undefined, answer.etag!);
+      const endorsed = await call(
+        ids.staff,
+        "PUT",
+        `/api/v1/answers/${answerId}/endorsement`,
+        undefined,
+        answer.etag!,
+      );
       expect(endorsed.status).toBe(200);
-      const correction = await call(ids.student, "PATCH", `/api/v1/answers/${answerId}`, { bodyMarkdown: "Corrected" }, endorsed.etag!);
+      const correction = await call(
+        ids.student,
+        "PATCH",
+        `/api/v1/answers/${answerId}`,
+        { bodyMarkdown: "Corrected" },
+        endorsed.etag!,
+      );
       expect(correction.status).toBe(200);
       expect(correction.data.data.endorsedAt).toBeNull();
-      const history = await pool.query("SELECT count(*)::int AS count FROM answer_endorsement_events WHERE answer_id=$1", [answerId]);
+      const history = await pool.query(
+        "SELECT count(*)::int AS count FROM answer_endorsement_events WHERE answer_id=$1",
+        [answerId],
+      );
       expect(history.rows[0].count).toBe(1);
       const live = new CollaborationStore(pool);
       const saved = await live.load("answer", answerId);
@@ -1111,13 +1156,27 @@ integration("answers HTTP contract: create and read", () => {
       Y.applyUpdate(doc, saved.state);
       const vector = Y.encodeStateVector(doc);
       doc.getText("content").delete(0, doc.getText("content").length);
-      await live.applyUpdate("answer", answerId, ids.author, sessions.get(ids.author)!.session.id, Y.encodeStateAsUpdate(doc, vector));
+      await live.applyUpdate(
+        "answer",
+        answerId,
+        ids.author,
+        sessions.get(ids.author)!.session.id,
+        Y.encodeStateAsUpdate(doc, vector),
+      );
       doc.destroy();
-      const rejected = await call(ids.staff, "PUT", `/api/v1/answers/${answerId}/endorsement`, undefined, '"v4"');
+      const rejected = await call(
+        ids.staff,
+        "PUT",
+        `/api/v1/answers/${answerId}/endorsement`,
+        undefined,
+        '"v4"',
+      );
       expect(rejected.status).toBe(409);
       expect(rejected.data.error.code).toBe("answer_empty");
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
     }
   });
 });
