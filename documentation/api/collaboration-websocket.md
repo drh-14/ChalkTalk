@@ -10,7 +10,7 @@ Call `POST /api/v1/answers/{answerId}/collaboration-ticket` or `POST /api/v1/fol
 
 The separate collaboration process and Redis bus are opt-in. Start them together with the API and PostgreSQL; Redis is not a durable document store. If collaboration is down, use the version-checked REST editor.
 
-Each socket accepts one ticket identity and one document. Initial document load is authorized atomically with the load transaction, and incoming sync requests as well as updates are reauthorized. Outbound frames are ordered through a bounded queue; PostgreSQL access locks remain held through each synchronous WebSocket send. A document frame is not handed to the WebSocket after a conflicting revocation transaction commits, including frames from REST refresh or Redis replication. Frames handed off before commit cannot be recalled. Unknown or multiplexed frames, queue overflow, and database authorization failures close the socket.
+Each socket accepts one ticket identity and one document. Every frame must use the exact plain `documentName` bound to the ticket; session-aware NUL-suffixed routing names are not supported. Initial document load is authorized atomically with the load transaction, and incoming sync requests as well as updates are reauthorized. Outbound frames are ordered through a bounded queue; PostgreSQL access locks remain held through each synchronous WebSocket send. A document frame is not handed to the WebSocket after a conflicting revocation transaction commits, including frames from REST refresh or Redis replication. Frames handed off before commit cannot be recalled. Unknown or multiplexed frames, queue overflow, and database authorization failures close the socket.
 
 ## Shared documents and presence
 

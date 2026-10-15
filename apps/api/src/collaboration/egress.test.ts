@@ -46,6 +46,39 @@ function fixture(sendAuthorized: CollaborationStore["sendAuthorized"]) {
 }
 
 describe("authorized collaboration egress", () => {
+  it("binds only the exact plain answer or followup address", () => {
+    for (const kind of ["answer", "followup"] as const) {
+      const documentName = `${kind}:${identity.documentId}`;
+      for (const address of [
+        `${documentName}\0session`,
+        `${kind}:01a0e5cc-58ae-7009-9f43-ea8bbebc2e09`,
+      ]) {
+        let terminated = false;
+        const socket = {
+          readyState: WebSocket.OPEN,
+          bufferedAmount: 0,
+          send: () => {},
+          close: () => {},
+          terminate: () => {
+            terminated = true;
+          },
+        } as unknown as WebSocket;
+        const adapter = new AuthorizedEgress(
+          socket,
+          { sendAuthorized: async () => {} } as unknown as CollaborationStore,
+          () => true,
+        );
+        adapter.acceptInbound(
+          new OutgoingMessage(address).writeAuthenticated(false).toUint8Array(),
+        );
+        expect(() => adapter.bind(documentName, { ...identity, kind })).toThrow(
+          "Ticket target changed",
+        );
+        expect(terminated).toBe(false);
+      }
+    }
+  });
+
   it("serializes frames and drops queued content on authorization failure", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -82,6 +115,17 @@ describe("authorized collaboration egress", () => {
         .toUint8Array(),
     );
     expect(allowed.terminated).toBe(true);
+
+    const suffixed = fixture(async (_kind, _id, _user, _session, send) =>
+      send(),
+    );
+    suffixed.adapter.transport.send(
+      new OutgoingMessage(`${name}\0session`)
+        .writeSyncStatus(true)
+        .toUint8Array(),
+    );
+    expect(suffixed.terminated).toBe(true);
+    expect(suffixed.sent).toEqual([]);
 
     const unsupported = fixture(async (_kind, _id, _user, _session, send) =>
       send(),
@@ -120,6 +164,16 @@ describe("authorized collaboration egress", () => {
   });
 
   it("rejects unknown and multiplexed inbound document frames", () => {
+    const malformed = fixture(async (_kind, _id, _user, _session, send) =>
+      send(),
+    );
+    expect(() =>
+      malformed.adapter.acceptInbound(
+        new OutgoingMessage("").writeSyncStatus(true).toUint8Array(),
+      ),
+    ).toThrow("Invalid collaboration frame");
+    expect(malformed.terminated).toBe(true);
+
     const sameDocument = fixture(async (_kind, _id, _user, _session, send) =>
       send(),
     );
@@ -141,5 +195,17 @@ describe("authorized collaboration egress", () => {
       ),
     ).toThrow("Multiplexed document");
     expect(otherDocument.terminated).toBe(true);
+
+    const suffixed = fixture(async (_kind, _id, _user, _session, send) =>
+      send(),
+    );
+    expect(() =>
+      suffixed.adapter.acceptInbound(
+        new OutgoingMessage(`${name}\0session`)
+          .writeSyncStatus(true)
+          .toUint8Array(),
+      ),
+    ).toThrow("Multiplexed document");
+    expect(suffixed.terminated).toBe(true);
   });
 });

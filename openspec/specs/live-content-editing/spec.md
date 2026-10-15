@@ -22,6 +22,11 @@ Each WebSocket SHALL be bound to one ticket identity and document. Unknown, mult
 - **WHEN** a ticket is reused or offered for another document
 - **THEN** the connection is rejected without exposing content
 
+#### Scenario: Session-suffixed or malformed document address
+
+- **WHEN** an editor sends a NUL-suffixed, malformed, or alternate document address instead of the exact ticket-bound name
+- **THEN** the connection is rejected without loading or disclosing document content
+
 #### Scenario: Permission change before join
 
 - **WHEN** membership or resource visibility changes between ticket issuance and connection

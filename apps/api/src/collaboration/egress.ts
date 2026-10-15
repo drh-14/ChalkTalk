@@ -58,7 +58,7 @@ export class AuthorizedEgress {
     if (this.identity) throw new Error("Ticket already bound");
     if (!this.address) throw new Error("Collaboration address missing");
     if (
-      this.address.split("\0", 1)[0] !== documentName ||
+      this.address !== documentName ||
       documentName !== `${identity.kind}:${identity.documentId}`
     )
       throw new Error("Ticket target changed");

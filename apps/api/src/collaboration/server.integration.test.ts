@@ -46,6 +46,92 @@ integration("Hocuspocus pre-apply persistence", () => {
     for (const server of servers) await server.destroy();
   }, 30_000);
 
+  it("rejects session-suffixed, malformed, and alternate document addresses without loading content", async () => {
+    const seed = new Y.Doc();
+    seed.getText("content").insert(0, "Private answer");
+    const state = Y.encodeStateAsUpdate(seed);
+    seed.destroy();
+    let loads = 0;
+    const fakeStore = {
+      consumeTicket: async () => ({
+        kind: "answer",
+        documentId,
+        userId,
+        sessionId,
+      }),
+      checkAccess: async () => {},
+      listenForRevisions: async () => async () => {},
+      loadAuthorized: async () => {
+        loads += 1;
+        return {
+          state,
+          text: "Private answer",
+          version: 1,
+          persistenceRevision: 1,
+        };
+      },
+      sendAuthorized: async (
+        _kind: string,
+        _id: string,
+        _user: string,
+        _session: string,
+        send: () => void,
+      ) => send(),
+    } as unknown as CollaborationStore;
+    const server = createCollaborationServer({
+      store: fakeStore,
+      redisUrl: redisUrl!,
+      allowedOrigins: new Set(["http://localhost"]),
+      redisPrefix: `chalktalk-address-test-${randomUUID()}`,
+      port: 0,
+      address: "127.0.0.1",
+    });
+    await server.listen();
+    try {
+      for (const [name, sessionAwareness] of [
+        [documentName, true],
+        ["not-a-document", false],
+        ["answer:01a0e5cc-58ae-7009-9f43-ea8bbebc2e09", false],
+      ] as const) {
+        const socket = new HocuspocusProviderWebsocket({
+          url: server.webSocketURL,
+          WebSocketPolyfill: OriginWebSocket,
+        });
+        const document = new Y.Doc();
+        const provider = new HocuspocusProvider({
+          websocketProvider: socket,
+          document,
+          name,
+          sessionAwareness,
+          awareness: null,
+          token: "test-ticket",
+        });
+        let closed = false;
+        let denied = false;
+        provider.on("close", () => {
+          closed = true;
+        });
+        provider.on("authenticationFailed", () => {
+          denied = true;
+        });
+        try {
+          provider.attach();
+          await until(() => closed || denied || provider.isSynced);
+          expect(closed || denied).toBe(true);
+          expect(provider.isSynced).toBe(false);
+          expect(document.getText("content").toString()).toBe("");
+          expect(loads).toBe(0);
+        } finally {
+          provider.destroy();
+          socket.destroy();
+          document.destroy();
+        }
+      }
+    } finally {
+      await server.destroy();
+    }
+  }, 20_000);
+
   it("does not broadcast either Update or initial SyncStep2 before the durable write resolves across two nodes", async () => {
     const seed = new Y.Doc();
     seed.getText("content").insert(0, "Base");
