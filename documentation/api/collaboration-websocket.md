@@ -1,6 +1,6 @@
 # Collaboration WebSocket protocol
 
-Answer and followup body editing uses the implemented Hocuspocus/Yjs WebSocket. Temporary collaboration sessions described elsewhere remain future work. Version-checked REST editing is still available as a fallback; see the [answers and followups API reference](answers.md).
+Answer and existing root followup and reply body editing uses the implemented Hocuspocus/Yjs WebSocket. Creating replies remains a REST operation. Temporary collaboration sessions described elsewhere remain future work. Version-checked REST editing is still available as a fallback; see the [answers and followups API reference](answers.md).
 
 ## Connecting
 

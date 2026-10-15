@@ -14,6 +14,7 @@ The existing answer path stores a complete Yjs state and Markdown projection tra
 - PostgreSQL row locks serialize live, REST, endorsement, and deletion. The persisted complete Yjs state and Markdown projection are authoritative; Redis only fans out accepted updates. Use periodic revision checks for missed REST notices.
 - Hash and consume random five-minute tickets in PostgreSQL; recheck session and role inside every update transaction. Never use client-supplied awareness identity.
 - Add a followup Yjs document table and migrate old followup bodies in place. Existing answer document state is retained.
+- Create root followups and replies through REST; edit the body of either existing kind through the same followup Yjs ticket and role checks.
 - Use the official Hocuspocus Redis extension. Fail closed on Redis unavailability and force reconnection/reload after recovery instead of accepting edits into isolated node memory.
 - Bind the existing CodeMirror 6 Markdown/LaTeX editor through `y-codemirror.next`; toolbar edits operate on ranges rather than replacing the full string.
 

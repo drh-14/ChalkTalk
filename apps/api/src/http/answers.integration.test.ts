@@ -738,6 +738,11 @@ integration("answers HTTP contract: create and read", () => {
       ),
     ).send({ bodyMarkdown: "Reply" });
     expect(reply.status).toBe(201);
+    expect(reply.body.data).toMatchObject({
+      parentId: root.body.data.id,
+      bodyMarkdown: "Reply",
+      version: 1,
+    });
     const voted = await unsafe(
       request(app(ids.student)).put(
         `/api/v1/followups/${root.body.data.id}/upvote`,
@@ -756,6 +761,7 @@ integration("answers HTTP contract: create and read", () => {
       `/api/v1/followups/${root.body.data.id}/replies`,
     );
     expect(children.body.data).toHaveLength(1);
+    expect(children.body.data[0].id).toBe(reply.body.data.id);
   });
   it("keeps answer vote totals independent of content revisions", async () => {
     const created = await answer(ids.author, await insertPost());

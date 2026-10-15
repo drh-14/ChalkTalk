@@ -10,6 +10,7 @@ import * as Y from "yjs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { AnswerService } from "../answers/service.js";
+import { FollowupService } from "../followups/service.js";
 import { CollaborationStore } from "./store.js";
 import { createCollaborationServer } from "./server.js";
 import { AuthorizedEgress } from "./egress.js";
@@ -273,6 +274,78 @@ integration("live collaboration persistence and authorization", () => {
         changed(saved.state, "spoof"),
       ),
     ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("persists authorized live edits to an existing reply body", async () => {
+    const reply = await new FollowupService(pool).create(
+      id.post,
+      id.student,
+      { bodyMarkdown: "Reply text" },
+      id.followup,
+    );
+    expect(reply.parentId).toBe(id.followup);
+    expect(reply.version).toBe(1);
+    await expect(
+      store.issueTicket("followup", reply.id, id.otherStudent, id.otherSession),
+    ).rejects.toMatchObject({ status: 403 });
+    const token = await store.issueTicket(
+      "followup",
+      reply.id,
+      id.student,
+      id.studentSession,
+    );
+    expect(await store.consumeTicket(token, "followup", reply.id)).toMatchObject({
+      userId: id.student,
+      documentId: reply.id,
+    });
+    const initial = await store.load("followup", reply.id);
+    const saved = await store.applyUpdate(
+      "followup",
+      reply.id,
+      id.student,
+      id.studentSession,
+      changed(initial.state, " edited"),
+    );
+    expect(saved.text).toBe("Reply text edited");
+    expect(saved.version).toBe(2);
+    await expect(
+      store.applyUpdate(
+        "followup",
+        reply.id,
+        id.otherStudent,
+        id.otherSession,
+        changed(saved.state, " unauthorized"),
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+    const row = await pool.query(
+      `SELECT f.body_markdown,f.version,f.parent_followup_id,d.yjs_state
+       FROM followups f JOIN followup_collaboration_documents d ON d.followup_id=f.id
+       WHERE f.id=$1`,
+      [reply.id],
+    );
+    expect(row.rows[0]).toMatchObject({
+      body_markdown: "Reply text edited",
+      version: "2",
+      parent_followup_id: id.followup,
+    });
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, row.rows[0].yjs_state);
+    expect(doc.getText("content").toString()).toBe("Reply text edited");
+    doc.destroy();
+    expect((await store.load("followup", reply.id)).text).toBe("Reply text edited");
+    await expect(
+      store.issueTicket("followup", reply.id, id.ta, id.taSession),
+    ).resolves.toEqual(expect.any(String));
+    const staffEdit = await store.applyUpdate(
+      "followup",
+      reply.id,
+      id.ta,
+      id.taSession,
+      changed(saved.state, " by staff"),
+    );
+    expect(staffEdit.text).toBe("Reply text edited by staff");
+    expect(staffEdit.version).toBe(3);
+    expect((await store.load("followup", reply.id)).text).toBe(staffEdit.text);
   });
 
   it("revokes a live editor immediately when course membership is removed", async () => {

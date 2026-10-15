@@ -4,9 +4,9 @@ The shared answer and followup editors currently save whole-body replacements th
 
 ## What Changes
 
-- Add one-use, session-bound tickets for existing answer and followup bodies and a separate Hocuspocus WebSocket service.
+- Add one-use, session-bound tickets for existing answer and followup bodies, including replies, and a separate Hocuspocus WebSocket service.
 - Persist each accepted Yjs edit and its Markdown projection in PostgreSQL before applying or broadcasting it; replicate across nodes through Redis.
-- Keep conditional REST edits synchronized with live documents and continue REST for creation, replies, votes, endorsement, and deletion.
+- Keep conditional REST edits synchronized with live documents and continue REST for answer, followup, and reply creation, votes, endorsement, and deletion.
 - Bind the existing Markdown/LaTeX CodeMirror editor to Yjs, with connection/rejection feedback and identity-safe awareness.
 - Allow temporarily empty live text, but continue requiring nonblank REST creation/edit and endorsement.
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Lets authorized course members edit existing shared answer and followup bodies together while keeping accepted changes durable, synchronized, and identity-safe.
+Lets authorized course members edit existing shared answer, root followup, and reply bodies together while keeping accepted changes durable, synchronized, and identity-safe; reply creation remains REST.
 
 ## Requirements
 
