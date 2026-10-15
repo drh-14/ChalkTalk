@@ -155,6 +155,73 @@ integration("live collaboration persistence and authorization", () => {
     await admin?.end();
   });
 
+  (redisUrl ? it : it.skip)(
+    "keeps an idle real-store provider connected and persists its next edit",
+    async () => {
+      const idlePost = randomUUID();
+      const idleAnswer = randomUUID();
+      await pool.query(
+        "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'question','Idle question','Body')",
+        [idlePost, id.course, id.student],
+      );
+      await pool.query(
+        "INSERT INTO answers(id,course_id,post_id,kind,body_markdown,created_by_user_id,edit_role_floor) VALUES($1,$2,$3,'student','Idle store text',$4,'student')",
+        [idleAnswer, id.course, idlePost, id.student],
+      );
+      await pool.query(
+        "INSERT INTO answer_collaboration_documents(answer_id,yjs_state) VALUES($1,$2)",
+        [idleAnswer, state("Idle store text")],
+      );
+      const node = createCollaborationServer({
+        store,
+        redisUrl: redisUrl!,
+        redisPrefix: `chalktalk-idle-store-${randomUUID()}`,
+        allowedOrigins: new Set(["http://localhost"]),
+        port: 0,
+        address: "127.0.0.1",
+      });
+      let provider: HocuspocusProvider | undefined;
+      let socket: HocuspocusProviderWebsocket | undefined;
+      try {
+        await node.listen();
+        const ticket = await store.issueTicket(
+          "answer",
+          idleAnswer,
+          id.student,
+          id.studentSession,
+        );
+        socket = new HocuspocusProviderWebsocket({
+          url: node.webSocketURL,
+          WebSocketPolyfill: OriginWebSocket,
+        });
+        const document = new Y.Doc();
+        provider = new HocuspocusProvider({
+          websocketProvider: socket,
+          document,
+          name: `answer:${idleAnswer}`,
+          awareness: null,
+          token: ticket,
+        });
+        provider.attach();
+        await until(() => provider!.isSynced);
+        const connectionId = socket.identifier;
+        await new Promise((resolve) => setTimeout(resolve, 35_000));
+        expect(provider.isSynced).toBe(true);
+        expect(socket.identifier).toBe(connectionId);
+        const suffix = ` idle-${randomUUID()}`;
+        const text = document.getText("content");
+        text.insert(text.length, suffix);
+        await until(async () => (await store.load("answer", idleAnswer)).text.endsWith(suffix));
+        expect(socket.identifier).toBe(connectionId);
+      } finally {
+        provider?.destroy();
+        socket?.destroy();
+        await node.destroy();
+      }
+    },
+    50_000,
+  );
+
   it("issues only role-authorized, document-bound one-use tickets", async () => {
     await expect(
       store.issueTicket(
