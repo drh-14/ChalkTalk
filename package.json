@@ -18,10 +18,13 @@
     "format:check": "prettier --check \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:browser:collaboration": "PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers playwright test tests/browser/live-collaboration.spec.mjs --workers=1",
+    "test:rest:collaboration": "vitest run apps/api/src/http/answers.integration.test.ts -t 'drives replies, votes, corrections and blank-live endorsement through an authenticated running API'",
     "typecheck": "tsc --noEmit -p apps/web/tsconfig.app.json && tsc --noEmit -p apps/api/tsconfig.json"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@playwright/test": "^1.58.2",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
     "@types/express": "^5.0.3",
