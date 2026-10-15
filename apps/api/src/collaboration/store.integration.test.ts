@@ -12,6 +12,7 @@ import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { AnswerService } from "../answers/service.js";
 import { CollaborationStore } from "./store.js";
 import { createCollaborationServer } from "./server.js";
+import { AuthorizedEgress } from "./egress.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const redisUrl = process.env.TEST_REDIS_URL;
@@ -591,7 +592,6 @@ integration("live collaboration persistence and authorization", () => {
           "session",
           "account",
           "rest",
-          "queued",
           "sync",
         ] as const) {
           const reader = await connect(nodes[0], id.ta, id.taSession);
@@ -600,7 +600,6 @@ integration("live collaboration persistence and authorization", () => {
           reader.provider.on("close", () => {
             closed = true;
           });
-          const gate = mode === "queued" ? await pool.connect() : null;
           try {
             if (mode === "membership" || mode === "rest")
               await pool.query(
@@ -612,14 +611,7 @@ integration("live collaboration persistence and authorization", () => {
                 "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
                 [id.course, id.ta],
               );
-            else if (mode === "queued") {
-              await gate!.query("BEGIN");
-              await gate!.query("SET LOCAL lock_timeout='3s'");
-              await gate!.query(
-                "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
-                [id.course, id.ta],
-              );
-            } else if (mode === "session")
+            else if (mode === "session")
               await pool.query(
                 "UPDATE sessions SET revoked_at=now() WHERE id=$1",
                 [id.taSession],
@@ -651,26 +643,6 @@ integration("live collaboration persistence and authorization", () => {
               await until(
                 () => writer.document.getText("content").toString() === next,
               );
-            } else if (mode === "queued") {
-              const current = await store.load("answer", id.staffAnswer);
-              await store.applyUpdate(
-                "answer",
-                id.staffAnswer,
-                id.instructor,
-                id.instructorSession,
-                changed(current.state, " queued"),
-              );
-              await nodes[0].refreshDocument(`answer:${id.staffAnswer}`);
-              expect(
-                nodes[0].hocuspocus.documents
-                  .get(`answer:${id.staffAnswer}`)
-                  ?.getText("content")
-                  .toString(),
-              ).toBe(next);
-              expect(closed).toBe(false);
-              expect(reader.document.getText("content").toString()).toBe(
-                oldText,
-              );
             } else {
               writer.document
                 .getText("content")
@@ -688,24 +660,19 @@ integration("live collaboration persistence and authorization", () => {
                   ).rows[0]?.body_markdown === next,
               );
             }
-            if (gate) await gate.query("COMMIT");
             await until(
               () => writer.document.getText("content").toString() === next,
             );
             await until(() => closed);
             expect(reader.document.getText("content").toString()).toBe(oldText);
           } finally {
-            if (gate) {
-              await gate.query("ROLLBACK");
-              gate.release();
-            }
             reader.provider.destroy();
             if (mode === "membership" || mode === "rest")
               await pool.query(
                 "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,'ta')",
                 [id.course, id.ta],
               );
-            else if (mode === "role" || mode === "queued" || mode === "sync")
+            else if (mode === "role" || mode === "sync")
               await pool.query(
                 "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
                 [id.course, id.ta],
@@ -802,4 +769,162 @@ integration("live collaboration persistence and authorization", () => {
     },
     30_000,
   );
+
+  it("drops a queued content frame after role revocation commits", async () => {
+    const applicationName = `collab_queue_${randomUUID()}`;
+    const concurrentPool = new Pool({
+      connectionString: url,
+      options: `--search_path="${schema}"`,
+      application_name: applicationName,
+    });
+    const concurrentStore = new CollaborationStore(concurrentPool);
+    const gate = await concurrentPool.connect();
+    let gateOpen = false;
+    let terminated = false;
+    const sent: Uint8Array[] = [];
+    const socket = {
+      readyState: WebSocket.OPEN,
+      bufferedAmount: 0,
+      send: (bytes: Uint8Array) => sent.push(Uint8Array.from(bytes)),
+      close: () => {
+        terminated = true;
+      },
+      terminate: () => {
+        terminated = true;
+      },
+    } as unknown as WebSocket;
+    const name = `answer:${id.staffAnswer}`;
+    const adapter = new AuthorizedEgress(socket, concurrentStore, () => true);
+    try {
+      const document = await store.load("answer", id.staffAnswer);
+      adapter.acceptInbound(
+        new OutgoingMessage(name).writeAuthenticated(false).toUint8Array(),
+      );
+      adapter.bind(name, {
+        kind: "answer",
+        documentId: id.staffAnswer,
+        userId: id.ta,
+        sessionId: id.taSession,
+      });
+      await gate.query("BEGIN");
+      gateOpen = true;
+      await gate.query(
+        "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+        [id.course, id.ta],
+      );
+      adapter.transport.send(
+        new OutgoingMessage(name)
+          .createSyncMessage()
+          .writeUpdate(document.state)
+          .toUint8Array(),
+      );
+      await until(async () => {
+        const result = await admin.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM pg_stat_activity
+           WHERE application_name=$1 AND wait_event_type='Lock'`,
+          [applicationName],
+        );
+        return Number(result.rows[0].count) === 1;
+      });
+      expect(sent).toEqual([]);
+      await gate.query("COMMIT");
+      gateOpen = false;
+      await until(() => terminated);
+      expect(sent).toEqual([]);
+    } finally {
+      adapter.close();
+      if (gateOpen) await gate.query("ROLLBACK");
+      gate.release();
+      await pool.query(
+        "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+        [id.course, id.ta],
+      );
+      await concurrentPool.end();
+    }
+  });
+
+  it("completes a concurrent outbound answer send and REST edit without deadlock", async () => {
+    const applicationName = `collab_lock_${randomUUID()}`;
+    const concurrentPool = new Pool({
+      connectionString: url,
+      options: `--search_path="${schema}"`,
+      application_name: applicationName,
+    });
+    const concurrentStore = new CollaborationStore(concurrentPool);
+    const service = new AnswerService(concurrentPool);
+    const gate = await concurrentPool.connect();
+    let gateOpen = false;
+    try {
+      const before = await service.get(id.staffAnswer, id.instructor);
+      await gate.query("BEGIN");
+      gateOpen = true;
+      await gate.query("SELECT id FROM answers WHERE id=$1 FOR UPDATE", [
+        id.staffAnswer,
+      ]);
+      const edit = service
+        .edit(
+          id.staffAnswer,
+          id.instructor,
+          `"v${before.version}"`,
+          `${before.bodyMarkdown} concurrent REST`,
+        )
+        .then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error }),
+        );
+      const waiting = async () => {
+        const result = await admin.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM pg_stat_activity
+             WHERE application_name=$1 AND wait_event_type='Lock'`,
+          [applicationName],
+        );
+        return Number(result.rows[0].count);
+      };
+      await until(async () => (await waiting()) === 1);
+      let sent = false;
+      const outbound = concurrentStore
+        .sendAuthorized("answer", id.staffAnswer, id.ta, id.taSession, () => {
+          sent = true;
+        })
+        .then(
+          () => ({ sent: true }),
+          (error: unknown) => ({ error }),
+        );
+      await until(async () => (await waiting()) === 2);
+      await gate.query("COMMIT");
+      gateOpen = false;
+      const [edited, delivered] = await Promise.all([edit, outbound]);
+      expect(edited).not.toHaveProperty("error");
+      expect(delivered).not.toHaveProperty("error");
+      expect(sent).toBe(true);
+      expect(
+        (await service.get(id.staffAnswer, id.instructor)).bodyMarkdown,
+      ).toBe(`${before.bodyMarkdown} concurrent REST`);
+      await pool.query(
+        "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+        [id.course, id.ta],
+      );
+      let revokedSend = false;
+      await expect(
+        concurrentStore.sendAuthorized(
+          "answer",
+          id.staffAnswer,
+          id.ta,
+          id.taSession,
+          () => {
+            revokedSend = true;
+          },
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(revokedSend).toBe(false);
+    } finally {
+      if (gateOpen) await gate.query("ROLLBACK");
+      gate.release();
+      await pool.query(
+        "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+        [id.course, id.ta],
+      );
+      await concurrentPool.end();
+    }
+  }, 30_000);
 });

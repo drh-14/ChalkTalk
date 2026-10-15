@@ -161,17 +161,6 @@ export class CollaborationStore {
   ): Promise<DocumentMeta> {
     if (!UUID.test(id)) throw hidden();
     if (kind === "answer") {
-      let priorPostId: string | undefined;
-      let priorRole: Role | undefined;
-      if (lock === "read") {
-        const found = await db.query<{ post_id: string }>(
-          "SELECT post_id FROM answers WHERE id=$1",
-          [id],
-        );
-        priorPostId = found.rows[0]?.post_id;
-        if (!priorPostId) throw hidden();
-        priorRole = await this.postRole(db, priorPostId, userId, true);
-      }
       const result = await db.query<{
         id: string;
         course_id: string;
@@ -186,16 +175,8 @@ export class CollaborationStore {
         [id],
       );
       const row = result.rows[0];
-      if (
-        !row ||
-        row.deleted_at ||
-        row.body_markdown === null ||
-        (priorPostId && priorPostId !== row.post_id)
-      )
-        throw hidden();
-      const role =
-        priorRole ??
-        (await this.postRole(db, row.post_id, userId, lock === true));
+      if (!row || row.deleted_at || row.body_markdown === null) throw hidden();
+      const role = await this.postRole(db, row.post_id, userId, lock !== false);
       if (rank[role] < rank[row.edit_role_floor])
         throw new AuthError(
           403,
