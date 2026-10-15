@@ -11,6 +11,7 @@ let providerConfiguration:
       token: () => Promise<string>;
       document: import("yjs").Doc;
       name: string;
+      awareness: null;
       onSynced: () => void;
       onStatus: (event: { status: string }) => void;
       onClose: () => void;
@@ -63,6 +64,7 @@ it("loads the collaborative Markdown editor and requests a fresh ticket on each 
   );
   const editor = await screen.findByRole("textbox", { name: "Answer" });
   expect(editor.textContent).toContain("Initial");
+  expect(providerConfiguration?.awareness).toBeNull();
   await expect(providerConfiguration?.token()).resolves.toBe("fresh");
   await expect(providerConfiguration?.token()).resolves.toBe("fresh");
   expect(fetchMock).toHaveBeenCalledTimes(2);
