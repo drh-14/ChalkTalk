@@ -200,19 +200,24 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         adapter.transport,
         request,
       );
+      const heartbeat = setInterval(() => adapter.heartbeat(), 10_000);
+      heartbeat.unref();
       webSocket.on("message", (data, isBinary) => {
         if (!isBinary || !(data instanceof Uint8Array)) {
           webSocket.terminate();
           return;
         }
         try {
-          connection.handleMessage(adapter.acceptInbound(data));
+          const frame = adapter.acceptInbound(data);
+          if (frame) connection.handleMessage(frame);
+          else connection.touch();
         } catch {
           webSocket.terminate();
         }
       });
       webSocket.on("pong", () => connection.touch());
       webSocket.on("close", (code, reason) => {
+        clearInterval(heartbeat);
         adapter.close();
         connection.handleClose({ code, reason: reason.toString() });
       });

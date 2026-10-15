@@ -13,8 +13,6 @@ const allowedTypes = new Set([
   MessageType.SyncReply,
   MessageType.CLOSE,
   MessageType.SyncStatus,
-  MessageType.Ping,
-  MessageType.Pong,
 ]);
 
 function decode(data: Uint8Array) {
@@ -65,8 +63,12 @@ export class AuthorizedEgress {
     this.identity = identity;
   }
 
-  acceptInbound(data: Uint8Array) {
+  acceptInbound(data: Uint8Array): Uint8Array | null {
     try {
+      if (data.length === 1 && data[0] === MessageType.Pong) {
+        if (!this.identity) throw new Error("Unauthenticated heartbeat");
+        return null;
+      }
       const frame = decode(data);
       if (!this.address) this.address = frame.address;
       if (frame.address !== this.address)
@@ -85,6 +87,21 @@ export class AuthorizedEgress {
     } catch (error) {
       this.fail();
       throw error;
+    }
+  }
+
+  heartbeat() {
+    if (!this.identity || this.closed) return;
+    try {
+      if (
+        !this.available() ||
+        this.socket.readyState !== WebSocket.OPEN ||
+        this.socket.bufferedAmount + 1 > MAX_SOCKET_BUFFER_BYTES
+      )
+        throw new Error("Collaboration socket unavailable");
+      this.socket.send(Uint8Array.of(MessageType.Ping));
+    } catch {
+      this.fail();
     }
   }
 

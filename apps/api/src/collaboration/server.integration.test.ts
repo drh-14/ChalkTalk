@@ -46,6 +46,85 @@ integration("Hocuspocus pre-apply persistence", () => {
     for (const server of servers) await server.destroy();
   }, 30_000);
 
+  it("keeps a real provider connected beyond its default idle check and saves its next edit", async () => {
+    const seed = new Y.Doc();
+    seed.getText("content").insert(0, "Idle");
+    let state = Y.encodeStateAsUpdate(seed);
+    seed.destroy();
+    let saves = 0;
+    const load = async (): Promise<LiveDocument> => {
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, state);
+      const text = doc.getText("content").toString();
+      doc.destroy();
+      return { state, text, version: saves + 1, persistenceRevision: saves + 1 };
+    };
+    const store = {
+      consumeTicket: async () => ({ kind: "answer", documentId, userId, sessionId }),
+      checkAccess: async () => {},
+      sendAuthorized: async (
+        _kind: string,
+        _id: string,
+        _user: string,
+        _session: string,
+        send: () => void,
+      ) => send(),
+      listenForRevisions: async () => async () => {},
+      load,
+      loadAuthorized: load,
+      applyUpdate: async (
+        _kind: string,
+        _id: string,
+        _user: string,
+        _session: string,
+        update: Uint8Array,
+      ): Promise<LiveDocument> => {
+        const doc = new Y.Doc();
+        Y.applyUpdate(doc, state);
+        Y.applyUpdate(doc, update);
+        state = Y.encodeStateAsUpdate(doc);
+        doc.destroy();
+        saves += 1;
+        return load();
+      },
+    } as unknown as CollaborationStore;
+    const server = createCollaborationServer({
+      store,
+      redisUrl: redisUrl!,
+      allowedOrigins: new Set(["http://localhost"]),
+      redisPrefix: `chalktalk-heartbeat-test-${randomUUID()}`,
+      port: 0,
+      address: "127.0.0.1",
+    });
+    servers.push(server);
+    await server.listen();
+    const socket = new HocuspocusProviderWebsocket({
+      url: server.webSocketURL,
+      WebSocketPolyfill: OriginWebSocket,
+    });
+    sockets.push(socket);
+    const doc = new Y.Doc();
+    const provider = new HocuspocusProvider({
+      websocketProvider: socket,
+      document: doc,
+      name: documentName,
+      awareness: null,
+      token: "test-ticket",
+    });
+    providers.push(provider);
+    provider.attach();
+    await until(() => provider.isSynced);
+    const connectionId = socket.identifier;
+    await new Promise((resolve) => setTimeout(resolve, 35_000));
+    expect(provider.isSynced).toBe(true);
+    expect(socket.identifier).toBe(connectionId);
+    const initialSaves = saves;
+    doc.getText("content").insert(4, " edited");
+    await until(() => saves > initialSaves);
+    expect((await load()).text).toBe("Idle edited");
+    expect(socket.identifier).toBe(connectionId);
+  }, 45_000);
+
   it("rejects session-suffixed, malformed, and alternate document addresses without loading content", async () => {
     const seed = new Y.Doc();
     seed.getText("content").insert(0, "Private answer");

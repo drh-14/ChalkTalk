@@ -1,4 +1,4 @@
-import { OutgoingMessage } from "@hocuspocus/server";
+import { MessageType, OutgoingMessage } from "@hocuspocus/server";
 import WebSocket from "ws";
 import { describe, expect, it, vi } from "vitest";
 import type { CollaborationStore } from "./store.js";
@@ -46,6 +46,38 @@ function fixture(sendAuthorized: CollaborationStore["sendAuthorized"]) {
 }
 
 describe("authorized collaboration egress", () => {
+  it("accepts only a bound, bare Pong and sends a content-free heartbeat", () => {
+    let checks = 0;
+    const context = fixture(async (_kind, _id, _user, _session, send) => {
+      checks += 1;
+      send();
+    });
+    context.adapter.heartbeat();
+    expect(context.sent).toEqual([Uint8Array.of(MessageType.Ping)]);
+    expect(checks).toBe(0);
+    expect(context.adapter.acceptInbound(Uint8Array.of(MessageType.Pong))).toBeNull();
+    expect(context.terminated).toBe(false);
+    expect(() =>
+      context.adapter.acceptInbound(Uint8Array.of(MessageType.Ping)),
+    ).toThrow();
+    expect(context.terminated).toBe(true);
+
+    const malformed = fixture(async (_kind, _id, _user, _session, send) => send());
+    expect(() =>
+      malformed.adapter.acceptInbound(Uint8Array.of(MessageType.Pong, 1)),
+    ).toThrow();
+    expect(malformed.terminated).toBe(true);
+
+    const unbound = new AuthorizedEgress(
+      context.socket,
+      { sendAuthorized: async () => {} } as unknown as CollaborationStore,
+      () => true,
+    );
+    expect(() =>
+      unbound.acceptInbound(Uint8Array.of(MessageType.Pong)),
+    ).toThrow();
+  });
+
   it("binds only the exact plain answer or followup address", () => {
     for (const kind of ["answer", "followup"] as const) {
       const documentName = `${kind}:${identity.documentId}`;
