@@ -124,7 +124,7 @@ export class CollaborationStore {
     db: PoolClient,
     postId: string,
     userId: string,
-    lock: boolean,
+    lock: boolean | "read",
   ) {
     const result = await db.query<{
       role: Role;
@@ -136,7 +136,7 @@ export class CollaborationStore {
       `SELECT m.role,c.status,p.type,p.deleted_at,p.duplicate_status
        FROM posts p JOIN courses c ON c.id=p.course_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
-       WHERE p.id=$1${lock ? " FOR SHARE OF p,c,m" : ""}`,
+       WHERE p.id=$1${lock === true ? " FOR NO KEY UPDATE OF p FOR SHARE OF c,m" : lock === "read" ? " FOR SHARE OF p,c,m" : ""}`,
       [postId, userId],
     );
     const row = result.rows[0];
@@ -176,7 +176,7 @@ export class CollaborationStore {
       );
       const row = result.rows[0];
       if (!row || row.deleted_at || row.body_markdown === null) throw hidden();
-      const role = await this.postRole(db, row.post_id, userId, lock !== false);
+      const role = await this.postRole(db, row.post_id, userId, lock);
       if (rank[role] < rank[row.edit_role_floor])
         throw new AuthError(
           403,
@@ -202,7 +202,7 @@ export class CollaborationStore {
       db,
       found.rows[0].post_id,
       userId,
-      lock !== false,
+      lock,
     );
     const result = await db.query<{
       id: string;

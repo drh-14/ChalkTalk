@@ -1000,4 +1000,74 @@ integration("live collaboration persistence and authorization", () => {
       await concurrentPool.end();
     }
   }, 30_000);
+
+  it("completes sibling live writes on one question without a post-lock upgrade deadlock", async () => {
+    const applicationName = `collab_siblings_${randomUUID()}`;
+    const concurrentPool = new Pool({
+      connectionString: url,
+      options: `--search_path="${schema}"`,
+      application_name: applicationName,
+    });
+    const concurrentStore = new CollaborationStore(concurrentPool);
+    const gate = await concurrentPool.connect();
+    let gateOpen = false;
+    try {
+      for (const targets of [
+        [
+          { kind: "answer", id: id.answer },
+          { kind: "answer", id: id.staffAnswer },
+        ],
+        [
+          { kind: "answer", id: id.answer },
+          { kind: "followup", id: id.followup },
+        ],
+      ] as const) {
+        const initial = await Promise.all(
+          targets.map(({ kind, id: targetId }) =>
+            concurrentStore.load(kind, targetId),
+          ),
+        );
+        const suffixes = targets.map(() => ` sibling ${randomUUID()}`);
+        await gate.query("BEGIN");
+        gateOpen = true;
+        await gate.query("SELECT id FROM posts WHERE id=$1 FOR SHARE", [
+          id.post,
+        ]);
+        const edits = targets.map(({ kind, id: targetId }, index) =>
+          concurrentStore
+            .applyUpdate(
+              kind,
+              targetId,
+              id.instructor,
+              id.instructorSession,
+              changed(initial[index].state, suffixes[index]),
+            )
+            .then(
+              (value) => ({ value }),
+              (error: unknown) => ({ error }),
+            ),
+        );
+        await until(async () => {
+          const waiting = await admin.query<{ count: string }>(
+            `SELECT count(*)::text AS count FROM pg_stat_activity
+             WHERE application_name=$1 AND wait_event_type='Lock'`,
+            [applicationName],
+          );
+          return Number(waiting.rows[0].count) === 2;
+        });
+        await gate.query("COMMIT");
+        gateOpen = false;
+        const results = await Promise.all(edits);
+        for (const result of results) expect(result).not.toHaveProperty("error");
+        for (const [index, target] of targets.entries()) {
+          const current = await concurrentStore.load(target.kind, target.id);
+          expect(current.text).toBe(initial[index].text + suffixes[index]);
+        }
+      }
+    } finally {
+      if (gateOpen) await gate.query("ROLLBACK");
+      gate.release();
+      await concurrentPool.end();
+    }
+  }, 30_000);
 });
