@@ -1,8 +1,10 @@
 import type { Pool, PoolClient } from "pg";
+import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 
-type DeleteCourseJob = {
+type CleanupJob = {
   id: string;
-  payload: { courseId: string };
+  kind: "delete_course" | "delete_course_file";
+  payload: { courseId: string; objectKey?: string };
   attempts: number;
   maxAttempts: number;
 };
@@ -14,6 +16,7 @@ export class JobWorker {
   constructor(
     private readonly pool: Pool,
     private readonly workerId = `api-${process.pid}`,
+    private readonly objectStore?: { client: S3Client; bucket: string },
   ) {}
 
   private async transaction<T>(
@@ -33,15 +36,16 @@ export class JobWorker {
     }
   }
 
-  private async claim(): Promise<DeleteCourseJob | undefined> {
+  private async claim(): Promise<CleanupJob | undefined> {
     return this.transaction(async (client) => {
       const claimed = await client.query<{
         id: string;
-        payload: { courseId: string };
+        kind: CleanupJob["kind"];
+        payload: CleanupJob["payload"];
         attempts: number;
         max_attempts: number;
       }>(
-        "SELECT id,payload,attempts,max_attempts FROM jobs WHERE kind='delete_course' AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",
+        "SELECT id,kind,payload,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",
       );
       const job = claimed.rows[0];
       if (!job) return undefined;
@@ -54,6 +58,7 @@ export class JobWorker {
       );
       return {
         id: job.id,
+        kind: job.kind,
         payload: job.payload,
         attempts: updated.rows[0]!.attempts,
         maxAttempts: updated.rows[0]!.max_attempts,
@@ -63,6 +68,9 @@ export class JobWorker {
 
   private async deleteCourse(courseId: string): Promise<void> {
     await this.transaction(async (client) => {
+      await client.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
+        courseId,
+      ]);
       const answers = "SELECT id FROM answers WHERE course_id=$1";
       await client.query(
         "DELETE FROM question_creation_daily_counts WHERE course_id=$1",
@@ -101,6 +109,19 @@ export class JobWorker {
       );
       await client.query("DELETE FROM posts WHERE course_id=$1", [courseId]);
       await client.query("DELETE FROM tags WHERE course_id=$1", [courseId]);
+      const objects = await client.query<{ object_key: string }>(
+        "SELECT object_key FROM course_files WHERE course_id=$1 FOR UPDATE",
+        [courseId],
+      );
+      if (objects.rows.length && !this.objectStore)
+        throw new Error("Object storage is required to delete course files");
+      for (const object of objects.rows)
+        await this.objectStore!.client.send(
+          new DeleteObjectCommand({
+            Bucket: this.objectStore!.bucket,
+            Key: object.object_key,
+          }),
+        );
       await client.query("DELETE FROM course_memberships WHERE course_id=$1", [
         courseId,
       ]);
@@ -108,14 +129,14 @@ export class JobWorker {
     });
   }
 
-  private async succeed(job: DeleteCourseJob): Promise<void> {
+  private async succeed(job: CleanupJob): Promise<void> {
     await this.pool.query(
       "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
       [job.id, this.workerId, job.attempts],
     );
   }
 
-  private async fail(job: DeleteCourseJob, error: unknown): Promise<void> {
+  private async fail(job: CleanupJob, error: unknown): Promise<void> {
     await this.pool.query(
       "UPDATE jobs SET status=CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END, available_at=CASE WHEN attempts >= max_attempts THEN available_at ELSE now()+make_interval(secs => LEAST(300, (2 ^ attempts)::integer)) END, locked_by=NULL,locked_until=NULL,last_error=$1,finished_at=CASE WHEN attempts >= max_attempts THEN now() ELSE NULL END,updated_at=now() WHERE id=$2 AND status='running' AND locked_by=$3 AND attempts=$4",
       [errorMessage(error).slice(0, 4000), job.id, this.workerId, job.attempts],
@@ -126,7 +147,20 @@ export class JobWorker {
     const job = await this.claim();
     if (!job) return false;
     try {
-      await this.deleteCourse(job.payload.courseId);
+      if (job.kind === "delete_course")
+        await this.deleteCourse(job.payload.courseId);
+      else {
+        if (!this.objectStore || !job.payload.objectKey)
+          throw new Error(
+            "Object storage and key are required to delete a course file",
+          );
+        await this.objectStore.client.send(
+          new DeleteObjectCommand({
+            Bucket: this.objectStore.bucket,
+            Key: job.payload.objectKey,
+          }),
+        );
+      }
       await this.succeed(job);
     } catch (error) {
       await this.fail(job, error);

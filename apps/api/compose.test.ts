@@ -8,11 +8,14 @@ type ComposeService = {
   environment?: Record<string, string>;
   ports?: Array<{ host_ip?: string; published: string; target: number }>;
   volumes?: Array<{ source: string; target: string; type: string }>;
+  healthcheck?: { test: string[] };
+  depends_on?: Record<string, { condition: string }>;
 };
 
 function renderCompose(
   credentials?: { accessKey: string; secretKey: string },
   ambientAws?: { accessKey?: string; secretKey?: string },
+  profile = "",
 ) {
   const output = execFileSync(
     "docker",
@@ -22,7 +25,7 @@ function renderCompose(
       encoding: "utf8",
       env: {
         ...process.env,
-        COMPOSE_PROFILES: "",
+        COMPOSE_PROFILES: profile,
         COMPOSE_ENV_FILE: ".env.example",
         SEAWEEDFS_ACCESS_KEY_ID: credentials?.accessKey ?? "",
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
@@ -79,6 +82,17 @@ describe("default Compose object storage", () => {
       AWS_ACCESS_KEY_ID: "custom-key",
       AWS_SECRET_ACCESS_KEY: "custom-secret",
     });
+  });
+
+  it("waits for authenticated S3 readiness before starting the API", () => {
+    const configuration = renderCompose(undefined, undefined, "app");
+    expect(configuration.services.api.depends_on?.seaweedfs).toMatchObject({
+      condition: "service_healthy",
+    });
+    expect(configuration.services.seaweedfs.healthcheck?.test).toEqual([
+      "CMD-SHELL",
+      expect.any(String),
+    ]);
   });
 
   it("keeps ambient AWS account credentials out of the SeaweedFS credential pair", () => {

@@ -1,3 +1,40 @@
+import type { S3ClientConfig } from "@aws-sdk/client-s3";
+
+export function loadObjectStorageConfig(
+  source: NodeJS.ProcessEnv = process.env,
+): {
+  bucket: string;
+  endpoint: string | undefined;
+  client: S3ClientConfig;
+} {
+  const bucket = source.S3_BUCKET ?? "chalktalk-resources";
+  const region = source.S3_REGION ?? "us-east-1";
+  const endpoint = source.S3_ENDPOINT;
+  const accessKeyId = source.S3_ACCESS_KEY_ID;
+  const secretAccessKey = source.S3_SECRET_ACCESS_KEY;
+  if (Boolean(accessKeyId) !== Boolean(secretAccessKey))
+    throw new Error(
+      "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together",
+    );
+  if (!endpoint && (!source.S3_BUCKET || !source.S3_REGION))
+    throw new Error("S3_BUCKET and S3_REGION are required for managed S3");
+  if (!bucket || !region)
+    throw new Error("S3_BUCKET and S3_REGION are required");
+  if (endpoint && !["http:", "https:"].includes(new URL(endpoint).protocol))
+    throw new Error("S3_ENDPOINT must use HTTP or HTTPS");
+  return {
+    bucket,
+    endpoint,
+    client: {
+      region,
+      ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
+      ...(accessKeyId && secretAccessKey
+        ? { credentials: { accessKeyId, secretAccessKey } }
+        : {}),
+    },
+  };
+}
+
 export interface Environment {
   databaseUrl: string | undefined;
   port: number;
