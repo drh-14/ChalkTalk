@@ -30,6 +30,15 @@ services:
       - "127.0.0.1:8333:8333"
     volumes:
       - seaweedfs-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'curl --fail --silent --show-error --max-time 2 --aws-sigv4 aws:amz:us-east-1:s3 --user "$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY" http://127.0.0.1:8333/ > /dev/null',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   migrate:
     profiles: ["app"]
@@ -45,6 +54,11 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_SECURE: "false"
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_BUCKET: chalktalk-resources
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:-chalktalk-local}
+      S3_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
     command: npm run db:migrate
     volumes:
       - .:/app
@@ -69,6 +83,8 @@ services:
     depends_on:
       seed-mock:
         condition: service_completed_successfully
+      seaweedfs:
+        condition: service_healthy
     healthcheck:
       test:
         [
