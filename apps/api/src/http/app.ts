@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Observability } from "../observability/index.js";
 import express, {
   type NextFunction,
   type Request,
@@ -37,6 +38,7 @@ export interface AppDependencies {
   answerService?: AnswerService;
   followupService?: FollowupService;
   statisticsService?: StatisticsService;
+  observability?: Observability;
 }
 type AuthContext = {
   credential: string;
@@ -59,6 +61,11 @@ function testEnvironment(): Environment {
       resetPerEmail: 5,
       resetPerIp: 100,
       signupPerIp: 100,
+    },
+    observability: {
+      enabled: false,
+      metricsToken: undefined,
+      spoolDirectory: undefined,
     },
     smtp: {
       host: "localhost",
@@ -549,6 +556,7 @@ export function createApp(
     answerService,
     followupService,
     statisticsService,
+    observability,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -557,7 +565,9 @@ export function createApp(
     response.set("X-Request-Id", response.locals.requestId);
     next();
   });
+  if (observability) app.use(observability.requestMiddleware);
   app.use(express.json({ limit: "128kb" }));
+  if (observability) app.get("/metrics", observability.metricsHandler);
   app.get("/health", (_request, response) =>
     response.status(200).json({ status: "ok" }),
   );
@@ -1232,6 +1242,7 @@ export function createApp(
           current.session.user.id,
           options,
         );
+        response.locals.safeResultCount = result.data.length;
         response.json(result);
       } catch (error) {
         next(error);
@@ -1650,6 +1661,9 @@ export function createApp(
           "Retry-After",
           String((authError as AuthError & { retryAfter: number }).retryAfter),
         );
+      response.locals.errorCode = authError.code;
+      if (authError.code === "internal_error")
+        observability?.recordUnexpectedError(authError.code);
       response.status(authError.status).json({
         error: {
           code: authError.code,

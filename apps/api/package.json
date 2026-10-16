@@ -10,10 +10,12 @@
     "seed:mock": "tsx src/database/seed-ams161.ts"
   },
   "dependencies": {
+    "@prometheus-io/client": "^0.16.1",
     "argon2": "^0.45.1",
     "express": "^5.1.0",
     "nodemailer": "^10.0.10",
     "pg": "^8.16.3",
+    "pino": "^10.4.0",
     "uuid": "^14.0.2",
     "yjs": "^13.6.33"
   },

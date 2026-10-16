@@ -1,0 +1,337 @@
+{
+  "uid": "chalktalk-api",
+  "title": "ChalkTalk API observability",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "1m",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests / second",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(chalktalk_http_requests_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 2,
+      "title": "5xx error fraction",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "(sum(rate(chalktalk_http_requests_total{status_class=\"5xx\"}[5m])) or vector(0)) / clamp_min(sum(rate(chalktalk_http_requests_total[5m])), 0.000001)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 3,
+      "title": "p50 request latency",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket[5m])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 4,
+      "title": "p95 request latency",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket[5m])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 5,
+      "title": "p99 request latency",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket[5m])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 6,
+      "title": "Within 200 ms",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(chalktalk_http_request_duration_seconds_bucket{le=\"0.2\"}[5m])) / clamp_min(sum(rate(chalktalk_http_request_duration_seconds_count[5m])), 0.000001)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 7,
+      "title": "Job outcomes",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (kind,outcome) (rate(chalktalk_jobs_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 8,
+      "title": "p95 job duration",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le,kind) (rate(chalktalk_job_duration_seconds_bucket[5m])))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 9,
+      "title": "API scrape health",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"chalktalk-api\"}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 10,
+      "title": "Definite spool drops / capacity evictions at risk",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(chalktalk_log_spool_dropped_events_total[5m]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(chalktalk_log_spool_capacity_evicted_events_total[5m]))",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 11,
+      "title": "Sanitized request logs (filter by Request ID)",
+      "type": "logs",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "chalktalk-logs"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "alias": "Logs",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "logs"
+            }
+          ],
+          "queryType": "logs"
+        }
+      ]
+    }
+  ],
+  "tags": ["chalktalk", "api"],
+  "templating": {
+    "list": [
+      {
+        "name": "log_filters",
+        "label": "Filter logs (requestId)",
+        "type": "adhoc",
+        "hide": 0,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "chalktalk-logs"
+        },
+        "filters": []
+      }
+    ]
+  }
+}

@@ -1,4 +1,8 @@
 import { Pool } from "pg";
+import request from "supertest";
+import { createApp } from "../http/app.js";
+import { loadEnvironment } from "../config/environment.js";
+import { createObservability } from "../observability/index.js";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
@@ -266,5 +270,36 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       question_counts: 0,
       courses: 0,
     });
+  });
+  it("records a sanitized start and outcome for a claimed job", async () => {
+    const { jobId } = await seedJob();
+    const events: string[] = [];
+    const observability = createObservability({
+      token: "job-test-operator-token-long-enough",
+      stdout: (line) => events.push(line),
+    });
+    await new JobWorker(pool, "instrumented-worker", observability).runOnce();
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId])).rows[0]
+        .status,
+    ).toBe("succeeded");
+    expect(events.join("\n")).toContain('"event":"job_start"');
+    expect(events.join("\n")).toContain('"event":"job_outcome"');
+    expect(events.join("\n")).not.toContain(jobId);
+    const metrics = await request(
+      createApp({
+        environment: loadEnvironment({
+          AUTH_TOKEN_SECRET:
+            "integration-test-auth-secret-more-than-thirty-two-characters",
+        }),
+        observability,
+      }),
+    )
+      .get("/metrics")
+      .set("Authorization", "Bearer job-test-operator-token-long-enough");
+    expect(metrics.text).toContain(
+      'chalktalk_jobs_total{kind="delete_course",outcome="succeeded"} 1',
+    );
+    await observability.close();
   });
 });

@@ -14,6 +14,11 @@ export interface Environment {
     resetPerIp: number;
     signupPerIp: number;
   };
+  observability: {
+    enabled: boolean;
+    metricsToken: string | undefined;
+    spoolDirectory: string | undefined;
+  };
   smtp: {
     host: string;
     port: number;
@@ -82,6 +87,24 @@ export function loadEnvironment(
     throw new Error("ALLOWED_SCHOOL_DOMAINS must contain valid domain names");
   }
 
+  const observabilityEnabled = source.OBSERVABILITY_ENABLED === "true";
+  if (
+    source.OBSERVABILITY_ENABLED !== undefined &&
+    !["true", "false"].includes(source.OBSERVABILITY_ENABLED)
+  )
+    throw new Error("OBSERVABILITY_ENABLED must be true or false");
+  if (
+    observabilityEnabled &&
+    (!source.METRICS_TOKEN || source.METRICS_TOKEN.length < 32)
+  )
+    throw new Error(
+      "METRICS_TOKEN must contain at least 32 characters when observability is enabled",
+    );
+  if (observabilityEnabled && !source.LOG_SPOOL_DIRECTORY)
+    throw new Error(
+      "LOG_SPOOL_DIRECTORY is required when observability is enabled",
+    );
+
   return {
     databaseUrl: source.DATABASE_URL,
     port,
@@ -97,6 +120,13 @@ export function loadEnvironment(
       resetPerEmail: positiveInteger("RATE_LIMIT_RESET_EMAIL", 5),
       resetPerIp: positiveInteger("RATE_LIMIT_RESET_IP", 100),
       signupPerIp: positiveInteger("RATE_LIMIT_SIGNUP_IP", 100),
+    },
+    observability: {
+      enabled: observabilityEnabled,
+      metricsToken: observabilityEnabled ? source.METRICS_TOKEN : undefined,
+      spoolDirectory: observabilityEnabled
+        ? source.LOG_SPOOL_DIRECTORY
+        : undefined,
     },
     smtp: {
       host: source.SMTP_HOST ?? "localhost",

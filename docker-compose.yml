@@ -45,6 +45,9 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_SECURE: "false"
+      OBSERVABILITY_ENABLED: ${OBSERVABILITY_ENABLED:-false}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      LOG_SPOOL_DIRECTORY: /var/log/chalktalk
     command: npm run db:migrate
     volumes:
       - .:/app
@@ -64,6 +67,7 @@ services:
     volumes:
       - .:/app
       - api-node-modules:/app/node_modules
+      - api-log-spool:/var/log/chalktalk
     expose:
       - "3000"
     depends_on:
@@ -134,8 +138,101 @@ services:
       retries: 12
       start_period: 30s
 
+  elasticsearch:
+    profiles: ["observability"]
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.6
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:9200/_cluster/health >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  elasticsearch-init:
+    profiles: ["observability"]
+    image: curlimages/curl:8.15.0
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        curl -fsS -X PUT http://elasticsearch:9200/_ilm/policy/chalktalk-local-7d -H 'Content-Type: application/json' --data '{"policy":{"phases":{"delete":{"min_age":"7d","actions":{"delete":{}}}}}}'
+        curl -fsS -X PUT http://elasticsearch:9200/_index_template/chalktalk-logs -H 'Content-Type: application/json' --data-binary @/config/elasticsearch-template.json
+    volumes:
+      - ./docker/observability/elasticsearch-template.json:/config/elasticsearch-template.json:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  logstash:
+    profiles: ["observability"]
+    image: docker.elastic.co/logstash/logstash:8.17.6
+    environment:
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+    volumes:
+      - ./docker/observability/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./docker/observability/logstash/pipeline.conf:/usr/share/logstash/pipeline/pipeline.conf:ro
+      - api-log-spool:/var/log/chalktalk:ro
+      - logstash-data:/usr/share/logstash/data
+    depends_on:
+      elasticsearch-init:
+        condition: service_completed_successfully
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.3.1
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        test -n "$${METRICS_TOKEN}" || { echo 'METRICS_TOKEN is required' >&2; exit 1; }
+        printf '%s' "$${METRICS_TOKEN}" > /tmp/metrics-token
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=15d
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+    volumes:
+      - ./docker/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.6.1
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        test -n "$${GF_SECURITY_ADMIN_PASSWORD}" || { echo 'GRAFANA_ADMIN_PASSWORD is required' >&2; exit 1; }
+        exec /run.sh
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_PLUGINS_DISABLE_PLUGINS: grafana-lokiexplore-app
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - elasticsearch-init
+
 volumes:
   postgres-data:
   seaweedfs-data:
   api-node-modules:
   web-node-modules:
+  api-log-spool:
+  prometheus-data:
+  grafana-data:
+  elasticsearch-data:
+  logstash-data:

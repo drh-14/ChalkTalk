@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { logApiEvent, type Observability } from "../observability/index.js";
 
 type Db = Pool | PoolClient;
 type Role = "student" | "ta" | "instructor";
@@ -79,7 +80,10 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class PostService {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly observability?: Observability,
+  ) {}
   private async tx<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
@@ -274,8 +278,8 @@ export class PostService {
           "INSERT INTO post_view_events (id,course_id,post_id,user_id,viewed_on) VALUES ($1,$2,$3,$4,(now() AT TIME ZONE 'UTC')::date) ON CONFLICT (course_id,post_id,user_id,viewed_on) DO NOTHING",
           [uuidv7(), row.course_id, row.id, userId],
         );
-      } catch (error) {
-        console.error("Could not record post view", error);
+      } catch {
+        logApiEvent(this.observability, "post_view_write_failed");
       }
     }
     return value;
