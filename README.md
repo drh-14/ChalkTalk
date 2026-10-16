@@ -98,4 +98,10 @@ docker compose --profile app run --rm migrate
 
 Stop the full stack with `docker compose --profile app down`. The default `docker compose up -d` starts PostgreSQL, Mailpit, and SeaweedFS.
 
+### Opt-in live answer/followup editing
+
+The separate Hocuspocus collaboration process and Redis bus do **not** start with the default stack. For local direct development, start Redis with `docker compose --profile collaboration up -d redis`, set `REDIS_URL=redis://localhost:6379` in your ignored `.env`, and run `npm run dev:collaboration` alongside `npm run dev`. Vite forwards `/collaboration` WebSocket traffic to `http://localhost:3001`; the browser still uses the trusted HTTPS origin. To run everything in Compose, use `docker compose --profile app --profile collaboration up --build`. The collaboration service starts after migration and Redis health; the default API/web stack remains usable through its version-checked REST editor if live editing is unavailable.
+
+For deployment, run at least one collaboration process with the same PostgreSQL database and Redis URL on every node. Place its credential-free `/collaboration` WebSocket path behind the frontend's HTTPS reverse proxy so browsers connect over `wss`; do not expose Redis or put tickets in URLs. Redis is an ephemeral replication bus, while PostgreSQL holds every accepted Yjs update before broadcast. Set `COLLABORATION_PORT` if the default `3001` conflicts with another service, and keep `FRONTEND_ORIGINS` restricted to actual HTTPS frontend origins.
+
 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before submitting changes.

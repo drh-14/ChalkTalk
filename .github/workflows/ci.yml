@@ -126,3 +126,53 @@ jobs:
       - name: Stop Compose profile
         if: always()
         run: docker compose --profile app down --volumes --remove-orphans
+
+  full-stack-browser:
+    runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: chalktalk
+          POSTGRES_USER: chalktalk
+          POSTGRES_PASSWORD: chalktalk
+        options: >-
+          --health-cmd "pg_isready -U chalktalk -d chalktalk"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    env:
+      TEST_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+      TEST_REDIS_URL: redis://localhost:6379
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium --only-shell
+
+      - name: Run authenticated full-stack browser scenarios
+        run: npm run test:browser:collaboration:full-stack

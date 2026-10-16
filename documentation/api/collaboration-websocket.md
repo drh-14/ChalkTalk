@@ -1,24 +1,24 @@
 # Collaboration WebSocket protocol
 
-This is a future WebSocket contract; its ticket endpoints and Hocuspocus connections are not implemented. Current answer editing uses version-checked REST requests described in the [answers API reference](answers.md).
+Answer and existing root followup and reply body editing uses the implemented Hocuspocus/Yjs WebSocket. Creating replies remains a REST operation. Temporary collaboration sessions described elsewhere remain future work. Version-checked REST editing is still available as a fallback; see the [answers and followups API reference](answers.md).
 
 ## Connecting
 
 Request a one-use ticket before opening a connection.
 
-`POST /api/v1/collaboration-sessions/{collaborationSessionId}/connection-tickets` returns credentials for a temporary post or subchannel session.
+Call `POST /api/v1/answers/{answerId}/collaboration-ticket` or `POST /api/v1/followups/{followupId}/collaboration-ticket` with a session cookie, allowed Origin, CSRF token, `Content-Type: application/json`, and `{}`. Configure the Hocuspocus provider with the returned `documentName`, `ticket` token, and credential-free `/collaboration` WebSocket URL. The one-use ticket expires five minutes after issuance; request a new ticket before each reconnect. The server checks the current session and edit role on ticket consumption and every incoming update.
 
-The proposed `POST /api/v1/answers/{answerId}/collaboration-connection-tickets` endpoint would return credentials for an editable answer.
+The separate collaboration process and Redis bus are opt-in. Start them together with the API and PostgreSQL; Redis is not a durable document store. If collaboration is down, use the version-checked REST editor.
 
-Configure the Hocuspocus provider with the returned credential-free `webSocketUrl`, `documentId` as its document name, and `ticket` as its token. A ticket expires five minutes after issuance and can be used once. Request a new ticket before reconnecting.
+Each socket accepts one ticket identity and one document. Every frame must use the exact plain `documentName` bound to the ticket; session-aware NUL-suffixed routing names are not supported. Initial document load is authorized atomically with the load transaction, and incoming sync requests as well as updates are reauthorized. Outbound frames are ordered through a bounded queue; PostgreSQL access locks remain held through each synchronous WebSocket send. A document frame is not handed to the WebSocket after a conflicting revocation transaction commits, including frames from REST refresh or Redis replication. Frames handed off before commit cannot be recalled. Unknown or multiplexed frames, queue overflow, and database authorization failures close the socket.
 
-The proposed server accepts a connection only while the authenticated user retains access to the target. Current answer permissions and endorsement behavior are specified in the [answers API reference](answers.md).
+An authenticated idle socket receives a one-byte application Ping and may answer with a one-byte Pong. These content-free heartbeats do not address a document; all document frames still require the exact ticket-bound name and per-frame authorization. Malformed control frames close the socket.
 
 ## Shared documents and presence
 
 Connected clients synchronize document changes using the standard Yjs protocol. Offline edits can be synchronized only while the user remains authorized to edit the target.
 
-Presence is live-only. It reflects the authenticated participant and does not reveal a hidden author identity.
+This phase does not publish named presence or cursors. Client-supplied awareness identity is discarded, including for anonymous content.
 
 ## Origin and transport policy
 
@@ -26,22 +26,6 @@ Production connections use `wss`. Plain `ws` is allowed only for local developme
 
 ## Connection closure
 
-The server uses these stable WebSocket close codes:
+The server fails closed on invalid tickets, revoked permission, invalid updates, PostgreSQL failure, or Redis failure. Authentication and role failures use Hocuspocus's generic `permission-denied` protocol response rather than a guaranteed application WebSocket close code. A rejected update sends the Hocuspocus reset/close message (normally `4205`); oversized WebSocket frames may close with `1009`, and idle unauthenticated connections may close with `4408`. Do not infer the exact failure cause from the transport code or expose a hidden target. The earlier proposed custom `4401`/`4403`/`4404`/`4429` contract is **not** implemented in this phase.
 
-`1000`: Normal closure.
-
-`1001`: Transient disconnect or server restart; request a fresh ticket and reconnect.
-
-`1008`: Malformed request or generic protocol-policy violation.
-
-`1011`: Internal server failure.
-
-`4401`: Authentication failed because the ticket is invalid, expired, or already used.
-
-`4403`: The user no longer has permission to access the target.
-
-`4404`: The session or answer is no longer available for editing.
-
-`4429`: The connection or ticket request was rate limited.
-
-Application close reasons are safe to display as diagnostic text and do not reveal whether a hidden resource exists.
+Clients must not interpret local Yjs text or a successful WebSocket send as a durable save; only a server-accepted update is durable. Copy any local draft before closing a disconnected editor. On reconnection, request a new one-use ticket and reload the PostgreSQL-backed document. Temporary collaboration sessions have a separate, still-unimplemented contract.
