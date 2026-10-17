@@ -34,3 +34,25 @@ describe("authentication environment", () => {
     ).toThrow("32 characters");
   });
 });
+
+describe("observability environment", () => {
+  it("fails closed if enabled without a separate metrics token", () => {
+    expect(() =>
+      loadEnvironment({ ...base, OBSERVABILITY_ENABLED: "true" }),
+    ).toThrow("METRICS_TOKEN");
+  });
+
+  it("does not create a metrics endpoint when disabled and accepts a configured spool", () => {
+    const environment = loadEnvironment({
+      ...base,
+      OBSERVABILITY_ENABLED: "true",
+      METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+      LOG_SPOOL_DIRECTORY: "/var/log/chalktalk",
+    });
+    expect(environment.observability).toEqual({
+      enabled: true,
+      metricsToken: "a-separate-operator-token-at-least-32-chars",
+      spoolDirectory: "/var/log/chalktalk",
+    });
+  });
+});

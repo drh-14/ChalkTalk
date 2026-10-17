@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import type { Observability } from "../observability/index.js";
 
 type DeleteCourseJob = {
   id: string;
@@ -14,6 +15,7 @@ export class JobWorker {
   constructor(
     private readonly pool: Pool,
     private readonly workerId = `api-${process.pid}`,
+    private readonly observability?: Observability,
   ) {}
 
   private async transaction<T>(
@@ -125,11 +127,19 @@ export class JobWorker {
   async runOnce(): Promise<boolean> {
     const job = await this.claim();
     if (!job) return false;
+    const started = process.hrtime.bigint();
+    this.observability?.recordJobStart("delete_course");
+    const duration = () => Number(process.hrtime.bigint() - started) / 1e9;
     try {
       await this.deleteCourse(job.payload.courseId);
       await this.succeed(job);
+      this.observability?.recordJob("delete_course", "succeeded", duration());
     } catch (error) {
-      await this.fail(job, error);
+      try {
+        await this.fail(job, error);
+      } finally {
+        this.observability?.recordJob("delete_course", "failed", duration());
+      }
     }
     return true;
   }

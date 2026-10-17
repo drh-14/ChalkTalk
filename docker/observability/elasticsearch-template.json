@@ -1,0 +1,25 @@
+{
+  "index_patterns": ["chalktalk-logs-*"],
+  "template": {
+    "settings": {
+      "index.lifecycle.name": "chalktalk-local-7d",
+      "number_of_replicas": 0
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "event": { "type": "keyword" },
+        "level": { "type": "integer" },
+        "requestId": { "type": "keyword" },
+        "method": { "type": "keyword" },
+        "route": { "type": "keyword" },
+        "status": { "type": "integer" },
+        "durationSeconds": { "type": "double" },
+        "outcome": { "type": "keyword" },
+        "errorCode": { "type": "keyword" },
+        "kind": { "type": "keyword" }
+      }
+    }
+  }
+}

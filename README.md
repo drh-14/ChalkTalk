@@ -100,4 +100,16 @@ docker compose --profile app run --rm migrate
 
 Stop the full stack with `docker compose --profile app down`. The default `docker compose up -d` starts PostgreSQL, Mailpit, and SeaweedFS.
 
+### Local API monitoring
+
+An opt-in Compose profile adds Prometheus, Grafana, Logstash, and Elasticsearch to the full application stack. In your **ignored** `.env`, set `OBSERVABILITY_ENABLED=true`, set `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` to **different** outputs of `openssl rand -hex 32`, then run:
+
+```bash
+docker compose --profile app --profile observability up --build --wait
+```
+
+Open Grafana at [http://127.0.0.1:3001](http://127.0.0.1:3001) and sign in as `admin` using `GRAFANA_ADMIN_PASSWORD`; the provisioned **ChalkTalk API observability** page shows request rates, errors, p50/p95/p99 latency, 200 ms compliance, worker outcomes, scrape health, definite spool drops, capacity evictions at risk, and sanitized logs. Grafana is the monitoring page: there is no ChalkTalk app route. Prometheus scrapes every 60 seconds; other collector ports are internal only. To scrape directly from inside the API container, send `Authorization: Bearer $METRICS_TOKEN` to `http://api:3000/metrics`. Never commit these secrets or paste metric output containing operational details into public issues.
+
+The local stack keeps logs for seven days and metric samples for 15 days. The API's 256 MiB spool and Logstash's persistent queue buffer outages but can lose records when full or on a crash, and replay can duplicate records. These logs intentionally contain only safe metadata and allowlisted enums, not bodies, account identities, passwords, tokens, or file bytes. See [local observability API and failure behavior](documentation/api/observability.md). This is not the future one-year production log-retention deployment. Stop this profile with `docker compose --profile app --profile observability down` (omit `--volumes` to retain local telemetry).
+
 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before submitting changes.

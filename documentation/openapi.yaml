@@ -26,6 +26,8 @@ info:
 servers:
   - url: "/api/v1"
 tags:
+  - name: Observability
+    description: Local operator-only metrics.
   - name: Authentication
     description: Authentication operations.
   - name: Organizations
@@ -49,6 +51,27 @@ tags:
   - name: Collaboration Sessions
     description: Collaboration Sessions operations.
 paths:
+  "/metrics":
+    get:
+      tags: [Observability]
+      summary: Scrape local API and job metrics
+      description: Available only when local observability is enabled. Outside the /api/v1 browser API; requests require an operator bearer token. No user session or CORS access.
+      operationId: scrapeMetrics
+      servers:
+        - url: "/"
+      security:
+        - metrics_bearer: []
+      responses:
+        "200":
+          description: Prometheus text metrics, with fixed-cardinality labels.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "401":
+          description: Bearer token absent or invalid; no metrics disclosed.
+        "404":
+          description: Observability disabled.
   "/account-verification-requests":
     post:
       tags:
@@ -10380,6 +10403,10 @@ paths:
         - "$ref": "#/components/parameters/CollaborationSessionId"
 components:
   securitySchemes:
+    metrics_bearer:
+      type: http
+      scheme: bearer
+      description: Local operator-only METRICS_TOKEN, distinct from browser sessions.
     session_cookie:
       type: apiKey
       in: cookie

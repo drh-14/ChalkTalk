@@ -1,0 +1,8 @@
+http.host: 0.0.0.0
+xpack.monitoring.enabled: false
+queue.type: persisted
+queue.max_bytes: 256mb
+queue.checkpoint.writes: 1
+pipeline.workers: 1
+path.config: /usr/share/logstash/pipeline/pipeline.conf
+pipeline.ecs_compatibility: disabled
