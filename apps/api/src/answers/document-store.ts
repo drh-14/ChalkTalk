@@ -80,7 +80,6 @@ export class AnswerDocumentStore {
     if (
       !row ||
       row.deleted_at ||
-      row.endorsed_at ||
       row.post_deleted_at ||
       row.post_duplicate_status === "confirmed" ||
       row.course_status !== "active"
@@ -164,7 +163,7 @@ export class AnswerDocumentStore {
         throw new AnswerDocumentError("invalid_update");
       }
       const text = locked.ydoc.getText("content").toString();
-      if (!text.trim() || text.length > MAX_TEXT_LENGTH)
+      if (text.length > MAX_TEXT_LENGTH)
         throw new AnswerDocumentError("invalid_content");
       const state = Buffer.from(Y.encodeStateAsUpdate(locked.ydoc));
       const binaryChanged = locked.seeded || !state.equals(previousState);
@@ -181,7 +180,7 @@ export class AnswerDocumentStore {
       }
       if (textChanged) {
         await db.query(
-          "UPDATE answers SET body_markdown=$2,version=version+1,updated_at=now() WHERE id=$1",
+          "UPDATE answers SET body_markdown=$2,endorsed_at=NULL,endorsed_by_user_id=NULL,version=version+1,updated_at=now() WHERE id=$1",
           [answerId, text],
         );
       }

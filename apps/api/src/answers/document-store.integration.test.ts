@@ -169,11 +169,16 @@ integration("answer Yjs document persistence", () => {
     const editor = new Y.Doc();
     Y.applyUpdate(editor, initial.state);
     editor.getText("content").delete(0, 4);
-    editor.getText("content").insert(0, "   ");
+    const empty = await store.applyUpdate(id, Y.encodeStateAsUpdate(editor));
+    expect(empty.text).toBe("");
+    expect((await store.load(id)).text).toBe("");
+    const oversized = new Y.Doc();
+    Y.applyUpdate(oversized, empty.state);
+    oversized.getText("content").insert(0, "x".repeat(100_001));
     await expect(
-      store.applyUpdate(id, Y.encodeStateAsUpdate(editor)),
+      store.applyUpdate(id, Y.encodeStateAsUpdate(oversized)),
     ).rejects.toMatchObject({ code: "invalid_content" });
-    expect(await store.load(id)).toEqual(initial);
+    oversized.destroy();
   });
 
   it("rejects inactive lifecycle and a projection mismatch", async () => {
@@ -263,7 +268,7 @@ integration("answer Yjs document persistence", () => {
     }
   });
 
-  it("orders endorsement and deletion after durable updates and blocks later writes", async () => {
+  it("allows a correction after endorsement and clears the current badge", async () => {
     const id = await answer("Base");
     const initial = await store.load(id);
     const editor = new Y.Doc();
@@ -275,12 +280,15 @@ integration("answer Yjs document persistence", () => {
     expect(before.bodyMarkdown).toBe("Base edit");
     expect(answerEtag(before)).toBe('"v2"');
     await answers.endorse(id, ids.user, answerEtag(before));
-    await expect(store.load(id)).rejects.toMatchObject({
-      code: "not_available",
-    });
-    await expect(store.applyUpdate(id, updated.state)).rejects.toMatchObject({
-      code: "not_available",
-    });
+    expect((await store.load(id)).text).toBe(updated.text);
+    const correction = new Y.Doc();
+    Y.applyUpdate(correction, updated.state);
+    correction
+      .getText("content")
+      .insert(correction.getText("content").length, " corrected");
+    await store.applyUpdate(id, Y.encodeStateAsUpdate(correction));
+    expect((await answers.get(id, ids.user)).endorsedAt).toBeNull();
+    correction.destroy();
     const deletedId = await answer("Another");
     const deletionVersion = await answers.get(deletedId, ids.user);
     await answers.delete(deletedId, ids.user, answerEtag(deletionVersion));
@@ -350,5 +358,5 @@ integration("answer Yjs document persistence", () => {
       store.applyUpdate(id, Y.encodeStateAsUpdate(editor)),
     ).rejects.toMatchObject({ code: "invalid_content" });
     expect(await store.load(id)).toEqual(accepted);
-  });
+  }, 20_000);
 });

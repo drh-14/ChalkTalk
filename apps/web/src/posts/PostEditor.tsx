@@ -15,8 +15,10 @@ import {
   type DecorationSet,
 } from "@codemirror/view";
 import katex from "katex";
+import { yCollab, yUndoManagerKeymap } from "y-codemirror.next";
+import * as Y from "yjs";
 import { useEffect, useId, useRef, useState, type Ref } from "react";
-import { formatBody, type FormatAction } from "./formatting.js";
+import { formatBodyChange, type FormatAction } from "./formatting.js";
 import {
   type MathAnalysis,
   type MathDiagnostic,
@@ -160,11 +162,13 @@ export function PostEditor({
   onChange,
   ref,
   label = "Post body",
+  liveText,
 }: {
   value: string;
   onChange: (value: string) => void;
   ref: Ref<PostEditorHandle>;
   label?: string;
+  liveText?: Y.Text;
 }) {
   const diagnosticsId = useId();
   const host = useRef<HTMLDivElement>(null);
@@ -229,8 +233,12 @@ export function PostEditor({
       disableAnalysis();
     }
     const extensions: Extension[] = [
-      history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
+      ...(liveText
+        ? [
+            yCollab(liveText, null),
+            keymap.of([...defaultKeymap, ...yUndoManagerKeymap]),
+          ]
+        : [history(), keymap.of([...defaultKeymap, ...historyKeymap])]),
       markdown(),
       EditorView.lineWrapping,
       placeholder(
@@ -256,7 +264,7 @@ export function PostEditor({
       }),
     ];
     const next = new EditorView({
-      doc: initialValue.current,
+      doc: liveText ? liveText.toString() : initialValue.current,
       extensions,
       parent: host.current,
     });
@@ -272,7 +280,7 @@ export function PostEditor({
       worker.current = null;
       next.destroy();
     };
-  }, [diagnosticsId, label]);
+  }, [diagnosticsId, label, liveText]);
 
   const handle = {
     format(action: FormatAction) {
@@ -280,10 +288,14 @@ export function PostEditor({
       if (!current) return;
       const source = current.state.doc.toString();
       const { from, to } = current.state.selection.main;
-      const formatted = formatBody(source, { from, to }, action);
+      const formatted = formatBodyChange(source, { from, to }, action);
       current.dispatch({
-        changes: { from: 0, to: source.length, insert: formatted.text },
-        selection: { anchor: formatted.from, head: formatted.to },
+        changes: {
+          from: formatted.from,
+          to: formatted.to,
+          insert: formatted.insert,
+        },
+        selection: { anchor: formatted.anchor, head: formatted.head },
         scrollIntoView: true,
       });
       current.focus();

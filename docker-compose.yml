@@ -20,6 +20,18 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  redis:
+    profiles: ["collaboration"]
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   seaweedfs:
     image: chrislusf/seaweedfs:4.48
     command: ["mini", "-dir=/data"]
@@ -82,6 +94,28 @@ services:
       retries: 12
       start_period: 10s
 
+  collaboration:
+    profiles: ["collaboration"]
+    build: *development-build
+    working_dir: /app
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment:
+      <<: *api-environment
+      REDIS_URL: redis://redis:6379
+      COLLABORATION_PORT: "3001"
+    command: npm run dev:collaboration
+    volumes:
+      - .:/app
+      - api-node-modules:/app/node_modules
+    expose:
+      - "3001"
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   seed-mock:
     profiles: ["app"]
     build: *development-build
@@ -105,6 +139,7 @@ services:
       - ${COMPOSE_ENV_FILE:-.env}
     environment:
       VITE_API_PROXY_TARGET: http://api:3000
+      VITE_COLLABORATION_PROXY_TARGET: http://collaboration:3001
       VITE_TLS_KEY_PATH: /certificates/localhost-key.pem
       VITE_TLS_CERT_PATH: /certificates/localhost.pem
       VITE_USE_POLLING: "true"

@@ -1,12 +1,14 @@
 import { Pool } from "pg";
+import argon2 from "argon2";
 import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
 import * as Y from "yjs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
-import type { AuthService } from "../auth/service.js";
+import { AuthService } from "../auth/service.js";
 import { FollowupService } from "../followups/service.js";
+import { CollaborationStore } from "../collaboration/store.js";
 import { AnswerService } from "../answers/service.js";
 import { PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
@@ -488,7 +490,7 @@ integration("answers HTTP contract: create and read", () => {
       endorsedBy: ids.staff,
       version: 2,
     });
-    expect(await lifecycle(created.body.data.id)).toBe("closed");
+    expect(await lifecycle(created.body.data.id)).toBe("active");
     const repeated = await endorse(ids.instructor, path, '"v2"');
     expect(repeated.status).toBe(200);
     expect(repeated.body.data).toEqual(endorsed.body.data);
@@ -737,6 +739,11 @@ integration("answers HTTP contract: create and read", () => {
       ),
     ).send({ bodyMarkdown: "Reply" });
     expect(reply.status).toBe(201);
+    expect(reply.body.data).toMatchObject({
+      parentId: root.body.data.id,
+      bodyMarkdown: "Reply",
+      version: 1,
+    });
     const voted = await unsafe(
       request(app(ids.student)).put(
         `/api/v1/followups/${root.body.data.id}/upvote`,
@@ -755,6 +762,7 @@ integration("answers HTTP contract: create and read", () => {
       `/api/v1/followups/${root.body.data.id}/replies`,
     );
     expect(children.body.data).toHaveLength(1);
+    expect(children.body.data[0].id).toBe(reply.body.data.id);
   });
   it("keeps answer vote totals independent of content revisions", async () => {
     const created = await answer(ids.author, await insertPost());
@@ -970,5 +978,205 @@ integration("answers HTTP contract: create and read", () => {
     expect((await read(ids.author, path)).body.data.bodyMarkdown).toBe(
       "Staff edit",
     );
+  });
+
+  it("keeps followup REST creation and conditional edits in the live Yjs document", async () => {
+    const postId = await insertPost();
+    const created = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "First text" });
+    expect(created.status).toBe(201);
+    const followupId = created.body.data.id as string;
+    const store = new CollaborationStore(pool);
+    expect((await store.load("followup", followupId)).text).toBe("First text");
+    const edited = await unsafe(
+      request(app(ids.author)).patch(created.headers.location),
+    )
+      .set("If-Match", created.headers.etag)
+      .send({ bodyMarkdown: "Revised text" });
+    expect(edited.status).toBe(200);
+    const live = await store.load("followup", followupId);
+    expect(live.text).toBe("Revised text");
+    const decoded = new Y.Doc();
+    Y.applyUpdate(decoded, live.state);
+    expect(decoded.getText("content").toString()).toBe("Revised text");
+  });
+
+  it("keeps an endorsed answer open for corrections but rejects endorsement when live text is empty", async () => {
+    const postId = await insertPost();
+    const created = await answer(ids.author, postId, {
+      bodyMarkdown: "Initial",
+    });
+    expect(created.status).toBe(201);
+    const answerId = created.body.data.id as string;
+    const endorsed = await unsafe(
+      request(app(ids.staff)).put(`/api/v1/answers/${answerId}/endorsement`),
+    ).set("If-Match", created.headers.etag);
+    expect(endorsed.status).toBe(200);
+    const document = await pool.query<{ lifecycle_state: string }>(
+      "SELECT lifecycle_state FROM answer_collaboration_documents WHERE answer_id=$1",
+      [answerId],
+    );
+    expect(document.rows[0].lifecycle_state).toBe("active");
+    const corrected = await unsafe(
+      request(app(ids.author)).patch(`/api/v1/answers/${answerId}`),
+    )
+      .set("If-Match", endorsed.headers.etag)
+      .send({ bodyMarkdown: "Correction" });
+    expect(corrected.status).toBe(200);
+    expect(corrected.body.data.endorsedAt).toBeNull();
+    await pool.query("UPDATE answers SET body_markdown='' WHERE id=$1", [
+      answerId,
+    ]);
+    const empty = new Y.Doc();
+    await pool.query(
+      "UPDATE answer_collaboration_documents SET yjs_state=$2 WHERE answer_id=$1",
+      [answerId, Buffer.from(Y.encodeStateAsUpdate(empty))],
+    );
+    empty.destroy();
+    const rejected = await unsafe(
+      request(app(ids.staff)).put(`/api/v1/answers/${answerId}/endorsement`),
+    ).set("If-Match", corrected.headers.etag);
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.error.code).toBe("answer_empty");
+  });
+
+  it("drives replies, votes, corrections and blank-live endorsement through an authenticated running API", async () => {
+    const password = "test-password-12345";
+    await pool.query(
+      "UPDATE users SET password_hash=$1 WHERE id=ANY($2::uuid[])",
+      [await argon2.hash(password), [ids.author, ids.student, ids.staff]],
+    );
+    const auth = new AuthService(pool, environment, { send: async () => {} });
+    const sessions = new Map<
+      string,
+      Awaited<ReturnType<AuthService["login"]>>
+    >();
+    for (const id of [ids.author, ids.student, ids.staff])
+      sessions.set(
+        id,
+        await auth.login(`${names[id].toLowerCase()}@example.edu`, password),
+      );
+    const api = createApp({
+      environment,
+      authService: auth,
+      postService: new PostService(pool),
+      answerService: new AnswerService(pool),
+      followupService: new FollowupService(pool),
+      collaborationStore: new CollaborationStore(pool),
+    });
+    const server = api.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Missing API port");
+      const base = `http://127.0.0.1:${address.port}`;
+      const call = async (
+        user: string,
+        method: string,
+        path: string,
+        body?: object,
+        etag?: string,
+      ) => {
+        const login = sessions.get(user)!;
+        const response = await fetch(base + path, {
+          method,
+          headers: {
+            Cookie: `__Host-chalktalk_session=${login.credential}`,
+            Origin: environment.frontendBaseUrl,
+            "X-CSRF-Token": login.session.csrfToken,
+            ...(body ? { "Content-Type": "application/json" } : {}),
+            ...(etag ? { "If-Match": etag } : {}),
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        return {
+          status: response.status,
+          data: await response.json(),
+          etag: response.headers.get("etag"),
+        };
+      };
+      const postId = await insertPost();
+      const answer = await call(
+        ids.author,
+        "POST",
+        `/api/v1/posts/${postId}/answers`,
+        { bodyMarkdown: "Initial" },
+      );
+      expect(answer.status).toBe(201);
+      const answerId = answer.data.data.id as string;
+      const root = await call(
+        ids.author,
+        "POST",
+        `/api/v1/posts/${postId}/followups`,
+        { bodyMarkdown: "Question followup" },
+      );
+      expect(root.status).toBe(201);
+      const reply = await call(
+        ids.student,
+        "POST",
+        `/api/v1/followups/${root.data.data.id}/replies`,
+        { bodyMarkdown: "REST reply" },
+      );
+      expect(reply.status).toBe(201);
+      expect(reply.data.data.parentId).toBe(root.data.data.id);
+      const vote = await call(
+        ids.student,
+        "PUT",
+        `/api/v1/followups/${root.data.data.id}/upvote`,
+      );
+      expect(vote.status).toBe(200);
+      expect(vote.data.data.upvoteCount).toBe(1);
+      const endorsed = await call(
+        ids.staff,
+        "PUT",
+        `/api/v1/answers/${answerId}/endorsement`,
+        undefined,
+        answer.etag!,
+      );
+      expect(endorsed.status).toBe(200);
+      const correction = await call(
+        ids.student,
+        "PATCH",
+        `/api/v1/answers/${answerId}`,
+        { bodyMarkdown: "Corrected" },
+        endorsed.etag!,
+      );
+      expect(correction.status).toBe(200);
+      expect(correction.data.data.endorsedAt).toBeNull();
+      const history = await pool.query(
+        "SELECT count(*)::int AS count FROM answer_endorsement_events WHERE answer_id=$1",
+        [answerId],
+      );
+      expect(history.rows[0].count).toBe(1);
+      const live = new CollaborationStore(pool);
+      const saved = await live.load("answer", answerId);
+      const doc = new Y.Doc();
+      Y.applyUpdate(doc, saved.state);
+      const vector = Y.encodeStateVector(doc);
+      doc.getText("content").delete(0, doc.getText("content").length);
+      await live.applyUpdate(
+        "answer",
+        answerId,
+        ids.author,
+        sessions.get(ids.author)!.session.id,
+        Y.encodeStateAsUpdate(doc, vector),
+      );
+      doc.destroy();
+      const rejected = await call(
+        ids.staff,
+        "PUT",
+        `/api/v1/answers/${answerId}/endorsement`,
+        undefined,
+        '"v4"',
+      );
+      expect(rejected.status).toBe(409);
+      expect(rejected.data.error.code).toBe("answer_empty");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });
