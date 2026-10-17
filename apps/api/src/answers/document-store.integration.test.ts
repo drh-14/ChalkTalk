@@ -349,6 +349,10 @@ integration("answer Yjs document persistence", () => {
     await expect(
       store.applyUpdate(id, Y.encodeStateAsUpdate(editor)),
     ).rejects.toMatchObject({ code: "invalid_content" });
-    expect(await store.load(id)).toEqual(accepted);
+    const { state: persistedState, ...persistedMetadata } =
+      await store.load(id);
+    const { state: acceptedState, ...acceptedMetadata } = accepted;
+    expect(persistedMetadata).toEqual(acceptedMetadata);
+    expect(Buffer.compare(persistedState, acceptedState)).toBe(0);
   });
 });

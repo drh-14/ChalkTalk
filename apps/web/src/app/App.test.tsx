@@ -1561,17 +1561,112 @@ describe("ChalkTalk auth entry", () => {
       screen.getByLabelText("New password"),
       "correct horse battery staple",
     );
+    await user.type(
+      screen.getByLabelText("Confirm new password"),
+      "correct horse battery staple",
+    );
     await user.click(screen.getByRole("button", { name: "Reset password" }));
 
     expect((await screen.findByRole("status")).textContent).toContain(
       "Password reset",
     );
-    await user.click(screen.getByRole("button", { name: "Go to sign in" }));
     expect(
       await screen.findByRole("heading", {
         name: "Discuss the work that matters.",
       }),
     ).toBeTruthy();
+    expect(window.location.pathname).toBe("/");
+    expect(screen.queryByRole("button", { name: "Go to sign in" })).toBeNull();
+
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 202 }));
+    await user.click(screen.getByRole("link", { name: "Forgot password?" }));
+    await user.type(screen.getByLabelText("Email address"), "ada@example.edu");
+    await user.click(screen.getByRole("button", { name: "Send reset link" }));
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "If an account matches that email",
+    );
+    await user.click(screen.getByRole("link", { name: "Back to sign in" }));
+    expect(
+      screen.queryByText("Password reset. You can now sign in."),
+    ).toBeNull();
+
+    await user.click(screen.getByRole("link", { name: "Create an account" }));
+    await user.click(screen.getByRole("link", { name: "Back to sign in" }));
+    expect(
+      screen.queryByText("Password reset. You can now sign in."),
+    ).toBeNull();
+  });
+
+  it("keeps invalid reset passwords on the form without calling the API", async () => {
+    setPath("/reset-password?token=reset-token");
+    const fetchMock = vi.fn().mockResolvedValueOnce(unauthenticatedResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Set a new password" });
+    const password = screen.getByLabelText("New password");
+    const confirmation = screen.getByLabelText("Confirm new password");
+    await user.type(password, "too short");
+    await user.type(confirmation, "too short");
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+    expect(screen.getByRole("alert").textContent).toContain(
+      "12 to 128 characters",
+    );
+    expect(password.getAttribute("aria-invalid")).toBe("true");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await user.clear(password);
+    await user.clear(confirmation);
+    await user.type(password, "p".repeat(129));
+    await user.type(confirmation, "p".repeat(129));
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+    expect(screen.getByRole("alert").textContent).toContain(
+      "12 to 128 characters",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await user.clear(password);
+    await user.clear(confirmation);
+    await user.type(password, "correct horse battery staple");
+    await user.type(confirmation, "different valid password");
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+    expect(screen.getByText(/passwords do not match/i)).toBeTruthy();
+    expect(confirmation.getAttribute("aria-invalid")).toBe("true");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe("/reset-password");
+  });
+
+  it("keeps a failed reset on the form with an actionable error", async () => {
+    setPath("/reset-password?token=reset-token");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(unauthenticatedResponse())
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { error: { code: "invalid_token", message: "Reset link expired" } },
+          400,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Set a new password" });
+    await user.type(
+      screen.getByLabelText("New password"),
+      "correct horse battery staple",
+    );
+    await user.type(
+      screen.getByLabelText("Confirm new password"),
+      "correct horse battery staple",
+    );
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Reset link expired",
+    );
+    expect(window.location.pathname).toBe("/reset-password");
+    expect(screen.getByLabelText("New password")).toBeTruthy();
   });
 
   it("surfaces API errors and prevents duplicate pending submissions", async () => {
