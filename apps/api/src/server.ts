@@ -13,27 +13,29 @@ import { StatisticsService } from "./statistics/service.js";
 const environment = loadEnvironment();
 const { port } = environment;
 const pool = createPool(requireDatabaseUrl(environment));
+const emailSender = createEmailSender(environment);
 const app = createApp({
   environment,
-  authService: new AuthService(
-    pool,
-    environment,
-    createEmailSender(environment),
-  ),
+  authService: new AuthService(pool, environment, emailSender),
   courseService: new CourseService(pool),
   postService: new PostService(pool),
   answerService: new AnswerService(pool),
   followupService: new FollowupService(pool),
   statisticsService: new StatisticsService(pool),
 });
-const worker = new JobWorker(pool);
+const worker = new JobWorker(
+  pool,
+  undefined,
+  emailSender,
+  environment.frontendBaseUrl,
+);
 let workerRunning = false;
 setInterval(() => {
   if (workerRunning) return;
   workerRunning = true;
   void worker
     .runOnce()
-    .catch((error: unknown) => console.error("Course job failed", error))
+    .catch((error: unknown) => console.error("Background job failed", error))
     .finally(() => {
       workerRunning = false;
     });
