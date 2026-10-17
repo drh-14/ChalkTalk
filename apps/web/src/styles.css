@@ -1784,6 +1784,15 @@ a {
   border-color: #39735f;
   box-shadow: 0 0 0 3px rgba(57, 115, 95, 0.15);
 }
+.auth-form input[aria-invalid="true"] {
+  border-color: #b42332;
+}
+.auth-form .field-error {
+  color: #b42332;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
 .button {
   border: 0;
   border-radius: 0.55rem;

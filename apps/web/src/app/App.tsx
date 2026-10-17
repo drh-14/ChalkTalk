@@ -69,9 +69,11 @@ function AuthMessage({ error, notice }: { error?: string; notice?: string }) {
 function LoginForm({
   onSession,
   setPanel,
+  notice,
 }: {
   onSession: (session: Session) => void;
   setPanel: (panel: LandingPanel) => void;
+  notice?: string;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -97,7 +99,7 @@ function LoginForm({
         <h2>Sign in to ChalkTalk</h2>
         <p>Pick up the conversation where your class left off.</p>
       </div>
-      <AuthMessage error={error} />
+      <AuthMessage error={error} notice={notice} />
       <label>
         Email address
         <input
@@ -271,8 +273,20 @@ function ResetRequestForm({
   );
 }
 
-function Landing({ onSession }: { onSession: (session: Session) => void }) {
+function Landing({
+  onSession,
+  notice,
+  onDismissNotice,
+}: {
+  onSession: (session: Session) => void;
+  notice?: string;
+  onDismissNotice: () => void;
+}) {
   const [panel, setPanel] = useState<LandingPanel>("login");
+  function changePanel(nextPanel: LandingPanel) {
+    if (nextPanel !== "login") onDismissNotice();
+    setPanel(nextPanel);
+  }
   return (
     <main className="landing-shell">
       <section className="brand-panel" aria-label="About ChalkTalk">
@@ -301,11 +315,15 @@ function Landing({ onSession }: { onSession: (session: Session) => void }) {
       <section className="auth-panel">
         <div className="auth-card">
           {panel === "login" ? (
-            <LoginForm onSession={onSession} setPanel={setPanel} />
+            <LoginForm
+              onSession={onSession}
+              setPanel={changePanel}
+              notice={notice}
+            />
           ) : panel === "signup" ? (
-            <SignupRequestForm setPanel={setPanel} />
+            <SignupRequestForm setPanel={changePanel} />
           ) : (
-            <ResetRequestForm setPanel={setPanel} />
+            <ResetRequestForm setPanel={changePanel} />
           )}
         </div>
         <p className="privacy-note">
@@ -416,26 +434,33 @@ function CreateAccount({
 
 function ResetPassword({
   token,
-  onLanding,
+  onSuccess,
 }: {
   token?: string;
-  onLanding: () => void;
+  onSuccess: () => void;
 }) {
   const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const [complete, setComplete] = useState(false);
+  const [passwordError, setPasswordError] = useState<string>();
+  const [confirmationError, setConfirmationError] = useState<string>();
   if (!token)
     return <LinkProblem title="This password reset link is incomplete." />;
   const resetToken = token;
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
+    const invalidLength = password.length < 12 || password.length > 128;
+    const mismatch = password !== confirmation;
+    setPasswordError(invalidLength ? "Use 12 to 128 characters." : undefined);
+    setConfirmationError(mismatch ? "Passwords do not match." : undefined);
+    if (invalidLength || mismatch) return;
     setPending(true);
     setError(undefined);
     try {
       await resetPassword(resetToken, password);
-      setComplete(true);
+      onSuccess();
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -444,38 +469,70 @@ function ResetPassword({
   }
   return (
     <AuthRoute>
-      <form className="auth-form" onSubmit={submit}>
+      <form className="auth-form" onSubmit={submit} noValidate>
         <div className="form-heading">
           <span>Choose a new password</span>
           <h1>Set a new password</h1>
-          <p>Use at least 12 characters to keep your account secure.</p>
+          <p>Use 12 to 128 characters to keep your account secure.</p>
         </div>
-        <AuthMessage
-          error={error}
-          notice={complete ? "Password reset. You can now sign in." : undefined}
-        />
+        <AuthMessage error={error} />
         <label>
           New password
           <input
             autoFocus
+            aria-label="New password"
             autoComplete="new-password"
             type="password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            minLength={12}
-            required
-            disabled={complete}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              setPasswordError(undefined);
+              setConfirmationError(undefined);
+            }}
+            aria-invalid={Boolean(passwordError)}
+            aria-describedby={
+              passwordError ? "reset-password-error" : undefined
+            }
           />
+          {passwordError && (
+            <span
+              id="reset-password-error"
+              className="field-error"
+              role="alert"
+            >
+              {passwordError}
+            </span>
+          )}
         </label>
-        {complete ? (
-          <button className="button primary" type="button" onClick={onLanding}>
-            Go to sign in
-          </button>
-        ) : (
-          <button className="button primary" type="submit" disabled={pending}>
-            {pending ? "Resetting…" : "Reset password"}
-          </button>
-        )}
+        <label>
+          Confirm new password
+          <input
+            aria-label="Confirm new password"
+            autoComplete="new-password"
+            type="password"
+            value={confirmation}
+            onChange={(event) => {
+              setConfirmation(event.target.value);
+              setConfirmationError(undefined);
+            }}
+            aria-invalid={Boolean(confirmationError)}
+            aria-describedby={
+              confirmationError ? "reset-confirmation-error" : undefined
+            }
+          />
+          {confirmationError && (
+            <span
+              id="reset-confirmation-error"
+              className="field-error"
+              role="alert"
+            >
+              {confirmationError}
+            </span>
+          )}
+        </label>
+        <button className="button primary" type="submit" disabled={pending}>
+          {pending ? "Resetting…" : "Reset password"}
+        </button>
       </form>
     </AuthRoute>
   );
@@ -1030,6 +1087,7 @@ export function App() {
     routeFromLocation(new URL(window.location.href)),
   );
   const [session, setSession] = useState<Session>();
+  const [landingNotice, setLandingNotice] = useState<string>();
   const [ready, setReady] = useState(false);
   const sessionRestoreStarted = useRef(false);
   const beforeCourseLeave = useRef<() => boolean>(() => true);
@@ -1167,6 +1225,20 @@ export function App() {
   if (route.name === "verify-email")
     return <CreateAccount token={route.token} onSession={startSession} />;
   if (route.name === "reset-password")
-    return <ResetPassword token={route.token} onLanding={() => move("/")} />;
-  return <Landing onSession={startSession} />;
+    return (
+      <ResetPassword
+        token={route.token}
+        onSuccess={() => {
+          setLandingNotice("Password reset. You can now sign in.");
+          move("/");
+        }}
+      />
+    );
+  return (
+    <Landing
+      onSession={startSession}
+      notice={landingNotice}
+      onDismissNotice={() => setLandingNotice(undefined)}
+    />
+  );
 }
