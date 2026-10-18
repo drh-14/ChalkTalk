@@ -28,6 +28,8 @@ import {
   type UpdatePost,
 } from "../posts/service.js";
 import { StatisticsService } from "../statistics/service.js";
+import { CourseFileService } from "../course-files/service.js";
+import { readMultipart } from "../course-files/multipart.js";
 
 export interface AppDependencies {
   environment: Environment;
@@ -37,6 +39,7 @@ export interface AppDependencies {
   answerService?: AnswerService;
   followupService?: FollowupService;
   statisticsService?: StatisticsService;
+  courseFileService?: CourseFileService;
 }
 type AuthContext = {
   credential: string;
@@ -549,6 +552,7 @@ export function createApp(
     answerService,
     followupService,
     statisticsService,
+    courseFileService,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -1190,6 +1194,92 @@ export function createApp(
           isSelfLeave,
         );
         response.sendStatus(204);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  const courseFiles = (): CourseFileService => {
+    if (!courseFileService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "File service is unavailable",
+      );
+    return courseFileService;
+  };
+  app.post(
+    "/api/v1/courses/:courseId/files",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+      try {
+        await courseFiles().authorizeUpload(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          request.header("idempotency-key"),
+        );
+        upload = await readMultipart(request);
+        const value = await courseFiles().create(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          upload,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set({
+            Location: `/api/v1/courses/${value.courseId}/files/${value.id}/download`,
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      } finally {
+        await upload?.cleanup();
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/files/:fileId/download",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const file = await courseFiles().download(
+          param(request.params.courseId),
+          param(request.params.fileId),
+          current.session.user.id,
+        );
+        const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+        response.set({
+          "Content-Type": file.mediaType,
+          "Content-Length": String(file.length),
+          "Content-Disposition": `attachment; filename="${safeName}"`,
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "private, no-store",
+        });
+        const body = file.body as NodeJS.ReadableStream;
+        body.on("error", (error) => {
+          if (!response.headersSent) next(error);
+          else response.destroy(error);
+        });
+        body.pipe(response);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/files/:fileId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await courseFiles().delete(
+          param(request.params.courseId),
+          param(request.params.fileId),
+          auth(response).session.user.id,
+        );
+        response.status(204).end();
       } catch (error) {
         next(error);
       }

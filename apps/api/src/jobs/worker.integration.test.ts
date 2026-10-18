@@ -1,4 +1,13 @@
 import { Pool } from "pg";
+import { createHash } from "node:crypto";
+import {
+  S3Client,
+  CreateBucketCommand,
+  DeleteBucketCommand,
+  PutObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectCommand,
+} from "@aws-sdk/client-s3";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
@@ -332,6 +341,290 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(delivered[0]!.text).not.toContain("Ada Staff");
   });
 
+  (process.env.TEST_S3_ENDPOINT ? it : it.skip)(
+    "deletes course file objects before completing course deletion",
+    async () => {
+      const bucket = `chalktalk-delete-test-${process.pid}-${Date.now()}`;
+      const s3 = new S3Client({
+        region: "us-east-1",
+        endpoint: process.env.TEST_S3_ENDPOINT,
+        forcePathStyle: true,
+        credentials: {
+          accessKeyId: process.env.TEST_S3_ACCESS_KEY_ID ?? "chalktalk-local",
+          secretAccessKey:
+            process.env.TEST_S3_SECRET_ACCESS_KEY ?? "chalktalk-local-secret",
+        },
+      });
+      await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+      try {
+        const { courseId, jobId } = await seedJob();
+        const resourceId = uuidv7();
+        const key = `courses/${courseId}/files/${resourceId}`;
+        const bytes = Buffer.from("stored original bytes");
+        await s3.send(
+          new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes }),
+        );
+        await pool.query(
+          "INSERT INTO course_files (id,course_id,object_key,media_type,file_name,size_bytes,checksum_sha256) VALUES ($1,$2,$3,'text/plain','notes.txt',$4,$5)",
+          [
+            resourceId,
+            courseId,
+            key,
+            bytes.length,
+            createHash("sha256").update(bytes).digest(),
+          ],
+        );
+        const tombstoneId = uuidv7();
+        const tombstoneKey = `courses/${courseId}/files/${tombstoneId}`;
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: tombstoneKey,
+            Body: bytes,
+          }),
+        );
+        await pool.query(
+          "INSERT INTO course_files (id,course_id,object_key,media_type,file_name,size_bytes,checksum_sha256,deleted_at) VALUES ($1,$2,$3,'text/plain','old.txt',$4,$5,clock_timestamp())",
+          [
+            tombstoneId,
+            courseId,
+            tombstoneKey,
+            bytes.length,
+            createHash("sha256").update(bytes).digest(),
+          ],
+        );
+        const storageWorker = new JobWorker(
+          pool,
+          "storage-worker",
+          undefined,
+          undefined,
+          {
+            client: s3,
+            bucket,
+          },
+        );
+        expect(await storageWorker.runOnce()).toBe(true);
+        expect(
+          (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId]))
+            .rows[0].status,
+        ).toBe("succeeded");
+        expect(
+          (
+            await pool.query("SELECT 1 FROM course_files WHERE id=$1", [
+              resourceId,
+            ])
+          ).rowCount,
+        ).toBe(0);
+        expect(
+          (await s3.send(new ListObjectsV2Command({ Bucket: bucket })))
+            .Contents ?? [],
+        ).toHaveLength(0);
+      } finally {
+        const objects = await s3.send(
+          new ListObjectsV2Command({ Bucket: bucket }),
+        );
+        for (const object of objects.Contents ?? [])
+          if (object.Key)
+            await s3.send(
+              new DeleteObjectCommand({ Bucket: bucket, Key: object.Key }),
+            );
+        await s3.send(new DeleteBucketCommand({ Bucket: bucket }));
+        s3.destroy();
+      }
+    },
+  );
+  it("retains course metadata and retries when object deletion fails", async () => {
+    const { courseId, jobId } = await seedJob();
+    const resourceId = uuidv7();
+    const bytes = Buffer.from("stored original bytes");
+    await pool.query(
+      "INSERT INTO course_files (id,course_id,object_key,media_type,file_name,size_bytes,checksum_sha256) VALUES ($1,$2,$3,'text/plain','notes.txt',$4,$5)",
+      [
+        resourceId,
+        courseId,
+        `courses/${courseId}/files/${resourceId}`,
+        bytes.length,
+        createHash("sha256").update(bytes).digest(),
+      ],
+    );
+    const failingStore = {
+      send: async () => {
+        throw new Error("object storage unavailable");
+      },
+    } as unknown as S3Client;
+    const storageWorker = new JobWorker(
+      pool,
+      "failing-storage-worker",
+      undefined,
+      undefined,
+      {
+        client: failingStore,
+        bucket: "unused",
+      },
+    );
+    expect(await storageWorker.runOnce()).toBe(true);
+    expect(
+      (
+        await pool.query("SELECT status,last_error FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toMatchObject({
+      status: "queued",
+      last_error: "object storage unavailable",
+    });
+    expect(
+      (await pool.query("SELECT 1 FROM course_files WHERE id=$1", [resourceId]))
+        .rowCount,
+    ).toBe(1);
+    expect(
+      (await pool.query("SELECT 1 FROM courses WHERE id=$1", [courseId]))
+        .rowCount,
+    ).toBe(1);
+  });
+  it("retries a durable file-delete job without restoring visibility", async () => {
+    const { courseId, jobId: courseJobId } = await seedJob();
+    await pool.query("DELETE FROM jobs WHERE id=$1", [courseJobId]);
+    const fileId = uuidv7();
+    const objectKey = `courses/${courseId}/files/${fileId}`;
+    const bytes = Buffer.from("original bytes");
+    await pool.query(
+      "INSERT INTO course_files (id,course_id,object_key,media_type,file_name,size_bytes,checksum_sha256,deleted_at) VALUES ($1,$2,$3,'text/plain','old.txt',$4,$5,clock_timestamp())",
+      [
+        fileId,
+        courseId,
+        objectKey,
+        bytes.length,
+        createHash("sha256").update(bytes).digest(),
+      ],
+    );
+    const jobId = uuidv7();
+    await pool.query(
+      "INSERT INTO jobs (id,kind,payload,deduplication_key) VALUES ($1,'delete_course_file',$2,$3)",
+      [jobId, { courseId, fileId, objectKey }, `file-delete:${fileId}`],
+    );
+    const failed = new JobWorker(
+      pool,
+      "failed-file-delete",
+      undefined,
+      undefined,
+      {
+        client: {
+          send: async () => {
+            throw new Error("storage offline");
+          },
+        } as unknown as S3Client,
+        bucket: "unused",
+      },
+    );
+    expect(await failed.runOnce()).toBe(true);
+    expect(
+      (
+        await pool.query(
+          "SELECT status,attempts,last_error FROM jobs WHERE id=$1",
+          [jobId],
+        )
+      ).rows[0],
+    ).toMatchObject({
+      status: "queued",
+      attempts: 1,
+      last_error: "storage offline",
+    });
+    expect(
+      (
+        await pool.query("SELECT deleted_at FROM course_files WHERE id=$1", [
+          fileId,
+        ])
+      ).rows[0].deleted_at,
+    ).toBeTruthy();
+    await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [jobId]);
+    const removed: string[] = [];
+    const recovered = new JobWorker(
+      pool,
+      "recovered-file-delete",
+      undefined,
+      undefined,
+      {
+        client: {
+          send: async (command: DeleteObjectCommand) => {
+            removed.push(command.input.Key!);
+            return {};
+          },
+        } as unknown as S3Client,
+        bucket: "unused",
+      },
+    );
+    expect(await recovered.runOnce()).toBe(true);
+    expect(removed).toEqual([objectKey]);
+    expect(
+      (
+        await pool.query("SELECT status,attempts FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toMatchObject({ status: "succeeded", attempts: 2 });
+  });
+  it("includes an upload committed while course deletion waits for its lock", async () => {
+    const { courseId, jobId } = await seedJob();
+    const resourceId = uuidv7();
+    const key = `courses/${courseId}/files/${resourceId}`;
+    const bytes = Buffer.from("concurrent upload");
+    const uploader = await pool.connect();
+    const deleted: string[] = [];
+    const store = {
+      send: async (command: DeleteObjectCommand) => {
+        deleted.push(command.input.Key!);
+        return {};
+      },
+    } as unknown as S3Client;
+    try {
+      await uploader.query("BEGIN");
+      const uploaderPid = (
+        await uploader.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+      ).rows[0]!.pid;
+      await uploader.query(
+        "INSERT INTO course_files (id,course_id,object_key,media_type,file_name,size_bytes,checksum_sha256) VALUES ($1,$2,$3,'text/plain','notes.txt',$4,$5)",
+        [
+          resourceId,
+          courseId,
+          key,
+          bytes.length,
+          createHash("sha256").update(bytes).digest(),
+        ],
+      );
+      const deleting = new JobWorker(
+        pool,
+        "concurrent-delete-worker",
+        undefined,
+        undefined,
+        {
+          client: store,
+          bucket: "unused",
+        },
+      ).runOnce();
+      let blocked = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const state = await pool.query<{ blocked: boolean }>(
+          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))) AS blocked",
+          [uploaderPid],
+        );
+        blocked = state.rows[0]!.blocked;
+        if (blocked) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await uploader.query("COMMIT");
+      expect(blocked).toBe(true);
+      expect(await deleting).toBe(true);
+      expect(deleted).toEqual([key]);
+      expect(
+        (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId]))
+          .rows[0].status,
+      ).toBe("succeeded");
+    } finally {
+      await uploader.query("ROLLBACK").catch(() => {});
+      uploader.release();
+    }
+  });
   it("persists a failed cleanup attempt, then retries it successfully", async () => {
     const { courseId, jobId } = await seedJob();
     await pool.query(`
