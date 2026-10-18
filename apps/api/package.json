@@ -6,15 +6,19 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
+    "dev:collaboration": "tsx watch src/collaboration/main.ts",
     "migrate": "tsx src/database/migrate.ts",
     "seed:mock": "tsx src/database/seed-ams161.ts"
   },
   "dependencies": {
+    "@hocuspocus/extension-redis": "4.7.1",
+    "@hocuspocus/server": "4.7.1",
     "argon2": "^0.45.1",
     "express": "^5.1.0",
     "nodemailer": "^10.0.10",
     "pg": "^8.16.3",
     "uuid": "^14.0.2",
+    "ws": "^8.18.3",
     "yjs": "^13.6.33"
   },
   "devDependencies": {

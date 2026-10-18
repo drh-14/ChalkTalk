@@ -1,0 +1,32 @@
+# Live editor browser verification
+
+On 2026-10-14, Playwright exercised the answer editor in Chromium with the ticket HTTP response mocked and a local Hocuspocus/Yjs test server. The latter was reset between scenarios; no production API or database was used.
+
+- **Connected** (`connected.png`): loaded saved Markdown/LaTeX text, typed a live change, observed synchronized status, and reloaded to confirm the change remained.
+- **Disconnected draft** (`disconnected-draft.png`): stopped the server, typed locally, and observed the disconnected warning and retry control while retaining the draft.
+- **Recovered draft** (`recovered-draft.png`): restarted the same mock server with its saved state, retried with a fresh ticket, and reloaded to confirm the offline draft was synchronized.
+
+Playwright also exercised the **live followup body editor** in Chromium with the followup ticket HTTP response mocked and a local Hocuspocus/Yjs server. The server held document state in memory; no production API or database was used.
+
+- **Connected followup** (`followup-connected.png`): loaded saved Markdown/LaTeX text, typed a live followup change, observed synchronized status, and reloaded to confirm the change remained.
+- **Disconnected followup draft** (`followup-disconnected-draft.png`): stopped the local server, typed into the followup editor, and observed the disconnected warning and retry control while retaining the local draft.
+
+Earlier full-app answer/followup panel coverage used the mocked-browser verification in `documentation/browser-screenshots/answers-followups-ui/`; these fixture runs exercised the collaborative editor path in isolation. The authenticated full-stack scenarios are documented below.
+
+On 2026-10-15, a two-editor Chromium fixture rendered the actual `LiveBodyEditor` in separate tabs against mocked ticket HTTP and a local in-memory Hocuspocus/Yjs server. An anonymous contributor entered Markdown with LaTeX in one editor; the peer visibly received the edit. The fixture issued a private identity-bearing one-use ticket on each connection. Browser assertions confirmed the peer DOM did not contain that identity, the server received no awareness states, and reloading the peer consumed a third fresh ticket while retaining the shared edit. [Anonymous awareness screenshot](anonymous-awareness.png) shows the rendered editor after the concurrent change. This was mocked-browser coverage, not a full-stack authenticated browser run; the existing real PostgreSQL/two-node Redis tests cover the server path separately.
+
+## Reproducible focused checks (2026-10-15)
+
+From the repository root after `npm ci`, run `npx playwright install chromium --only-shell` and `npm run test:browser:collaboration`. If using `PLAYWRIGHT_BROWSERS_PATH`, set it to the same cache path for both commands. This starts the real React/CodeMirror editor fixture, a Vite server, and an in-memory Hocuspocus/Yjs server; it needs no preexisting tab or login. The ticket HTTP endpoint is mocked, while the WebSocket uses the local Hocuspocus server. The browser test asserts two-editor Markdown and rendered LaTeX synchronization for both answers and followups, reload persistence, distinct one-use tickets on reconnect, a retained disconnected draft and its recovery, and absence of anonymous identity in peer UI and awareness. Current screenshots: [answer peer](answer-two-editors.png), [answer disconnected](answer-offline-draft.png), [answer recovered](answer-recovered-draft.png), [followup peer](followup-two-editors.png), [followup disconnected](followup-offline-draft.png), [followup recovered](followup-recovered-draft.png).
+
+With the existing PostgreSQL service, run `TEST_DATABASE_URL=postgresql://chalktalk:chalktalk@localhost:5432/chalktalk npm run test:rest:collaboration`. This starts an ephemeral API listener backed by an isolated migrated schema, seeds disposable users and real password-backed sessions, and drives authenticated HTTP answer/followup/reply creation, voting, endorsement, correction, and blank-live-text endorsement rejection. It checks the historical endorsement event in PostgreSQL and tears down the listener and schema. Redis is not required for this focused REST scenario.
+
+These focused checks are separate mocked-browser and authenticated-API checks, not the full-stack browser run below. The browser fixture does not exercise PostgreSQL persistence or the production collaboration transport; focused real PostgreSQL/two-node Redis tests cover those seams separately.
+
+The focused browser command passed both rendered-editor scenarios on 2026-10-15 and refreshed the six screenshots above. Separately, `TEST_DATABASE_URL=postgresql://chalktalk:chalktalk@localhost:5432/chalktalk TEST_REDIS_URL=redis://127.0.0.1:6379 npx vitest run apps/api/src/collaboration/store.integration.test.ts -t 'keeps an idle real-store provider connected and persists its next edit'` passed: a real HocuspocusProvider stayed on the same connection past its default idle check and its next edit persisted through the production collaboration server to isolated PostgreSQL, with Redis available. This is a backend integration check, not full-stack browser coverage.
+
+## Authenticated full-stack browser run (2026-10-17)
+
+After `npm ci` and `npx playwright install chromium --only-shell`, start disposable PostgreSQL and Redis services (for example, `docker compose --profile collaboration up -d postgres redis`) and run `TEST_DATABASE_URL=postgresql://chalktalk:chalktalk@localhost:5432/chalktalk TEST_REDIS_URL=redis://localhost:6379 npm run test:browser:collaboration:full-stack` from the repository root. The command runs two Chromium scenarios against the real question-detail UI, HTTP API, Hocuspocus server, PostgreSQL, and Redis. It creates an isolated database schema and two real password-backed accounts, signs both browsers in, edits the shared answer and a followup concurrently, checks peer synchronization and PostgreSQL persistence, reloads the peer, and drops the schema on teardown. No API or WebSocket responses are mocked. CI runs the same command with service containers.
+
+Both scenarios passed locally. The [answer screenshot](full-stack-answer.png) and [followup screenshot](full-stack-followup.png) show the signed-in peer's question-detail view after synchronization. The earlier fixture screenshots above remain useful for offline recovery and anonymous-awareness cases, which this full-stack run does not repeat.

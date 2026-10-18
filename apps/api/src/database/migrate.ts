@@ -1,13 +1,41 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
+import * as Y from "yjs";
 import { loadEnvironment, requireDatabaseUrl } from "../config/environment.js";
 import { createPool } from "./pool.js";
 
 interface Migration {
   name: string;
   sql: string;
+}
+
+async function backfillFollowupDocuments(client: PoolClient): Promise<void> {
+  let cursor: string | null = null;
+  for (;;) {
+    const result: { rows: Array<{ id: string; body_markdown: string }> } =
+      await client.query(
+        `SELECT id,body_markdown FROM followups
+         WHERE deleted_at IS NULL AND ($1::uuid IS NULL OR id > $1::uuid)
+         ORDER BY id LIMIT 250`,
+        [cursor],
+      );
+    if (!result.rows.length) break;
+    for (const row of result.rows) {
+      const doc = new Y.Doc();
+      try {
+        doc.getText("content").insert(0, row.body_markdown);
+        await client.query(
+          "INSERT INTO followup_collaboration_documents (followup_id,yjs_state) VALUES ($1,$2)",
+          [row.id, Buffer.from(Y.encodeStateAsUpdate(doc))],
+        );
+      } finally {
+        doc.destroy();
+      }
+    }
+    cursor = result.rows.at(-1)!.id;
+  }
 }
 
 export function getMigrationDirectory(): string {
@@ -60,6 +88,8 @@ export async function runMigrations(
       await client.query("BEGIN");
       try {
         await client.query(migration.sql);
+        if (migration.name === "011_live_content_editing.sql")
+          await backfillFollowupDocuments(client);
         await client.query("INSERT INTO schema_migrations (name) VALUES ($1)", [
           migration.name,
         ]);

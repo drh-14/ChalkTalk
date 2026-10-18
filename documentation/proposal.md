@@ -97,9 +97,7 @@ Classes can be archived or deleted. Archiving a class makes it read-only, preven
 Users can create posts on the main page. There are three types of posts: questions, notes, and polls.
 
 Questions  
-Questions can be posted by any user. When a user creates a question, similar existing posts are surfaced automatically. For the current shared-answer model and editing permissions, see the [answers API reference](api/answers.md).
-
-For current endorsement and question-level followup behavior, see the [answers API reference](api/answers.md).
+Questions can be posted by any user. When a user creates a question, similar existing posts are surfaced automatically. For current shared-answer, endorsement, and question-level followup behavior, see the [answers API reference](api/answers.md).
 
 Notes  
 Notes can be posted by any user. Responses cannot be posted to notes.

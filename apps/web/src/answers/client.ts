@@ -39,6 +39,11 @@ export type FollowupPage = {
   data: Followup[];
   meta: { total: number; nextCursor: string | null };
 };
+export type CollaborationTicket = {
+  ticket: string;
+  documentName: string;
+  expiresInSeconds: number;
+};
 
 async function receive<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
@@ -69,6 +74,30 @@ const voteHeaders = (csrfToken: string) => ({
   Accept: "application/json",
   "X-CSRF-Token": csrfToken,
 });
+
+export async function requestCollaborationTicket(
+  kind: "answer" | "followup",
+  id: string,
+  csrfToken: string,
+): Promise<CollaborationTicket> {
+  const path = kind === "answer" ? "answers" : "followups";
+  return receive<CollaborationTicket>(
+    await fetch(
+      `/api/v1/${path}/${encodeURIComponent(id)}/collaboration-ticket`,
+      {
+        method: "POST",
+        credentials: "include",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+        },
+        body: "{}",
+      },
+    ),
+  );
+}
 
 export async function listAnswers(
   postId: string,

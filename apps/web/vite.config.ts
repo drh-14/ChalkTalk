@@ -39,6 +39,13 @@ export function createViteConfig(
           target: environment.VITE_API_PROXY_TARGET ?? "http://localhost:3000",
           changeOrigin: true,
         },
+        "/collaboration": {
+          target:
+            environment.VITE_COLLABORATION_PROXY_TARGET ??
+            "http://localhost:3001",
+          ws: true,
+          changeOrigin: true,
+        },
       },
       watch:
         environment.VITE_USE_POLLING === "true"

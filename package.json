@@ -11,22 +11,28 @@
     "dev": "concurrently -n web,api -c cyan,green \"npm run dev:web\" \"npm run dev:api\"",
     "dev:web": "npm run dev --workspace=@chalktalk/web",
     "dev:api": "npm run dev --workspace=@chalktalk/api",
+    "dev:collaboration": "npm run dev:collaboration --workspace=@chalktalk/api",
     "db:migrate": "npm run migrate --workspace=@chalktalk/api",
     "db:seed:mock": "npm run seed:mock --workspace=@chalktalk/api",
     "format": "prettier --write \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:browser:collaboration": "playwright test tests/browser/live-collaboration.spec.mjs --workers=1",
+    "test:browser:collaboration:full-stack": "playwright test tests/browser/live-collaboration-full-stack.spec.ts --workers=1",
+    "test:rest:collaboration": "vitest run apps/api/src/http/answers.integration.test.ts -t 'drives replies, votes, corrections and blank-live endorsement through an authenticated running API'",
     "typecheck": "tsc --noEmit -p apps/web/tsconfig.app.json && tsc --noEmit -p apps/api/tsconfig.json"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@playwright/test": "^1.58.2",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
     "@types/express": "^5.0.3",
     "@types/node": "^24.6.1",
     "@types/pg": "^8.15.5",
     "@types/supertest": "^6.0.3",
+    "@types/ws": "8.18.1",
     "@vitejs/plugin-react": "^5.0.4",
     "concurrently": "^9.2.1",
     "eslint": "^9.36.0",
@@ -40,6 +46,7 @@
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.44.1",
     "vite": "^7.1.7",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "ws": "8.18.3"
   }
 }
