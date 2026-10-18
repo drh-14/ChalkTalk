@@ -234,8 +234,14 @@ export class PostService {
       }
       this.writable(member.status);
       const id = uuidv7();
+      await db.query(
+        "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
+      );
       const created = await db.query<{ created_on: string }>(
-        "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on",
+        `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
+         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,created_at,updated_at,last_activity_at)
+         SELECT $1,$2,$3,$4,$5,$6,$7,stamp.at,stamp.at,stamp.at FROM stamp
+         RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on`,
         [
           id,
           courseId,
