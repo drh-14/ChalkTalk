@@ -101,6 +101,7 @@ jobs:
           WEB_PORT: 5174
         run: |
           curl --fail --insecure --retry 20 --retry-connrefused https://localhost:${WEB_PORT}/api/health
+          docker compose --profile app ps --services --status running | grep -qx worker
           docker compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '005_text_posts.sql')" | grep -qx t
           docker compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM organizations WHERE domain = 'ams161.mock.chalktalk.invalid')" | grep -qx f
 

@@ -47,7 +47,7 @@ Prerequisites: Node.js 22 or later, npm, and Docker with Docker Compose.
 
 ### Direct application development
 
-Use this workflow for the fastest edit loop: Docker runs PostgreSQL, Mailpit, and SeaweedFS, while the API and Vite development server run directly on your machine.
+Use this workflow for the fastest edit loop: Docker runs PostgreSQL, Mailpit, and SeaweedFS, while the API, background job worker, and Vite development server run directly on your machine.
 
 1. Install dependencies:
 
@@ -71,23 +71,25 @@ Use this workflow for the fastest edit loop: Docker runs PostgreSQL, Mailpit, an
    npm run db:migrate
    ```
 
-4. Start the web application and API:
+4. Start the web application, API, and independent background job worker:
 
    ```bash
    npm run dev
    ```
 
+   This starts the three development processes together. To run the worker independently, use `npm run dev:worker`; the API and browser can be started separately with `npm run dev:api` and `npm run dev:web`.
+
 The React client runs at `https://localhost:5173`. Its `/api` requests are forwarded unchanged to the Express API at `http://localhost:3000`; use `https://localhost:5173/api/v1/...` for browser auth requests. Mailpit receives local SMTP mail at `localhost:1025` and displays it at [http://localhost:8025](http://localhost:8025). SeaweedFS provides a local S3-compatible endpoint at `http://127.0.0.1:8333`. Use `chalktalk-local` as the access key and `chalktalk-local-secret` as the secret key, or override `SEAWEEDFS_ACCESS_KEY_ID` and `SEAWEEDFS_SECRET_ACCESS_KEY` in your ignored `.env`. These keys authenticate only to local SeaweedFS; no AWS account is needed. The `seaweedfs-data` Docker volume preserves objects across `docker compose stop`, `start`, and `down`. `docker compose down --volumes` deletes that data. Keep `.cert/` private and configure a random `AUTH_TOKEN_SECRET` plus your real allowed school domains before deployment.
 
 ### Full-stack Docker development
 
-After completing the certificate and `.env` setup above, start the hot-reloading web application, API, migrations, PostgreSQL, Mailpit, and SeaweedFS together:
+After completing the certificate and `.env` setup above, start the hot-reloading web application, API, background job worker, migrations, PostgreSQL, Mailpit, and SeaweedFS together:
 
 ```bash
 docker compose --profile app up --build
 ```
 
-The browser application is available at `https://localhost:5173`; its `/api` requests are proxied to the API inside the Compose network. The API intentionally has no host port. The `migrate` service waits for PostgreSQL health and completes before the API starts; rerunning it is safe because migrations are tracked. Compose automatically refreshes each container's named dependency volume when `package-lock.json` or the Node runtime changes; it never removes the PostgreSQL data volume.
+The browser application is available at `https://localhost:5173`; its `/api` requests are proxied to the API inside the Compose network. The API intentionally has no host port. The `migrate` service waits for PostgreSQL health and completes before the API and worker start; rerunning it is safe because migrations are tracked. The worker processes queued PostgreSQL jobs separately from the API, so the API can serve requests if the worker stops; pending jobs resume when it restarts. Compose automatically refreshes each container's named dependency volume when `package-lock.json` or the Node runtime changes; it never removes the PostgreSQL data volume.
 
 For an optional, local-only Calculus II prototype, set `MOCK_DATA=true` and `AMS161_DEMO_INSTRUCTOR_PASSWORD` (12–128 characters) in your ignored `.env` before starting the full-stack profile. The one-shot `seed-mock` service runs after migrations and before the API. On a fresh database, it creates AMS161 with instructor Maya Chen, TA Sam Okafor, and four student authors, plus a mix of questions and notes dated from minutes to about four months ago. Posts include tags, pinned and anonymous examples, and questions with student or staff answers for the feed filters. Three questions have similar counterparts you can find and merge manually. No posts start merged, so all of them appear in the normal feed and search; the Duplicate posts view starts empty. Sign in as `maya.chen@ams161.mock.chalktalk.invalid` using your local password; the course ID is `01a0e5a4-2985-7445-b435-1927a9a02715` and join code is `AMS16101`. The TA and mock students have random discarded passwords and are not intended for login. The password is never printed or committed. The seed runs once per PostgreSQL data volume: later starts do not change posts, existing merges or unmerges, deleted courses, or the instructor password. Changing this script or the password in `.env` after the first successful seed does not change an existing fixture; the instructor account retains its original password. `MOCK_DATA=false` (the tracked default, including CI) exits without writing fixture data and does not need a demo password. Direct `docker compose up` does not run the seed.
 
