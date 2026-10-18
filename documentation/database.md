@@ -70,6 +70,25 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 
 ## Background work
 
+### `digest_outbox`
+
+- `id`: `uuid`; primary key.
+- `recipient_user_id`: `uuid`; foreign key to `users.id`, cascading on deletion.
+- `course_id`: `uuid`; foreign key to `courses.id`, cascading on deletion.
+- `activity_date`: `date`; UTC date of the activity summarized.
+- `(recipient_user_id, course_id, activity_date)`: unique key preventing duplicate queued intents.
+- `status`: `queued`, `running`, `sent`, or `canceled`.
+- `attempts`, `available_at`, `locked_by`, `locked_until`, `last_error`, `sent_at`, `created_at`, `updated_at`: claim, retry, and delivery state.
+
+For delivery and visibility behavior, see the [daily course email digest](api/daily-course-email-digest.md).
+
+Digest scheduling scans from the day after the cursor through yesterday (inclusive), using partial `created_at` indexes on visible posts, undeleted answers, and undeleted followups before grouping activity by UTC day.
+
+### `digest_schedule_state`
+
+- `singleton`: fixed `true` primary key.
+- `last_scanned_date`: `date`; most recent UTC activity date considered for outbox generation. The migration initializes it to the UTC day before deployment, making the deployment day the first eligible activity date. The scheduler locks and advances this row in the same transaction as the outbox insert, so concurrent replicas and restarts agree on catch-up progress.
+
 ### `jobs`
 
 - `id`: `uuid_v7`; primary key.

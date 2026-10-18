@@ -131,7 +131,7 @@ The system consists of a frontend, a backend made up of three processes (a web s
 
 **Collaboration engine.** The collaboration engine is a Hocuspocus server that holds active Yjs documents in memory. Clients send edits to it over a WebSocket, and it merges them and broadcasts them to everyone else in the same session. Before accepting a connection, it validates a one-use ticket issued by the web server. It loads each document from PostgreSQL when the first participant joins and saves the merged state back periodically.
 
-**Worker.** The worker is a separate Node.js process that claims queued jobs from PostgreSQL and runs them. Jobs include OCR on uploaded documents, which the worker reads from the object store, digest generation, and sending email. Because the queue is stored in the database, queued jobs aren't lost if the worker restarts.
+**Worker.** Background jobs are claimed from PostgreSQL. The worker also schedules and delivers the daily course email digest using a durable PostgreSQL outbox; see the [daily course email digest](api/daily-course-email-digest.md) for delivery behavior.
 
 **PostgreSQL.** PostgreSQL stores users, courses, memberships, posts, sessions, the job queue, and saved collaboration documents. Row-level security limits every query to the courses the current user belongs to.
 
@@ -155,15 +155,14 @@ In the managed deployment, system metrics and request logs are collected with AW
 
 ### **Background jobs**
 
- Slow or non-request-critical work is delegated to a background worker process. This work  includes:
+Slow or non-request-critical work is delegated to a background worker process. This work includes:
 
-*  OCR and text extraction from documents
-*  Digest generation
-*  Email delivery
+- OCR and text extraction from documents
+- Email delivery
 
- The web server or scheduler queues a job by inserting a record into PostgreSQL with a queued status. Database storage ensures that queued work survives application and worker restarts.
+For daily course emails, see the [daily course email digest](api/daily-course-email-digest.md). For ordinary jobs, the web server inserts a queued record into PostgreSQL. Database storage ensures that queued work survives application and worker restarts.
 
-  When the worker claims a job, it marks the record as running. After completing the work, it marks the job as successful. If processing fails temporarily, the job is returned to the queue for another attempt. Jobs  that exceed their retry limit are marked as dead. Completed job records are removed later by scheduled retention cleanup.
+When the worker claims a job, it marks the record as running. After completing the work, it marks the job as successful. If processing fails temporarily, the job is returned to the queue for another attempt. Jobs that exceed their retry limit are marked as dead. Completed job records are removed later by scheduled retention cleanup.
 
 ### **Concurrent editing**
 
