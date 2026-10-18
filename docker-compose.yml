@@ -82,6 +82,22 @@ services:
       retries: 12
       start_period: 10s
 
+  worker:
+    profiles: ["app"]
+    restart: unless-stopped
+    build: *development-build
+    working_dir: /app
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment: *api-environment
+    command: npm run dev:worker --workspace=@chalktalk/api
+    volumes:
+      - .:/app
+      - worker-node-modules:/app/node_modules
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   seed-mock:
     profiles: ["app"]
     build: *development-build
@@ -138,4 +154,5 @@ volumes:
   postgres-data:
   seaweedfs-data:
   api-node-modules:
+  worker-node-modules:
   web-node-modules:

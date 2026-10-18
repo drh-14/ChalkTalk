@@ -6,6 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/jobs/main.ts",
+    "start:worker": "node dist/jobs/main.js",
     "migrate": "tsx src/database/migrate.ts",
     "seed:mock": "tsx src/database/seed-ams161.ts"
   },

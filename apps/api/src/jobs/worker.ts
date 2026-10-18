@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import type { EmailSender } from "../auth/service.js";
 
@@ -22,7 +23,7 @@ const errorMessage = (error: unknown) =>
 export class JobWorker {
   constructor(
     private readonly pool: Pool,
-    private readonly workerId = `api-${process.pid}`,
+    private readonly workerId = `worker-${randomUUID()}`,
     private readonly emailSender?: EmailSender,
     private readonly frontendBaseUrl?: string,
   ) {}

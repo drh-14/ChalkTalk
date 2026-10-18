@@ -8,15 +8,26 @@ type ComposeService = {
   environment?: Record<string, string>;
   ports?: Array<{ host_ip?: string; published: string; target: number }>;
   volumes?: Array<{ source: string; target: string; type: string }>;
+  restart?: string;
+  depends_on?: Record<string, { condition: string }>;
 };
 
 function renderCompose(
   credentials?: { accessKey: string; secretKey: string },
   ambientAws?: { accessKey?: string; secretKey?: string },
+  profile?: string,
 ) {
   const output = execFileSync(
     "docker",
-    ["compose", "--env-file", ".env.example", "config", "--format", "json"],
+    [
+      "compose",
+      "--env-file",
+      ".env.example",
+      ...(profile ? ["--profile", profile] : []),
+      "config",
+      "--format",
+      "json",
+    ],
     {
       cwd: process.cwd(),
       encoding: "utf8",
@@ -114,5 +125,30 @@ describe("default Compose object storage", () => {
       AWS_ACCESS_KEY_ID: "custom-key",
       AWS_SECRET_ACCESS_KEY: "custom-secret",
     });
+  });
+});
+
+describe("application Compose worker", () => {
+  it("runs only in the app profile, after migrations, with independent restart and dependencies", () => {
+    expect(renderCompose().services.worker).toBeUndefined();
+    const configuration = renderCompose(undefined, undefined, "app");
+    const worker = configuration.services.worker;
+    expect(worker).toBeDefined();
+    expect(worker.command).toEqual([
+      "npm",
+      "run",
+      "dev:worker",
+      "--workspace=@chalktalk/api",
+    ]);
+    expect(worker.restart).toBe("unless-stopped");
+    expect(worker.depends_on?.migrate.condition).toBe(
+      "service_completed_successfully",
+    );
+    expect(worker.volumes).toContainEqual(
+      expect.objectContaining({
+        source: "worker-node-modules",
+        target: "/app/node_modules",
+      }),
+    );
   });
 });
