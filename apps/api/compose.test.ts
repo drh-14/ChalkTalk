@@ -9,6 +9,7 @@ type ComposeService = {
   ports?: Array<{ host_ip?: string; published: string; target: number }>;
   volumes?: Array<{ source: string; target: string; type: string }>;
   restart?: string;
+  healthcheck?: { test: string[] };
   depends_on?: Record<string, { condition: string }>;
 };
 
@@ -33,7 +34,7 @@ function renderCompose(
       encoding: "utf8",
       env: {
         ...process.env,
-        COMPOSE_PROFILES: "",
+        COMPOSE_PROFILES: profile,
         COMPOSE_ENV_FILE: ".env.example",
         SEAWEEDFS_ACCESS_KEY_ID: credentials?.accessKey ?? "",
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
@@ -92,6 +93,17 @@ describe("default Compose object storage", () => {
     });
   });
 
+  it("waits for authenticated S3 readiness before starting the API", () => {
+    const configuration = renderCompose(undefined, undefined, "app");
+    expect(configuration.services.api.depends_on?.seaweedfs).toMatchObject({
+      condition: "service_healthy",
+    });
+    expect(configuration.services.seaweedfs.healthcheck?.test).toEqual([
+      "CMD-SHELL",
+      expect.any(String),
+    ]);
+  });
+
   it("keeps ambient AWS account credentials out of the SeaweedFS credential pair", () => {
     expect(
       renderCompose(undefined, {
@@ -144,6 +156,14 @@ describe("application Compose worker", () => {
     expect(worker.depends_on?.migrate.condition).toBe(
       "service_completed_successfully",
     );
+    expect(worker.depends_on?.seaweedfs.condition).toBe("service_healthy");
+    expect(worker.environment).toMatchObject({
+      S3_ENDPOINT: "http://seaweedfs:8333",
+      S3_BUCKET: "chalktalk-resources",
+      S3_REGION: "us-east-1",
+      S3_ACCESS_KEY_ID: "chalktalk-local",
+      S3_SECRET_ACCESS_KEY: "chalktalk-local-secret",
+    });
     expect(worker.volumes).toContainEqual(
       expect.objectContaining({
         source: "worker-node-modules",

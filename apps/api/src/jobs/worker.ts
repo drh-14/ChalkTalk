@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import type { EmailSender } from "../auth/service.js";
 
 type Job = {
   id: string;
-  kind: "delete_course" | "send_question_duplicate_email";
+  kind:
+    "delete_course" | "delete_course_file" | "send_question_duplicate_email";
   payload: {
     courseId?: string;
+    objectKey?: string;
     sourcePostId?: string;
     canonicalPostId?: string;
     staffUserId?: string;
@@ -26,6 +29,7 @@ export class JobWorker {
     private readonly workerId = `worker-${randomUUID()}`,
     private readonly emailSender?: EmailSender,
     private readonly frontendBaseUrl?: string,
+    private readonly objectStore?: { client: S3Client; bucket: string },
   ) {}
 
   private async transaction<T>(
@@ -55,7 +59,7 @@ export class JobWorker {
         attempts: number;
         max_attempts: number;
       }>(
-        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','send_question_duplicate_email') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
+        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','send_question_duplicate_email') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
       );
       const job = claimed.rows[0];
       if (!job) return undefined;
@@ -133,6 +137,9 @@ export class JobWorker {
 
   private async deleteCourse(courseId: string): Promise<void> {
     await this.transaction(async (client) => {
+      await client.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
+        courseId,
+      ]);
       const answers = "SELECT id FROM answers WHERE course_id=$1";
       await client.query(
         "DELETE FROM question_creation_daily_counts WHERE course_id=$1",
@@ -171,6 +178,19 @@ export class JobWorker {
       );
       await client.query("DELETE FROM posts WHERE course_id=$1", [courseId]);
       await client.query("DELETE FROM tags WHERE course_id=$1", [courseId]);
+      const objects = await client.query<{ object_key: string }>(
+        "SELECT object_key FROM course_files WHERE course_id=$1 FOR UPDATE",
+        [courseId],
+      );
+      if (objects.rows.length && !this.objectStore)
+        throw new Error("Object storage is required to delete course files");
+      for (const object of objects.rows)
+        await this.objectStore!.client.send(
+          new DeleteObjectCommand({
+            Bucket: this.objectStore!.bucket,
+            Key: object.object_key,
+          }),
+        );
       await client.query("DELETE FROM course_memberships WHERE course_id=$1", [
         courseId,
       ]);
@@ -200,6 +220,17 @@ export class JobWorker {
         if (!job.payload.courseId)
           throw new Error("Course deletion job payload is invalid");
         await this.deleteCourse(job.payload.courseId);
+      } else if (job.kind === "delete_course_file") {
+        if (!this.objectStore || !job.payload.objectKey)
+          throw new Error(
+            "Object storage and key are required to delete a course file",
+          );
+        await this.objectStore.client.send(
+          new DeleteObjectCommand({
+            Bucket: this.objectStore.bucket,
+            Key: job.payload.objectKey,
+          }),
+        );
       } else {
         await this.sendQuestionDuplicateEmail(job);
       }
