@@ -174,6 +174,10 @@ test.describe("rendered discussion attachments", () => {
             meta: { total: 1, nextCursor: null },
           },
         });
+      if (path === "/api/v1/courses/course-1/collaboration-sessions")
+        return route.fulfill({
+          json: { data: [], page: { nextCursor: null, hasMore: false } },
+        });
       return route.fulfill({
         status: 404,
         json: {

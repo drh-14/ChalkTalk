@@ -1,0 +1,427 @@
+import {
+  HocuspocusProvider,
+  HocuspocusProviderWebsocket,
+} from "@hocuspocus/provider";
+import type { Pool } from "pg";
+import { v7 as uuidv7 } from "uuid";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import WebSocket from "ws";
+import * as Y from "yjs";
+import { CourseService } from "../courses/service.js";
+import { collaborationAccessChanged } from "./lifecycle.js";
+import { createCollaborationServer, CLOSE_REASONS } from "./server.js";
+import { CollaborationSessionService, documentName } from "./service.js";
+import { createTestSchema, seedCourse } from "./test-fixtures.js";
+
+const url = process.env.TEST_DATABASE_URL;
+const integration = url ? describe : describe.skip;
+const ORIGIN = "https://app.example.edu";
+
+function socketClass(origin: string) {
+  return class extends WebSocket {
+    constructor(address: string, protocols?: string | string[]) {
+      super(address, protocols, { headers: { Origin: origin } });
+    }
+  };
+}
+
+async function until(check: () => boolean | Promise<boolean>, timeout = 5000) {
+  const started = Date.now();
+  while (!(await check())) {
+    if (Date.now() - started > timeout) throw new Error("Timed out waiting");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return Date.now() - started;
+}
+
+integration("collaboration server", () => {
+  let database: Awaited<ReturnType<typeof createTestSchema>>;
+  let pool: Pool;
+  let service: CollaborationSessionService;
+  let fixture: Awaited<ReturnType<typeof seedCourse>>;
+  let collaboration: ReturnType<typeof createCollaborationServer>;
+  const authSessions: Record<string, string> = {};
+  const opened: { destroy(): unknown }[] = [];
+
+  function startServer() {
+    collaboration = createCollaborationServer({
+      pool,
+      databaseUrl: url!,
+      frontendOrigins: new Set([ORIGIN]),
+      port: 0,
+      address: "127.0.0.1",
+      debounce: 300,
+      maxDebounce: 800,
+      sweepIntervalMs: 60_000,
+      listenerRetryMs: 100,
+    });
+    return collaboration.start();
+  }
+
+  async function newSession(creator = "alice", invitees: string[] = ["bob"]) {
+    const session = (
+      await service.create(fixture.courseId, fixture.users[creator]!, {
+        postId: fixture.postId,
+        language: "python",
+      })
+    ).value;
+    for (const name of invitees)
+      await service.invite(
+        session.id,
+        fixture.users[creator]!,
+        fixture.users[name]!,
+      );
+    return session.id;
+  }
+
+  function join(
+    name: string,
+    sessionId: string,
+    options: {
+      origin?: string;
+      token?: () => Promise<string>;
+      documentId?: string;
+    } = {},
+  ) {
+    const userId = fixture.users[name]!;
+    const state = {
+      closeReason: undefined as string | undefined,
+      authFailed: false,
+      stateless: [] as string[],
+    };
+    const websocketProvider = new HocuspocusProviderWebsocket({
+      url: collaboration.server.webSocketURL,
+      WebSocketPolyfill: socketClass(options.origin ?? ORIGIN),
+      maxAttempts: 1,
+    });
+    const document = new Y.Doc();
+    const provider = new HocuspocusProvider({
+      websocketProvider,
+      name: options.documentId ?? documentName(sessionId),
+      document,
+      token:
+        options.token ??
+        (async () =>
+          (await service.ticket(sessionId, userId, authSessions[userId]!))
+            .ticket),
+      onAuthenticationFailed: () => {
+        state.authFailed = true;
+      },
+      onClose: ({ event }) => {
+        state.closeReason ??= event.reason;
+      },
+      onStateless: ({ payload }) => {
+        state.stateless.push(payload);
+      },
+    });
+    provider.attach();
+    opened.push(provider, websocketProvider);
+    return { provider, document, text: document.getText("content"), state };
+  }
+
+  beforeAll(async () => {
+    database = await createTestSchema(url!, "collab_server");
+    pool = database.pool;
+    service = new CollaborationSessionService(pool, {
+      webSocketUrl: "wss://app.example.edu/collaboration",
+      endTimeoutMs: 3000,
+      endPollMs: 20,
+    });
+    fixture = await seedCourse(pool, {
+      alice: "student",
+      bob: "student",
+      carol: "student",
+      tim: "ta",
+      ina: "instructor",
+    });
+    for (const [name, userId] of Object.entries(fixture.users)) {
+      authSessions[userId] = uuidv7();
+      await pool.query(
+        "INSERT INTO sessions (id,user_id,credential_hash,csrf_token_hash,expires_at) VALUES ($1,$2,$3,$3,now()+interval '1 day')",
+        [
+          authSessions[userId],
+          userId,
+          Buffer.from(`${name}-server-credential-hash`),
+        ],
+      );
+    }
+    await startServer();
+  });
+  afterEach(async () => {
+    for (const item of opened.splice(0).reverse()) await item.destroy();
+  });
+  afterAll(async () => {
+    await collaboration?.stop();
+    await database?.drop();
+  });
+
+  describe("authentication", () => {
+    it("accepts a valid ticket once and rejects its reuse", async () => {
+      const sessionId = await newSession();
+      const ticket = (
+        await service.ticket(
+          sessionId,
+          fixture.users.alice!,
+          authSessions[fixture.users.alice!]!,
+        )
+      ).ticket;
+      const first = join("alice", sessionId, { token: async () => ticket });
+      await until(() => first.provider.isSynced);
+      const second = join("alice", sessionId, { token: async () => ticket });
+      await until(() => second.state.authFailed);
+      expect(second.provider.isSynced).toBe(false);
+    });
+
+    it("rejects expired, revoked, and other-document tickets", async () => {
+      const sessionId = await newSession();
+      const otherId = await newSession();
+      const alice = fixture.users.alice!;
+      const issue = async (id: string) =>
+        (await service.ticket(id, alice, authSessions[alice]!)).ticket;
+      const expired = await issue(sessionId);
+      await pool.query(
+        "UPDATE collaboration_connection_tickets SET issued_at=now()-interval '10 minutes',expires_at=now()-interval '1 minute' WHERE collaboration_session_id=$1 AND consumed_at IS NULL",
+        [sessionId],
+      );
+      const revoked = await issue(sessionId);
+      await pool.query(
+        "UPDATE collaboration_connection_tickets SET revoked_at=now() WHERE collaboration_session_id=$1 AND consumed_at IS NULL AND expires_at>now()",
+        [sessionId],
+      );
+      const foreign = await issue(otherId);
+      for (const ticket of [expired, revoked, foreign]) {
+        const client = join("alice", sessionId, { token: async () => ticket });
+        await until(() => client.state.authFailed);
+      }
+    });
+
+    it("rejects a disallowed origin, a logged-out session, and an uninvited user", async () => {
+      const sessionId = await newSession();
+      const wrongOrigin = join("alice", sessionId, {
+        origin: "https://evil.example.com",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(wrongOrigin.provider.isSynced).toBe(false);
+
+      const bob = fixture.users.bob!;
+      const bobTicket = (
+        await service.ticket(sessionId, bob, authSessions[bob]!)
+      ).ticket;
+      await pool.query("UPDATE sessions SET revoked_at=now() WHERE id=$1", [
+        authSessions[bob],
+      ]);
+      const loggedOut = join("bob", sessionId, {
+        token: async () => bobTicket,
+      });
+      await until(() => loggedOut.state.authFailed);
+      await pool.query("UPDATE sessions SET revoked_at=NULL WHERE id=$1", [
+        authSessions[bob],
+      ]);
+
+      const carol = fixture.users.carol!;
+      await service.invite(sessionId, fixture.users.alice!, carol);
+      const carolTicket = (
+        await service.ticket(sessionId, carol, authSessions[carol]!)
+      ).ticket;
+      await pool.query(
+        "DELETE FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2",
+        [sessionId, carol],
+      );
+      const uninvited = join("carol", sessionId, {
+        token: async () => carolTicket,
+      });
+      await until(() => uninvited.state.authFailed);
+    });
+  });
+
+  describe("editing and persistence", () => {
+    it("converges concurrent edits at the same position", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      const bob = join("bob", sessionId);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
+      alice.text.insert(0, "def f():\n");
+      await until(() => bob.text.toString() === "def f():\n");
+      alice.text.insert(9, "    return 1\n");
+      bob.text.insert(9, "    # TA note\n");
+      await until(
+        () =>
+          alice.text.toString() === bob.text.toString() &&
+          alice.text.length > 20,
+      );
+      expect(alice.text.toString()).toContain("    return 1\n");
+      expect(alice.text.toString()).toContain("    # TA note\n");
+    });
+
+    it("persists within the debounce window, on last disconnect, and across a restart", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      alice.text.insert(0, "print('hello')");
+      const saved = async () =>
+        (
+          await pool.query(
+            "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+            [sessionId],
+          )
+        ).rows[0]?.text_projection;
+      const elapsed = await until(
+        async () => (await saved()) === "print('hello')",
+      );
+      expect(elapsed).toBeLessThan(5000);
+      alice.text.insert(alice.text.length, "\n# bye");
+      alice.provider.destroy();
+      await until(async () => (await saved()) === "print('hello')\n# bye");
+
+      await collaboration.stop();
+      await startServer();
+      const again = join("bob", sessionId);
+      await until(() => again.provider.isSynced);
+      await until(() => again.text.toString() === "print('hello')\n# bye");
+    });
+
+    it("rejects oversized, out-of-schema, and too-long updates without applying them", async () => {
+      const sessionId = await newSession();
+      const watcher = join("bob", sessionId);
+      await until(() => watcher.provider.isSynced);
+      const serverText = () =>
+        collaboration.hocuspocus.documents
+          .get(documentName(sessionId))
+          ?.getText("content");
+
+      const outOfSchema = join("alice", sessionId);
+      await until(() => outOfSchema.provider.isSynced);
+      outOfSchema.document.getMap("other").set("x", 1);
+      await until(
+        () => outOfSchema.state.closeReason === CLOSE_REASONS.invalid,
+      );
+      expect(
+        collaboration.hocuspocus.documents
+          .get(documentName(sessionId))
+          ?.share.has("other"),
+      ).toBe(false);
+
+      const tooLong = join("alice", sessionId);
+      await until(() => tooLong.provider.isSynced);
+      tooLong.text.insert(0, "x".repeat(200_001));
+      await until(() => tooLong.state.closeReason === CLOSE_REASONS.invalid);
+      expect(serverText()?.length).toBe(0);
+
+      const oversized = join("alice", sessionId);
+      await until(() => oversized.provider.isSynced);
+      oversized.text.insert(0, "y".repeat(300_000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(serverText()?.length).toBe(0);
+      expect(watcher.text.length).toBe(0);
+    });
+
+    it("labels presence with the server identity, not a client-supplied name", async () => {
+      const sessionId = await newSession("alice", ["tim"]);
+      const alice = join("alice", sessionId);
+      const tim = join("tim", sessionId);
+      await until(() => alice.provider.isSynced && tim.provider.isSynced);
+      tim.provider.setAwarenessField("user", { name: "Impostor", userId: "x" });
+      tim.provider.setAwarenessField("cursor", { anchor: 0, head: 0 });
+      const names = () =>
+        [...alice.provider.awareness!.getStates().values()].map(
+          (state) => state.user?.name,
+        );
+      await until(() => names().includes("tim"));
+      expect(names()).not.toContain("Impostor");
+      const timState = [...alice.provider.awareness!.getStates().values()].find(
+        (state) => state.user?.name === "tim",
+      );
+      expect(timState?.user.userId).toBe(fixture.users.tim);
+      expect(timState?.cursor).toEqual({ anchor: 0, head: 0 });
+    });
+  });
+
+  describe("revocation and ending", () => {
+    it("closes a removed invitee within 5 seconds", async () => {
+      const sessionId = await newSession();
+      const bob = join("bob", sessionId);
+      await until(() => bob.provider.isSynced);
+      await service.remove(sessionId, fixture.users.alice!, fixture.users.bob!);
+      const elapsed = await until(() => bob.state.closeReason !== undefined);
+      expect(bob.state.closeReason).toBe(CLOSE_REASONS.removed);
+      expect(elapsed).toBeLessThan(5000);
+    });
+
+    it("closes a member who leaves the course and a user who logs out", async () => {
+      const sessionId = await newSession("alice", ["bob", "carol"]);
+      const bob = join("bob", sessionId);
+      const carol = join("carol", sessionId);
+      await until(() => bob.provider.isSynced && carol.provider.isSynced);
+      await new CourseService(pool).removeMember(
+        fixture.courseId,
+        fixture.users.carol!,
+        fixture.users.carol!,
+        undefined,
+        true,
+      );
+      await until(() => carol.state.closeReason === CLOSE_REASONS.removed);
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student')",
+        [fixture.courseId, fixture.users.carol],
+      );
+
+      await pool.query("UPDATE sessions SET revoked_at=now() WHERE id=$1", [
+        authSessions[fixture.users.bob!],
+      ]);
+      await collaborationAccessChanged(pool, [fixture.users.bob!]);
+      await until(() => bob.state.closeReason === CLOSE_REASONS.removed);
+      await pool.query("UPDATE sessions SET revoked_at=NULL WHERE id=$1", [
+        authSessions[fixture.users.bob!],
+      ]);
+    });
+
+    it("sweeps after the listener reconnects to catch a missed change", async () => {
+      const sessionId = await newSession();
+      const bob = join("bob", sessionId);
+      await until(() => bob.provider.isSynced);
+      await collaboration.dropListener();
+      await pool.query(
+        "DELETE FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2",
+        [sessionId, fixture.users.bob],
+      );
+      await until(() => bob.state.closeReason === CLOSE_REASONS.removed);
+    });
+
+    it("stores the final text, marks the session ended, and closes editors on end", async () => {
+      const sessionId = await newSession("alice", ["tim"]);
+      const alice = join("alice", sessionId);
+      const tim = join("tim", sessionId);
+      await until(() => alice.provider.isSynced && tim.provider.isSynced);
+      alice.text.insert(0, "while True:\n    break\n");
+      await until(() => tim.text.toString() === "while True:\n    break\n");
+      const current = await service.get(sessionId, fixture.users.tim!);
+      const startedAt = Date.now();
+      const ended = await service.update(
+        sessionId,
+        fixture.users.tim!,
+        `"v${current.version}"`,
+        {
+          status: "ended",
+        },
+      );
+      expect(Date.now() - startedAt).toBeLessThan(3000);
+      expect(ended.status).toBe("ended");
+      const snapshot = await service.snapshot(sessionId, fixture.users.alice!);
+      expect(snapshot).toMatchObject({
+        sessionStatus: "ended",
+        content: "while True:\n    break\n",
+      });
+      await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
+      expect(
+        alice.state.stateless.map((payload) => JSON.parse(payload).type),
+      ).toContain("session-ended");
+    });
+
+    it("rejects a document name that is not a session", async () => {
+      const sessionId = await newSession();
+      const client = join("alice", sessionId, { documentId: "answer:123" });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(client.provider.isSynced).toBe(false);
+    });
+  });
+});

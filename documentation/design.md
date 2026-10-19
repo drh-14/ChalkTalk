@@ -68,7 +68,7 @@ Uploaded documents can be divided into instructor-defined regions, such as a dia
 
 ### **Live Collaborative Sessions**
 
-Any user can start a live, shared code editor session, linked to a post or channel, for use during office hours or collaborative debugging. Multiple participants can edit the same session concurrently, with changes merging in real time without conflict.
+Any course member can start a live, shared code editor session from a post, for use during office hours or collaborative debugging. Sessions are private: only the person who started one, course TAs and instructors, and members they invite can open it. Multiple participants can edit the same session concurrently, with changes merging in real time without conflict, and see each other's names and cursors. The editor highlights common course languages but does not run code. When a session ends, its final code stays viewable read-only. Channel-linked sessions will follow once channels exist.
 
 ### **Statistics**
 
@@ -275,7 +275,7 @@ A single posts table holds questions, notes, and polls. Questions have one share
 
 ## ![][image4]
 
-Channels contain subchannels, which contain messages. Resources are course materials such as the syllabus or lecture notes. An instructor can divide an uploaded resource into regions, and the text in each region is extracted with OCR so it can be searched. Shared answers and question-level followups use explicit version-checked REST saves; post- or subchannel-scoped collaboration sessions remain future work. The jobs table is the queue for the background worker. It doesn't reference other tables directly because each job's details are stored in its payload.
+Channels contain subchannels, which contain messages. Resources are course materials such as the syllabus or lecture notes. An instructor can divide an uploaded resource into regions, and the text in each region is extracted with OCR so it can be searched. Shared answers and question-level followups use explicit version-checked REST saves. Collaboration sessions are private live code sessions anchored to a post; their participants are the creator and invited course members, and their Yjs document and plain-text projection are persisted by the collaboration server. Subchannel-anchored sessions remain future work. The jobs table is the queue for the background worker. It doesn't reference other tables directly because each job's details are stored in its payload.
 
 ### **Tenant isolation**
 

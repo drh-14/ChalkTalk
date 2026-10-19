@@ -8,6 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError } from "../auth/client.js";
+import { SessionsPanel } from "../sessions/SessionsPanel.js";
+import { sessionRoute } from "../sessions/client.js";
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { QuestionResponses } from "../answers/views.js";
@@ -2145,6 +2147,17 @@ function DiscussionContent({
                         role={role}
                         courseStatus={course?.status}
                         csrfToken={csrfToken}
+                      />
+                    )}
+                    {postView === "posts" && (
+                      <SessionsPanel
+                        courseId={courseId}
+                        postId={detail.id}
+                        courseStatus={course?.status}
+                        csrfToken={csrfToken}
+                        onOpen={(sessionId) =>
+                          navigate(sessionRoute(courseId, sessionId))
+                        }
                       />
                     )}
                   </article>

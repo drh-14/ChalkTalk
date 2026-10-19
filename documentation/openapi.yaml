@@ -20,8 +20,10 @@ info:
     Answer bodies support explicit save-only versioned REST editing; followups and
     replies also use REST only. Saved questions, notes, answers, and followups
     support separate parent-scoped file attachments; create/update text requests
-    remain JSON-only. Polls, multipart post create/update, download refresh, and
-    temporary collaboration sessions remain unavailable.
+    remain JSON-only. Private post-anchored live code sessions are live through the
+    collaboration-session routes and the collaboration WebSocket. Polls, multipart
+    post create/update, download refresh, and subchannel-anchored collaboration
+    sessions remain unavailable.
   license:
     name: MIT
     identifier: MIT
@@ -9639,31 +9641,31 @@ paths:
         - "$ref": "#/components/parameters/MessageId"
         - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
-  "/courses/{courseId}/collaboration-sessions":
+  /courses/{courseId}/collaboration-sessions:
     post:
       tags:
         - Collaboration Sessions
       summary: Create collaboration session in course
-      description: Create a collaboration session in a course. Provide exactly one postId or subchannelId. Create a separate one-use connection ticket before opening the collaboration WebSocket.
+      description: Creates an active, private live code session anchored to a readable post in an active course. The creator becomes the first participant. The text starts empty. Create a separate one-use connection ticket before opening the collaboration WebSocket.
       operationId: createCollaborationSession
       security:
         - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateCollaborationSessionRequest"
+            example:
+              anchor:
+                postId: post_123
+              language: python
       responses:
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_createCollaborationSession
-                      details: []
         "201":
           description: The collaboration session was created.
           headers:
@@ -9682,11 +9684,62 @@ paths:
                   status: active
                   anchor:
                     postId: post_123
+                  title: Why does my loop never stop?
+                  language: python
                   createdBy: user_123
-                  endedAt:
+                  participants:
+                    - userId: user_123
+                      displayName: Ada Lovelace
+                      role: creator
+                  endedAt: null
                   createdAt: "2026-09-20T14:30:00Z"
                   updatedAt: "2026-09-20T14:30:00Z"
                   version: 1
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_createCollaborationSession
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createCollaborationSession
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The course, collaboration session, or participant is absent or hidden.
+                  value:
+                    error:
+                      code: not_found
+                      message: The course, collaboration session, or participant is absent or hidden.
+                      requestId: req_createCollaborationSession
+                      details: []
         "409":
           description: Conflict
           content:
@@ -9725,19 +9778,12 @@ paths:
                       message: The anchor is invalid or belongs to another course.
                       requestId: req_createCollaborationSession
                       details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
+                validation_failed:
+                  summary: The request body is invalid.
                   value:
                     error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
+                      code: validation_failed
+                      message: The request body is invalid.
                       requestId: req_createCollaborationSession
                       details: []
         "500":
@@ -9770,127 +9816,16 @@ paths:
                       message: A required service is temporarily unavailable.
                       requestId: req_createCollaborationSession
                       details: []
-      parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/CourseId"
-        - "$ref": "#/components/parameters/IdempotencyKey"
-        - "$ref": "#/components/parameters/CsrfToken"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/CreateCollaborationSessionRequest"
-            example:
-              anchor:
-                postId: post_123
     get:
       tags:
         - Collaboration Sessions
       summary: List collaboration sessions in course
-      description: Lists collaboration-session summaries in a course.
+      description: Lists the course's collaboration sessions visible to the caller, newest first. Hidden sessions are excluded before pagination and hasMore are calculated. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
       operationId: listCourseCollaborationSessions
       security:
         - session_cookie: []
-      responses:
-        "200":
-          description: Collaboration-session summaries in the course.
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/CollaborationSessionListResponse"
-              example:
-                data:
-                  - id: collab_123
-                    courseId: course_123
-                    status: active
-                    anchor:
-                      postId: post_123
-                    createdBy: user_123
-                    endedAt:
-                    createdAt: "2026-09-20T14:30:00Z"
-                    updatedAt: "2026-09-20T14:30:00Z"
-                    version: 1
-                page:
-                  nextCursor:
-                  hasMore: false
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                invalid_request:
-                  summary: Filters or pagination are invalid.
-                  value:
-                    error:
-                      code: invalid_request
-                      message: Filters or pagination are invalid.
-                      requestId: req_listCourseCollaborationSessions
-                      details: []
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The course is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The course is absent or hidden.
-                      requestId: req_listCourseCollaborationSessions
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_listCourseCollaborationSessions
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_listCourseCollaborationSessions
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_listCourseCollaborationSessions
-                      details: []
       parameters:
-        - "$ref": "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/CourseId"
         - name: status
           in: query
           required: false
@@ -9903,31 +9838,123 @@ paths:
         - name: anchorType
           in: query
           required: false
-          description: Filter by anchor kind.
+          description: Filter by anchor kind. Only post anchors exist.
           schema:
             type: string
             enum:
               - post
-              - subchannel
         - name: anchorId
           in: query
           required: false
-          description: Filter by the attached post or subchannel ID.
+          description: Filter by the anchored post ID.
           schema:
             type: string
             minLength: 1
             maxLength: 255
-        - "$ref": "#/components/parameters/Cursor"
-        - "$ref": "#/components/parameters/Limit"
-  "/collaboration-sessions/{collaborationSessionId}":
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Visible collaboration sessions in the course.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CollaborationSessionListResponse"
+              example:
+                data:
+                  - id: collab_123
+                    courseId: course_123
+                    status: active
+                    anchor:
+                      postId: post_123
+                    title: Why does my loop never stop?
+                    language: python
+                    createdBy: user_123
+                    participants:
+                      - userId: user_123
+                        displayName: Ada Lovelace
+                        role: creator
+                      - userId: user_456
+                        displayName: Grace Hopper
+                        role: invitee
+                    endedAt: null
+                    createdAt: "2026-09-20T14:30:00Z"
+                    updatedAt: "2026-09-20T14:30:00Z"
+                    version: 1
+                page:
+                  nextCursor: null
+                  hasMore: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                invalid_request:
+                  summary: The query parameters or cursor are invalid.
+                  value:
+                    error:
+                      code: invalid_request
+                      message: The query parameters or cursor are invalid.
+                      requestId: req_listCourseCollaborationSessions
+                      details: []
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_listCourseCollaborationSessions
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The course, collaboration session, or participant is absent or hidden.
+                  value:
+                    error:
+                      code: not_found
+                      message: The course, collaboration session, or participant is absent or hidden.
+                      requestId: req_listCourseCollaborationSessions
+                      details: []
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                internal_error:
+                  summary: The server could not complete the request.
+                  value:
+                    error:
+                      code: internal_error
+                      message: The server could not complete the request.
+                      requestId: req_listCourseCollaborationSessions
+                      details: []
+  /collaboration-sessions/{collaborationSessionId}:
     get:
       tags:
         - Collaboration Sessions
       summary: Retrieve collaboration session
-      description: Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session.
+      description: Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
       operationId: getCollaborationSession
       security:
         - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/CollaborationSessionId"
       responses:
         "200":
           description: The collaboration session.
@@ -9945,26 +9972,20 @@ paths:
                   status: active
                   anchor:
                     postId: post_123
+                  title: Why does my loop never stop?
+                  language: python
                   createdBy: user_123
-                  endedAt:
+                  participants:
+                    - userId: user_123
+                      displayName: Ada Lovelace
+                      role: creator
+                    - userId: user_456
+                      displayName: Grace Hopper
+                      role: invitee
+                  endedAt: null
                   createdAt: "2026-09-20T14:30:00Z"
                   updatedAt: "2026-09-20T14:30:00Z"
                   version: 1
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The session is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The session is absent or hidden.
-                      requestId: req_getCollaborationSession
-                      details: []
         "401":
           description: Unauthorized
           content:
@@ -9978,6 +9999,21 @@ paths:
                     error:
                       code: authentication_required
                       message: Authentication is missing or invalid.
+                      requestId: req_getCollaborationSession
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The course, collaboration session, or participant is absent or hidden.
+                  value:
+                    error:
+                      code: not_found
+                      message: The course, collaboration session, or participant is absent or hidden.
                       requestId: req_getCollaborationSession
                       details: []
         "500":
@@ -9995,34 +10031,30 @@ paths:
                       message: The server could not complete the request.
                       requestId: req_getCollaborationSession
                       details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_getCollaborationSession
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/CollaborationSessionId"
     patch:
       tags:
         - Collaboration Sessions
-      summary: End collaboration session
-      description: Ends a collaboration session. Ended sessions retain their final snapshot.
-      operationId: endCollaborationSession
+      summary: Update or end collaboration session
+      description: Changes an active session's title or language, or ends it with status ended. Only the session creator or current course staff may call it. Ending asks the collaboration server to persist the final text and waits up to 5 seconds for it to confirm; if it does not confirm in time, the session still ends with the most recently persisted text. Ended sessions become read-only and keep their final snapshot.
+      operationId: updateCollaborationSession
       security:
         - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CollaborationSessionId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/UpdateCollaborationSessionRequest"
+            example:
+              language: java
       responses:
         "200":
-          description: The ended collaboration session.
+          description: The updated collaboration session.
           headers:
             ETag:
               "$ref": "#/components/headers/ETag"
@@ -10031,20 +10063,41 @@ paths:
               schema:
                 "$ref": "#/components/schemas/CollaborationSessionResponse"
               example:
-                {
-                  "data":
-                    {
-                      "id": "collab_123",
-                      "courseId": "course_123",
-                      "status": "ended",
-                      "anchor": { "postId": "post_123" },
-                      "createdBy": "user_123",
-                      "endedAt": "2026-09-20T14:40:00Z",
-                      "createdAt": "2026-09-20T14:30:00Z",
-                      "updatedAt": "2026-09-20T14:40:00Z",
-                      "version": 4,
-                    },
-                }
+                data:
+                  id: collab_123
+                  courseId: course_123
+                  status: active
+                  anchor:
+                    postId: post_123
+                  title: Why does my loop never stop?
+                  language: java
+                  createdBy: user_123
+                  participants:
+                    - userId: user_123
+                      displayName: Ada Lovelace
+                      role: creator
+                    - userId: user_456
+                      displayName: Grace Hopper
+                      role: invitee
+                  endedAt: null
+                  createdAt: "2026-09-20T14:30:00Z"
+                  updatedAt: "2026-09-20T14:30:00Z"
+                  version: 2
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_updateCollaborationSession
+                      details: []
         "403":
           description: Forbidden
           content:
@@ -10058,15 +10111,30 @@ paths:
                     error:
                       code: csrf_validation_failed
                       message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_endCollaborationSession
+                      requestId: req_updateCollaborationSession
                       details: []
-                permission_denied:
-                  summary: The caller cannot end this session.
+                forbidden:
+                  summary: The caller is not the session creator or course staff.
                   value:
                     error:
-                      code: permission_denied
-                      message: The caller cannot end this session.
-                      requestId: req_endCollaborationSession
+                      code: forbidden
+                      message: The caller is not the session creator or course staff.
+                      requestId: req_updateCollaborationSession
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The course, collaboration session, or participant is absent or hidden.
+                  value:
+                    error:
+                      code: not_found
+                      message: The course, collaboration session, or participant is absent or hidden.
+                      requestId: req_updateCollaborationSession
                       details: []
         "409":
           description: Conflict
@@ -10076,12 +10144,12 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 session_ended:
-                  summary: The session has already ended.
+                  summary: The collaboration session has ended.
                   value:
                     error:
                       code: session_ended
-                      message: The session has already ended.
-                      requestId: req_endCollaborationSession
+                      message: The collaboration session has ended.
+                      requestId: req_updateCollaborationSession
                       details: []
                 course_archived:
                   summary: The course is archived.
@@ -10089,7 +10157,7 @@ paths:
                     error:
                       code: course_archived
                       message: The course is archived.
-                      requestId: req_endCollaborationSession
+                      requestId: req_updateCollaborationSession
                       details: []
         "412":
           description: Precondition Failed
@@ -10104,7 +10172,7 @@ paths:
                     error:
                       code: version_conflict
                       message: The supplied ETag is stale.
-                      requestId: req_endCollaborationSession
+                      requestId: req_updateCollaborationSession
                       details: []
         "422":
           description: Unprocessable Content
@@ -10114,12 +10182,12 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 validation_failed:
-                  summary: The status transition is invalid.
+                  summary: The request body is invalid.
                   value:
                     error:
                       code: validation_failed
-                      message: The status transition is invalid.
-                      requestId: req_endCollaborationSession
+                      message: The request body is invalid.
+                      requestId: req_updateCollaborationSession
                       details: []
         "428":
           description: Precondition Required
@@ -10134,22 +10202,7 @@ paths:
                     error:
                       code: precondition_required
                       message: If-Match is required.
-                      requestId: req_endCollaborationSession
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_endCollaborationSession
+                      requestId: req_updateCollaborationSession
                       details: []
         "500":
           description: Internal Server Error
@@ -10164,46 +10217,75 @@ paths:
                     error:
                       code: internal_error
                       message: The server could not complete the request.
-                      requestId: req_endCollaborationSession
+                      requestId: req_updateCollaborationSession
                       details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_endCollaborationSession
-                      details: []
+  /collaboration-sessions/{collaborationSessionId}/participants:
+    post:
+      tags:
+        - Collaboration Sessions
+      summary: Invite collaboration participant
+      description: Invites a current course member to an active session. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication.
+      operationId: inviteCollaborationParticipant
+      security:
+        - session_cookie: []
       parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/CollaborationSessionId"
-        - "$ref": "#/components/parameters/IfMatch"
-        - "$ref": "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CollaborationSessionId"
+        - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              "$ref": "#/components/schemas/EndCollaborationSessionRequest"
+              "$ref": "#/components/schemas/InviteCollaborationParticipantRequest"
             example:
-              status: ended
-  "/collaboration-sessions/{collaborationSessionId}/connection-tickets":
-    post:
-      tags:
-        - Collaboration Sessions
-      summary: Create collaboration connection ticket
-      description: Creates a five-minute, one-use WebSocket ticket bound to the authenticated REST session, user, course, collaboration session, document, and effective permission. The server atomically consumes it during Hocuspocus authentication.
-      operationId: createCollaborationConnectionTicket
-      security:
-        - session_cookie: []
+              userId: user_456
       responses:
+        "200":
+          description: The collaboration session with its updated participants.
+          headers:
+            ETag:
+              "$ref": "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CollaborationSessionResponse"
+              example:
+                data:
+                  id: collab_123
+                  courseId: course_123
+                  status: active
+                  anchor:
+                    postId: post_123
+                  title: Why does my loop never stop?
+                  language: python
+                  createdBy: user_123
+                  participants:
+                    - userId: user_123
+                      displayName: Ada Lovelace
+                      role: creator
+                    - userId: user_456
+                      displayName: Grace Hopper
+                      role: invitee
+                  endedAt: null
+                  createdAt: "2026-09-20T14:30:00Z"
+                  updatedAt: "2026-09-20T14:30:00Z"
+                  version: 1
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
         "403":
           description: Forbidden
           content:
@@ -10217,10 +10299,223 @@ paths:
                     error:
                       code: csrf_validation_failed
                       message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_createCollaborationConnectionTicket
+                      requestId: req_inviteCollaborationParticipant
                       details: []
+                forbidden:
+                  summary: The caller is not the session creator or course staff.
+                  value:
+                    error:
+                      code: forbidden
+                      message: The caller is not the session creator or course staff.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The course, collaboration session, or participant is absent or hidden.
+                  value:
+                    error:
+                      code: not_found
+                      message: The course, collaboration session, or participant is absent or hidden.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                session_ended:
+                  summary: The collaboration session has ended.
+                  value:
+                    error:
+                      code: session_ended
+                      message: The collaboration session has ended.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
+                course_archived:
+                  summary: The course is archived.
+                  value:
+                    error:
+                      code: course_archived
+                      message: The course is archived.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
+        "422":
+          description: Unprocessable Content
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_course_member:
+                  summary: The user is not a current member of the course.
+                  value:
+                    error:
+                      code: not_course_member
+                      message: The user is not a current member of the course.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
+                validation_failed:
+                  summary: The request body is invalid.
+                  value:
+                    error:
+                      code: validation_failed
+                      message: The request body is invalid.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                internal_error:
+                  summary: The server could not complete the request.
+                  value:
+                    error:
+                      code: internal_error
+                      message: The server could not complete the request.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
+  /collaboration-sessions/{collaborationSessionId}/participants/{userId}:
+    delete:
+      tags:
+        - Collaboration Sessions
+      summary: Remove collaboration participant
+      description: Removes an invitee from an active session. Only the session creator or current course staff may remove. The invitee's unused tickets are revoked and their open connections close within 5 seconds.
+      operationId: removeCollaborationParticipant
+      security:
+        - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CollaborationSessionId"
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "204":
+          description: The participant was removed.
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_removeCollaborationParticipant
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_removeCollaborationParticipant
+                      details: []
+                forbidden:
+                  summary: The caller is not the session creator or course staff.
+                  value:
+                    error:
+                      code: forbidden
+                      message: The caller is not the session creator or course staff.
+                      requestId: req_removeCollaborationParticipant
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The course, collaboration session, or participant is absent or hidden.
+                  value:
+                    error:
+                      code: not_found
+                      message: The course, collaboration session, or participant is absent or hidden.
+                      requestId: req_removeCollaborationParticipant
+                      details: []
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                session_ended:
+                  summary: The collaboration session has ended.
+                  value:
+                    error:
+                      code: session_ended
+                      message: The collaboration session has ended.
+                      requestId: req_removeCollaborationParticipant
+                      details: []
+        "422":
+          description: Unprocessable Content
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                creator_not_removable:
+                  summary: The session creator cannot be removed.
+                  value:
+                    error:
+                      code: creator_not_removable
+                      message: The session creator cannot be removed.
+                      requestId: req_removeCollaborationParticipant
+                      details: []
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                internal_error:
+                  summary: The server could not complete the request.
+                  value:
+                    error:
+                      code: internal_error
+                      message: The server could not complete the request.
+                      requestId: req_removeCollaborationParticipant
+                      details: []
+  /collaboration-sessions/{collaborationSessionId}/connection-tickets:
+    post:
+      tags:
+        - Collaboration Sessions
+      summary: Create collaboration connection ticket
+      description: Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with write permission, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+      operationId: createCollaborationConnectionTicket
+      security:
+        - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CollaborationSessionId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
         "201":
-          description: The one-use connection ticket was created.
+          description: One-use connection credentials.
           headers:
             Cache-Control:
               "$ref": "#/components/headers/CacheControlNoStore"
@@ -10231,8 +10526,8 @@ paths:
               example:
                 data:
                   ticket: opaque_one_use_ticket
-                  webSocketUrl: wss://api.example.edu/collaboration
-                  documentId: collab_123
+                  webSocketUrl: wss://app.example.edu/collaboration
+                  documentId: collaboration-session:collab_123
                   expiresAt: "2026-09-20T14:35:00Z"
         "401":
           description: Unauthorized
@@ -10249,6 +10544,21 @@ paths:
                       message: Authentication is missing or invalid.
                       requestId: req_createCollaborationConnectionTicket
                       details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_createCollaborationConnectionTicket
+                      details: []
         "404":
           description: Not Found
           content:
@@ -10257,11 +10567,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 not_found:
-                  summary: The collaboration session is absent or hidden.
+                  summary: The course, collaboration session, or participant is absent or hidden.
                   value:
                     error:
                       code: not_found
-                      message: The collaboration session is absent or hidden.
+                      message: The course, collaboration session, or participant is absent or hidden.
                       requestId: req_createCollaborationConnectionTicket
                       details: []
         "409":
@@ -10287,24 +10597,6 @@ paths:
                       message: The course is archived.
                       requestId: req_createCollaborationConnectionTicket
                       details: []
-        "429":
-          description: Too Many Requests
-          headers:
-            Retry-After:
-              "$ref": "#/components/headers/RetryAfter"
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                rate_limited:
-                  summary: Too many ticket requests were made.
-                  value:
-                    error:
-                      code: rate_limited
-                      message: Too many ticket requests were made; retry after the duration in Retry-After.
-                      requestId: req_createCollaborationConnectionTicket
-                      details: []
         "500":
           description: Internal Server Error
           content:
@@ -10335,22 +10627,20 @@ paths:
                       message: A required service is temporarily unavailable.
                       requestId: req_createCollaborationConnectionTicket
                       details: []
-      parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/CollaborationSessionId"
-        - "$ref": "#/components/parameters/CsrfToken"
-  "/collaboration-sessions/{collaborationSessionId}/snapshot":
+  /collaboration-sessions/{collaborationSessionId}/snapshot:
     get:
       tags:
         - Collaboration Sessions
-      summary: Retrieve collaboration session snapshot
-      description: Retrieves the latest text snapshot.
+      summary: Retrieve collaboration snapshot
+      description: Retrieves the most recently persisted plain text of an active or ended session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
       operationId: getCollaborationSessionSnapshot
       security:
         - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/CollaborationSessionId"
       responses:
         "200":
-          description: The latest persisted collaboration snapshot.
+          description: The persisted collaboration text.
           headers:
             Cache-Control:
               "$ref": "#/components/headers/CacheControlNoStore"
@@ -10361,9 +10651,11 @@ paths:
               example:
                 data:
                   collaborationSessionId: collab_123
-                  documentId: collab_123
+                  documentId: collaboration-session:collab_123
                   sessionStatus: active
-                  content: Shared explanation in progress.
+                  content: |
+                    for i in range(3):
+                        print(i)
                   persistedAt: "2026-09-20T14:31:58Z"
                   capturedAt: "2026-09-20T14:32:00Z"
         "401":
@@ -10389,11 +10681,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 not_found:
-                  summary: The collaboration session is absent or hidden.
+                  summary: The course, collaboration session, or participant is absent or hidden.
                   value:
                     error:
                       code: not_found
-                      message: The collaboration session is absent or hidden.
+                      message: The course, collaboration session, or participant is absent or hidden.
                       requestId: req_getCollaborationSessionSnapshot
                       details: []
         "500":
@@ -10411,23 +10703,6 @@ paths:
                       message: The server could not complete the request.
                       requestId: req_getCollaborationSessionSnapshot
                       details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_getCollaborationSessionSnapshot
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/CollaborationSessionId"
   /posts/{postId}/attachments:
     post:
       tags: [Posts]
@@ -12853,32 +13128,53 @@ components:
         - version
         - introductoryMessage
     CollaborationAnchor:
-      oneOf:
-        - type: object
-          properties:
-            postId:
-              type: string
-              description: Opaque stable identifier.
-              minLength: 1
-              maxLength: 255
-              examples:
-                - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-          additionalProperties: false
-          required:
-            - postId
-        - type: object
-          properties:
-            subchannelId:
-              type: string
-              description: Opaque stable identifier.
-              minLength: 1
-              maxLength: 255
-              examples:
-                - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-          additionalProperties: false
-          required:
-            - subchannelId
-      description: Exactly one same-course post or subchannel anchor.
+      type: object
+      properties:
+        postId:
+          type: string
+          description: Opaque stable identifier.
+          minLength: 1
+          maxLength: 255
+          examples:
+            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
+      additionalProperties: false
+      required:
+        - postId
+      description: A same-course post anchor. Subchannel anchors are future work and are not accepted.
+    CollaborationLanguage:
+      type: string
+      description: Syntax-highlighting language. The editor never runs code.
+      enum:
+        - plaintext
+        - python
+        - java
+        - c
+        - cpp
+        - javascript
+        - typescript
+        - sql
+    CollaborationParticipant:
+      type: object
+      properties:
+        userId:
+          type: string
+          description: Opaque stable identifier.
+          minLength: 1
+          maxLength: 255
+        displayName:
+          type: string
+          description: Account display name.
+        role:
+          type: string
+          description: The participant's role in the session.
+          enum:
+            - creator
+            - invitee
+      additionalProperties: false
+      required:
+        - userId
+        - displayName
+        - role
     CollaborationSessionSummary:
       type: object
       properties:
@@ -12887,15 +13183,11 @@ components:
           description: Opaque stable identifier.
           minLength: 1
           maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
         courseId:
           type: string
           description: Opaque stable identifier.
           minLength: 1
           maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
         status:
           type: string
           description: Session lifecycle state.
@@ -12904,13 +13196,23 @@ components:
             - ended
         anchor:
           "$ref": "#/components/schemas/CollaborationAnchor"
+        title:
+          type: string
+          description: Session title, trimmed, 1 to 120 characters.
+          minLength: 1
+          maxLength: 120
+        language:
+          "$ref": "#/components/schemas/CollaborationLanguage"
         createdBy:
           type: string
           description: Opaque stable identifier.
           minLength: 1
           maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
+        participants:
+          type: array
+          description: The creator and invited participants.
+          items:
+            "$ref": "#/components/schemas/CollaborationParticipant"
         endedAt:
           type:
             - string
@@ -12921,27 +13223,24 @@ components:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
           format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
         updatedAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
           format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
         version:
           type: integer
           description: Revision number used to construct the resource ETag.
           minimum: 1
-          examples:
-            - 3
       additionalProperties: false
       required:
         - id
         - courseId
         - status
         - anchor
+        - title
+        - language
         - createdBy
+        - participants
         - endedAt
         - createdAt
         - updatedAt
@@ -12954,15 +13253,11 @@ components:
           description: Opaque stable identifier.
           minLength: 1
           maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
         courseId:
           type: string
           description: Opaque stable identifier.
           minLength: 1
           maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
         status:
           type: string
           description: Session lifecycle state.
@@ -12971,13 +13266,23 @@ components:
             - ended
         anchor:
           "$ref": "#/components/schemas/CollaborationAnchor"
+        title:
+          type: string
+          description: Session title, trimmed, 1 to 120 characters.
+          minLength: 1
+          maxLength: 120
+        language:
+          "$ref": "#/components/schemas/CollaborationLanguage"
         createdBy:
           type: string
           description: Opaque stable identifier.
           minLength: 1
           maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
+        participants:
+          type: array
+          description: The creator and invited participants.
+          items:
+            "$ref": "#/components/schemas/CollaborationParticipant"
         endedAt:
           type:
             - string
@@ -12988,27 +13293,24 @@ components:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
           format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
         updatedAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
           format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
         version:
           type: integer
           description: Revision number used to construct the resource ETag.
           minimum: 1
-          examples:
-            - 3
       additionalProperties: false
       required:
         - id
         - courseId
         - status
         - anchor
+        - title
+        - language
         - createdBy
+        - participants
         - endedAt
         - createdAt
         - updatedAt
@@ -13018,7 +13320,7 @@ components:
       properties:
         ticket:
           type: string
-          description: Opaque one-use secret consumed by the first WebSocket authentication attempt.
+          description: Opaque one-use secret, sent as the Hocuspocus token when opening the WebSocket.
           minLength: 1
         webSocketUrl:
           type: string
@@ -13026,7 +13328,7 @@ components:
           format: uri
         documentId:
           type: string
-          description: Document identifier derived by the server from the collaboration session.
+          description: Document name to open, derived by the server as collaboration-session:{id}.
           minLength: 1
           maxLength: 255
         expiresAt:
@@ -13049,7 +13351,7 @@ components:
           maxLength: 255
         documentId:
           type: string
-          description: Document identifier derived by the server from the collaboration session.
+          description: Document name derived from the collaboration session.
           minLength: 1
           maxLength: 255
         sessionStatus:
@@ -13060,7 +13362,8 @@ components:
             - ended
         content:
           type: string
-          description: Plain-text projection of Y.Text('content').
+          description: Plain-text projection of Y.Text('content'), at most 200,000 characters.
+          maxLength: 200000
         persistedAt:
           type: string
           description: UTC timestamp of the returned snapshot.
@@ -14091,19 +14394,43 @@ components:
       properties:
         anchor:
           "$ref": "#/components/schemas/CollaborationAnchor"
+        title:
+          type: string
+          description: Optional title, 1 to 120 characters after trimming; defaults to the post title.
+          minLength: 1
+          maxLength: 120
+        language:
+          "$ref": "#/components/schemas/CollaborationLanguage"
       additionalProperties: false
       required:
         - anchor
-    EndCollaborationSessionRequest:
+    UpdateCollaborationSessionRequest:
       type: object
       properties:
+        title:
+          type: string
+          description: New title, 1 to 120 characters after trimming.
+          minLength: 1
+          maxLength: 120
+        language:
+          "$ref": "#/components/schemas/CollaborationLanguage"
         status:
           type: string
           const: ended
-          description: The only supported transition.
+          description: Ends the session. Cannot be combined with title or language.
+      additionalProperties: false
+      minProperties: 1
+    InviteCollaborationParticipantRequest:
+      type: object
+      properties:
+        userId:
+          type: string
+          description: Opaque stable identifier.
+          minLength: 1
+          maxLength: 255
       additionalProperties: false
       required:
-        - status
+        - userId
     CreateLinkResourceRequest:
       type: object
       properties:
