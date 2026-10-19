@@ -54,8 +54,9 @@ recovery; the existing lexical/fuzzy query path remains authoritative.
 Catch-up rows are keyed by post and embedding generation, so old-model and
 no-key API writes cannot overwrite new-model work. An ordinary PostgreSQL
 registry tracks generations active in the last day. No-key edits atomically
-create separate catch-up rows for each active generation; registration and
-no-key writes serialize. Newly registered generations begin their own initial
+create separate catch-up rows for each active generation; first registration
+and bounded lease refresh serialize with no-key writes, while ordinary searches
+do not acquire that lock or write a heartbeat. Newly registered generations begin their own initial
 backfill, including writes made before any generation was registered. Workers
 claim only matching-generation jobs and clear only their own rows after
 revision-checked vector storage. Health checks ignore rows from other

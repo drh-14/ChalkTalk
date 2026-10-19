@@ -34,6 +34,11 @@ export class SemanticIndex {
   ) {}
 
   private async registerGeneration(db: Db): Promise<void> {
+    const active = await db.query<{ fresh: boolean }>(
+      "SELECT last_seen_at >= now()-interval '1 minute' AS fresh FROM semantic_embedding_generations WHERE generation=$1",
+      [this.config.generation],
+    );
+    if (active.rows[0]?.fresh) return;
     const ownTransaction = db === this.pool;
     const client = ownTransaction ? await this.pool.connect() : db;
     try {
@@ -41,16 +46,17 @@ export class SemanticIndex {
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtext('semantic_embedding_generations'))",
       );
-      const previous = await client.query<{ stale: boolean }>(
-        "SELECT last_seen_at < now()-interval '1 day' AS stale FROM semantic_embedding_generations WHERE generation=$1",
+      const previous = await client.query<{ stale: boolean; fresh: boolean }>(
+        "SELECT last_seen_at < now()-interval '1 day' AS stale, last_seen_at >= now()-interval '1 minute' AS fresh FROM semantic_embedding_generations WHERE generation=$1",
         [this.config.generation],
       );
       if (!previous.rowCount || previous.rows[0]?.stale)
         this.backfillCursor = undefined;
-      await client.query(
-        "INSERT INTO semantic_embedding_generations(generation) VALUES($1) ON CONFLICT (generation) DO UPDATE SET last_seen_at=now()",
-        [this.config.generation],
-      );
+      if (!previous.rows[0]?.fresh)
+        await client.query(
+          "INSERT INTO semantic_embedding_generations(generation) VALUES($1) ON CONFLICT (generation) DO UPDATE SET last_seen_at=now()",
+          [this.config.generation],
+        );
       if (ownTransaction) await client.query("COMMIT");
     } catch (error) {
       if (ownTransaction) await client.query("ROLLBACK");

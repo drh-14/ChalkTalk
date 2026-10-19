@@ -52,6 +52,63 @@ integration("semantic post indexing", () => {
     }
   });
 
+  it("does not write or wait on registration for repeated health checks", async () => {
+    const heartbeatConfig = readEmbeddingConfig({
+      EMBEDDING_API_KEY: "test-key",
+      EMBEDDING_MODEL: "heartbeat-test-model",
+    })!;
+    const index = new SemanticIndex(pool, heartbeatConfig, {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    });
+    await index.healthy();
+    const seenAt = async () =>
+      (
+        await pool.query<{ last_seen_at: string }>(
+          "SELECT last_seen_at::text FROM semantic_embedding_generations WHERE generation=$1",
+          [heartbeatConfig.generation],
+        )
+      ).rows[0]!.last_seen_at;
+    const before = await seenAt();
+    await pool.query("SELECT pg_sleep(0.02)");
+    await index.healthy();
+    await index.healthy();
+    expect(await index.enqueue(pool, uuidv7())).toBe(false);
+    expect(await index.queueBackfillOne()).toBe(false);
+    expect(await seenAt()).toBe(before);
+
+    const blocker = await pool.connect();
+    let checking: Promise<boolean> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let completed = false;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(
+        "SELECT pg_advisory_xact_lock(hashtext('semantic_embedding_generations'))",
+      );
+      checking = index.healthy();
+      completed = await Promise.race([
+        checking.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), 1_000);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
+    await checking;
+    expect(completed).toBe(true);
+
+    await pool.query(
+      "UPDATE semantic_embedding_generations SET last_seen_at=now()-interval '2 minutes' WHERE generation=$1",
+      [heartbeatConfig.generation],
+    );
+    const expired = await seenAt();
+    await index.healthy();
+    expect(await seenAt()).not.toBe(expired);
+  });
+
   it("stores chunks but not stale vectors after a concurrent text edit", async () => {
     const postId = uuidv7();
     await pool.query(

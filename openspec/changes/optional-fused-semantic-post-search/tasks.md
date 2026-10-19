@@ -17,6 +17,7 @@
 - [x] 2.8 Own jobs and catch-up by embedding generation and skip blank chunks.
 - [x] 2.9 Keep generation-scoped and no-key catch-up ownership distinct during rollout.
 - [x] 2.10 Fan out no-key writes to registered generations without shared ownership.
+- [x] 2.11 Bound generation heartbeats without serializing ordinary searches.
 
 ## 3. Verification and delivery
 
