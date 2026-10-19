@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { v7 as uuidv7 } from "uuid";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { runSemanticMigration } from "../database/migrate-semantic.js";
 import { readEmbeddingConfig } from "./provider.js";
@@ -10,7 +10,8 @@ import { PostService, postEtag } from "../posts/service.js";
 
 const url = process.env.TEST_VECTOR_DATABASE_URL;
 const integration = url ? describe : describe.skip;
-const schema = `semantic_${process.pid}_${Date.now()}`;
+let schema: string;
+let schemaSequence = 0;
 let admin: Pool;
 let pool: Pool;
 const courseId = uuidv7();
@@ -22,7 +23,8 @@ const config = readEmbeddingConfig({
 })!;
 
 integration("semantic post indexing", () => {
-  beforeAll(async () => {
+  beforeEach(async () => {
+    schema = `semantic_${process.pid}_${Date.now()}_${schemaSequence++}`;
     admin = new Pool({ connectionString: url });
     await admin.query(`CREATE SCHEMA "${schema}"`);
     pool = new Pool({
@@ -43,8 +45,12 @@ integration("semantic post indexing", () => {
       "INSERT INTO courses(id,organization_id,created_by_user_id,name,join_code) VALUES($1,$2,$3,'Course','ABCDEFGH')",
       [courseId, orgId, userId],
     );
+    await pool.query(
+      "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,'student')",
+      [courseId, userId],
+    );
   });
-  afterAll(async () => {
+  afterEach(async () => {
     await pool?.end();
     if (admin) {
       await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
