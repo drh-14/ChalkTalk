@@ -7,6 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { ApiError } from "../auth/client.js";
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { QuestionResponses } from "../answers/views.js";
@@ -14,6 +15,7 @@ import {
   AttachmentManager,
   AttachmentSelection,
 } from "../attachments/views.js";
+import { deleteAttachment } from "../attachments/client.js";
 import { useAttachmentQueue } from "../attachments/queue.js";
 import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
@@ -25,6 +27,7 @@ import {
   listPosts,
   setPostPinned,
   unmergePost,
+  updatePost,
   type CreatePostInput,
   type MergedPost,
   type Post,
@@ -601,11 +604,15 @@ function MergeControl({
   source,
   courseId,
   csrfToken,
+  onBeforeMerge,
+  onPendingChange,
   onMerged,
 }: {
   source: Post;
   courseId: string;
   csrfToken: string;
+  onBeforeMerge: () => boolean;
+  onPendingChange: (pending: boolean) => void;
   onMerged: (targetId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -641,8 +648,9 @@ function MergeControl({
     };
   }, [courseId, open, query, source.id]);
   async function confirm() {
-    if (!target || pending) return;
+    if (!target || pending || !onBeforeMerge()) return;
     setPending(true);
+    onPendingChange(true);
     setError("");
     try {
       await confirmMergePost(source, target.id, csrfToken);
@@ -651,6 +659,7 @@ function MergeControl({
       setError(message(caught));
     } finally {
       setPending(false);
+      onPendingChange(false);
     }
   }
   return (
@@ -729,6 +738,249 @@ export function Discussion(props: DiscussionProps) {
   return <DiscussionContent key={props.courseId} {...props} />;
 }
 
+function PostEditor({
+  post,
+  csrfToken,
+  onClose,
+  onChanged,
+  onStateChange,
+}: {
+  post: Post;
+  csrfToken: string;
+  onClose: () => void;
+  onChanged: (post: Post) => void;
+  onStateChange: (dirty: boolean, pending: boolean) => void;
+}) {
+  const [title, setTitle] = useState(post.title);
+  const [body, setBody] = useState(post.bodyMarkdown);
+  const [tags, setTags] = useState(post.tags.join(", "));
+  const [anonymous, setAnonymous] = useState(post.anonymous);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const queue = useAttachmentQueue();
+  const draft = {
+    title: title.trim(),
+    bodyMarkdown: body,
+    anonymous,
+    tags: tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean),
+  };
+  const payload = JSON.stringify(draft);
+  const [savedPayload, setSavedPayload] = useState(payload);
+  const latestPayload = useRef(payload);
+  latestPayload.current = payload;
+  const revision = useRef(post);
+  const [conflict, setConflict] = useState(false);
+  const [review, setReview] = useState<Post>();
+  const [filesAttempted, setFilesAttempted] = useState(false);
+  const dirty = payload !== savedPayload || queue.files.length > 0;
+  useEffect(() => {
+    onStateChange(dirty, pending);
+  }, [dirty, pending, onStateChange]);
+
+  async function refresh() {
+    const next = await getPost(post.id);
+    if (
+      "redirectToPostId" in next ||
+      next.deleted ||
+      next.courseId !== post.courseId ||
+      next.duplicateStatus === "confirmed"
+    )
+      throw new Error(
+        "This post is no longer editable. Your draft has been retained.",
+      );
+    revision.current = next;
+    onChanged(next);
+    return next;
+  }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pending || conflict) return;
+    if (!draft.title || draft.title.length > 200) {
+      setError("Post title must be between 1 and 200 characters.");
+      return;
+    }
+    if (!draft.bodyMarkdown.trim() || draft.bodyMarkdown.length > 100000) {
+      setError("Post body must be between 1 and 100,000 characters.");
+      return;
+    }
+    if (draft.tags.length > 10 || draft.tags.some((tag) => tag.length > 40)) {
+      setError("Use at most 10 tags of 40 characters each.");
+      return;
+    }
+    setPending(true);
+    setError("");
+    setReview(undefined);
+    try {
+      if (payload !== savedPayload) {
+        const saved = await updatePost(revision.current, draft, csrfToken);
+        revision.current = saved;
+        onChanged(saved);
+        setSavedPayload(payload);
+      }
+      setFilesAttempted(queue.files.length > 0);
+      const complete = await queue.upload(
+        "post",
+        post.id,
+        csrfToken,
+        async () => {
+          await refresh();
+        },
+      );
+      if (complete && latestPayload.current === payload) onClose();
+    } catch (caught) {
+      setError(message(caught));
+      if (caught instanceof ApiError && caught.status === 412)
+        setConflict(true);
+    } finally {
+      setPending(false);
+    }
+  }
+  async function removeFile(id: string) {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      await deleteAttachment(id, csrfToken);
+      await refresh();
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  async function reviewLatest() {
+    setPending(true);
+    setError("");
+    try {
+      setReview(await refresh());
+      setConflict(false);
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <section className="post-composer" aria-label="Edit post">
+      <h2>Edit post</h2>
+      <form onSubmit={submit} noValidate>
+        <label>
+          Post title
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            maxLength={201}
+            required
+          />
+        </label>
+        <MarkdownEditorField
+          label="Post body"
+          value={body}
+          onChange={setBody}
+        />
+        <label>
+          Tags (comma-separated)
+          <input
+            value={tags}
+            onChange={(event) => setTags(event.target.value)}
+          />
+        </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={anonymous}
+            onChange={(event) => setAnonymous(event.target.checked)}
+          />
+          Post anonymously
+        </label>
+        <AttachmentManager
+          kind="post"
+          parentId={post.id}
+          attachments={post.attachments ?? []}
+          canEdit={false}
+          csrfToken={csrfToken}
+          onChanged={() => {}}
+        />
+        {(post.attachments ?? []).map((file) => (
+          <button
+            key={file.id}
+            type="button"
+            className="text-button danger"
+            disabled={pending}
+            onClick={() => void removeFile(file.id)}
+            aria-label={`Remove ${file.fileName}`}
+          >
+            Remove {file.fileName}
+          </button>
+        ))}
+        <AttachmentSelection
+          queue={queue}
+          disabled={pending}
+          existingCount={post.attachments?.length ?? 0}
+        />
+        {error && (
+          <p className="form-message error" role="alert">
+            {error}
+          </p>
+        )}
+        {conflict && (
+          <>
+            <p>
+              Your draft is intact. Review the latest post before saving again.
+            </p>
+            <button
+              type="button"
+              className="button secondary"
+              disabled={pending}
+              onClick={() => void reviewLatest()}
+            >
+              Review latest post
+            </button>
+          </>
+        )}
+        {review && (
+          <section aria-label="Latest saved post">
+            <h3>{review.title}</h3>
+            <PostBody bodyMarkdown={review.bodyMarkdown} />
+            <p>
+              Tags: {review.tags.join(", ")} ·{" "}
+              {review.anonymous ? "Anonymous" : "Named"}
+            </p>
+            <p>
+              Latest saved version loaded. Compare it with your draft before
+              saving again.
+            </p>
+          </section>
+        )}
+        <button
+          type="submit"
+          className="button primary"
+          disabled={pending || conflict}
+        >
+          {pending
+            ? "Saving…"
+            : filesAttempted &&
+                payload === savedPayload &&
+                queue.files.length > 0
+              ? "Retry attachments"
+              : "Save post"}
+        </button>
+        <button
+          type="button"
+          className="text-button"
+          disabled={pending}
+          onClick={onClose}
+        >
+          Cancel editing
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function DiscussionContent({
   courseId,
   course: sharedCourse,
@@ -785,6 +1037,15 @@ function DiscussionContent({
   const [composerOpen, setComposerOpen] = useState(false);
   const [detail, setDetail] = useState<PostDetail>();
   const [detailError, setDetailError] = useState("");
+  const canEditDetail =
+    !!detail &&
+    !detail.deleted &&
+    course?.status === "active" &&
+    !!role &&
+    detail.duplicateStatus !== "confirmed" &&
+    (staff || (!!userId && detail.author.userId === userId));
+  const [editingPostId, setEditingPostId] = useState<string>();
+  const [mergePending, setMergePending] = useState(false);
   const [selectedReviewId, setSelectedReviewId] = useState<string>();
   const [reviewDetail, setReviewDetail] = useState<Post>();
   const [reviewDetailError, setReviewDetailError] = useState("");
@@ -793,6 +1054,7 @@ function DiscussionContent({
     id: number;
   }>();
   const composerState = useRef({ dirty: false, pending: false });
+  const editorState = useRef({ dirty: false, pending: false });
   const listScroll = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -1108,6 +1370,17 @@ function DiscussionContent({
       });
   }
   function leaveComposer() {
+    if (mergePending) return false;
+    if (editingPostId) {
+      if (editorState.current.pending) return false;
+      if (
+        editorState.current.dirty &&
+        !window.confirm("Discard your unsaved post edits?")
+      )
+        return false;
+      editorState.current = { dirty: false, pending: false };
+      setEditingPostId(undefined);
+    }
     if (!composerOpen) return true;
     if (composerState.current.pending) return false;
     if (
@@ -1117,6 +1390,13 @@ function DiscussionContent({
       return false;
     composerState.current = { dirty: false, pending: false };
     setComposerOpen(false);
+    return true;
+  }
+  function beforeMerge() {
+    if (editorState.current.pending || composerState.current.pending)
+      return false;
+    if (editingPostId && editorState.current.dirty)
+      return window.confirm("Discard your unsaved post edits?");
     return true;
   }
   // The route shell consults the same guard used by post navigation.
@@ -1151,7 +1431,7 @@ function DiscussionContent({
   }
   function openComposer(title?: string) {
     if (composerOpen && !title) return;
-    if (composerOpen && !leaveComposer()) return;
+    if ((composerOpen || editingPostId) && !leaveComposer()) return;
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
     setComposerSeed(title ? { title, id: Date.now() } : undefined);
     setComposerOpen(true);
@@ -1401,6 +1681,7 @@ function DiscussionContent({
                     type="button"
                     aria-pressed={postView === view}
                     onClick={() => {
+                      if (view !== postView && !leaveComposer()) return;
                       setSelectedReviewId(undefined);
                       setReviewDetail(undefined);
                       setReviewDetailError("");
@@ -1738,49 +2019,81 @@ function DiscussionContent({
                   <p>This post was deleted.</p>
                 ) : (
                   <article>
-                    <p className="post-kind">{postTypeOf(detail.type).label}</p>
-                    <h2>{detail.title}</h2>
-                    <p className="post-author">
-                      <PostByline post={detail} />
-                      <ActivityTime post={detail} />
-                    </p>
-                    <TagList
-                      tags={detail.tags}
-                      active={tags}
-                      onSelect={selectTag}
-                    />
-                    <div className="post-markdown">
-                      <PostBody bodyMarkdown={detail.bodyMarkdown} />
-                      <AttachmentManager
-                        kind="post"
-                        parentId={detail.id}
-                        attachments={detail.attachments ?? []}
-                        canEdit={
-                          course?.status === "active" &&
-                          !!role &&
-                          (staff ||
-                            (!!userId && detail.author.userId === userId))
-                        }
-                        csrfToken={csrfToken}
-                        onChanged={async () => {
-                          const next = await getPost(detail.id);
-                          if ("redirectToPostId" in next) {
-                            setDetailCycle((value) => value + 1);
-                            return;
-                          }
-                          if (next.courseId !== courseId)
-                            throw new Error("This post is unavailable.");
-                          setDetail((current) =>
-                            current?.id === next.id &&
-                            (next.deleted ||
-                              current.deleted ||
-                              next.version >= current.version)
-                              ? next
-                              : current,
-                          );
-                        }}
-                      />
-                    </div>
+                    {canEditDetail &&
+                      (editingPostId === detail.id ? (
+                        <div inert={mergePending}>
+                          <PostEditor
+                            key={detail.id}
+                            post={detail}
+                            csrfToken={csrfToken}
+                            onClose={() => setEditingPostId(undefined)}
+                            onChanged={(next) => {
+                              setDetail(next);
+                              setItems((current) =>
+                                current.map((item) =>
+                                  item.id === next.id ? next : item,
+                                ),
+                              );
+                            }}
+                            onStateChange={(dirty, pending) => {
+                              editorState.current = { dirty, pending };
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="button secondary edit-button"
+                          disabled={mergePending}
+                          onClick={() => setEditingPostId(detail.id)}
+                        >
+                          Edit post
+                        </button>
+                      ))}
+                    {(editingPostId !== detail.id || !canEditDetail) && (
+                      <>
+                        <p className="post-kind">
+                          {postTypeOf(detail.type).label}
+                        </p>
+                        <h2>{detail.title}</h2>
+                        <p className="post-author">
+                          <PostByline post={detail} />
+                          <ActivityTime post={detail} />
+                        </p>
+                        <TagList
+                          tags={detail.tags}
+                          active={tags}
+                          onSelect={selectTag}
+                        />
+                        <div className="post-markdown">
+                          <PostBody bodyMarkdown={detail.bodyMarkdown} />
+                          <AttachmentManager
+                            kind="post"
+                            parentId={detail.id}
+                            attachments={detail.attachments ?? []}
+                            canEdit={false}
+                            csrfToken={csrfToken}
+                            onChanged={async () => {
+                              const next = await getPost(detail.id);
+                              if ("redirectToPostId" in next) {
+                                setDetailCycle((value) => value + 1);
+                                return;
+                              }
+                              if (next.courseId !== courseId)
+                                throw new Error("This post is unavailable.");
+                              setDetail((current) =>
+                                current?.id === next.id &&
+                                (next.deleted ||
+                                  current.deleted ||
+                                  next.version >= current.version)
+                                  ? next
+                                  : current,
+                              );
+                            }}
+                          />
+                        </div>
+                      </>
+                    )}
                     {staff && postView === "posts" && (
                       <div
                         className="staff-actions"
@@ -1812,7 +2125,14 @@ function DiscussionContent({
                           source={detail}
                           courseId={courseId}
                           csrfToken={csrfToken}
+                          onBeforeMerge={beforeMerge}
+                          onPendingChange={setMergePending}
                           onMerged={(targetId) => {
+                            editorState.current = {
+                              dirty: false,
+                              pending: false,
+                            };
+                            setEditingPostId(undefined);
                             setFeedCycle((value) => value + 1);
                             onNavigate(postPath(courseId, targetId, search));
                           }}

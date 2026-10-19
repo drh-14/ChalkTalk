@@ -2054,6 +2054,166 @@ it("shows an answer image and a followup document beneath their text", async () 
   ).toBe(document.downloadUrl);
 });
 
+it.each([
+  ["student", "Students' answer", "student"],
+  ["staff", "Instructors' answer", "ta"],
+] as const)(
+  "shows %s answer file controls only after Edit",
+  async (kind, slot, role) => {
+    const document = {
+      id: "doc-1",
+      fileName: "notes.txt",
+      mediaType: "text/plain",
+      sizeBytes: 3,
+      createdAt: "2026-10-18T00:00:00Z",
+      downloadUrl: "/api/v1/attachments/doc-1/download",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/answers")
+          ? answers([answer({ kind, attachments: [document] })])
+          : discussions([]),
+      ),
+    );
+    render(<AnswerSections {...props} role={role} />);
+    const card = within(
+      await screen.findByRole("region", { name: slot }),
+    ).getByRole("region", { name: /Answer by/ });
+    expect(within(card).getByRole("link", { name: "notes.txt" })).toBeTruthy();
+    expect(within(card).queryByLabelText("Add files")).toBeNull();
+    expect(
+      within(card).queryByRole("button", { name: "Remove notes.txt" }),
+    ).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(card).getByRole("button", { name: "Edit answer" }));
+    expect(within(card).getByLabelText("Add files")).toBeTruthy();
+    expect(
+      within(card).getByRole("button", { name: "Remove notes.txt" }),
+    ).toBeTruthy();
+  },
+);
+
+it.each(["root", "reply"] as const)(
+  "shows %s followup file controls only after Edit",
+  async (level) => {
+    const document = {
+      id: "doc-1",
+      fileName: "notes.txt",
+      mediaType: "text/plain",
+      sizeBytes: 3,
+      createdAt: "2026-10-18T00:00:00Z",
+      downloadUrl: "/api/v1/attachments/doc-1/download",
+    };
+    const root = followup({ replyCount: 1, attachments: [document] });
+    const child = followup({
+      id: "f2",
+      parentId: "f1",
+      attachments: [document],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/replies") ? discussions([child]) : discussions([root]),
+      ),
+    );
+    render(<FollowupSections {...props} />);
+    const parent = await screen.findByRole("article", {
+      name: "Followup by Ada Lovelace",
+    });
+    if (level === "reply")
+      await userEvent
+        .setup()
+        .click(within(parent).getByRole("button", { name: "Show 1 replies" }));
+    const card =
+      level === "root"
+        ? parent
+        : within(parent).getAllByRole("article", {
+            name: "Followup by Ada Lovelace",
+          })[0];
+    expect(within(card).getByRole("link", { name: "notes.txt" })).toBeTruthy();
+    expect(within(card).queryByLabelText("Add files")).toBeNull();
+    expect(
+      within(card).queryByRole("button", { name: "Remove notes.txt" }),
+    ).toBeNull();
+    await userEvent
+      .setup()
+      .click(within(card).getByRole("button", { name: "Edit followup" }));
+    expect(within(card).getByLabelText("Add files")).toBeTruthy();
+    expect(
+      within(card).getByRole("button", { name: "Remove notes.txt" }),
+    ).toBeTruthy();
+  },
+);
+
+it.each([
+  ["archived", true],
+  ["active", false],
+] as const)(
+  "keeps %s response attachments read-only when edit is unavailable",
+  async (status, editable) => {
+    const document = {
+      id: "doc-1",
+      fileName: "notes.txt",
+      mediaType: "text/plain",
+      sizeBytes: 3,
+      createdAt: "2026-10-18T00:00:00Z",
+      downloadUrl: "/api/v1/attachments/doc-1/download",
+    };
+    const root = followup({
+      replyCount: 1,
+      attachments: [document],
+      canEdit: editable,
+    });
+    const child = followup({
+      id: "f2",
+      parentId: "f1",
+      attachments: [document],
+      canEdit: editable,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/answers"))
+          return answers([
+            answer({ attachments: [document], canEdit: editable }),
+          ]);
+        if (url.endsWith("/replies")) return discussions([child]);
+        return discussions([root]);
+      }),
+    );
+    render(<QuestionResponses {...props} courseStatus={status} />);
+    const answerCard = within(
+      await screen.findByRole("region", { name: "Students' answer" }),
+    ).getByRole("region", { name: /Answer by/ });
+    const rootCard = await screen.findByRole("article", {
+      name: "Followup by Ada Lovelace",
+    });
+    await userEvent
+      .setup()
+      .click(within(rootCard).getByRole("button", { name: "Show 1 replies" }));
+    const replyCard = within(rootCard).getAllByRole("article", {
+      name: "Followup by Ada Lovelace",
+    })[0];
+    for (const card of [answerCard, rootCard, replyCard]) {
+      expect(
+        within(card).getAllByRole("link", { name: "notes.txt" }).length,
+      ).toBeGreaterThan(0);
+      expect(within(card).queryByLabelText("Add files")).toBeNull();
+      expect(
+        within(card).queryByRole("button", { name: "Remove notes.txt" }),
+      ).toBeNull();
+    }
+    expect(
+      within(answerCard).queryByRole("button", { name: "Edit answer" }),
+    ).toBeNull();
+    expect(
+      within(replyCard).queryByRole("button", { name: "Edit followup" }),
+    ).toBeNull();
+  },
+);
+
 it("keeps a shared answer after an attachment failure and retries without creating another answer", async () => {
   let creates = 0;
   let uploads = 0;

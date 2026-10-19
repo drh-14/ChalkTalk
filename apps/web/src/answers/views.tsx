@@ -628,7 +628,7 @@ function AnswerCard({
         kind="answer"
         parentId={answer.id}
         attachments={answer.attachments}
-        canEdit={canWrite(props) && answer.canEdit && !editing}
+        canEdit={canWrite(props) && answer.canEdit && editing}
         csrfToken={props.csrfToken}
         onMutationStart={() => {
           reconcile.begin();
@@ -646,7 +646,7 @@ function AnswerCard({
         />
         {canWrite(props) && answer.canEdit && !editing && (
           <button
-            className="text-button"
+            className="text-button edit-button"
             type="button"
             onClick={() => setEditing(true)}
           >
@@ -957,7 +957,7 @@ function FollowupItem({
           kind="followup"
           parentId={item.id}
           attachments={item.attachments ?? []}
-          canEdit={canWrite(props) && item.canEdit && !editing}
+          canEdit={canWrite(props) && item.canEdit && editing}
           csrfToken={props.csrfToken}
           onMutationStart={() => {
             reconcile.begin();
@@ -987,7 +987,7 @@ function FollowupItem({
           {canWrite(props) && item.canEdit && !editing && (
             <>
               <button
-                className="text-button"
+                className="text-button edit-button"
                 type="button"
                 onClick={() => setEditing(true)}
               >
