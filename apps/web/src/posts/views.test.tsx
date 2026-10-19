@@ -3955,7 +3955,9 @@ it("places staff actions after the post body and before answers", async () => {
   const title = await screen.findByRole("heading", { name: "Pin me" });
   const article = title.closest("article")!;
   const body = article.querySelector(":scope > .post-markdown");
-  const actions = body?.nextElementSibling as HTMLElement | null;
+  const edit = body?.nextElementSibling as HTMLElement | null;
+  expect(edit?.textContent).toBe("Edit post");
+  const actions = edit?.nextElementSibling as HTMLElement | null;
   expect(actions?.getAttribute("aria-label")).toBe("Staff actions");
   expect(
     actions?.nextElementSibling?.classList.contains("question-responses"),
@@ -5235,3 +5237,44 @@ it("returns an active editor to read-only viewing when the course is archived", 
   expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
   expect(screen.queryByLabelText("Add files")).toBeNull();
 });
+
+it.each(["question", "note"])(
+  "places %s Edit after the rendered post body and attachments",
+  async (type) => {
+    const current = { ...post("p1", "Readable post"), type, version: 1 };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/members/staff"))
+          return json({ data: { role: "ta" } });
+        if (url === "/api/v1/posts/p1") return json({ data: current });
+        if (url.endsWith("/answers")) return json({ data: [] });
+        if (url.endsWith("/followups"))
+          return json({ data: [], meta: { total: 0, nextCursor: null } });
+        return page([current]);
+      }),
+    );
+    render(
+      <Discussion
+        courseId={course.id}
+        course={course}
+        csrfToken="csrf"
+        userId="staff"
+        postId="p1"
+        onNavigate={vi.fn()}
+      />,
+    );
+    const edit = await screen.findByRole("button", { name: "Edit post" });
+    const article = edit.closest("article")!;
+    const body = article.querySelector(".post-markdown")!;
+    expect(
+      body.compareDocumentPosition(edit) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      edit.compareDocumentPosition(
+        within(article).getByRole("group", { name: "Staff actions" }),
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Add files")).toBeNull();
+  },
+);
