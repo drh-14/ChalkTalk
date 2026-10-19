@@ -68,15 +68,15 @@ Hocuspocus `onLoadDocument` reads `collaboration_documents.yjs_state`, or starts
 
 ### D6. Ending: `ending` handshake with a 5-second fallback
 
-PATCH `status: "ended"` sets `lifecycle_state='ending'` in a transaction that notifies `session_ending`. The collaboration server stores the document, sets `lifecycle_state='ended'` and `ended_at`, sends a stateless `session-ended` message, and closes the session's connections with code 4403. The API waits for `ended` by polling the row every 100 ms for up to 5 seconds, then completes the transition itself if needed. Tickets are refused once the state is `ending`. Lifecycle-driven ends (archive, post deletion) use the same path without waiting.
+PATCH `status: "ended"` sets `lifecycle_state='ending'` in a transaction that notifies `session_ending`. The collaboration server stores the document, sets `lifecycle_state='ended'` and `ended_at`, sends a stateless `session-ended` message, and closes the session's connections with reason `session-ended`. The API waits for `ended` by polling the row every 100 ms for up to 5 seconds, then completes the transition itself if needed. Tickets are refused once the state is `ending`. Lifecycle-driven ends (archive, post deletion) use the same path without waiting.
 
 ### D7. Update validation before apply
 
-In `beforeHandleMessage`, the server rejects any incoming message over 256 KiB. For document updates it applies the update to a scratch copy of the current document and checks that the only populated shared type is `content` and that its length is at most 200,000. On failure it closes the connection with a policy code, before the real document changes. This costs one copy per update, which is acceptable for small sessions. The exact hook semantics are verified first (task 1.2), since the retired design flagged this as an open question.
+The WebSocket server's `maxPayload` rejects any incoming message over 256 KiB. In `beforeSync`, which receives the decoded sync message type and payload before it is applied, the server handles SyncStep2 and Update messages: it applies the update to a scratch copy of the current document and checks that the only populated shared type is `content` and that its length is at most 200,000. On failure it closes the connection with a policy code, before the real document changes. This costs one copy per update, which is acceptable for small sessions. Task 1.2 confirmed that throwing from `beforeSync` closes the connection and leaves the document unchanged and unbroadcast.
 
 ### D8. Presence identity from the server
 
-Clients publish only cursor and selection data in Yjs awareness. On each connection the server records the first awareness client ID it sees for that connection. It broadcasts a stateless `participants` message mapping awareness client IDs to `{ userId, displayName, color }` for currently connected users, with the color derived from the user ID. The browser labels cursors from that map and ignores any name inside awareness state, so a client cannot impersonate another user.
+Clients publish cursor and selection data in Yjs awareness. The server's `beforeHandleAwareness` hook rewrites every inbound awareness state's `user` field to `{ userId, name, color }` from the authenticated connection context before it is applied or broadcast, with the color derived from the user ID. A client therefore cannot impersonate another user even if it sets a fake name, which task 1.2 confirmed. The browser labels cursors from `user.name` and builds the participant list from the awareness states. Rewriting presence in place made the separate stateless `participants` message originally planned unnecessary.
 
 ### D9. Data model: migration `020_collaboration_sessions.sql`
 
@@ -93,7 +93,7 @@ The number 020 leaves 016–019 free for the open branches and is renumbered at 
 - `routes.ts` gains `course-session` for `/courses/{courseId}/sessions/{sessionId}`. It renders inside the existing course app bar and is not a Discussion tab.
 - `apps/web/src/sessions/` holds the REST client, `SessionsPanel`, the start dialog, and `SessionView`.
 - `CodeEditor.tsx` is a new CodeMirror 6 instance with line numbers, a monospace theme from existing tokens, and a `Compartment` for the language. It uses `@codemirror/lang-python`, `lang-java`, `lang-cpp` (C and C++), `lang-javascript` (JavaScript and TypeScript), and `lang-sql`, plus `yCollab` from `y-codemirror.next` with Yjs undo.
-- `HocuspocusProvider` is given `token` as an async function that requests a fresh ticket, so reconnects use new tickets automatically. The provider's status, authentication failure, and close events map to the five spec'd connection states. Close code 4403 or a `session-ended` message switches the editor to read-only and loads the final snapshot.
+- `HocuspocusProvider` is given `token` as an async function that requests a fresh ticket, so reconnects use new tickets automatically. The provider's status, authentication failure, and close events map to the five spec'd connection states. A close with reason `session-ended`, or a `session-ended` stateless message, switches the editor to read-only and loads the final snapshot. Because the provider is given an explicit `HocuspocusProviderWebsocket`, it must call `attach()`, which task 1.2 found.
 
 The post detail page shows `SessionsPanel` below the post body: active and recent sessions visible to the viewer, plus a **Start live code session** button.
 
@@ -110,7 +110,7 @@ The post detail page shows `SessionsPanel` below the post body: active and recen
 - `anchorType` limited to `post`, and
 - removal of the "future contract" banners for implemented routes.
 
-`collaboration-websocket.md` documents the session protocol: the ticket as token, close codes (4401 authentication failed, 4403 ended, 4404 access removed, 4413 update too large or invalid), stateless messages, and the reconnect rule. `database.md`, the README, `.env.example`, and the design doc's future-work note are updated.
+`collaboration-websocket.md` documents the session protocol: the ticket as token, close reasons (`session-ended`, `access-removed`, `invalid-update`; authentication failure is the provider's authentication-failed event), stateless messages, and the reconnect rule. Task 1.2 found that a document-level close always reaches the client as code 1000 with only the reason string preserved, so the reason carries the close's meaning. `database.md`, the README, `.env.example`, and the design doc's future-work note are updated.
 
 ## Risks / Trade-offs
 

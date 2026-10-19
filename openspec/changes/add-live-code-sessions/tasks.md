@@ -2,8 +2,8 @@
 
 ## 1. Dependencies and Hocuspocus spike
 
-- [ ] 1.1 Add `@hocuspocus/server` and `ws` to the API workspace, and `@hocuspocus/provider`, `y-codemirror.next`, `@codemirror/lang-python`, `@codemirror/lang-java`, `@codemirror/lang-cpp`, `@codemirror/lang-javascript`, and `@codemirror/lang-sql` to the web workspace; verify `npm install`, `npm run typecheck`, and `npm run build` pass
-- [ ] 1.2 Write a spike test in `apps/api/src/collaboration/hocuspocus.spike.test.ts` that starts an in-process Hocuspocus server and proves: `onAuthenticate` receives the provider token; a `beforeHandleMessage` rejection leaves the document unchanged and nothing is broadcast; `onStoreDocument` honors `debounce` and `maxDebounce` and runs on last disconnect; and stateless messages reach clients. Verify the test passes, and record any deviation from design D3, D5, D7, or D8 in design.md before continuing
+- [x] 1.1 Add `@hocuspocus/server` and `ws` to the API workspace, and `@hocuspocus/provider`, `y-codemirror.next`, `@codemirror/lang-python`, `@codemirror/lang-java`, `@codemirror/lang-cpp`, `@codemirror/lang-javascript`, and `@codemirror/lang-sql` to the web workspace; verify `npm install`, `npm run typecheck`, and `npm run build` pass
+- [x] 1.2 Write a spike test in `apps/api/src/collaboration/hocuspocus.spike.test.ts` that starts an in-process Hocuspocus server and proves: `onAuthenticate` receives the provider token; a `beforeHandleMessage` rejection leaves the document unchanged and nothing is broadcast; `onStoreDocument` honors `debounce` and `maxDebounce` and runs on last disconnect; and stateless messages reach clients. Verify the test passes, and record any deviation from design D3, D5, D7, or D8 in design.md before continuing
 
 ## 2. Data model and contract
 
@@ -25,7 +25,7 @@
 - [ ] 4.2 Implement ticket authentication and authorization (design D3), including `Origin` rejection; verify tests that a valid ticket connects once, and that reused, expired, revoked, mismatched-document, wrong-origin, logged-out, and uninvited cases are closed
 - [ ] 4.3 Implement load and debounced store (design D5); verify tests that edits persist within 5 seconds, on last disconnect, and survive a server restart
 - [ ] 4.4 Implement update validation (design D7); verify tests that an oversized message, a write to another shared type, and content over 200,000 characters are rejected without changing or broadcasting the document
-- [ ] 4.5 Implement the `LISTEN` handler, the 15-second sweep, and the ending handshake (design D4 and D6); verify tests that removal, membership loss, and logout close connections within 5 seconds, that a dropped listener triggers a sweep on reconnect, and that ending stores the final text, marks the session ended, and sends close code 4403
+- [ ] 4.5 Implement the `LISTEN` handler, the 15-second sweep, and the ending handshake (design D4 and D6); verify tests that removal, membership loss, and logout close connections within 5 seconds, that a dropped listener triggers a sweep on reconnect, and that ending stores the final text, marks the session ended, and closes connections with reason `session-ended`
 - [ ] 4.6 Implement server-derived presence (design D8); verify a test with two clients converging after concurrent edits at the same position, and that cursor labels come from the server map even when a client puts a fake name in awareness
 
 ## 5. Browser experience
