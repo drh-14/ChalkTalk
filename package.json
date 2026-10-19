@@ -22,7 +22,8 @@
     "test:browser:answers": "playwright test tests/browser/answer-save-only.spec.mjs --workers=1",
     "typecheck": "tsc --noEmit -p apps/web/tsconfig.app.json && tsc --noEmit -p apps/api/tsconfig.json",
     "test:browser:attachments": "playwright test tests/browser/attachments.spec.mjs --workers=1",
-    "test:browser:live-sessions": "playwright test tests/browser/live-code-session.spec.mjs --workers=1"
+    "test:browser:live-sessions": "playwright test tests/browser/live-code-session.spec.mjs --workers=1",
+    "test:browser:course-files": "playwright test tests/browser/course-files.spec.mjs --workers=1"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",

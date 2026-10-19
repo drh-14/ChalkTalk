@@ -264,18 +264,160 @@ integration("course file upload and byte download", () => {
     expect(
       (
         await request(app(ids.student))
-          .get(`/api/v1/courses/${ids.course}/files`)
-          .set("Cookie", "__Host-chalktalk_session=opaque")
-      ).status,
-    ).toBe(404);
-    expect(
-      (
-        await request(app(ids.student))
           .get(`/api/v1/resources/${response.body.data.id}/download`)
           .set("Cookie", "__Host-chalktalk_session=opaque")
       ).status,
     ).toBe(404);
   });
+  it("lists live metadata for members with exact timestamp pagination and course isolation", async () => {
+    const fileA = (
+      await upload(ids.instructor, "list-a.txt", "text/plain", Buffer.from("a"))
+    ).body.data;
+    const fileB = (
+      await upload(ids.instructor, "list-b.txt", "text/plain", Buffer.from("b"))
+    ).body.data;
+    await pool.query(
+      "UPDATE course_files SET created_at='2090-01-01T00:00:00.123456Z' WHERE id=ANY($1)",
+      [[fileA.id, fileB.id]],
+    );
+    const list = (user: string, query = "") =>
+      request(app(user))
+        .get(`/api/v1/courses/${ids.course}/files${query}`)
+        .set("Cookie", "__Host-chalktalk_session=opaque");
+    const first = await list(ids.student, "?limit=1");
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+    expect(first.body.page).toEqual({
+      hasMore: true,
+      nextCursor: expect.any(String),
+    });
+    expect(first.body.data).toEqual([
+      { ...fileB, createdAt: "2090-01-01T00:00:00.123Z" },
+    ]);
+    const second = await list(
+      ids.ta,
+      `?limit=1&cursor=${encodeURIComponent(first.body.page.nextCursor)}`,
+    );
+    expect(second.status).toBe(200);
+    expect(second.body.data.map((file: { id: string }) => file.id)).toEqual([
+      fileA.id,
+    ]);
+    expect(Object.keys(second.body.data[0]).sort()).toEqual([
+      "courseId",
+      "createdAt",
+      "fileName",
+      "id",
+      "mediaType",
+      "sizeBytes",
+    ]);
+    await pool.query("UPDATE course_files SET deleted_at=now() WHERE id=$1", [
+      fileB.id,
+    ]);
+    expect(
+      (await list(ids.instructor)).body.data.some(
+        (file: { id: string }) => file.id === fileB.id,
+      ),
+    ).toBe(false);
+    expect((await list(ids.outsider)).status).toBe(404);
+    expect(
+      (
+        await request(app(ids.student))
+          .get(`/api/v1/courses/${uuidv7()}/files`)
+          .set("Cookie", "__Host-chalktalk_session=opaque")
+      ).status,
+    ).toBe(404);
+    await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+      ids.course,
+    ]);
+    expect((await list(ids.student)).status).toBe(200);
+    await pool.query("UPDATE courses SET status='deleting' WHERE id=$1", [
+      ids.course,
+    ]);
+    expect((await list(ids.student)).status).toBe(404);
+    await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+      ids.course,
+    ]);
+    expect(
+      (
+        await request(app(ids.student)).get(
+          `/api/v1/courses/${ids.course}/files`,
+        )
+      ).status,
+    ).toBe(401);
+    await pool.query(
+      "UPDATE course_files SET created_at=now() WHERE id=ANY($1)",
+      [[fileA.id, fileB.id]],
+    );
+  });
+
+  it("rejects invalid list queries and cross-course cursors with an error envelope", async () => {
+    const list = (query: string) =>
+      request(app(ids.student))
+        .get(`/api/v1/courses/${ids.course}/files?${query}`)
+        .set("Cookie", "__Host-chalktalk_session=opaque");
+    const encoded = (value: unknown) =>
+      Buffer.from(JSON.stringify(value)).toString("base64url");
+    for (const query of [
+      "limit=0",
+      "limit=101",
+      "limit=1.5",
+      "limit=1e1",
+      "limit=",
+      "limit=1&limit=2",
+      "limit[x]=1",
+      "search=x",
+      "cursor=",
+      "cursor=bad",
+      "cursor=x&cursor=y",
+      `cursor=${encoded([uuidv7(), "2090-01-01T00:00:00.123456Z", uuidv7()])}`,
+      `cursor=${encoded([ids.course, "2090-02-30T00:00:00.123456Z", uuidv7()])}`,
+      `cursor=${encoded([ids.course, "2090-01-01T00:00:00.123Z", uuidv7()])}`,
+      `cursor=${encoded([ids.course, "2090-01-01T00:00:00.123456Z", "bad"])}`,
+    ]) {
+      const result = await list(query);
+      expect(result.status, query).toBe(400);
+      expect(result.body.error.code).toBe("invalid_request");
+      expect(result.body.error.requestId).toEqual(expect.any(String));
+    }
+  });
+  it("isolates files between courses and hides removed or deleted members", async () => {
+    const otherCourse = uuidv7();
+    await pool.query(
+      "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,'Other','OTHER123')",
+      [otherCourse, ids.org, ids.instructor],
+    );
+    await pool.query(
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student')",
+      [otherCourse, ids.student],
+    );
+    const list = () =>
+      request(app(ids.student))
+        .get(`/api/v1/courses/${otherCourse}/files`)
+        .set("Cookie", "__Host-chalktalk_session=opaque");
+    const empty = await list();
+    expect(empty.status).toBe(200);
+    expect(empty.headers["cache-control"]).toBe("private, no-store");
+    expect(empty.body).toEqual({
+      data: [],
+      page: { hasMore: false, nextCursor: null },
+    });
+    await pool.query(
+      "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+      [otherCourse, ids.student],
+    );
+    expect((await list()).status).toBe(404);
+    await pool.query(
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student')",
+      [otherCourse, ids.student],
+    );
+    await pool.query("UPDATE users SET deleted_at=now() WHERE id=$1", [
+      ids.student,
+    ]);
+    expect((await list()).status).toBe(404);
+    await pool.query("UPDATE users SET deleted_at=NULL WHERE id=$1", [
+      ids.student,
+    ]);
+  });
+
   for (const [name, mime, bytes] of [
     ["lecture.pdf", "application/pdf", pdf],
     ["image.png", "image/png", png],
