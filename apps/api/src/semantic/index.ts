@@ -51,10 +51,21 @@ export class SemanticIndex {
        VALUES ($1,'index_post',$2,$3)
        ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL
        DO UPDATE SET status='queued', attempts=0, available_at=now(),
-         locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now()
-       WHERE jobs.status='dead' AND jobs.updated_at < now()-interval '1 hour'
+         locked_by=NULL,locked_until=NULL,last_error=NULL,finished_at=NULL,updated_at=now()
+       WHERE (jobs.status='dead' AND jobs.updated_at < now()-interval '1 hour')
+          OR (jobs.status='succeeded' AND NOT EXISTS (
+            SELECT 1 FROM post_embeddings e WHERE e.post_id=$4
+              AND e.generation=$5 AND e.source_revision=$6
+          ))
        RETURNING id`,
-      [uuidv7(), { postId, generation: this.config.generation, revision }, key],
+      [
+        uuidv7(),
+        { postId, generation: this.config.generation, revision },
+        key,
+        postId,
+        this.config.generation,
+        revision,
+      ],
     );
     return queued.rowCount === 1;
   }
@@ -76,7 +87,8 @@ export class SemanticIndex {
          AND NOT EXISTS (
            SELECT 1 FROM jobs j WHERE j.kind='index_post'
              AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
-             AND (j.status <> 'dead' OR j.updated_at >= now()-interval '1 hour')
+             AND (j.status IN ('queued','running')
+               OR (j.status='dead' AND j.updated_at >= now()-interval '1 hour'))
          )
        ORDER BY p.created_at,p.id LIMIT 1`,
       [this.config.generation],

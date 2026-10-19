@@ -130,6 +130,61 @@ integration("semantic post indexing", () => {
     expect(provider.embedMany).toHaveBeenCalled();
   });
 
+  it("requeues a succeeded revision after reversion or duplicate unmerge removes its embeddings", async () => {
+    const postId = uuidv7();
+    const canonicalId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'question','Returning revision','Original body','2000-01-01')",
+      [postId, courseId, userId],
+    );
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'question','Canonical question','Canonical body')",
+      [canonicalId, courseId, userId],
+    );
+    const index = new SemanticIndex(pool, config, {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    });
+    expect(await index.enqueue(pool, postId)).toBe(true);
+    expect(await index.indexPost(postId)).toBe(true);
+    await pool.query(
+      "UPDATE jobs SET status='succeeded' WHERE kind='index_post' AND payload->>'postId'=$1",
+      [postId],
+    );
+    expect(await index.enqueue(pool, postId)).toBe(false);
+
+    await pool.query("UPDATE posts SET body_markdown='Edited body' WHERE id=$1", [postId]);
+    expect(await index.indexPost(postId)).toBe(true);
+    await pool.query("UPDATE posts SET body_markdown='Original body' WHERE id=$1", [postId]);
+    expect(await index.enqueue(pool, postId)).toBe(true);
+    expect(
+      (await pool.query(
+        "SELECT status FROM jobs WHERE kind='index_post' AND payload->>'postId'=$1",
+        [postId],
+      )).rows[0]?.status,
+    ).toBe("queued");
+
+    expect(await index.indexPost(postId)).toBe(true);
+    await pool.query(
+      "UPDATE jobs SET status='succeeded' WHERE kind='index_post' AND payload->>'postId'=$1 AND status='queued'",
+      [postId],
+    );
+    await pool.query(
+      "UPDATE posts SET duplicate_status='confirmed',duplicate_of_post_id=$2 WHERE id=$1",
+      [postId, canonicalId],
+    );
+    await index.removePost(pool, postId);
+    await pool.query(
+      "UPDATE posts SET duplicate_status='none',duplicate_of_post_id=NULL WHERE id=$1",
+      [postId],
+    );
+    expect(await index.queueBackfillOne()).toBe(true);
+    const jobs = await pool.query<{ status: string }>(
+      "SELECT status FROM jobs WHERE kind='index_post' AND payload->>'postId'=$1 AND status='queued'",
+      [postId],
+    );
+    expect(jobs.rowCount).toBe(1);
+  });
+
   it("retries a provider failure without rolling back the post", async () => {
     const postId = uuidv7();
     await pool.query(
