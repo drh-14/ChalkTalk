@@ -104,7 +104,7 @@ integration("semantic post indexing", () => {
   it("backfills an existing post through the durable job worker", async () => {
     const postId = uuidv7();
     await pool.query(
-      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'note','Legacy note','Already existed before opt-in','1970-01-01')",
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at,updated_at) VALUES($1,$2,$3,'note','Legacy note','Already existed before opt-in','1970-01-01','1970-01-01')",
       [postId, courseId, userId],
     );
     const provider = {
@@ -133,8 +133,8 @@ integration("semantic post indexing", () => {
   it("advances across bounded indexed batches before enqueuing a later post", async () => {
     const indexedIds = Array.from({ length: 100 }, () => uuidv7());
     await pool.query(
-      `INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at)
-       SELECT input.id,$1,$2,'note','Indexed batch','Already embedded','1990-01-01'::timestamptz
+      `INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at,updated_at)
+       SELECT input.id,$1,$2,'note','Indexed batch','Already embedded','1990-01-01'::timestamptz,'1990-01-01'::timestamptz
        FROM unnest($3::uuid[]) AS input(id)`,
       [courseId, userId, indexedIds],
     );
@@ -146,12 +146,12 @@ integration("semantic post indexing", () => {
     );
     const targetId = uuidv7();
     await pool.query(
-      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'note','Later post','Needs backfill','1990-01-02')",
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at,updated_at) VALUES($1,$2,$3,'note','Later post','Needs backfill','1990-01-02','1990-01-02')",
       [targetId, courseId, userId],
     );
     const nextId = uuidv7();
     await pool.query(
-      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'note','Next post','Also needs backfill','1990-01-03')",
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at,updated_at) VALUES($1,$2,$3,'note','Next post','Also needs backfill','1990-01-03','1990-01-03')",
       [nextId, courseId, userId],
     );
     const index = new SemanticIndex(pool, config, {
@@ -168,16 +168,97 @@ integration("semantic post indexing", () => {
       [targetId, nextId].sort(),
     );
     await pool.query(
-      "DELETE FROM jobs WHERE kind='index_post' AND payload->>'postId'=ANY($1::text[])",
-      [[targetId, nextId]],
+      "UPDATE posts SET body_markdown='Revised after scan',updated_at='1990-01-04' WHERE id=$1",
+      [indexedIds[0]],
     );
+    expect(await index.queueBackfillOne()).toBe(true);
+    const edited = await pool.query(
+      "SELECT 1 FROM jobs WHERE kind='index_post' AND payload->>'postId'=$1 AND status='queued'",
+      [indexedIds[0]],
+    );
+    expect(edited.rowCount).toBe(1);
+    await pool.query(
+      "DELETE FROM jobs WHERE kind='index_post' AND payload->>'postId'=ANY($1::text[])",
+      [[targetId, nextId, indexedIds[0]]],
+    );
+  });
+
+  it("stays idle after a complete sweep and processes newly updated posts", async () => {
+    const idleSchema = `${schema}_idle`;
+    await admin.query(`CREATE SCHEMA "${idleSchema}"`);
+    const isolated = new Pool({
+      connectionString: url,
+      options: `--search_path="${idleSchema}"`,
+    });
+    try {
+      await runMigrations(isolated, getMigrationDirectory());
+      await runSemanticMigration(isolated);
+      await isolated.query(
+        "INSERT INTO organizations(id,domain,name) VALUES($1,'idle.example.edu','Idle')",
+        [orgId],
+      );
+      await isolated.query(
+        "INSERT INTO users(id,organization_id,email,display_name,password_hash) VALUES($1,$2,'idle@example.edu','Idle','x')",
+        [userId, orgId],
+      );
+      await isolated.query(
+        "INSERT INTO courses(id,organization_id,created_by_user_id,name,join_code) VALUES($1,$2,$3,'Idle course','HGFEDCBA')",
+        [courseId, orgId, userId],
+      );
+      const indexedId = uuidv7();
+      await isolated.query(
+        "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,updated_at) VALUES($1,$2,$3,'note','Indexed post','Already covered','1970-01-01')",
+        [indexedId, courseId, userId],
+      );
+      await isolated.query(
+        `INSERT INTO post_embeddings(post_id,generation,source_revision,chunk_ordinal,embedding)
+         SELECT p.id,$2,${POST_REVISION_SQL},0,'[1,0]'::public.vector
+         FROM posts p WHERE p.id=$1`,
+        [indexedId, config.generation],
+      );
+      const index = new SemanticIndex(isolated, config, {
+        embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+      });
+      expect(await index.queueBackfillOne()).toBe(false);
+      expect(await index.queueBackfillOne()).toBe(false);
+
+      const oldId = uuidv7();
+      await isolated.query(
+        "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,updated_at) VALUES($1,$2,$3,'note','Old timestamp','Not a new change','1960-01-01')",
+        [oldId, courseId, userId],
+      );
+      expect(await index.queueBackfillOne()).toBe(false);
+      const freshId = uuidv7();
+      await isolated.query(
+        "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,updated_at) VALUES($1,$2,$3,'note','Fresh update','Needs a job','1980-01-01')",
+        [freshId, courseId, userId],
+      );
+      expect(await index.queueBackfillOne()).toBe(true);
+      const jobs = await isolated.query<{ post_id: string }>(
+        "SELECT payload->>'postId' AS post_id FROM jobs WHERE kind='index_post'",
+      );
+      expect(jobs.rows).toEqual([{ post_id: freshId }]);
+      await isolated.query(
+        "UPDATE jobs SET status='dead',updated_at=now()-interval '2 hours' WHERE kind='index_post' AND payload->>'postId'=$1",
+        [freshId],
+      );
+      expect(await index.queueBackfillOne()).toBe(true);
+      const retried = await isolated.query<{ status: string }>(
+        "SELECT status FROM jobs WHERE kind='index_post' AND payload->>'postId'=$1",
+        [freshId],
+      );
+      expect(retried.rows).toEqual([{ status: "queued" }]);
+    } finally {
+      await isolated.end();
+      await admin.query(`DROP SCHEMA "${idleSchema}" CASCADE`);
+    }
   });
 
   it("requeues a succeeded revision after reversion or duplicate unmerge removes its embeddings", async () => {
     const postId = uuidv7();
     const canonicalId = uuidv7();
     await pool.query(
-      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'question','Returning revision','Original body','1980-01-01')",
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at,updated_at) VALUES($1,$2,$3,'question','Returning revision','Original body','1980-01-01','1980-01-01')",
       [postId, courseId, userId],
     );
     await pool.query(

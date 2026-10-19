@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS post_embeddings (
 );
 CREATE INDEX IF NOT EXISTS post_embeddings_generation_post_idx
   ON post_embeddings (generation, post_id, source_revision);
-CREATE INDEX IF NOT EXISTS posts_semantic_backfill_idx
-  ON posts (created_at, id)
+DROP INDEX IF EXISTS posts_semantic_backfill_idx;
+CREATE INDEX IF NOT EXISTS posts_semantic_backfill_updated_idx
+  ON posts (updated_at, id)
   WHERE deleted_at IS NULL AND duplicate_status <> 'confirmed';
+CREATE INDEX IF NOT EXISTS jobs_semantic_dead_idx
+  ON jobs (updated_at, id)
+  WHERE kind='index_post' AND status='dead';
