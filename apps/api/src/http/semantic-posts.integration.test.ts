@@ -390,4 +390,76 @@ integration("semantic post search HTTP contract", () => {
     expect(replay.status).toBe(400);
     expect(replay.body.error.code).toBe("invalid_request");
   });
+
+  it("rolls back deletion and merge when embedding cleanup fails", async () => {
+    await pool.query(
+      "UPDATE course_memberships SET role='instructor' WHERE course_id=$1 AND user_id=$2",
+      [courseId, userId],
+    );
+    const canonical = await service.create(courseId, userId, {
+      type: "question",
+      title: "Canonical cleanup question",
+      bodyMarkdown: "Canonical body",
+    });
+    const source = await service.create(courseId, userId, {
+      type: "question",
+      title: "Private duplicate text",
+      bodyMarkdown: "Duplicate body",
+    });
+    const deleted = await service.create(courseId, userId, {
+      type: "note",
+      title: "Private deleted text",
+      bodyMarkdown: "Deleted body",
+    });
+    await index.indexPost(source.value.id);
+    await index.indexPost(deleted.value.id);
+    const failing = new PostService(
+      pool,
+      undefined,
+      {
+        removePost: vi.fn(async () => {
+          throw new Error("embedding cleanup failed");
+        }),
+      } as unknown as SemanticIndex,
+    );
+    await expect(
+      failing.update(source.value.id, userId, '"v1"', {
+        duplicateStatus: "confirmed",
+        duplicateOfPostId: canonical.value.id,
+      }),
+    ).rejects.toThrow("embedding cleanup failed");
+    await expect(
+      failing.delete(deleted.value.id, userId, '"v1"'),
+    ).rejects.toThrow("embedding cleanup failed");
+    const unchanged = await pool.query<{
+      id: string;
+      duplicate_status: string;
+      deleted_at: Date | null;
+    }>(
+      "SELECT id,duplicate_status,deleted_at FROM posts WHERE id=ANY($1::uuid[]) ORDER BY id",
+      [[source.value.id, deleted.value.id]],
+    );
+    expect(unchanged.rows).toHaveLength(2);
+    expect(
+      unchanged.rows.every(
+        (post) => post.duplicate_status === "none" && post.deleted_at === null,
+      ),
+    ).toBe(true);
+    const embeddingsBefore = await pool.query(
+      "SELECT post_id FROM post_embeddings WHERE post_id=ANY($1::uuid[])",
+      [[source.value.id, deleted.value.id]],
+    );
+    expect(embeddingsBefore.rowCount).toBe(2);
+
+    await service.update(source.value.id, userId, '"v1"', {
+      duplicateStatus: "confirmed",
+      duplicateOfPostId: canonical.value.id,
+    });
+    await service.delete(deleted.value.id, userId, '"v1"');
+    const embeddingsAfter = await pool.query(
+      "SELECT post_id FROM post_embeddings WHERE post_id=ANY($1::uuid[])",
+      [[source.value.id, deleted.value.id]],
+    );
+    expect(embeddingsAfter.rowCount).toBe(0);
+  });
 });

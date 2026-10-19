@@ -748,9 +748,7 @@ export class PostService {
       if (body.tags !== undefined)
         await this.replaceTags(db, id, row.course_id, body.tags);
       if (status === "confirmed")
-        await this.optionalSemanticWrite(db, () =>
-          this.semantic!.removePost(db, id),
-        );
+        await this.semantic?.removePost(db, id);
       else if (
         body.title !== undefined ||
         body.bodyMarkdown !== undefined ||
@@ -824,9 +822,7 @@ export class PostService {
           "Post deletion is not permitted",
         );
       await db.query("DELETE FROM post_tags WHERE post_id=$1", [id]);
-      await this.optionalSemanticWrite(db, () =>
-        this.semantic!.removePost(db, id),
-      );
+      await this.semantic?.removePost(db, id);
       await db.query(
         "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [id],
