@@ -14,7 +14,7 @@ Anonymous content viewed by another student returns `userId: null`, `displayName
 
 Deleted authors return `userId: null`, `displayName: "Deleted user"`, and `deleted: true`. The `anonymous` value retains the content's original anonymity setting.
 
-Anonymous messages remain supported. Live collaboration presence is intentionally named and follows the separate [collaboration WebSocket contract](collaboration-websocket.md).
+Anonymous messages remain supported. Shared-answer drafts are local until explicitly saved; the API projects anonymous contributor identity according to the viewer's role. No answer presence or cursor data is published.
 
 ## Answer contributors
 

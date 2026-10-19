@@ -22,6 +22,9 @@ const answer: Answer = {
   createdAt: "2026-09-20T14:00:00Z",
   updatedAt: "2026-09-20T14:00:00Z",
   version: 3,
+  canEdit: true,
+  upvoteCount: 0,
+  viewerUpvoted: false,
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {

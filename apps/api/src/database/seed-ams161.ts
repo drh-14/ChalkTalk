@@ -339,7 +339,6 @@ export const AMS161_FIXTURE = {
 } as const;
 
 // Answer collaboration documents start from an empty Yjs update, as in the answers service.
-const EMPTY_YJS_UPDATE = Buffer.from([0, 0]);
 
 export async function seedAms161(
   pool: Pool,
@@ -501,10 +500,6 @@ export async function seedAms161(
               ids[answer.author],
               members.find((member) => member.key === answer.author)!.role,
             ],
-          );
-          await client.query(
-            "INSERT INTO answer_collaboration_documents (answer_id,yjs_state) VALUES ($1,$2)",
-            [answerId, EMPTY_YJS_UPDATE],
           );
           await client.query(
             "INSERT INTO answer_contributors (answer_id,user_id) VALUES ($1,$2)",

@@ -146,6 +146,16 @@ integration("course statistics API", () => {
       .set("X-CSRF-Token", "csrf")
       .send({ bodyMarkdown: "Because." });
     expect(created.status).toBe(201);
+    // The DB clock can lead the API's JS-clock query window. Keep this
+    // contribution inside that window, after its answer was created.
+    await pool.query(
+      "UPDATE answers SET created_at=now()-interval '2 minutes' WHERE id=$1",
+      [created.body.data.id],
+    );
+    await pool.query(
+      "UPDATE answer_contribution_events SET contributed_at=now()-interval '1 minute' WHERE answer_id=$1",
+      [created.body.data.id],
+    );
     const events = await pool.query(
       "SELECT user_id FROM answer_contribution_events WHERE answer_id=$1",
       [created.body.data.id],
@@ -156,12 +166,14 @@ integration("course statistics API", () => {
   it("returns staff summary, creation-time response interval, and current students including zero activity", async () => {
     const postId = uuidv7();
     const answerId = uuidv7();
+    // Keep the endorsement safely before the API's JS-clock window end: the
+    // PostgreSQL clock can run a few milliseconds ahead of the test process.
     await pool.query(
       "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES ($1,$2,$3,'question','Time?','Body',now()-interval '2 hours')",
       [postId, ids.course, ids.student],
     );
     await pool.query(
-      "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,created_at,endorsed_at,endorsed_by_user_id,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,'student','Answer',now()-interval '1 hour',now(),$4,$5,'student')",
+      "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,created_at,endorsed_at,endorsed_by_user_id,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,'student','Answer',now()-interval '1 hour',now()-interval '1 minute',$4,$5,'student')",
       [answerId, ids.course, postId, ids.staff, ids.student],
     );
     await pool.query(
@@ -221,7 +233,15 @@ integration("course statistics API", () => {
     const created = await answers.create(postId, ids.student, {
       bodyMarkdown: "Initial",
     });
+    await pool.query(
+      "UPDATE answers SET created_at=now()-interval '2 minutes' WHERE id=$1",
+      [created.value.id],
+    );
     const endorsed = await answers.endorse(created.value.id, ids.staff, '"v1"');
+    await pool.query(
+      "UPDATE answer_endorsement_events SET endorsed_at=now()-interval '1 minute' WHERE answer_id=$1",
+      [created.value.id],
+    );
     const revised = await answers.edit(
       created.value.id,
       ids.student,

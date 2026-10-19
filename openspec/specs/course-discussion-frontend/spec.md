@@ -458,29 +458,59 @@ The protected `/courses/{courseId}/resources` route SHALL render inside the shar
 
 ### Requirement: Question detail shows the students' and instructors' answers
 
-When the detail pane shows an active question, it SHALL show a Students' answer section and an Instructors' answer section below the question, loaded from the documented answers list for that post. Notes, deleted posts, and staff duplicate review SHALL not show answer sections. Each section SHALL show loading, error with retry, and empty states. An existing answer SHALL render its Markdown safely, like post bodies, together with its creation time and its viewer-projected contributors. An anonymous answer whose contributors are hidden SHALL show "Anonymous", and an answer with no visible contributors SHALL show "Deleted user". An endorsed answer SHALL show that it is endorsed.
+When the detail pane shows an active question, it SHALL show exactly one Students' answer area in green and one Instructors' answer area in amber below the question, loaded from the documented answer list. Notes, deleted posts, and staff duplicate review SHALL not show answer areas. Each area SHALL show loading, retryable error, and empty states. A writable empty area SHALL initially show a compact click-to-start prompt rather than an expanded editor. Activating the prompt SHALL open the shared Markdown/LaTeX composer. Canceling a draft SHALL return to the prompt. Read-only empty areas SHALL state that no answer exists without a write prompt. A present answer SHALL safely render its Markdown and LaTeX immediately after creation or editing, creation or edit time, viewer-projected contributors, current endorsement, and an upvote control beneath its content. Anonymous contributors hidden by the API SHALL show "Anonymous"; no visible contributors SHALL show "Deleted user".
 
-A member whose role matches an empty section (students for the students' answer; TAs and instructors for the instructors' answer) SHALL be able to write that answer with an optional anonymity choice. The composer SHALL require a trimmed nonempty body of at most 100,000 characters, send the documented create request with CSRF and an idempotency key, prevent duplicate submission while pending, keep the draft on failure, and explain that the answer cannot be edited after posting in this phase. A `409 answer_kind_exists` response SHALL reload the answers instead of showing a second composer. TAs and instructors SHALL be able to endorse an unendorsed answer and to delete an unendorsed answer after confirming, sending the answer's current ETag. Students SHALL not see endorse or delete controls. Answer controls SHALL be unavailable when the course is archived or deleting.
+A member whose role matches an empty slot (student for student, TA or instructor for staff) SHALL be able to create its answer with optional anonymity through the shared Markdown/LaTeX composer. The composer SHALL require a trimmed nonempty body of at most 100,000 characters, send CSRF and an idempotency key, prevent duplicate submission, and retain the draft on failure. A `409 answer_kind_exists` response SHALL refresh the occupied slot while retaining the unfinished draft for comparison or copying. A present answer SHALL offer an independent local Markdown/LaTeX draft only when its server-projected `canEdit` is true. Typing SHALL have no server or peer effect until Save. A `412 version_conflict` SHALL keep the draft open, show the latest saved answer beside it, and offer explicit Continue editing, Discard my draft, and Overwrite with my draft actions. Overwrite SHALL be another conditional PATCH with the latest ETag; a further race SHALL repeat review. TAs and instructors SHALL be able to endorse an unendorsed answer and delete an unendorsed answer after confirmation, using its current ETag. A content edit SHALL update the visible rendered Markdown and may clear its current endorsement. Answer controls SHALL be unavailable in archived or deleting courses.
+
+#### Scenario: Student starts an empty answer
+
+- **WHEN** a student opens a question without a student answer and activates the student answer prompt
+- **THEN** the student composer opens with Markdown and LaTeX formatting controls and the staff area remains read-only
+
+#### Scenario: Student cancels an empty answer
+
+- **WHEN** a student cancels the empty student answer composer
+- **THEN** the compact click-to-start prompt returns and no answer is sent
+
+#### Scenario: Member switches questions with an open draft
+
+- **WHEN** a member navigates to another question while an answer draft is open
+- **THEN** the new question starts with its own answer state and does not show the previous question's draft
+
+#### Scenario: Populated answer
+
+- **WHEN** a question has a student or staff answer
+- **THEN** the matching colored area renders its answer, with its upvote control beneath the text
 
 #### Scenario: A student answers an unanswered question
 
 - **WHEN** a student opens a question with no students' answer and submits a valid answer
-- **THEN** the browser sends the documented create request and shows the created answer in the Students' answer section without a composer
+- **THEN** the browser sends the documented create request and shows the created answer in the Students' answer area without a composer
 
 #### Scenario: Another student posted first
 
 - **WHEN** a student submits an answer but the API returns `409 answer_kind_exists`
-- **THEN** the browser reloads the answers and shows the existing students' answer
+- **THEN** the browser reloads the occupied student slot and preserves the local draft
 
 #### Scenario: A TA endorses an answer
 
 - **WHEN** a TA endorses the students' answer
-- **THEN** the browser sends a conditional endorsement request and the section shows the answer as endorsed without endorse or delete controls
+- **THEN** the browser sends a conditional endorsement request and shows the current endorsement; after a content edit clears it, staff may endorse again
 
 #### Scenario: A student views a note
 
 - **WHEN** a student opens a note
-- **THEN** no answer sections or answer composers appear
+- **THEN** no answer areas or answer composers appear
+
+#### Scenario: Stale answer edit
+
+- **WHEN** an answer save receives `412 version_conflict`
+- **THEN** the editor remains open with the local draft, displays the latest saved answer for comparison, and requires an explicit Overwrite before retrying with the latest ETag
+
+#### Scenario: Member votes on an answer
+
+- **WHEN** a member toggles an answer upvote
+- **THEN** the count and viewer state beneath the answer update without changing the content version
 
 ### Requirement: Posts show when they were created
 
@@ -556,7 +586,7 @@ The title SHALL be the most prominent text on the card. The badge's label, icon,
 
 ### Requirement: Staff can pin and unpin a post from the post view
 
-When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group containing the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
+When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group immediately below the post body and before question answers. It SHALL contain the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
 
 #### Scenario: A TA pins a post
 
@@ -577,3 +607,22 @@ When a TA or instructor views an ordinary post, the post view SHALL show a "Staf
 
 - **WHEN** a student opens a post
 - **THEN** no Staff actions group or Pin control appears
+
+### Requirement: Question detail presents question-level followup discussions
+
+The question detail SHALL show a root followup count and a prominent zero-followup compose prompt. Members SHALL create roots and nested replies using the shared Markdown/LaTeX composer and optional anonymity. The page SHALL list roots and direct replies with cursor-based loading, render bodyless deleted parent tombstones when children remain, and show vote controls beneath active followup content. Author and staff edit/delete controls SHALL follow server-projected `canEdit`; other members SHALL not see them. Existing root and reply bodies SHALL be edited only through the version-checked REST composer. Failed REST writes and version conflicts SHALL preserve draft text and offer explicit refresh. Saved root and reply content SHALL render Markdown and LaTeX immediately after creation or editing but SHALL not offer media upload.
+
+#### Scenario: Empty followups
+
+- **WHEN** a member opens a question with no followup roots
+- **THEN** a zero count and prominent compose prompt are displayed
+
+#### Scenario: Nested followup and tombstone
+
+- **WHEN** a member opens a deleted parent with visible replies
+- **THEN** the bodyless tombstone and nested replies remain navigable
+
+#### Scenario: Followup vote and pagination
+
+- **WHEN** a member votes on a followup and loads the next root page
+- **THEN** the vote count updates beneath that followup and additional roots append without duplicate entries

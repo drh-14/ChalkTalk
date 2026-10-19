@@ -1,6 +1,8 @@
 # Yjs answer document core
 
-Status: agreed
+Historical design for the removed private document-store slice. The current answer editing and endorsement contract is in the [answers API reference](../../documentation/api/answers.md); the [database reference](../../documentation/database.md) describes the historical Yjs migration. The document-store and future-transport decisions below are superseded.
+
+Status: superseded
 Date: 2026-10-09
 
 ## Context

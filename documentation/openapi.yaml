@@ -14,12 +14,12 @@ info:
     include `Vary: Origin` and `Access-Control-Allow-Credentials: true`, and never
     use a wildcard origin. Every unsafe request validates `Origin`; authenticated
     unsafe requests also validate the session-bound `X-CSRF-Token`. Expiring or
-    revoking a session invalidates its CSRF token and unused WebSocket tickets.
+    revoking a session invalidates its CSRF token.
     Implementation status: JSON question and note posts, shared student and staff
     answers, question-owned threaded followups, and answer/followup upvotes are live.
-    Answer editing uses versioned REST backed by durable Yjs state. Polls, multipart
-    content, attachments, download refresh, collaboration tickets, and Hocuspocus
-    remain unavailable.
+    Answer bodies support explicit save-only versioned REST editing; followups and
+    replies also use REST only. Polls, multipart content,
+    attachments, download refresh, and temporary collaboration sessions remain unavailable.
   license:
     name: MIT
     identifier: MIT
@@ -570,7 +570,7 @@ paths:
       tags:
         - Authentication
       summary: Sign out
-      description: Sign out. Revokes the current session, its CSRF token, and its unused WebSocket connection tickets, then expires the browser cookie.
+      description: Sign out. Revokes the current session and its CSRF token, then expires the browser cookie.
       operationId: deleteCurrentSession
       security:
         - session_cookie: []
@@ -908,7 +908,7 @@ paths:
       tags:
         - Authentication
       summary: Delete account
-      description: Delete account after validating currentPassword against the authenticated user’s stored password hash. Retained contributions are pseudonymized; all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked; and the current __Host-chalktalk_session cookie is expired. If deletion would remove the final instructor from a course, the server returns 409 Conflict and leaves the account and current session intact.
+      description: Delete account after validating currentPassword against the authenticated user’s stored password hash. Retained contributions are pseudonymized; all sessions and their CSRF tokens are revoked; and the current __Host-chalktalk_session cookie is expired. If deletion would remove the final instructor from a course, the server returns 409 Conflict and leaves the account and current session intact.
       operationId: deleteCurrentUser
       security:
         - session_cookie: []
@@ -941,7 +941,7 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
         "204":
-          description: Retained contributions are pseudonymized; all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked; and the current browser session cookie is expired.
+          description: Retained contributions are pseudonymized; all sessions and their CSRF tokens are revoked; and the current browser session cookie is expired.
           headers:
             Set-Cookie:
               "$ref": "#/components/headers/ClearSessionCookie"
@@ -1022,7 +1022,7 @@ paths:
       tags:
         - Authentication
       summary: Change password
-      description: Change password. Success revokes the user’s other sessions together with their CSRF tokens and unused WebSocket connection tickets; the current session remains valid.
+      description: Change password. Success revokes the user’s other sessions together with their CSRF tokens; the current session remains valid.
       operationId: changeCurrentUserPassword
       security:
         - session_cookie: []
@@ -1043,7 +1043,7 @@ paths:
                       requestId: req_changeCurrentUserPassword
                       details: []
         "204":
-          description: Success revokes the user’s other sessions together with their CSRF tokens and unused WebSocket connection tickets; the current session remains valid.
+          description: Success revokes the user’s other sessions together with their CSRF tokens; the current session remains valid.
         "401":
           description: Unauthorized
           content:
@@ -1233,7 +1233,7 @@ paths:
       tags:
         - Authentication
       summary: Reset password using token
-      description: Reset password using token. Success consumes the token and revokes every existing session for the account together with its CSRF token and unused WebSocket connection tickets.
+      description: Reset password using token. Success consumes the token and revokes every existing session for the account together with its CSRF token.
       operationId: resetPassword
       security: []
       responses:
@@ -1253,7 +1253,7 @@ paths:
                       requestId: req_resetPassword
                       details: []
         "204":
-          description: Success consumes the token and revokes every existing session for the account together with its CSRF token and unused WebSocket connection tickets.
+          description: Success consumes the token and revokes every existing session for the account together with its CSRF token.
         "409":
           description: Conflict
           content:
@@ -4571,7 +4571,7 @@ paths:
   "/answers/{answerId}/endorsement":
     put:
       tags: [Answers]
-      summary: Endorse answer and close document
+      summary: Endorse answer
       operationId: endorseAnswer
       security:
         - session_cookie: []
@@ -12903,7 +12903,7 @@ components:
           format: uri
         documentId:
           type: string
-          description: Document identifier derived by the server from the collaboration session or answer.
+          description: Document identifier derived by the server from the collaboration session.
           minLength: 1
           maxLength: 255
         expiresAt:
