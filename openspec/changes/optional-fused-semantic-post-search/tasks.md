@@ -3,6 +3,7 @@
 - [x] 1.1 Update API, database, and OpenAPI references for optional semantic search and configuration.
 - [x] 1.2 Add failing API/database tests for query validation, tiering, filters, pagination, fallback, and worker revision races.
 - [x] 1.3 Add failing Related questions client and view tests for separate bounded `semanticQuery`.
+- [x] 1.4 Specify and test transactional catch-up, in-flight backfill races, worker recovery, no-key writes, and lexical-only fallback.
 
 ## 2. Implementation
 
@@ -11,6 +12,7 @@
 - [x] 2.3 Implement durable revision-safe worker indexing and backfill of question/note text.
 - [x] 2.4 Integrate semantic candidate union and strict relevance tiers into post search and cursor binding.
 - [x] 2.5 Send the separate semantic query from Related questions.
+- [x] 2.6 Persist and drain per-post catch-up state and gate semantic search on indexing health.
 
 ## 3. Verification and delivery
 

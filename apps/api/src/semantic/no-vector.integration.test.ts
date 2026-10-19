@@ -76,6 +76,11 @@ integration("configured embeddings without optional schema", () => {
     expect(provider.embedMany).not.toHaveBeenCalled();
     const jobs = await pool.query("SELECT 1 FROM jobs WHERE kind='index_post'");
     expect(jobs.rowCount).toBe(0);
+    const pending = await pool.query(
+      "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1",
+      [post.value.id],
+    );
+    expect(pending.rowCount).toBe(1);
   });
 
   it("does not fail a post write when optional indexing is unavailable", async () => {
@@ -95,5 +100,11 @@ integration("configured embeddings without optional schema", () => {
       created.value.id,
     ]);
     expect(row.rows[0]?.title).toBe("Fallback note");
+    expect(
+      (await pool.query(
+        "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1",
+        [created.value.id],
+      )).rowCount,
+    ).toBe(1);
   });
 });

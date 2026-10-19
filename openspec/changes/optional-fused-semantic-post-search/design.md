@@ -41,6 +41,17 @@ or invalid provider output falls back to lexical/fuzzy results rather than
 failing the search request. Missing or stale embeddings do not produce a
 semantic match.
 
+An ordinary PostgreSQL catch-up table records eligible post writes when enqueue
+is unavailable or fails in the post transaction, including when no provider key
+is currently configured.
+Enqueue failures cannot roll back post writes or leave an invisible gap behind
+the incremental backfill cursor. The worker drains indexed catch-up rows in
+bounded work; it removes a row only in the transaction that stores embeddings
+for the post's current revision. Deletion and confirmed-duplicate merge remove
+catch-up rows with embeddings. Pending catch-up rows, failed current-generation
+jobs, and query-provider failures disable semantic candidates for search until
+recovery; the existing lexical/fuzzy query path remains authoritative.
+
 For relevance sorting, preserve pinned-first order and then use **strict match
 tiers** within each pinned group: full-text matches, fuzzy-only matches, then
 semantic-only matches. Semantic similarity orders only the last tier; it cannot

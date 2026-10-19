@@ -3358,7 +3358,7 @@ paths:
         - name: semanticQuery
           in: query
           required: false
-          description: Separate natural-language semantic query. Requires q; does not change q operator meaning. Ignored when deployment embeddings or optional pgvector schema are unavailable.
+          description: Separate natural-language semantic query. Requires q; does not change q operator meaning. Ignored when deployment embeddings or optional pgvector schema are unavailable. A query-provider error, pending post catch-up work, or a failed current-generation indexing job uses only the established full-text and fuzzy search path.
           schema:
             type: string
             minLength: 1

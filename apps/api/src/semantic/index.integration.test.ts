@@ -6,6 +6,7 @@ import { runSemanticMigration } from "../database/migrate-semantic.js";
 import { readEmbeddingConfig } from "./provider.js";
 import { POST_REVISION_SQL, SemanticIndex } from "./index.js";
 import { JobWorker } from "../jobs/worker.js";
+import { PostService } from "../posts/service.js";
 
 const url = process.env.TEST_VECTOR_DATABASE_URL;
 const integration = url ? describe : describe.skip;
@@ -128,6 +129,59 @@ integration("semantic post indexing", () => {
     );
     expect(stored.rowCount).toBeGreaterThan(0);
     expect(provider.embedMany).toHaveBeenCalled();
+  });
+
+  it("recovers an enqueue failure committed behind the backfill high-water mark", async () => {
+    const index = new SemanticIndex(pool, config, {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    });
+    let reachedEnqueue!: () => void;
+    let resumeEnqueue!: () => void;
+    const reached = new Promise<void>((resolve) => (reachedEnqueue = resolve));
+    const resume = new Promise<void>((resolve) => (resumeEnqueue = resolve));
+    vi.spyOn(index, "enqueue").mockImplementationOnce(async () => {
+      reachedEnqueue();
+      await resume;
+      throw new Error("enqueue unavailable");
+    });
+    const service = new PostService(pool, undefined, index);
+    await pool.query(
+      "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,'student') ON CONFLICT DO NOTHING",
+      [courseId, userId],
+    );
+    const creating = service.create(courseId, userId, {
+      type: "note",
+      title: "In-flight catch-up",
+      bodyMarkdown: "Persist despite enqueue failure",
+    });
+    await reached;
+    const anchorId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,updated_at) VALUES($1,$2,$3,'note','Cursor anchor','Already indexed',now()+interval '1 minute')",
+      [anchorId, courseId, userId],
+    );
+    await pool.query(
+      `INSERT INTO post_embeddings(post_id,generation,source_revision,chunk_ordinal,embedding)
+       SELECT p.id,$2,${POST_REVISION_SQL},0,'[1,0]'::public.vector FROM posts p WHERE p.id=$1`,
+      [anchorId, config.generation],
+    );
+    for (let i = 0; i < 20; i++) await index.queueBackfillOne();
+    resumeEnqueue();
+    const created = await creating;
+    const postId = created.value.id;
+    expect(
+      (await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1", [
+        postId,
+      ])).rowCount,
+    ).toBe(1);
+    expect(await index.queueBackfillOne()).toBe(true);
+    expect(await index.indexPost(postId)).toBe(true);
+    expect(
+      (await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1", [
+        postId,
+      ])).rowCount,
+    ).toBe(0);
+    await pool.query("DELETE FROM jobs WHERE kind='index_post' AND status='queued'");
   });
 
   it("advances across bounded indexed batches before enqueuing a later post", async () => {
@@ -319,9 +373,11 @@ integration("semantic post indexing", () => {
       "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'question','Retry note','Still searchable lexically')",
       [postId, courseId, userId],
     );
+    let unavailable = true;
     const index = new SemanticIndex(pool, config, {
       embedMany: vi.fn(async () => {
-        throw new Error("provider unavailable");
+        if (unavailable) throw new Error("provider unavailable");
+        return [[1, 0]];
       }),
     });
     expect(await index.enqueue(pool, postId)).toBe(true);
@@ -340,9 +396,17 @@ integration("semantic post indexing", () => {
       [postId],
     );
     expect(job.rows).toEqual([{ status: "queued", attempts: 1 }]);
+    expect(await index.healthy()).toBe(false);
     expect(
       (await pool.query("SELECT title FROM posts WHERE id=$1", [postId]))
         .rows[0].title,
     ).toBe("Retry note");
+    unavailable = false;
+    await pool.query(
+      "UPDATE jobs SET available_at=now() WHERE kind='index_post' AND payload->>'postId'=$1",
+      [postId],
+    );
+    expect(await worker.runOnce()).toBe(true);
+    expect(await index.healthy()).toBe(true);
   });
 });

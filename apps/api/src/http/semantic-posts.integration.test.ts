@@ -265,6 +265,34 @@ integration("semantic post search HTTP contract", () => {
     ).toEqual(["Spectrometer overview", "Spectromter overview"]);
   });
 
+  it("uses only lexical and fuzzy ranking while catch-up or a failed job is pending", async () => {
+    const postId = (await pool.query<{ id: string }>(
+      "SELECT id FROM posts WHERE title='Spectrometer overview'",
+    )).rows[0]!.id;
+    await pool.query("INSERT INTO semantic_post_catchup(post_id) VALUES($1) ON CONFLICT DO NOTHING", [postId]);
+    const pending = await list("q=spectrometer&sort=relevance");
+    expect(pending.status).toBe(200);
+    expect(pending.body.data.map((post: { title: string }) => post.title)).toEqual([
+      "Spectrometer overview",
+      "Spectromter overview",
+    ]);
+    await pool.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [postId]);
+    await pool.query(
+      "UPDATE jobs SET status='queued',last_error='provider unavailable' WHERE kind='index_post' AND payload->>'postId'=$1",
+      [postId],
+    );
+    const failed = await list("q=spectrometer&sort=relevance");
+    expect(failed.status).toBe(200);
+    expect(failed.body.data.map((post: { title: string }) => post.title)).toEqual([
+      "Spectrometer overview",
+      "Spectromter overview",
+    ]);
+    await pool.query(
+      "UPDATE jobs SET last_error=NULL WHERE kind='index_post' AND payload->>'postId'=$1",
+      [postId],
+    );
+  });
+
   it("does not repeat an earlier page if the provider fails mid-pagination", async () => {
     const first = await list("q=spectrometer&sort=relevance&limit=2");
     expect(first.status).toBe(200);

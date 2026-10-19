@@ -38,6 +38,22 @@ export class SemanticIndex {
     return Boolean(result.rows[0]?.relation);
   }
 
+  async healthy(): Promise<boolean> {
+    const result = await this.pool.query<{ unhealthy: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM semantic_post_catchup LIMIT 1)
+         OR EXISTS (
+           SELECT 1 FROM jobs j JOIN posts p ON p.id=(j.payload->>'postId')::uuid
+           WHERE j.kind='index_post' AND j.status <> 'succeeded'
+             AND j.last_error IS NOT NULL AND j.payload->>'generation'=$1
+             AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+             AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
+           LIMIT 1
+         ) AS unhealthy`,
+      [this.config.generation],
+    );
+    return !result.rows[0]?.unhealthy;
+  }
+
   async enqueue(db: Db, postId: string): Promise<boolean> {
     if (!(await this.available(db))) return false;
     const source = await db.query<{ source_revision: string }>(
@@ -55,9 +71,12 @@ export class SemanticIndex {
        DO UPDATE SET status='queued', attempts=0, available_at=now(),
          locked_by=NULL,locked_until=NULL,last_error=NULL,finished_at=NULL,updated_at=now()
        WHERE (jobs.status='dead' AND jobs.updated_at < now()-interval '1 hour')
-          OR (jobs.status='succeeded' AND NOT EXISTS (
-            SELECT 1 FROM post_embeddings e WHERE e.post_id=$4
-              AND e.generation=$5 AND e.source_revision=$6
+          OR (jobs.status='succeeded' AND (
+            EXISTS (SELECT 1 FROM semantic_post_catchup d WHERE d.post_id=$4)
+            OR NOT EXISTS (
+              SELECT 1 FROM post_embeddings e WHERE e.post_id=$4
+                AND e.generation=$5 AND e.source_revision=$6
+            )
           ))
        RETURNING id`,
       [
@@ -74,6 +93,24 @@ export class SemanticIndex {
 
   async queueBackfillOne(): Promise<boolean> {
     if (!(await this.available())) return false;
+    const pending = await this.pool.query<{ post_id: string }>(
+      `SELECT d.post_id FROM semantic_post_catchup d
+       JOIN posts p ON p.id=d.post_id
+       WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+         AND NOT EXISTS (
+           SELECT 1 FROM jobs j WHERE j.kind='index_post'
+             AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
+             AND (j.status IN ('queued','running')
+               OR (j.status='dead' AND j.updated_at >= now()-interval '1 hour'))
+         )
+       ORDER BY d.post_id LIMIT 1`,
+      [this.config.generation],
+    );
+    if (
+      pending.rows[0] &&
+      (await this.enqueue(this.pool, pending.rows[0].post_id))
+    )
+      return true;
     const after = this.backfillCursor;
     const scanned = await this.pool.query<{
       id: string;
@@ -188,6 +225,9 @@ export class SemanticIndex {
             `[${vector.join(",")}]`,
           ],
         );
+      await client.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [
+        postId,
+      ]);
       await client.query("COMMIT");
       return true;
     } catch (error) {

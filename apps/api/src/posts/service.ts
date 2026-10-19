@@ -103,18 +103,34 @@ export class PostService {
   }
   private async optionalSemanticWrite(
     db: PoolClient,
+    postId: string,
     work: () => Promise<unknown>,
   ): Promise<void> {
-    if (!this.semantic) return;
+    if (!this.semantic) {
+      await this.markSemanticCatchup(db, postId);
+      return;
+    }
+    let needsCatchup = false;
     await db.query("SAVEPOINT semantic_side_effect");
     try {
-      await work();
+      needsCatchup = (await work()) === false;
     } catch {
       await db.query("ROLLBACK TO SAVEPOINT semantic_side_effect");
+      needsCatchup = true;
       logApiEvent(this.observability, "semantic_index_write_failed");
     } finally {
       await db.query("RELEASE SAVEPOINT semantic_side_effect");
     }
+    if (needsCatchup) await this.markSemanticCatchup(db, postId);
+  }
+  private async markSemanticCatchup(
+    db: PoolClient,
+    postId: string,
+  ): Promise<void> {
+    await db.query(
+      "INSERT INTO semantic_post_catchup(post_id) VALUES($1) ON CONFLICT DO NOTHING",
+      [postId],
+    );
   }
   private async removeEmbeddings(db: PoolClient, postId: string): Promise<void> {
     const table = await db.query<{ relation: string | null }>(
@@ -122,6 +138,7 @@ export class PostService {
     );
     if (table.rows[0]?.relation)
       await db.query("DELETE FROM post_embeddings WHERE post_id=$1", [postId]);
+    await db.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [postId]);
   }
   private async membership(
     db: Db,
@@ -287,7 +304,7 @@ export class PostService {
           [courseId, userId, created.rows[0]!.created_on],
         );
       await this.replaceTags(db, id, courseId, body.tags ?? []);
-      await this.optionalSemanticWrite(db, () =>
+      await this.optionalSemanticWrite(db, id, () =>
         this.semantic!.enqueue(db, id),
       );
       const row = await this.row(db, id);
@@ -357,9 +374,14 @@ export class PostService {
       options.duplicateStatus === "confirmed"
         ? undefined
         : (options.semanticQuery ?? (ordinarySearch ? options.q : undefined));
-    const semanticReady = Boolean(
+    const semanticCapable = Boolean(
       this.semantic && semanticInput && (await this.semantic.available()),
     );
+    const semanticEmbedding =
+      semanticCapable && (await this.semantic!.healthy())
+        ? await this.semantic!.embedQuery(semanticInput!)
+        : undefined;
+    let semanticReady = Boolean(semanticEmbedding);
     const binding = createHash("sha256")
       .update(
         JSON.stringify({
@@ -367,7 +389,7 @@ export class PostService {
           userId,
           filters,
           searchVersion: options.sort === "relevance" ? 3 : undefined,
-          semanticGeneration: semanticReady
+          semanticGeneration: semanticCapable
             ? this.semantic!.config.generation
             : undefined,
         }),
@@ -386,8 +408,7 @@ export class PostService {
           typeof parsed.pinned !== "boolean" ||
           typeof parsed.id !== "string" ||
           !UUID_PATTERN.test(parsed.id) ||
-          (semanticReady &&
-            options.sort === "relevance" &&
+          (parsed.tier !== undefined &&
             (!Number.isInteger(parsed.tier) ||
               parsed.tier < 0 ||
               parsed.tier > 2)) ||
@@ -401,6 +422,11 @@ export class PostService {
         )
           throw Error();
         after = parsed;
+        if (options.sort === "relevance" && semanticCapable) {
+          if (parsed.tier === undefined) semanticReady = false;
+          else if (!semanticReady)
+            return { data: [], page: { nextCursor: null, hasMore: false } };
+        }
       } catch {
         throw new AuthError(
           400,
@@ -409,9 +435,6 @@ export class PostService {
         );
       }
     }
-    const semanticEmbedding = semanticReady
-      ? await this.semantic!.embedQuery(semanticInput!)
-      : undefined;
     const values: unknown[] = [courseId];
     const add = (value: unknown) => {
       values.push(value);
@@ -760,10 +783,11 @@ export class PostService {
         body.title !== undefined ||
         body.bodyMarkdown !== undefined ||
         row.duplicate_status === "confirmed"
-      )
-        await this.optionalSemanticWrite(db, () =>
+      ) {
+        await this.optionalSemanticWrite(db, id, () =>
           this.semantic!.enqueue(db, id),
         );
+      }
       const updated = (await this.row(db, id))!;
       if (
         row.type === "question" &&
