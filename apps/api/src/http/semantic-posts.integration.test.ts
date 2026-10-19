@@ -228,6 +228,34 @@ integration("semantic post search HTTP contract", () => {
     expect(matchingIds(noKey.data)).toEqual([titleId, bodyId]);
   });
 
+  it("keeps short-query full-text ties in ID order with semantic search", async () => {
+    const [titleId, bodyId] = [uuidv7(), uuidv7()].sort();
+    for (const [id, title, body] of [
+      [titleId, "AI", "A"],
+      [bodyId, "A", "AI"],
+    ])
+      await pool.query(
+        "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'question',$4,$5)",
+        [id, courseId, userId, title, body],
+      );
+    const ranks = await pool.query<{ id: string; rank: string }>(
+      `SELECT id,round(ts_rank_cd(search_vector,websearch_to_tsquery('english','AI'))::numeric,6) AS rank
+       FROM posts WHERE id=ANY($1::uuid[]) ORDER BY id`,
+      [[titleId, bodyId]],
+    );
+    expect(ranks.rows[0]?.rank).toBe(ranks.rows[1]?.rank);
+    const matchingIds = (posts: { id: string }[]) =>
+      posts.map((post) => post.id).filter((id) => [titleId, bodyId].includes(id));
+    const query = "q=AI&sort=relevance&limit=20";
+    const expanded = await list(query);
+    expect(expanded.status).toBe(200);
+    expect(matchingIds(expanded.body.data)).toEqual([bodyId, titleId]);
+    providerMock.mockRejectedValueOnce(new Error("provider unavailable"));
+    const failedProvider = await list(query);
+    expect(failedProvider.status).toBe(200);
+    expect(matchingIds(failedProvider.body.data)).toEqual([bodyId, titleId]);
+  });
+
   it("falls back to lexical and fuzzy matches on provider failure", async () => {
     providerMock.mockRejectedValueOnce(new Error("provider unavailable"));
     const response = await list("q=spectrometer&sort=relevance");

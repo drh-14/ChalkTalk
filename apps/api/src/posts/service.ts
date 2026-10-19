@@ -540,14 +540,14 @@ export class PostService {
           ), ranked AS (
             SELECT candidates.*,
               row_number() OVER (PARTITION BY lexical_match ORDER BY lexical_score DESC,id DESC) AS lexical_position,
-              row_number() OVER (ORDER BY fuzzy_score DESC,id DESC) AS fuzzy_position
+              row_number() OVER (PARTITION BY (lexical_match OR fuzzy_match) ORDER BY fuzzy_score DESC,id DESC) AS fuzzy_position
             FROM candidates
           ), listed AS (
             SELECT ranked.*,
               CASE WHEN lexical_match THEN 2 WHEN fuzzy_match THEN 1 ELSE 0 END AS match_tier,
               ${
                 options.sort === "relevance"
-                  ? `round(CASE WHEN lexical_match THEN ${ordinarySearch ? "1.0+1.5/(60+lexical_position)+1.0/(60+fuzzy_position)" : `1.0+round(ts_rank_cd(search_vector,${searchQuery})::numeric,6)`}
+                  ? `round(CASE WHEN lexical_match THEN ${fuzzySearch ? "1.0+1.5/(60+lexical_position)+1.0/(60+fuzzy_position)" : `round(ts_rank_cd(search_vector,${searchQuery})::numeric,6)`}
                      WHEN fuzzy_match THEN 1.0/(60+fuzzy_position)
                      ELSE (1.0+semantic_score)/2.0 END::numeric,12)`
                   : sortExpression.replaceAll("p.", "ranked.")
