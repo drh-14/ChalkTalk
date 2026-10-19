@@ -134,3 +134,41 @@ jobs:
       - name: Stop Compose profile
         if: always()
         run: docker compose --profile app down --volumes --remove-orphans
+
+  observability-smoke:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Prepare local-only secrets and HTTPS certificate
+        run: |
+          cp .env.example .env
+          sed -i 's/^OBSERVABILITY_ENABLED=false$/OBSERVABILITY_ENABLED=true/' .env
+          cat >> .env <<EOF_CONFIG
+          METRICS_TOKEN=$(openssl rand -hex 32)
+          GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 32)
+          EOF_CONFIG
+          mkdir -p .cert
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout .cert/localhost-key.pem \
+            -out .cert/localhost.pem \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost"
+
+      - name: Validate observability Compose profile
+        run: docker compose --profile app --profile observability config --quiet
+
+      - name: Start observability stack
+        run: docker compose --profile app --profile observability up --build --wait --wait-timeout 240 --quiet-pull
+
+      - name: Exercise protected metrics, backlog recovery, and log privacy
+        run: sh docker/test-observability.sh
+
+      - name: Collect service logs
+        if: failure()
+        run: docker compose --profile app --profile observability logs --no-color --tail 200
+
+      - name: Stop observability stack
+        if: always()
+        run: docker compose --profile app --profile observability down --volumes --remove-orphans

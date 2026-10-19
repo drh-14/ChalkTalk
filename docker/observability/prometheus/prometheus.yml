@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 60s
+  evaluation_interval: 60s
+scrape_configs:
+  - job_name: chalktalk-api
+    metrics_path: /metrics
+    bearer_token_file: /tmp/metrics-token
+    static_configs:
+      - targets: [api:3000]
+  - job_name: chalktalk-worker
+    metrics_path: /metrics
+    bearer_token_file: /tmp/metrics-token
+    static_configs:
+      - targets: [worker:3000]

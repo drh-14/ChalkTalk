@@ -27,4 +27,8 @@ export default tseslint.config(
     files: ["apps/api/src/**/*.ts", "vitest.config.ts"],
     languageOptions: { globals: globals.node },
   },
+  {
+    files: ["docker/observability/**/*.test.mjs"],
+    languageOptions: { globals: globals.node },
+  },
 );
