@@ -3,11 +3,15 @@ import type { Pool, PoolClient } from "pg";
 import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import type { EmailSender } from "../auth/service.js";
 import type { Observability } from "../observability/index.js";
+import type { SemanticIndex } from "../semantic/index.js";
 
 type Job = {
   id: string;
   kind:
-    "delete_course" | "delete_course_file" | "send_question_duplicate_email";
+    | "delete_course"
+    | "delete_course_file"
+    | "send_question_duplicate_email"
+    | "index_post";
   payload: {
     courseId?: string;
     objectKey?: string;
@@ -15,6 +19,7 @@ type Job = {
     canonicalPostId?: string;
     staffUserId?: string;
     staffRole?: "ta" | "instructor";
+    postId?: string;
   };
   deduplicationKey: string | null;
   attempts: number;
@@ -32,6 +37,7 @@ export class JobWorker {
     private readonly frontendBaseUrl?: string,
     private readonly objectStore?: { client: S3Client; bucket: string },
     private readonly observability?: Observability,
+    private readonly semantic?: SemanticIndex,
   ) {}
 
   private async transaction<T>(
@@ -61,7 +67,7 @@ export class JobWorker {
         attempts: number;
         max_attempts: number;
       }>(
-        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','send_question_duplicate_email') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
+        `SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','send_question_duplicate_email'${this.semantic ? ",'index_post'" : ""}) AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`,
       );
       const job = claimed.rows[0];
       if (!job) return undefined;
@@ -69,7 +75,7 @@ export class JobWorker {
         attempts: number;
         max_attempts: number;
       }>(
-        "UPDATE jobs SET status='running',attempts=attempts+1,locked_by=$1,locked_until=now()+interval '1 minute',updated_at=now() WHERE id=$2 RETURNING attempts,max_attempts",
+        "UPDATE jobs SET status='running',attempts=attempts+1,locked_by=$1,locked_until=now()+CASE WHEN kind='index_post' THEN interval '5 minutes' ELSE interval '1 minute' END,updated_at=now() WHERE id=$2 RETURNING attempts,max_attempts",
         [this.workerId, job.id],
       );
       return {
@@ -236,6 +242,10 @@ export class JobWorker {
             Key: job.payload.objectKey,
           }),
         );
+      } else if (job.kind === "index_post") {
+        if (!this.semantic || !job.payload.postId)
+          throw new Error("Semantic indexing job payload is invalid");
+        await this.semantic.indexPost(job.payload.postId);
       } else {
         await this.sendQuestionDuplicateEmail(job);
       }

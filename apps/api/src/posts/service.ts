@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
+import { POST_REVISION_SQL, type SemanticIndex } from "../semantic/index.js";
 
 type Db = Pool | PoolClient;
 type Role = "student" | "ta" | "instructor";
@@ -55,6 +56,7 @@ export type MergedReference = {
 };
 export type ListPosts = {
   q?: string;
+  semanticQuery?: string;
   type?: "question" | "note";
   tags?: string[];
   tagMatch?: "all";
@@ -83,6 +85,7 @@ export class PostService {
   constructor(
     private readonly pool: Pool,
     private readonly observability?: Observability,
+    private readonly semantic?: SemanticIndex,
   ) {}
   private async tx<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
@@ -96,6 +99,21 @@ export class PostService {
       throw error;
     } finally {
       client.release();
+    }
+  }
+  private async optionalSemanticWrite(
+    db: PoolClient,
+    work: () => Promise<unknown>,
+  ): Promise<void> {
+    if (!this.semantic) return;
+    await db.query("SAVEPOINT semantic_side_effect");
+    try {
+      await work();
+    } catch {
+      await db.query("ROLLBACK TO SAVEPOINT semantic_side_effect");
+      logApiEvent(this.observability, "semantic_index_write_failed");
+    } finally {
+      await db.query("RELEASE SAVEPOINT semantic_side_effect");
     }
   }
   private async membership(
@@ -262,6 +280,9 @@ export class PostService {
           [courseId, userId, created.rows[0]!.created_on],
         );
       await this.replaceTags(db, id, courseId, body.tags ?? []);
+      await this.optionalSemanticWrite(db, () =>
+        this.semantic!.enqueue(db, id),
+      );
       const row = await this.row(db, id);
       const value = await this.project(db, row!, userId, member.role);
       if (key !== undefined)
@@ -322,18 +343,32 @@ export class PostService {
         "Duplicate review is staff-only",
       );
     const { cursor, limit, ...filters } = options;
+    const ordinarySearch =
+      options.duplicateStatus !== "confirmed" &&
+      !/["\u201c\u201d]|\bOR\b|(^|\s)-\S/i.test(options.q ?? "");
+    const semanticInput =
+      options.duplicateStatus === "confirmed"
+        ? undefined
+        : (options.semanticQuery ?? (ordinarySearch ? options.q : undefined));
+    const semanticReady = Boolean(
+      this.semantic && semanticInput && (await this.semantic.available()),
+    );
     const binding = createHash("sha256")
       .update(
         JSON.stringify({
           courseId,
           userId,
           filters,
-          searchVersion: options.sort === "relevance" ? 2 : undefined,
+          searchVersion: options.sort === "relevance" ? 3 : undefined,
+          semanticGeneration: semanticReady
+            ? this.semantic!.config.generation
+            : undefined,
         }),
       )
       .digest("hex");
     let after:
-      { pinned: boolean; value: number | string; id: string } | undefined;
+      | { pinned: boolean; value: number | string; id: string; tier?: number }
+      | undefined;
     if (cursor) {
       try {
         const parsed = JSON.parse(
@@ -344,6 +379,11 @@ export class PostService {
           typeof parsed.pinned !== "boolean" ||
           typeof parsed.id !== "string" ||
           !UUID_PATTERN.test(parsed.id) ||
+          (semanticReady &&
+            options.sort === "relevance" &&
+            (!Number.isInteger(parsed.tier) ||
+              parsed.tier < 0 ||
+              parsed.tier > 2)) ||
           (options.sort === "relevance"
             ? typeof parsed.value !== "number" ||
               !Number.isFinite(parsed.value) ||
@@ -362,6 +402,9 @@ export class PostService {
         );
       }
     }
+    const semanticEmbedding = semanticReady
+      ? await this.semantic!.embedQuery(semanticInput!)
+      : undefined;
     const values: unknown[] = [courseId];
     const add = (value: unknown) => {
       values.push(value);
@@ -371,9 +414,6 @@ export class PostService {
     const possibleFuzzyTerms = (
       options.q?.match(/[\p{L}\p{N}]+/gu) ?? []
     ).filter((term) => [...term].length >= 3);
-    const ordinarySearch =
-      options.duplicateStatus !== "confirmed" &&
-      !/["\u201c\u201d]|\bOR\b|(^|\s)-\S/i.test(options.q ?? "");
     const searchTerms =
       ordinarySearch && possibleFuzzyTerms.length
         ? (
@@ -390,7 +430,7 @@ export class PostService {
       : undefined;
     if (options.duplicateStatus !== "confirmed")
       clauses.push("p.duplicate_status <> 'confirmed'");
-    if (searchQuery && !fuzzySearch)
+    if (searchQuery && !fuzzySearch && !semanticReady)
       clauses.push(`p.search_vector @@ ${searchQuery}`);
     if (options.type) clauses.push(`p.type=${add(options.type)}`);
     if (options.tags?.length) {
@@ -440,16 +480,85 @@ export class PostService {
     let cursorClause = "";
     if (after) {
       const pinned = add(after.pinned);
+      const tier =
+        semanticReady && options.sort === "relevance"
+          ? add(after.tier)
+          : undefined;
       const rank = add(after.value);
       const id = add(after.id);
-      cursorClause = `AND (listed.pinned < ${pinned}::boolean OR (listed.pinned = ${pinned}::boolean AND (listed.rank_value,listed.id)${ascending ? ">" : "<"}(${rank}::${sortValue},${id}::uuid)))`;
+      cursorClause = `AND (listed.pinned < ${pinned}::boolean OR (listed.pinned = ${pinned}::boolean AND (${tier ? "listed.match_tier," : ""}listed.rank_value,listed.id)${ascending ? ">" : "<"}(${tier ? `${tier}::integer,` : ""}${rank}::${sortValue},${id}::uuid)))`;
     }
     const direction = ascending ? "ASC" : "DESC";
     const source = `FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}`;
-    const listed = fuzzySearch
+    const listed = semanticReady
       ? (() => {
           const terms = add(searchTerms);
+          const generation = semanticEmbedding
+            ? add(this.semantic!.config.generation)
+            : undefined;
+          const vector = semanticEmbedding
+            ? add(semanticEmbedding.vector)
+            : undefined;
+          const dimensions = semanticEmbedding
+            ? add(semanticEmbedding.dimensions)
+            : undefined;
+          const semanticMatches = vector
+            ? `SELECT e.post_id,MAX(CASE WHEN public.vector_dims(e.embedding)=${dimensions}::integer
+                 THEN 1-(e.embedding OPERATOR(public.<=>) ${vector}::public.vector) END) AS similarity
+               FROM post_embeddings e JOIN posts sp ON sp.id=e.post_id
+               WHERE sp.course_id=$1 AND sp.deleted_at IS NULL AND sp.duplicate_status <> 'confirmed'
+                 AND e.generation=${generation} AND e.source_revision=${POST_REVISION_SQL.replaceAll("p.", "sp.")}
+               GROUP BY e.post_id
+               HAVING MAX(CASE WHEN public.vector_dims(e.embedding)=${dimensions}::integer
+                 THEN 1-(e.embedding OPERATOR(public.<=>) ${vector}::public.vector) END) IS NOT NULL`
+            : "SELECT NULL::uuid AS post_id,NULL::double precision AS similarity WHERE false";
           return `WITH search_terms AS (
+            SELECT unnest(${terms}::text[]) AS term
+          ), fuzzy_ids AS (
+            SELECT p.id FROM posts p JOIN search_terms t
+              ON t.term OPERATOR(public.<<%) p.title OR t.term OPERATOR(public.<<%) p.body_markdown
+            WHERE p.course_id=$1 AND p.deleted_at IS NULL
+            GROUP BY p.id HAVING count(*)=(SELECT count(*) FROM search_terms)
+          ), semantic_matches AS (${semanticMatches}), candidate_ids AS (
+            SELECT p.id FROM posts p WHERE p.course_id=$1 AND p.deleted_at IS NULL AND p.search_vector @@ ${searchQuery}
+            UNION SELECT id FROM fuzzy_ids
+            UNION SELECT post_id FROM semantic_matches
+          ), candidates AS (
+            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,
+              ${ANSWERED} AS answered,canonical.title AS canonical_title,
+              p.search_vector @@ ${searchQuery} AS lexical_match,
+              (ts_rank_cd(p.search_vector,${searchQuery})
+                + ts_rank_cd(to_tsvector('english',p.title),${searchQuery})) AS lexical_score,
+              COALESCE((SELECT avg(greatest(
+                public.strict_word_similarity(t.term,coalesce(p.title,'')),
+                0.75*public.strict_word_similarity(t.term,coalesce(p.body_markdown,''))
+              )) FROM search_terms t),0) AS fuzzy_score,
+              sm.similarity AS semantic_score,
+              (p.id IN (SELECT id FROM fuzzy_ids)) AS fuzzy_match
+            ${source.replace(" WHERE ", " LEFT JOIN semantic_matches sm ON sm.post_id=p.id WHERE ")}
+              AND p.id IN (SELECT id FROM candidate_ids)
+          ), ranked AS (
+            SELECT candidates.*,
+              row_number() OVER (PARTITION BY lexical_match ORDER BY lexical_score DESC,id DESC) AS lexical_position,
+              row_number() OVER (ORDER BY fuzzy_score DESC,id DESC) AS fuzzy_position
+            FROM candidates
+          ), listed AS (
+            SELECT ranked.*,
+              CASE WHEN lexical_match THEN 2 WHEN fuzzy_match THEN 1 ELSE 0 END AS match_tier,
+              ${
+                options.sort === "relevance"
+                  ? `round(CASE WHEN lexical_match THEN 1.0+1.5/(60+lexical_position)+1.0/(60+fuzzy_position)
+                     WHEN fuzzy_match THEN 1.0/(60+fuzzy_position)
+                     ELSE (1.0+semantic_score)/2.0 END::numeric,12)`
+                  : sortExpression.replaceAll("p.", "ranked.")
+              } AS rank_value
+            FROM ranked
+          )`;
+        })()
+      : fuzzySearch
+        ? (() => {
+            const terms = add(searchTerms);
+            return `WITH search_terms AS (
             SELECT unnest(${terms}::text[]) AS term
           ), fuzzy_ids AS (
             SELECT p.id FROM posts p JOIN search_terms t
@@ -485,13 +594,12 @@ export class PostService {
             ${source} AND p.id IN (SELECT id FROM candidate_ids)
           )`
           }`;
-        })()
-      : `WITH listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
-    const query = `${listed} SELECT listed.* FROM listed WHERE true ${cursorClause} ORDER BY listed.pinned DESC,listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}`;
-    const result = await this.pool.query<Row & { rank_value: number | Date }>(
-      query,
-      values,
-    );
+          })()
+        : `WITH listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
+    const query = `${listed} SELECT listed.* FROM listed WHERE true ${cursorClause} ORDER BY listed.pinned DESC,${semanticReady && options.sort === "relevance" ? "listed.match_tier DESC," : ""}listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}`;
+    const result = await this.pool.query<
+      Row & { rank_value: number | Date; match_tier?: number }
+    >(query, values);
     const pageRows = result.rows.slice(0, limit);
     const data = await Promise.all(
       pageRows.map((row) =>
@@ -517,6 +625,9 @@ export class PostService {
                   ? tail.rank_value.toISOString()
                   : Number(tail.rank_value),
               id: tail.id,
+              ...(semanticReady && options.sort === "relevance"
+                ? { tier: tail.match_tier }
+                : {}),
             }),
           ).toString("base64url")
         : null;
@@ -636,6 +747,18 @@ export class PostService {
       );
       if (body.tags !== undefined)
         await this.replaceTags(db, id, row.course_id, body.tags);
+      if (status === "confirmed")
+        await this.optionalSemanticWrite(db, () =>
+          this.semantic!.removePost(db, id),
+        );
+      else if (
+        body.title !== undefined ||
+        body.bodyMarkdown !== undefined ||
+        row.duplicate_status === "confirmed"
+      )
+        await this.optionalSemanticWrite(db, () =>
+          this.semantic!.enqueue(db, id),
+        );
       const updated = (await this.row(db, id))!;
       if (
         row.type === "question" &&
@@ -701,6 +824,9 @@ export class PostService {
           "Post deletion is not permitted",
         );
       await db.query("DELETE FROM post_tags WHERE post_id=$1", [id]);
+      await this.optionalSemanticWrite(db, () =>
+        this.semantic!.removePost(db, id),
+      );
       await db.query(
         "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [id],

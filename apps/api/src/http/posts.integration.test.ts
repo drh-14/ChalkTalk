@@ -69,6 +69,19 @@ function unsafe(agent: request.SuperTest<request.Test>) {
 }
 
 integration("text posts HTTP contract", () => {
+  it("rejects semanticQuery without q or above its bound", async () => {
+    const missing = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts?semanticQuery=related`)
+      .set("Cookie", cookie);
+    expect(missing.status).toBe(400);
+    expect(missing.body.error.code).toBe("invalid_request");
+    const oversized = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .query({ q: "related", semanticQuery: "x".repeat(501) })
+      .set("Cookie", cookie);
+    expect(oversized.status).toBe(400);
+    expect(oversized.body.error.code).toBe("invalid_request");
+  });
   beforeAll(async () => {
     admin = new Pool({ connectionString: url });
     await admin.query(`CREATE SCHEMA "${schema}"`);

@@ -2286,6 +2286,11 @@ it("bounds debounced related-question requests to ten results while title and bo
   expect(q).toContain("course");
   expect(q).toContain("friday");
   expect(q.length).toBeLessThanOrEqual(500);
+  const semanticQuery = suggestionUrl.searchParams.get("semanticQuery")!;
+  expect(semanticQuery).toContain("A cutoff for the course");
+  expect(semanticQuery).toContain("Deadline on Friday");
+  expect(semanticQuery).not.toContain(" OR ");
+  expect(semanticQuery.length).toBeLessThanOrEqual(500);
   expect(suggestionUrl.searchParams.get("limit")).toBe("10");
   expect(suggestionUrl.searchParams.get("sort")).toBe("relevance");
   expect(

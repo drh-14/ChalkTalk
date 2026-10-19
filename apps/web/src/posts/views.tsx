@@ -313,6 +313,12 @@ function relatedQuery(title: string, body: string): string {
   return selected.join(" OR ");
 }
 
+function relatedSemanticQuery(title: string, body: string): string {
+  const heading = title.trim().slice(0, 200);
+  const sample = body.trim().slice(0, 500 - heading.length - 1);
+  return [heading, sample].filter(Boolean).join(" ");
+}
+
 function Composer({
   courseId,
   csrfToken,
@@ -389,6 +395,7 @@ function Composer({
     const timer = window.setTimeout(() => {
       void listPosts(courseId, {
         q: query,
+        semanticQuery: relatedSemanticQuery(title, body),
         sort: "relevance",
         type: "question",
         limit: 10,
@@ -409,7 +416,7 @@ function Composer({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [courseId, query, type]);
+  }, [courseId, query, title, body, type]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

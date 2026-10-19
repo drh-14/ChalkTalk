@@ -145,6 +145,15 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `search_vector`: generated `tsvector`, nullable.
 - Active post titles and bodies have separate GIN trigram indexes (`posts_title_trgm_idx`, `posts_body_trgm_idx`) for ordinary fuzzy search. Migration `007_post_fuzzy_search.sql` installs `pg_trgm` in `public` and qualifies its functions, operators, and operator classes because API tests use isolated schemas in their search paths. The extension must be available and installable in each deployment database; the migration fails if it is not.
 
+### Optional semantic post embeddings
+
+The ordinary migrations and PostgreSQL startup do not require pgvector. An operator that enables semantic post search runs `npm run migrate:semantic --workspace=@chalktalk/api` against a pgvector-capable database. This explicit migration installs `vector` in `public` and creates `post_embeddings` without changing authoritative post content.
+
+- `(post_id, generation, chunk_ordinal)`: primary key; `post_id` references `posts(id)` with cascading deletion.
+- `source_revision`: SHA-256 digest of the post title and body. A changed title or body makes old vectors ineligible immediately, before the worker refreshes them.
+- `embedding`: pgvector value for one bounded title/body chunk. `generation` identifies the configured endpoint/model so vectors from different generations are never compared.
+- The worker backfills active posts and stores a post's chunks only if its content revision remains unchanged after provider calls. Search joins current course and post visibility before ranking or pagination; deleted posts and confirmed duplicates do not yield semantic candidates.
+
 ### `tags`
 
 - `id`: `uuid_v7`; primary key.

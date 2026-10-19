@@ -3355,6 +3355,14 @@ paths:
             type: string
             minLength: 1
             maxLength: 500
+        - name: semanticQuery
+          in: query
+          required: false
+          description: Separate natural-language semantic query. Requires q; does not change q operator meaning. Ignored when deployment embeddings or optional pgvector schema are unavailable.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
         - name: type
           in: query
           required: false

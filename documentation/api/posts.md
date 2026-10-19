@@ -317,7 +317,7 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 ### **`GET /api/v1/courses/{courseId}/posts`**
 
-Lists or searches the posts in a course. Ordinary search text combines English full-text matches with word-level fuzzy matches in titles and bodies. Fuzzy matching requires at least one query term of three or more searchable characters, ignores shorter terms and English stopwords, and requires every remaining term to match in either field. Queries with no eligible fuzzy terms use full-text matching and ranking alone. Under relevance sorting, exact full-text matches precede fuzzy-only matches within each pinned group; title similarity contributes more than body similarity within the groups. Quoted phrases, `OR`, and excluded-term queries retain full-text-only matching and relevance. Confirmed duplicates are excluded from ordinary lists and searches, including Related questions, before ranking and pagination. Related questions queries containing `OR` therefore remain full-text-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+Lists or searches the posts in a course. Ordinary search text combines English full-text matches with word-level fuzzy matches in titles and bodies. Fuzzy matching requires at least one query term of three or more searchable characters, ignores shorter terms and English stopwords, and requires every remaining term to match in either field. Queries with no eligible fuzzy terms use full-text matching and ranking alone. Under relevance sorting, exact full-text matches precede fuzzy-only matches within each pinned group; title similarity contributes more than body similarity within the groups. With deployment-configured embeddings and the optional pgvector schema, semantic-only matches follow both groups, ordered by cosine similarity without an initial cutoff. Pinned results still precede unpinned results. A missing key, vector schema, or working embedding provider leaves full-text and fuzzy search available. Quoted phrases, `OR`, and excluded-term queries retain their existing full-text-only meaning unless an explicit `semanticQuery` accompanies `q`. Confirmed duplicates are excluded from ordinary lists and searches, including Related questions, before ranking and pagination. Related questions keeps its existing `OR` expression in `q` and sends the draft text separately as `semanticQuery`; this adds semantic candidates only when configured, without changing the `OR` expression. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -338,6 +338,8 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 #### Query parameters
 
 `q` (string, optional; minimum length 1, maximum length 500): Trimmed non-empty search text; matching rules are described above. Omit to list without search.
+
+`semanticQuery` (string, optional; minimum length 1, maximum length 500): A separate bounded natural-language query used for semantic candidates when embeddings are configured. Requires `q`. It does not change the boolean, phrase, or exclusion meaning of `q`; without semantic capability it is ignored and the lexical/fuzzy path remains available.
 
 `type` (enum: question, note, poll, optional; values question, note, poll): Filter by post type.
 

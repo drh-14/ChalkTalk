@@ -18,6 +18,11 @@ import {
 } from "../observability/index.js";
 import { runJobLoop } from "./runner.js";
 import { JobWorker } from "./worker.js";
+import {
+  EmbeddingProvider,
+  readEmbeddingConfig,
+} from "../semantic/provider.js";
+import { SemanticIndex } from "../semantic/index.js";
 
 const environment = loadEnvironment();
 const observability = environment.observability.enabled
@@ -29,6 +34,14 @@ const observability = environment.observability.enabled
     })
   : undefined;
 const pool = createPool(requireDatabaseUrl(environment));
+const embeddingConfig = readEmbeddingConfig();
+const semantic = embeddingConfig
+  ? new SemanticIndex(
+      pool,
+      embeddingConfig,
+      new EmbeddingProvider(embeddingConfig),
+    )
+  : undefined;
 pool.on("error", () => logApiEvent(observability, "database_pool_error"));
 const { bucket, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
@@ -39,6 +52,7 @@ const worker = new JobWorker(
   environment.frontendBaseUrl,
   { client: s3, bucket },
   observability,
+  semantic,
 );
 const digest = new DigestService(
   pool,
@@ -63,6 +77,20 @@ try {
       1_000,
       () => logUnexpectedError(observability, "job_worker_failure"),
     ),
+    ...(semantic
+      ? [
+          runJobLoop(
+            async () => {
+              await semantic.queueBackfillOne();
+              return false;
+            },
+            controller.signal,
+            5_000,
+            () =>
+              logUnexpectedError(observability, "semantic_backfill_failure"),
+          ),
+        ]
+      : []),
     runJobLoop(
       () => digest.deliverOnce(),
       controller.signal,

@@ -20,6 +20,8 @@ import { PostService } from "./posts/service.js";
 import { StatisticsService } from "./statistics/service.js";
 import { CourseFileService } from "./course-files/service.js";
 import { createObservability, logApiEvent } from "./observability/index.js";
+import { EmbeddingProvider, readEmbeddingConfig } from "./semantic/provider.js";
+import { SemanticIndex } from "./semantic/index.js";
 
 const environment = loadEnvironment();
 const { port } = environment;
@@ -32,6 +34,14 @@ const observability = environment.observability.enabled
     })
   : undefined;
 const pool = createPool(requireDatabaseUrl(environment));
+const embeddingConfig = readEmbeddingConfig();
+const semantic = embeddingConfig
+  ? new SemanticIndex(
+      pool,
+      embeddingConfig,
+      new EmbeddingProvider(embeddingConfig),
+    )
+  : undefined;
 const emailSender = createEmailSender(environment);
 const { bucket, endpoint, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
@@ -57,7 +67,7 @@ const app = createApp({
   observability,
   authService: new AuthService(pool, environment, emailSender),
   courseService: new CourseService(pool),
-  postService: new PostService(pool, observability),
+  postService: new PostService(pool, observability, semantic),
   answerService: new AnswerService(pool),
   followupService: new FollowupService(pool),
   statisticsService: new StatisticsService(pool),
