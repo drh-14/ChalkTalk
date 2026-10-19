@@ -51,12 +51,19 @@ integration("collaboration session HTTP contract", () => {
       .set("Origin", environment.frontendBaseUrl)
       .set("X-CSRF-Token", "csrf");
   const as = (name: string) => course.users[name]!;
-  const create = (name: string, body: object = { anchor: { postId: course.postId } }) =>
+  const create = (
+    name: string,
+    body: object = { anchor: { postId: course.postId } },
+  ) =>
     unsafe(
-      request(app(as(name))).post(`/api/v1/courses/${course.courseId}/collaboration-sessions`),
+      request(app(as(name))).post(
+        `/api/v1/courses/${course.courseId}/collaboration-sessions`,
+      ),
     ).send(body);
   const get = (name: string, path: string) =>
-    request(app(as(name))).get(path).set("Cookie", cookie);
+    request(app(as(name)))
+      .get(path)
+      .set("Cookie", cookie);
   async function started(name = "alice") {
     const response = await create(name, {
       anchor: { postId: course.postId },
@@ -67,10 +74,14 @@ integration("collaboration session HTTP contract", () => {
   }
   const invite = (by: string, sessionId: string, userId: string) =>
     unsafe(
-      request(app(as(by))).post(`/api/v1/collaboration-sessions/${sessionId}/participants`),
+      request(app(as(by))).post(
+        `/api/v1/collaboration-sessions/${sessionId}/participants`,
+      ),
     ).send({ userId });
   const patch = (by: string, sessionId: string, etag: string, body: object) =>
-    unsafe(request(app(as(by))).patch(`/api/v1/collaboration-sessions/${sessionId}`))
+    unsafe(
+      request(app(as(by))).patch(`/api/v1/collaboration-sessions/${sessionId}`),
+    )
       .set("If-Match", etag)
       .send(body);
 
@@ -90,7 +101,10 @@ integration("collaboration session HTTP contract", () => {
       ina: "instructor",
     });
     other = await seedCourse(pool, { olga: "student" });
-    for (const [name, userId] of Object.entries({ ...course.users, ...other.users })) {
+    for (const [name, userId] of Object.entries({
+      ...course.users,
+      ...other.users,
+    })) {
       const id = uuidv7();
       authSessions[userId] = id;
       await pool.query(
@@ -117,7 +131,9 @@ integration("collaboration session HTTP contract", () => {
         title: "Why does my loop never stop?",
         language: "plaintext",
         createdBy: as("alice"),
-        participants: [{ userId: as("alice"), displayName: "alice", role: "creator" }],
+        participants: [
+          { userId: as("alice"), displayName: "alice", role: "creator" },
+        ],
         endedAt: null,
         version: 1,
       });
@@ -129,7 +145,10 @@ integration("collaboration session HTTP contract", () => {
         title: "  Office hours  ",
         language: "java",
       });
-      expect(response.body.data).toMatchObject({ title: "Office hours", language: "java" });
+      expect(response.body.data).toMatchObject({
+        title: "Office hours",
+        language: "java",
+      });
     });
 
     it("rejects invalid bodies with validation_failed", async () => {
@@ -162,11 +181,17 @@ integration("collaboration session HTTP contract", () => {
 
     it("returns 404 for nonmembers and 409 for an archived course", async () => {
       expect((await create("olga")).status).toBe(404);
-      const archived = await seedCourse(pool, { zed: "student" }, { status: "archived" });
+      const archived = await seedCourse(
+        pool,
+        { zed: "student" },
+        { status: "archived" },
+      );
       authSessions[archived.users.zed!] = uuidv7();
       course.users.zed = archived.users.zed!;
       const response = await unsafe(
-        request(app(as("zed"))).post(`/api/v1/courses/${archived.courseId}/collaboration-sessions`),
+        request(app(as("zed"))).post(
+          `/api/v1/courses/${archived.courseId}/collaboration-sessions`,
+        ),
       ).send({ anchor: { postId: archived.postId } });
       expect(response.status).toBe(409);
       expect(response.body.error.code).toBe("course_archived");
@@ -222,7 +247,9 @@ integration("collaboration session HTTP contract", () => {
         `/api/v1/courses/${course.courseId}/collaboration-sessions?limit=1&status=active&anchorType=post&anchorId=${course.postId}`,
       );
       expect(list.status).toBe(200);
-      expect(list.body.data.map((s: { id: string }) => s.id)).toEqual([mine.id]);
+      expect(list.body.data.map((s: { id: string }) => s.id)).toEqual([
+        mine.id,
+      ]);
       expect(list.body.page).toEqual({ nextCursor: null, hasMore: false });
       const staff = await get(
         "tim",
@@ -239,13 +266,21 @@ integration("collaboration session HTTP contract", () => {
 
     it("rejects invalid list parameters and foreign cursors", async () => {
       const base = `/api/v1/courses/${course.courseId}/collaboration-sessions`;
-      for (const query of ["status=ending", "anchorType=subchannel", "limit=0", "cursor=bad"]) {
+      for (const query of [
+        "status=ending",
+        "anchorType=subchannel",
+        "limit=0",
+        "cursor=bad",
+      ]) {
         const response = await get("tim", `${base}?${query}`);
         expect(response.status).toBe(400);
         expect(response.body.error.code).toBe("invalid_request");
       }
       const staff = await get("tim", `${base}?limit=1`);
-      const replayed = await get("ina", `${base}?limit=1&cursor=${staff.body.page.nextCursor}`);
+      const replayed = await get(
+        "ina",
+        `${base}?limit=1&cursor=${staff.body.page.nextCursor}`,
+      );
       expect(replayed.status).toBe(400);
       expect((await get("olga", base)).status).toBe(404);
     });
@@ -264,7 +299,10 @@ integration("collaboration session HTTP contract", () => {
       const again = await invite("tim", session.id, as("bob"));
       expect(again.body.data.participants).toHaveLength(2);
       expect(again.body.data.version).toBe(2);
-      expect((await get("bob", `/api/v1/collaboration-sessions/${session.id}`)).status).toBe(200);
+      expect(
+        (await get("bob", `/api/v1/collaboration-sessions/${session.id}`))
+          .status,
+      ).toBe(200);
     });
 
     it("rejects invitees managing others, non-members, and the creator's removal", async () => {
@@ -295,7 +333,9 @@ integration("collaboration session HTTP contract", () => {
       const session = await started();
       await invite("alice", session.id, as("bob"));
       const ticket = await unsafe(
-        request(app(as("bob"))).post(`/api/v1/collaboration-sessions/${session.id}/connection-tickets`),
+        request(app(as("bob"))).post(
+          `/api/v1/collaboration-sessions/${session.id}/connection-tickets`,
+        ),
       );
       expect(ticket.status).toBe(201);
       const removed = await unsafe(
@@ -309,7 +349,10 @@ integration("collaboration session HTTP contract", () => {
         [hashTicket(ticket.body.data.ticket)],
       );
       expect(row.rows[0].revoked_at).not.toBeNull();
-      expect((await get("bob", `/api/v1/collaboration-sessions/${session.id}`)).status).toBe(404);
+      expect(
+        (await get("bob", `/api/v1/collaboration-sessions/${session.id}`))
+          .status,
+      ).toBe(404);
       const missing = await unsafe(
         request(app(as("alice"))).delete(
           `/api/v1/collaboration-sessions/${session.id}/participants/${as("bob")}`,
@@ -322,18 +365,30 @@ integration("collaboration session HTTP contract", () => {
   describe("updating and ending", () => {
     it("changes title and language with If-Match", async () => {
       const session = await started();
-      const updated = await patch("tim", session.id, '"v1"', { language: "java", title: "Loops" });
+      const updated = await patch("tim", session.id, '"v1"', {
+        language: "java",
+        title: "Loops",
+      });
       expect(updated.status).toBe(200);
       expect(updated.headers.etag).toBe('"v2"');
-      expect(updated.body.data).toMatchObject({ language: "java", title: "Loops" });
+      expect(updated.body.data).toMatchObject({
+        language: "java",
+        title: "Loops",
+      });
       const stale = await patch("alice", session.id, '"v1"', { language: "c" });
       expect(stale.status).toBe(412);
       expect(stale.body.error.code).toBe("version_conflict");
       const missing = await unsafe(
-        request(app(as("alice"))).patch(`/api/v1/collaboration-sessions/${session.id}`),
+        request(app(as("alice"))).patch(
+          `/api/v1/collaboration-sessions/${session.id}`,
+        ),
       ).send({ language: "c" });
       expect(missing.status).toBe(428);
-      for (const body of [{}, { status: "active" }, { status: "ended", language: "c" }]) {
+      for (const body of [
+        {},
+        { status: "active" },
+        { status: "ended", language: "c" },
+      ]) {
         const invalid = await patch("alice", session.id, '"v2"', body);
         expect(invalid.status).toBe(422);
       }
@@ -342,24 +397,35 @@ integration("collaboration session HTTP contract", () => {
     it("forbids invitees and ends with the fallback when no collaboration server confirms", async () => {
       const session = await started();
       await invite("alice", session.id, as("bob"));
-      const byInvitee = await patch("bob", session.id, '"v2"', { status: "ended" });
+      const byInvitee = await patch("bob", session.id, '"v2"', {
+        status: "ended",
+      });
       expect(byInvitee.status).toBe(403);
       const startedAt = Date.now();
-      const ended = await patch("alice", session.id, '"v2"', { status: "ended" });
+      const ended = await patch("alice", session.id, '"v2"', {
+        status: "ended",
+      });
       expect(ended.status).toBe(200);
       expect(Date.now() - startedAt).toBeLessThan(5000);
       expect(ended.body.data.status).toBe("ended");
       expect(ended.body.data.endedAt).not.toBeNull();
-      const again = await patch("alice", session.id, ended.headers.etag, { status: "ended" });
+      const again = await patch("alice", session.id, ended.headers.etag, {
+        status: "ended",
+      });
       expect(again.status).toBe(409);
       expect(again.body.error.code).toBe("session_ended");
       const ticket = await unsafe(
-        request(app(as("alice"))).post(`/api/v1/collaboration-sessions/${session.id}/connection-tickets`),
+        request(app(as("alice"))).post(
+          `/api/v1/collaboration-sessions/${session.id}/connection-tickets`,
+        ),
       );
       expect(ticket.status).toBe(409);
       expect(ticket.body.error.code).toBe("session_ended");
       expect((await invite("alice", session.id, as("carol"))).status).toBe(409);
-      expect((await get("bob", `/api/v1/collaboration-sessions/${session.id}`)).status).toBe(200);
+      expect(
+        (await get("bob", `/api/v1/collaboration-sessions/${session.id}`))
+          .status,
+      ).toBe(200);
     });
 
     it("notifies the collaboration server of updates, removals, and endings", async () => {
@@ -368,7 +434,9 @@ integration("collaboration session HTTP contract", () => {
       const listener = await pool.connect();
       const events: unknown[] = [];
       await listener.query("LISTEN collaboration_events");
-      listener.on("notification", (message) => events.push(JSON.parse(message.payload!)));
+      listener.on("notification", (message) =>
+        events.push(JSON.parse(message.payload!)),
+      );
       await patch("alice", session.id, '"v2"', { language: "sql" });
       await unsafe(
         request(app(as("alice"))).delete(
@@ -410,14 +478,19 @@ integration("collaboration session HTTP contract", () => {
     it("issues a hashed, five-minute, no-store ticket bound to the login session", async () => {
       const session = await started();
       const response = await unsafe(
-        request(app(as("alice"))).post(`/api/v1/collaboration-sessions/${session.id}/connection-tickets`),
+        request(app(as("alice"))).post(
+          `/api/v1/collaboration-sessions/${session.id}/connection-tickets`,
+        ),
       );
       expect(response.status).toBe(201);
       expect(response.headers["cache-control"]).toBe("no-store");
-      const { ticket, webSocketUrl, documentId, expiresAt } = response.body.data;
+      const { ticket, webSocketUrl, documentId, expiresAt } =
+        response.body.data;
       expect(webSocketUrl).toBe("wss://app.example.edu/collaboration");
       expect(documentId).toBe(`collaboration-session:${session.id}`);
-      expect(new Date(expiresAt).getTime() - Date.now()).toBeGreaterThan(4 * 60 * 1000);
+      expect(new Date(expiresAt).getTime() - Date.now()).toBeGreaterThan(
+        4 * 60 * 1000,
+      );
       const stored = await pool.query(
         "SELECT token_hash,user_id,auth_session_id,permission FROM collaboration_connection_tickets WHERE collaboration_session_id=$1",
         [session.id],
@@ -431,14 +504,19 @@ integration("collaboration session HTTP contract", () => {
         permission: "write",
       });
       const hidden = await unsafe(
-        request(app(as("bob"))).post(`/api/v1/collaboration-sessions/${session.id}/connection-tickets`),
+        request(app(as("bob"))).post(
+          `/api/v1/collaboration-sessions/${session.id}/connection-tickets`,
+        ),
       );
       expect(hidden.status).toBe(404);
     });
 
     it("returns the persisted snapshot with no-store to participants only", async () => {
       const session = await started();
-      const empty = await get("alice", `/api/v1/collaboration-sessions/${session.id}/snapshot`);
+      const empty = await get(
+        "alice",
+        `/api/v1/collaboration-sessions/${session.id}/snapshot`,
+      );
       expect(empty.status).toBe(200);
       expect(empty.body.data).toMatchObject({
         collaborationSessionId: session.id,
@@ -450,14 +528,24 @@ integration("collaboration session HTTP contract", () => {
         "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,persisted_at) VALUES ($1,$2,'print(1)','2026-09-20T14:31:58Z')",
         [session.id, Buffer.from([0, 0])],
       );
-      const saved = await get("tim", `/api/v1/collaboration-sessions/${session.id}/snapshot`);
+      const saved = await get(
+        "tim",
+        `/api/v1/collaboration-sessions/${session.id}/snapshot`,
+      );
       expect(saved.headers["cache-control"]).toBe("no-store");
       expect(saved.body.data).toMatchObject({
         content: "print(1)",
         persistedAt: "2026-09-20T14:31:58.000Z",
       });
       expect(typeof saved.body.data.capturedAt).toBe("string");
-      expect((await get("bob", `/api/v1/collaboration-sessions/${session.id}/snapshot`)).status).toBe(404);
+      expect(
+        (
+          await get(
+            "bob",
+            `/api/v1/collaboration-sessions/${session.id}/snapshot`,
+          )
+        ).status,
+      ).toBe(404);
     });
   });
 });

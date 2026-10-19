@@ -42,7 +42,8 @@ export function createViteConfig(
         // Live code sessions; the browser Origin header is forwarded unchanged.
         "/collaboration": {
           target:
-            environment.VITE_COLLABORATION_PROXY_TARGET ?? "ws://localhost:3100",
+            environment.VITE_COLLABORATION_PROXY_TARGET ??
+            "ws://localhost:3100",
           ws: true,
         },
       },

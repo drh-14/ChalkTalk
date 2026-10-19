@@ -656,7 +656,8 @@ export class CourseService {
         "UPDATE courses SET name=$1,status=$2,version=version+1,updated_at=now() WHERE id=$3 RETURNING id,organization_id,name,status,join_code,created_at,updated_at,version",
         [name, status, courseId],
       );
-      if (status !== "active") await endCollaborationSessions(client, { courseId });
+      if (status !== "active")
+        await endCollaborationSessions(client, { courseId });
       return course(result.rows[0]!, true);
     });
   }

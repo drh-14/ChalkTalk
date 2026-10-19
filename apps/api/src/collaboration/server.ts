@@ -17,7 +17,16 @@ export const CLOSE_REASONS = {
 } as const;
 const DOCUMENT_PATTERN =
   /^collaboration-session:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
-const COLORS = ["#c2410c", "#1d4ed8", "#047857", "#7c3aed", "#be123c", "#0e7490", "#a16207", "#4d7c0f"];
+const COLORS = [
+  "#c2410c",
+  "#1d4ed8",
+  "#047857",
+  "#7c3aed",
+  "#be123c",
+  "#0e7490",
+  "#a16207",
+  "#4d7c0f",
+];
 
 export type ConnectionContext = {
   userId: string;
@@ -41,7 +50,8 @@ export type CollaborationServerOptions = {
 
 export const colorFor = (userId: string) => {
   let hash = 0;
-  for (const character of userId) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  for (const character of userId)
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
   return COLORS[hash % COLORS.length]!;
 };
 
@@ -110,7 +120,11 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   }
 
   function connectionsOf(sessionId: string) {
-    return server.hocuspocus.documents.get(documentName(sessionId))?.getConnections() ?? [];
+    return (
+      server.hocuspocus.documents
+        .get(documentName(sessionId))
+        ?.getConnections() ?? []
+    );
   }
 
   function closeAll(document: Document, reason: string) {
@@ -159,8 +173,10 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         ?.broadcastStateless(JSON.stringify({ type: "session-updated" }));
       return;
     }
-    if (event.type === "session_ending") return finishSession(event.sessionId, true);
-    if (event.type === "session_ended") return finishSession(event.sessionId, false);
+    if (event.type === "session_ending")
+      return finishSession(event.sessionId, true);
+    if (event.type === "session_ended")
+      return finishSession(event.sessionId, false);
     const users = new Set(event.userIds);
     await recheck(
       (context) =>
@@ -180,12 +196,16 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       if (stopped || listener !== client) return;
       listener = undefined;
       void client.end().catch(() => undefined);
-      retryTimer = setTimeout(() => void startListener(), options.listenerRetryMs ?? 1000);
+      retryTimer = setTimeout(
+        () => void startListener(),
+        options.listenerRetryMs ?? 1000,
+      );
     };
     client.on("error", retry);
     client.on("end", retry);
     client.on("notification", (message) => {
-      if (message.channel !== COLLABORATION_EVENTS_CHANNEL || !message.payload) return;
+      if (message.channel !== COLLABORATION_EVENTS_CHANNEL || !message.payload)
+        return;
       let event: CollaborationEvent;
       try {
         event = JSON.parse(message.payload);
@@ -223,7 +243,8 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
 
     async onAuthenticate({ token, documentName: name }) {
       const sessionId = sessionIdOf(name);
-      if (!sessionId || typeof token !== "string" || !token) throw new Rejection("Not authorized");
+      if (!sessionId || typeof token !== "string" || !token)
+        throw new Rejection("Not authorized");
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -249,7 +270,8 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
           displayName: user.rows[0]?.display_name ?? "Participant",
           color: colorFor(ticket.user_id),
         };
-        if (!(await stillAuthorized(context))) throw new Rejection("Not authorized");
+        if (!(await stillAuthorized(context)))
+          throw new Rejection("Not authorized");
         await client.query("COMMIT");
         return context;
       } catch (error) {
@@ -266,7 +288,8 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         "SELECT yjs_state FROM collaboration_documents WHERE collaboration_session_id=$1",
         [sessionId],
       );
-      if (saved.rows[0]) Y.applyUpdate(document, new Uint8Array(saved.rows[0].yjs_state));
+      if (saved.rows[0])
+        Y.applyUpdate(document, new Uint8Array(saved.rows[0].yjs_state));
       return document;
     },
 
@@ -293,7 +316,11 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     async beforeHandleAwareness({ states, context }) {
       if (!context) return;
       for (const state of states.values())
-        state.user = { userId: context.userId, name: context.displayName, color: context.color };
+        state.user = {
+          userId: context.userId,
+          name: context.displayName,
+          color: context.color,
+        };
     },
   });
 

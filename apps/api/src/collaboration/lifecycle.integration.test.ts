@@ -6,7 +6,10 @@ import { loadEnvironment } from "../config/environment.js";
 import { CourseService } from "../courses/service.js";
 import { JobWorker } from "../jobs/worker.js";
 import { PostService } from "../posts/service.js";
-import { CollaborationSessionService, type CollaborationEvent } from "./service.js";
+import {
+  CollaborationSessionService,
+  type CollaborationEvent,
+} from "./service.js";
 import { createTestSchema, seedCourse } from "./test-fixtures.js";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -19,7 +22,10 @@ integration("collaboration session lifecycle effects", () => {
   let listener: PoolClient;
   let events: CollaborationEvent[] = [];
   const etag = async (table: string, where: string, values: unknown[]) => {
-    const row = await pool.query(`SELECT version FROM ${table} WHERE ${where}`, values);
+    const row = await pool.query(
+      `SELECT version FROM ${table} WHERE ${where}`,
+      values,
+    );
     return `"v${row.rows[0].version}"`;
   };
   async function course() {
@@ -55,7 +61,9 @@ integration("collaboration session lifecycle effects", () => {
     });
     listener = await pool.connect();
     await listener.query("LISTEN collaboration_events");
-    listener.on("notification", (message) => events.push(JSON.parse(message.payload!)));
+    listener.on("notification", (message) =>
+      events.push(JSON.parse(message.payload!)),
+    );
   });
   beforeEach(() => {
     events = [];
@@ -75,7 +83,10 @@ integration("collaboration session lifecycle effects", () => {
     );
     await settle();
     expect((await state(fixture.session.id)).lifecycle_state).toBe("ended");
-    expect(events).toContainEqual({ type: "session_ended", sessionId: fixture.session.id });
+    expect(events).toContainEqual({
+      type: "session_ended",
+      sessionId: fixture.session.id,
+    });
     await expect(
       sessions.ticket(fixture.session.id, fixture.users.alice!, uuidv7()),
     ).rejects.toMatchObject({ status: 409, code: "course_archived" });
@@ -90,11 +101,16 @@ integration("collaboration session lifecycle effects", () => {
     );
     await settle();
     expect((await state(fixture.session.id)).lifecycle_state).toBe("ended");
-    expect(events).toContainEqual({ type: "session_ended", sessionId: fixture.session.id });
+    expect(events).toContainEqual({
+      type: "session_ended",
+      sessionId: fixture.session.id,
+    });
     await expect(
       sessions.get(fixture.session.id, fixture.users.alice!),
     ).rejects.toMatchObject({ status: 404 });
-    await expect(sessions.get(fixture.session.id, fixture.users.tim!)).resolves.toMatchObject({
+    await expect(
+      sessions.get(fixture.session.id, fixture.users.tim!),
+    ).resolves.toMatchObject({
       status: "ended",
     });
   });
@@ -138,8 +154,12 @@ integration("collaboration session lifecycle effects", () => {
       "SELECT user_id FROM collaboration_participants WHERE collaboration_session_id=$1",
       [fixture.session.id],
     );
-    expect(participants.rows.map((row) => row.user_id)).toEqual([fixture.users.alice]);
-    await expect(sessions.get(fixture.session.id, fixture.users.bob!)).rejects.toMatchObject({
+    expect(participants.rows.map((row) => row.user_id)).toEqual([
+      fixture.users.alice,
+    ]);
+    await expect(
+      sessions.get(fixture.session.id, fixture.users.bob!),
+    ).rejects.toMatchObject({
       status: 404,
     });
   });
@@ -147,9 +167,13 @@ integration("collaboration session lifecycle effects", () => {
   it("keeps a demoted TA's own sessions only", async () => {
     const fixture = await course();
     const own = (
-      await sessions.create(fixture.courseId, fixture.users.tim!, { postId: fixture.postId })
+      await sessions.create(fixture.courseId, fixture.users.tim!, {
+        postId: fixture.postId,
+      })
     ).value;
-    await expect(sessions.get(fixture.session.id, fixture.users.tim!)).resolves.toBeTruthy();
+    await expect(
+      sessions.get(fixture.session.id, fixture.users.tim!),
+    ).resolves.toBeTruthy();
     await new CourseService(pool).updateMember(
       fixture.courseId,
       fixture.users.ina!,
@@ -166,10 +190,14 @@ integration("collaboration session lifecycle effects", () => {
       courseId: fixture.courseId,
       userIds: [fixture.users.tim],
     });
-    await expect(sessions.get(fixture.session.id, fixture.users.tim!)).rejects.toMatchObject({
+    await expect(
+      sessions.get(fixture.session.id, fixture.users.tim!),
+    ).rejects.toMatchObject({
       status: 404,
     });
-    await expect(sessions.get(own.id, fixture.users.tim!)).resolves.toMatchObject({
+    await expect(
+      sessions.get(own.id, fixture.users.tim!),
+    ).resolves.toMatchObject({
       createdBy: fixture.users.tim,
     });
   });
@@ -184,11 +212,14 @@ integration("collaboration session lifecycle effects", () => {
     const environment = loadEnvironment({
       AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
     });
-    await new AuthService(pool, environment, { send: async () => undefined } as never).logout(
-      authSession,
-    );
+    await new AuthService(pool, environment, {
+      send: async () => undefined,
+    } as never).logout(authSession);
     await settle();
-    expect(events).toContainEqual({ type: "access_changed", userIds: [fixture.users.bob] });
+    expect(events).toContainEqual({
+      type: "access_changed",
+      userIds: [fixture.users.bob],
+    });
   });
 
   it("removes session data when course deletion cleanup runs", async () => {
@@ -214,10 +245,12 @@ integration("collaboration session lifecycle effects", () => {
       "collaboration_participants",
       "collaboration_connection_tickets",
     ]) {
-      const column = table === "collaboration_sessions" ? "id" : "collaboration_session_id";
-      const count = await pool.query(`SELECT count(*)::int AS count FROM ${table} WHERE ${column}=$1`, [
-        fixture.session.id,
-      ]);
+      const column =
+        table === "collaboration_sessions" ? "id" : "collaboration_session_id";
+      const count = await pool.query(
+        `SELECT count(*)::int AS count FROM ${table} WHERE ${column}=$1`,
+        [fixture.session.id],
+      );
       expect(count.rows[0].count).toBe(0);
     }
   });

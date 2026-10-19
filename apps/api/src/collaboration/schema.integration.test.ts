@@ -52,7 +52,9 @@ integration("collaboration session schema", () => {
   });
 
   it("requires a trimmed title of 1 to 120 characters", async () => {
-    await expect(insertSession({ title: "x".repeat(120) })).resolves.toBeTruthy();
+    await expect(
+      insertSession({ title: "x".repeat(120) }),
+    ).resolves.toBeTruthy();
     for (const title of ["", "x".repeat(121), " padded "])
       await expect(insertSession({ title })).rejects.toMatchObject({
         code: "23514",
@@ -124,7 +126,14 @@ integration("collaboration session schema", () => {
     const ticket = (hash: Buffer) =>
       pool.query(
         "INSERT INTO collaboration_connection_tickets (id, token_hash, collaboration_session_id, course_id, user_id, auth_session_id, permission, expires_at) VALUES ($1, $2, $3, $4, $5, $6, 'write', now() + interval '5 minutes')",
-        [uuidv7(), hash, id, fixture.courseId, fixture.users.alice, authSession],
+        [
+          uuidv7(),
+          hash,
+          id,
+          fixture.courseId,
+          fixture.users.alice,
+          authSession,
+        ],
       );
     await ticket(Buffer.alloc(32, 1));
     await expect(ticket(Buffer.alloc(32, 1))).rejects.toMatchObject({

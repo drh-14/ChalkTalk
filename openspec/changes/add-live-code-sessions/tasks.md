@@ -30,10 +30,10 @@
 
 ## 5. Browser experience
 
-- [ ] 5.1 Add the sessions REST client and the `course-session` route; verify client tests for each request's method, headers, and body, and route tests for parsing and direct links
-- [ ] 5.2 Build `CodeEditor.tsx` with line numbers, the eight language modes in a `Compartment`, read-only mode, and `yCollab` binding; verify component tests that switching language keeps the text and that read-only blocks input
-- [ ] 5.3 Build `SessionView` with the participant list, creator/staff-only invite, language, and End session controls, ticket-refreshing reconnect, and the five connection states; verify component tests for each state, control visibility by role, the invite picker using course members, and the unavailable view revealing nothing
-- [ ] 5.4 Add `SessionsPanel` and the start dialog to post detail, including the warning that participants will see your name; verify component tests for listing visible sessions, the empty state, starting a session navigating to its view, and the button hidden in archived courses
+- [x] 5.1 Add the sessions REST client and the `course-session` route; verify client tests for each request's method, headers, and body, and route tests for parsing and direct links
+- [x] 5.2 Build `CodeEditor.tsx` with line numbers, the eight language modes in a `Compartment`, read-only mode, and `yCollab` binding; verify component tests that switching language keeps the text and that read-only blocks input
+- [x] 5.3 Build `SessionView` with the participant list, creator/staff-only invite, language, and End session controls, ticket-refreshing reconnect, and the five connection states; verify component tests for each state, control visibility by role, the invite picker using course members, and the unavailable view revealing nothing
+- [x] 5.4 Add `SessionsPanel` and the start dialog to post detail, including the warning that participants will see your name; verify component tests for listing visible sessions, the empty state, starting a session navigating to its view, and the button hidden in archived courses
 
 ## 6. Documentation
 

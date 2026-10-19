@@ -31,6 +31,7 @@ import {
 } from "../courses/client.js";
 import { CourseStatistics } from "../statistics/views.js";
 import { Discussion } from "../posts/views.js";
+import { SessionView } from "../sessions/SessionView.js";
 import {
   initializeRoute,
   navigate,
@@ -939,7 +940,9 @@ function CourseFrame({
         ? "resources"
         : route.name === "course-statistics"
           ? "statistics"
-          : "discussion";
+          : route.name === "course-session"
+            ? "session"
+            : "discussion";
   const discussionPath = `/courses/${encodeURIComponent(courseId)}`;
   const tabs = [
     { key: "discussion", label: "Discussion", path: discussionPath },
@@ -992,7 +995,12 @@ function CourseFrame({
               <a
                 key={tab.key}
                 href={tab.path}
-                aria-current={section === tab.key ? "page" : undefined}
+                aria-current={
+                  section === tab.key ||
+                  (section === "session" && tab.key === "discussion")
+                    ? "page"
+                    : undefined
+                }
                 onClick={(event) => follow(event, tab.path)}
               >
                 {tab.label}
@@ -1039,6 +1047,16 @@ function CourseFrame({
           </div>
         ) : !visibleCourse ? (
           <p role="status">Loading course…</p>
+        ) : section === "session" ? (
+          <SessionView
+            key={route.sessionId}
+            courseId={courseId}
+            sessionId={route.sessionId!}
+            viewerId={session.user.id}
+            staff={staff === true}
+            csrfToken={session.csrfToken}
+            onNavigate={onNavigate}
+          />
         ) : section === "resources" ? (
           <CourseResources />
         ) : section === "settings" ? (
@@ -1151,7 +1169,8 @@ export function App() {
           route.name === "post" ||
           route.name === "course-settings" ||
           route.name === "course-resources" ||
-          route.name === "course-statistics"
+          route.name === "course-statistics" ||
+          route.name === "course-session"
         )
           move("/");
       })
@@ -1207,7 +1226,8 @@ export function App() {
       route.name === "post" ||
       route.name === "course-settings" ||
       route.name === "course-resources" ||
-      route.name === "course-statistics") &&
+      route.name === "course-statistics" ||
+      route.name === "course-session") &&
     route.courseId &&
     session
   )

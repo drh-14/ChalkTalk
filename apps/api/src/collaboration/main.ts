@@ -13,7 +13,9 @@ const collaboration = createCollaborationServer({
 });
 
 await collaboration.start();
-console.log(`ChalkTalk collaboration server listening on port ${environment.collaboration.port}`);
+console.log(
+  `ChalkTalk collaboration server listening on port ${environment.collaboration.port}`,
+);
 
 let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const)

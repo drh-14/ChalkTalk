@@ -29,7 +29,12 @@ export type CollaborationEvent =
   | { type: "session_ending"; sessionId: string }
   | { type: "session_ended"; sessionId: string }
   | { type: "session_updated"; sessionId: string }
-  | { type: "access_changed"; sessionId?: string; courseId?: string; userIds: string[] };
+  | {
+      type: "access_changed";
+      sessionId?: string;
+      courseId?: string;
+      userIds: string[];
+    };
 
 export type CollaborationParticipant = {
   userId: string;
@@ -56,8 +61,7 @@ export type CreateCollaborationSession = {
   language?: CollaborationLanguage;
 };
 export type UpdateCollaborationSession =
-  | { title?: string; language?: CollaborationLanguage }
-  | { status: "ended" };
+  { title?: string; language?: CollaborationLanguage } | { status: "ended" };
 export type ListCollaborationSessions = {
   status?: "active" | "ended";
   anchorId?: string;
@@ -85,10 +89,15 @@ export const collaborationEtag = (session: { version: number }) =>
 const notFound = () =>
   new AuthError(404, "not_found", "Collaboration session is not found");
 const forbidden = () =>
-  new AuthError(403, "forbidden", "Only the session creator or course staff may do this");
+  new AuthError(
+    403,
+    "forbidden",
+    "Only the session creator or course staff may do this",
+  );
 const ended = () =>
   new AuthError(409, "session_ended", "The collaboration session has ended");
-const archived = () => new AuthError(409, "course_archived", "Course is not active");
+const archived = () =>
+  new AuthError(409, "course_archived", "Course is not active");
 const invalidRequest = (message: string) =>
   new AuthError(400, "invalid_request", message);
 
@@ -133,7 +142,12 @@ export class CollaborationSessionService {
     ]);
   }
 
-  private async membership(db: Db, courseId: string, userId: string, lock = false) {
+  private async membership(
+    db: Db,
+    courseId: string,
+    userId: string,
+    lock = false,
+  ) {
     const result = await db.query<{ role: Role; status: string }>(
       `SELECT m.role,c.status FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m,c" : ""}`,
       [courseId, userId],
@@ -189,8 +203,14 @@ export class CollaborationSessionService {
     if (access.row.lifecycle_state !== "active") throw ended();
   }
 
-  private async project(db: Db, row: SessionRow): Promise<CollaborationSession> {
-    const participants = await db.query<{ user_id: string; display_name: string }>(
+  private async project(
+    db: Db,
+    row: SessionRow,
+  ): Promise<CollaborationSession> {
+    const participants = await db.query<{
+      user_id: string;
+      display_name: string;
+    }>(
       "SELECT p.user_id,u.display_name FROM collaboration_participants p JOIN users u ON u.id=p.user_id WHERE p.collaboration_session_id=$1 ORDER BY (p.user_id=$2) DESC,p.created_at,p.user_id",
       [row.id, row.created_by_user_id],
     );
@@ -205,7 +225,10 @@ export class CollaborationSessionService {
       participants: participants.rows.map((participant) => ({
         userId: participant.user_id,
         displayName: participant.display_name,
-        role: participant.user_id === row.created_by_user_id ? "creator" : "invitee",
+        role:
+          participant.user_id === row.created_by_user_id
+            ? "creator"
+            : "invitee",
       })),
       endedAt: row.ended_at?.toISOString() ?? null,
       createdAt: row.created_at.toISOString(),
@@ -236,7 +259,11 @@ export class CollaborationSessionService {
     key?: string,
   ): Promise<{ value: CollaborationSession; status: number }> {
     if (key !== undefined && (key.length < 1 || key.length > 255))
-      throw new AuthError(422, "validation_failed", "Idempotency-Key is invalid");
+      throw new AuthError(
+        422,
+        "validation_failed",
+        "Idempotency-Key is invalid",
+      );
     if (!UUID_PATTERN.test(courseId)) throw notFound();
     const scope = `collaboration-session-create:${userId}:${courseId}`;
     const hash = createHash("sha256").update(JSON.stringify(body)).digest();
@@ -244,10 +271,10 @@ export class CollaborationSessionService {
       const member = await this.membership(db, courseId, userId, true);
       if (!member) throw notFound();
       if (key !== undefined) {
-        await db.query("SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))", [
-          scope,
-          key,
-        ]);
+        await db.query(
+          "SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",
+          [scope, key],
+        );
         const old = await db.query<{
           request_hash: Buffer;
           response_body: CollaborationSession;
@@ -258,7 +285,11 @@ export class CollaborationSessionService {
         );
         if (old.rows[0]) {
           if (!old.rows[0].request_hash.equals(hash))
-            throw new AuthError(409, "idempotency_key_reused", "Idempotency key was reused");
+            throw new AuthError(
+              409,
+              "idempotency_key_reused",
+              "Idempotency key was reused",
+            );
           const current = await db.query<SessionRow>(
             "SELECT * FROM collaboration_sessions WHERE id=$1",
             [old.rows[0].response_body.id],
@@ -287,11 +318,19 @@ export class CollaborationSessionService {
           "cross_course_anchor",
           "The anchor is invalid or belongs to another course",
         );
-      const title = body.title ?? post.rows[0].title.trim().slice(0, 120).trim();
+      const title =
+        body.title ?? post.rows[0].title.trim().slice(0, 120).trim();
       const id = uuidv7();
       await db.query(
         "INSERT INTO collaboration_sessions (id,course_id,post_id,title,language,created_by_user_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,clock_timestamp(),clock_timestamp())",
-        [id, courseId, body.postId, title, body.language ?? "plaintext", userId],
+        [
+          id,
+          courseId,
+          body.postId,
+          title,
+          body.language ?? "plaintext",
+          userId,
+        ],
       );
       await db.query(
         "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id) VALUES ($1,$2,$3,$3)",
@@ -314,16 +353,29 @@ export class CollaborationSessionService {
     row: { created_at: Date; id: string },
   ) {
     return Buffer.from(
-      JSON.stringify({ c: courseId, u: userId, f: filters, t: row.created_at.toISOString(), i: row.id }),
+      JSON.stringify({
+        c: courseId,
+        u: userId,
+        f: filters,
+        t: row.created_at.toISOString(),
+        i: row.id,
+      }),
     ).toString("base64url");
   }
 
-  async list(courseId: string, userId: string, query: ListCollaborationSessions) {
+  async list(
+    courseId: string,
+    userId: string,
+    query: ListCollaborationSessions,
+  ) {
     if (!UUID_PATTERN.test(courseId)) throw notFound();
     const member = await this.membership(this.pool, courseId, userId);
     if (!member) throw notFound();
     const staff = STAFF.has(member.role);
-    const filters = JSON.stringify([query.status ?? null, query.anchorId ?? null]);
+    const filters = JSON.stringify([
+      query.status ?? null,
+      query.anchorId ?? null,
+    ]);
     const values: unknown[] = [courseId, userId, staff];
     const add = (value: unknown) => {
       values.push(value);
@@ -342,9 +394,17 @@ export class CollaborationSessionService {
       clauses.push(`s.post_id=${add(query.anchorId)}`);
     }
     if (query.cursor) {
-      let decoded: { c?: string; u?: string; f?: string; t?: string; i?: string };
+      let decoded: {
+        c?: string;
+        u?: string;
+        f?: string;
+        t?: string;
+        i?: string;
+      };
       try {
-        decoded = JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8"));
+        decoded = JSON.parse(
+          Buffer.from(query.cursor, "base64url").toString("utf8"),
+        );
       } catch {
         throw invalidRequest("Pagination cursor is invalid");
       }
@@ -358,7 +418,9 @@ export class CollaborationSessionService {
         !UUID_PATTERN.test(decoded.i)
       )
         throw invalidRequest("Pagination cursor is invalid");
-      clauses.push(`(s.created_at,s.id)<(${add(decoded.t)}::timestamptz,${add(decoded.i)}::uuid)`);
+      clauses.push(
+        `(s.created_at,s.id)<(${add(decoded.t)}::timestamptz,${add(decoded.i)}::uuid)`,
+      );
     }
     const rows = await this.pool.query<SessionRow>(
       `SELECT s.* FROM collaboration_sessions s JOIN posts p ON p.id=s.post_id WHERE ${clauses.join(" AND ")} ORDER BY s.created_at DESC,s.id DESC LIMIT ${add(query.limit + 1)}`,
@@ -371,7 +433,9 @@ export class CollaborationSessionService {
     return {
       data,
       page: {
-        nextCursor: hasMore ? this.cursorFor(courseId, userId, filters, page.at(-1)!) : null,
+        nextCursor: hasMore
+          ? this.cursorFor(courseId, userId, filters, page.at(-1)!)
+          : null,
         hasMore,
       },
     };
@@ -383,9 +447,14 @@ export class CollaborationSessionService {
   }
 
   private checkRevision(row: SessionRow, etag: string | undefined) {
-    if (!etag) throw new AuthError(428, "precondition_required", "If-Match is required");
+    if (!etag)
+      throw new AuthError(428, "precondition_required", "If-Match is required");
     if (etag !== collaborationEtag({ version: Number(row.version) }))
-      throw new AuthError(412, "version_conflict", "The collaboration session has changed");
+      throw new AuthError(
+        412,
+        "version_conflict",
+        "The collaboration session has changed",
+      );
   }
 
   async update(
@@ -404,7 +473,10 @@ export class CollaborationSessionService {
         "UPDATE collaboration_sessions SET title=coalesce($2,title),language=coalesce($3,language),version=version+1,updated_at=clock_timestamp() WHERE id=$1",
         [sessionId, body.title ?? null, body.language ?? null],
       );
-      await CollaborationSessionService.notify(db, { type: "session_updated", sessionId });
+      await CollaborationSessionService.notify(db, {
+        type: "session_updated",
+        sessionId,
+      });
       return this.project(db, await this.reload(db, sessionId));
     });
   }
@@ -413,7 +485,11 @@ export class CollaborationSessionService {
    * Marks the session ending so the collaboration server persists the final
    * text, waits for it to confirm, then completes the end itself if needed.
    */
-  private async end(sessionId: string, userId: string, etag: string | undefined) {
+  private async end(
+    sessionId: string,
+    userId: string,
+    etag: string | undefined,
+  ) {
     await this.tx(async (db) => {
       const access = await this.access(db, sessionId, userId, true);
       this.manager(access, userId);
@@ -423,7 +499,10 @@ export class CollaborationSessionService {
         "UPDATE collaboration_sessions SET lifecycle_state='ending',version=version+1,updated_at=clock_timestamp() WHERE id=$1",
         [sessionId],
       );
-      await CollaborationSessionService.notify(db, { type: "session_ending", sessionId });
+      await CollaborationSessionService.notify(db, {
+        type: "session_ending",
+        sessionId,
+      });
     });
     const deadline = Date.now() + this.endTimeoutMs;
     while (Date.now() < deadline) {
@@ -445,7 +524,10 @@ export class CollaborationSessionService {
       [sessionId],
     );
     if (result.rowCount)
-      await CollaborationSessionService.notify(db, { type: "session_ended", sessionId });
+      await CollaborationSessionService.notify(db, {
+        type: "session_ended",
+        sessionId,
+      });
   }
 
   async invite(sessionId: string, userId: string, targetUserId: string) {
@@ -457,7 +539,11 @@ export class CollaborationSessionService {
         ? await this.membership(db, access.row.course_id, targetUserId, true)
         : undefined;
       if (!target)
-        throw new AuthError(422, "not_course_member", "The user is not a current member of the course");
+        throw new AuthError(
+          422,
+          "not_course_member",
+          "The user is not a current member of the course",
+        );
       const inserted = await db.query(
         "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
         [sessionId, access.row.course_id, targetUserId, userId],
@@ -473,7 +559,11 @@ export class CollaborationSessionService {
       this.manager(access, userId);
       if (access.row.lifecycle_state !== "active") throw ended();
       if (targetUserId === access.row.created_by_user_id)
-        throw new AuthError(422, "creator_not_removable", "The session creator cannot be removed");
+        throw new AuthError(
+          422,
+          "creator_not_removable",
+          "The session creator cannot be removed",
+        );
       const removed = UUID_PATTERN.test(targetUserId)
         ? await db.query(
             "DELETE FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2",
@@ -481,7 +571,11 @@ export class CollaborationSessionService {
           )
         : undefined;
       if (!removed?.rowCount)
-        throw new AuthError(404, "not_found", "Collaboration participant is not found");
+        throw new AuthError(
+          404,
+          "not_found",
+          "Collaboration participant is not found",
+        );
       await db.query(
         "UPDATE collaboration_connection_tickets SET revoked_at=now() WHERE collaboration_session_id=$1 AND user_id=$2 AND consumed_at IS NULL AND revoked_at IS NULL",
         [sessionId, targetUserId],
@@ -523,16 +617,24 @@ export class CollaborationSessionService {
 
   async snapshot(sessionId: string, userId: string) {
     const access = await this.access(this.pool, sessionId, userId);
-    const document = await this.pool.query<{ text_projection: string; persisted_at: Date }>(
+    const document = await this.pool.query<{
+      text_projection: string;
+      persisted_at: Date;
+    }>(
       "SELECT text_projection,persisted_at FROM collaboration_documents WHERE collaboration_session_id=$1",
       [sessionId],
     );
     return {
       collaborationSessionId: sessionId,
       documentId: documentName(sessionId),
-      sessionStatus: access.row.lifecycle_state === "ended" ? ("ended" as const) : ("active" as const),
+      sessionStatus:
+        access.row.lifecycle_state === "ended"
+          ? ("ended" as const)
+          : ("active" as const),
       content: document.rows[0]?.text_projection ?? "",
-      persistedAt: (document.rows[0]?.persisted_at ?? access.row.created_at).toISOString(),
+      persistedAt: (
+        document.rows[0]?.persisted_at ?? access.row.created_at
+      ).toISOString(),
       capturedAt: new Date().toISOString(),
     };
   }

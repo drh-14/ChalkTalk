@@ -66,14 +66,22 @@ integration("collaboration server", () => {
       })
     ).value;
     for (const name of invitees)
-      await service.invite(session.id, fixture.users[creator]!, fixture.users[name]!);
+      await service.invite(
+        session.id,
+        fixture.users[creator]!,
+        fixture.users[name]!,
+      );
     return session.id;
   }
 
   function join(
     name: string,
     sessionId: string,
-    options: { origin?: string; token?: () => Promise<string>; documentId?: string } = {},
+    options: {
+      origin?: string;
+      token?: () => Promise<string>;
+      documentId?: string;
+    } = {},
   ) {
     const userId = fixture.users[name]!;
     const state = {
@@ -93,7 +101,9 @@ integration("collaboration server", () => {
       document,
       token:
         options.token ??
-        (async () => (await service.ticket(sessionId, userId, authSessions[userId]!)).ticket),
+        (async () =>
+          (await service.ticket(sessionId, userId, authSessions[userId]!))
+            .ticket),
       onAuthenticationFailed: () => {
         state.authFailed = true;
       },
@@ -128,7 +138,11 @@ integration("collaboration server", () => {
       authSessions[userId] = uuidv7();
       await pool.query(
         "INSERT INTO sessions (id,user_id,credential_hash,csrf_token_hash,expires_at) VALUES ($1,$2,$3,$3,now()+interval '1 day')",
-        [authSessions[userId], userId, Buffer.from(`${name}-server-credential-hash`)],
+        [
+          authSessions[userId],
+          userId,
+          Buffer.from(`${name}-server-credential-hash`),
+        ],
       );
     }
     await startServer();
@@ -145,7 +159,11 @@ integration("collaboration server", () => {
     it("accepts a valid ticket once and rejects its reuse", async () => {
       const sessionId = await newSession();
       const ticket = (
-        await service.ticket(sessionId, fixture.users.alice!, authSessions[fixture.users.alice!]!)
+        await service.ticket(
+          sessionId,
+          fixture.users.alice!,
+          authSessions[fixture.users.alice!]!,
+        )
       ).ticket;
       const first = join("alice", sessionId, { token: async () => ticket });
       await until(() => first.provider.isSynced);
@@ -179,25 +197,39 @@ integration("collaboration server", () => {
 
     it("rejects a disallowed origin, a logged-out session, and an uninvited user", async () => {
       const sessionId = await newSession();
-      const wrongOrigin = join("alice", sessionId, { origin: "https://evil.example.com" });
+      const wrongOrigin = join("alice", sessionId, {
+        origin: "https://evil.example.com",
+      });
       await new Promise((resolve) => setTimeout(resolve, 400));
       expect(wrongOrigin.provider.isSynced).toBe(false);
 
       const bob = fixture.users.bob!;
-      const bobTicket = (await service.ticket(sessionId, bob, authSessions[bob]!)).ticket;
-      await pool.query("UPDATE sessions SET revoked_at=now() WHERE id=$1", [authSessions[bob]]);
-      const loggedOut = join("bob", sessionId, { token: async () => bobTicket });
+      const bobTicket = (
+        await service.ticket(sessionId, bob, authSessions[bob]!)
+      ).ticket;
+      await pool.query("UPDATE sessions SET revoked_at=now() WHERE id=$1", [
+        authSessions[bob],
+      ]);
+      const loggedOut = join("bob", sessionId, {
+        token: async () => bobTicket,
+      });
       await until(() => loggedOut.state.authFailed);
-      await pool.query("UPDATE sessions SET revoked_at=NULL WHERE id=$1", [authSessions[bob]]);
+      await pool.query("UPDATE sessions SET revoked_at=NULL WHERE id=$1", [
+        authSessions[bob],
+      ]);
 
       const carol = fixture.users.carol!;
       await service.invite(sessionId, fixture.users.alice!, carol);
-      const carolTicket = (await service.ticket(sessionId, carol, authSessions[carol]!)).ticket;
+      const carolTicket = (
+        await service.ticket(sessionId, carol, authSessions[carol]!)
+      ).ticket;
       await pool.query(
         "DELETE FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2",
         [sessionId, carol],
       );
-      const uninvited = join("carol", sessionId, { token: async () => carolTicket });
+      const uninvited = join("carol", sessionId, {
+        token: async () => carolTicket,
+      });
       await until(() => uninvited.state.authFailed);
     });
   });
@@ -212,7 +244,11 @@ integration("collaboration server", () => {
       await until(() => bob.text.toString() === "def f():\n");
       alice.text.insert(9, "    return 1\n");
       bob.text.insert(9, "    # TA note\n");
-      await until(() => alice.text.toString() === bob.text.toString() && alice.text.length > 20);
+      await until(
+        () =>
+          alice.text.toString() === bob.text.toString() &&
+          alice.text.length > 20,
+      );
       expect(alice.text.toString()).toContain("    return 1\n");
       expect(alice.text.toString()).toContain("    # TA note\n");
     });
@@ -229,7 +265,9 @@ integration("collaboration server", () => {
             [sessionId],
           )
         ).rows[0]?.text_projection;
-      const elapsed = await until(async () => (await saved()) === "print('hello')");
+      const elapsed = await until(
+        async () => (await saved()) === "print('hello')",
+      );
       expect(elapsed).toBeLessThan(5000);
       alice.text.insert(alice.text.length, "\n# bye");
       alice.provider.destroy();
@@ -247,13 +285,21 @@ integration("collaboration server", () => {
       const watcher = join("bob", sessionId);
       await until(() => watcher.provider.isSynced);
       const serverText = () =>
-        collaboration.hocuspocus.documents.get(documentName(sessionId))?.getText("content");
+        collaboration.hocuspocus.documents
+          .get(documentName(sessionId))
+          ?.getText("content");
 
       const outOfSchema = join("alice", sessionId);
       await until(() => outOfSchema.provider.isSynced);
       outOfSchema.document.getMap("other").set("x", 1);
-      await until(() => outOfSchema.state.closeReason === CLOSE_REASONS.invalid);
-      expect(collaboration.hocuspocus.documents.get(documentName(sessionId))?.share.has("other")).toBe(false);
+      await until(
+        () => outOfSchema.state.closeReason === CLOSE_REASONS.invalid,
+      );
+      expect(
+        collaboration.hocuspocus.documents
+          .get(documentName(sessionId))
+          ?.share.has("other"),
+      ).toBe(false);
 
       const tooLong = join("alice", sessionId);
       await until(() => tooLong.provider.isSynced);
@@ -277,7 +323,9 @@ integration("collaboration server", () => {
       tim.provider.setAwarenessField("user", { name: "Impostor", userId: "x" });
       tim.provider.setAwarenessField("cursor", { anchor: 0, head: 0 });
       const names = () =>
-        [...alice.provider.awareness!.getStates().values()].map((state) => state.user?.name);
+        [...alice.provider.awareness!.getStates().values()].map(
+          (state) => state.user?.name,
+        );
       await until(() => names().includes("tim"));
       expect(names()).not.toContain("Impostor");
       const timState = [...alice.provider.awareness!.getStates().values()].find(
@@ -348,9 +396,14 @@ integration("collaboration server", () => {
       await until(() => tim.text.toString() === "while True:\n    break\n");
       const current = await service.get(sessionId, fixture.users.tim!);
       const startedAt = Date.now();
-      const ended = await service.update(sessionId, fixture.users.tim!, `"v${current.version}"`, {
-        status: "ended",
-      });
+      const ended = await service.update(
+        sessionId,
+        fixture.users.tim!,
+        `"v${current.version}"`,
+        {
+          status: "ended",
+        },
+      );
       expect(Date.now() - startedAt).toBeLessThan(3000);
       expect(ended.status).toBe("ended");
       const snapshot = await service.snapshot(sessionId, fixture.users.alice!);
@@ -359,9 +412,9 @@ integration("collaboration server", () => {
         content: "while True:\n    break\n",
       });
       await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
-      expect(alice.state.stateless.map((payload) => JSON.parse(payload).type)).toContain(
-        "session-ended",
-      );
+      expect(
+        alice.state.stateless.map((payload) => JSON.parse(payload).type),
+      ).toContain("session-ended");
     });
 
     it("rejects a document name that is not a session", async () => {

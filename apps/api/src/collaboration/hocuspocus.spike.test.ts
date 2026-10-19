@@ -28,7 +28,11 @@ async function startServer(extension: Partial<Extension>, debounce = 200) {
 
 function connect(
   server: Server,
-  options: { name?: string; token?: string; onStateless?: (p: string) => void } = {},
+  options: {
+    name?: string;
+    token?: string;
+    onStateless?: (p: string) => void;
+  } = {},
 ) {
   const websocketProvider = new HocuspocusProviderWebsocket({
     url: server.webSocketURL,
@@ -150,7 +154,9 @@ describe("Hocuspocus 4 behaviour relied on by live code sessions", () => {
       },
       async beforeHandleAwareness({ states, context }) {
         for (const state of states.values())
-          state.user = { name: (context as { displayName: string }).displayName };
+          state.user = {
+            name: (context as { displayName: string }).displayName,
+          };
       },
     });
     const received: string[] = [];

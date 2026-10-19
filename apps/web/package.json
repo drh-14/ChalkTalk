@@ -15,6 +15,7 @@
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language": "^6.13.1",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.13",
     "@hocuspocus/provider": "^4.7.1",
@@ -30,6 +31,7 @@
     "unified": "^11.0.5",
     "vite": "^7.3.1",
     "y-codemirror.next": "^0.3.6",
+    "y-protocols": "^1.0.7",
     "yjs": "^13.6.33"
   },
   "devDependencies": {

@@ -2645,3 +2645,257 @@ a:focus-visible {
   max-width: 100%;
   font: inherit;
 }
+
+/* Live code sessions */
+.sessions-panel {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+}
+.sessions-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+.sessions-header h3 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+.sessions-panel .button,
+.session-view .button {
+  min-height: 0;
+  padding: 0.45rem 0.85rem;
+}
+.sessions-list {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sessions-row {
+  align-items: center;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+}
+.sessions-row > div {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.sessions-row strong {
+  overflow-wrap: anywhere;
+}
+.sessions-row-meta,
+.sessions-empty {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+.sessions-list.ended .sessions-row {
+  background: var(--surface-sunken);
+}
+.sessions-start {
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.sessions-start label,
+.session-language,
+.session-invite label {
+  display: grid;
+  font-size: 0.85rem;
+  font-weight: 600;
+  gap: var(--space-1);
+}
+.sessions-start select,
+.sessions-start input,
+.session-language select,
+.session-invite select {
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-weight: 400;
+  padding: 0.45rem 0.55rem;
+}
+.sessions-warning {
+  background: var(--badge-pin-bg);
+  border-radius: var(--radius-sm);
+  color: var(--badge-pin-ink);
+  font-size: 0.85rem;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+}
+.sessions-start-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.session-view {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0 auto;
+  max-width: 90rem;
+}
+.session-header {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  justify-content: space-between;
+}
+.session-header h2 {
+  font-size: clamp(1.3rem, 2vw, 1.75rem);
+  margin: var(--space-1) 0;
+}
+.session-back {
+  color: var(--accent-ink);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.session-meta {
+  color: var(--ink-muted);
+  margin: 0;
+}
+.session-state {
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0;
+  padding: 0.35rem 0.8rem;
+}
+.session-state-connecting,
+.session-state-reconnecting {
+  background: var(--badge-pin-bg);
+  color: var(--badge-pin-ink);
+}
+.session-state-connected {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.session-state-ended {
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+}
+.session-state-removed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.session-layout {
+  align-items: start;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 19rem);
+}
+.session-editor {
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  min-height: 60vh;
+  overflow: hidden;
+}
+.code-editor .cm-editor {
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  min-height: 60vh;
+}
+.code-editor .cm-editor.cm-focused {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+.code-editor .cm-scroller {
+  font-family: var(--font-mono);
+  line-height: 1.55;
+}
+.code-editor .cm-gutters {
+  background: var(--surface-sunken);
+  border-right: 1px solid var(--line);
+  color: var(--ink-subtle);
+}
+.code-editor .cm-ySelectionInfo {
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 1;
+  padding: 0.05rem 0.3rem;
+}
+.session-removed {
+  color: var(--danger);
+  margin: 0;
+  padding: var(--space-6);
+}
+.session-side {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+.session-side h3 {
+  font-size: 0.95rem;
+  margin: 0 0 var(--space-2);
+}
+.session-participants {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.session-participants li {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+}
+.session-participants li > span:nth-child(2) {
+  flex: 1;
+  font-size: 0.9rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.presence-dot {
+  background: var(--line-strong);
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 0.6rem;
+  width: 0.6rem;
+}
+.presence-dot:not(.online) {
+  background: var(--line-strong) !important;
+}
+.session-invite {
+  display: grid;
+  gap: var(--space-2);
+}
+.session-view .button.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.session-unavailable {
+  max-width: 36rem;
+}
+@media (max-width: 850px) {
+  .session-layout {
+    grid-template-columns: 1fr;
+  }
+  .session-editor,
+  .code-editor .cm-editor {
+    min-height: 50vh;
+  }
+}

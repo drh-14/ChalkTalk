@@ -14,7 +14,9 @@ export async function endCollaborationSessions(
   scope: { courseId: string } | { postId: string },
 ) {
   const [column, id] =
-    "courseId" in scope ? ["course_id", scope.courseId] : ["post_id", scope.postId];
+    "courseId" in scope
+      ? ["course_id", scope.courseId]
+      : ["post_id", scope.postId];
   const ended = await db.query<{ id: string }>(
     `UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE ${column}=$1 AND lifecycle_state<>'ended' RETURNING id`,
     [id],
