@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { endCollaborationSessions } from "../collaboration/lifecycle.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
 import {
   hideAttachmentsForPostTree,
@@ -641,6 +642,8 @@ export class PostService {
           status,
         ],
       );
+      if (status === "confirmed" && row.duplicate_status !== "confirmed")
+        await endCollaborationSessions(db, { postId: id });
       if (body.tags !== undefined)
         await this.replaceTags(db, id, row.course_id, body.tags);
       const updated = (await this.row(db, id))!;
@@ -713,6 +716,7 @@ export class PostService {
         "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [id],
       );
+      await endCollaborationSessions(db, { postId: id });
     });
   }
 }
