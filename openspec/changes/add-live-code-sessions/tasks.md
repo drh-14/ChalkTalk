@@ -37,7 +37,7 @@
 
 ## 6. Documentation
 
-- [ ] 6.1 Update `README.md` local-development steps (three dev processes plus collaboration, the new env keys), `.env.example`, and the "future work" sentence in `documentation/design.md`; verify the README steps run as written on a fresh `.env` copy
+- [x] 6.1 Update `README.md` local-development steps (three dev processes plus collaboration, the new env keys), `.env.example`, and the "future work" sentence in `documentation/design.md`; verify the README steps run as written on a fresh `.env` copy
 
 ## 7. Integration checks
 
