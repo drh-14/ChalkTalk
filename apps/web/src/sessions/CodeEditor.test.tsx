@@ -1,4 +1,5 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
 import * as Y from "yjs";
 import { CodeEditor } from "./CodeEditor.js";
@@ -65,4 +66,33 @@ it("reflects remote Yjs edits without replacing the whole buffer", () => {
     text.insert(1, " (remote)");
   });
   expect(shown()).toBe("a (remote)\nb");
+});
+
+it("lets keyboard users leave with Escape, then Tab, and says so", async () => {
+  const text = new Y.Doc().getText("content");
+  render(<CodeEditor text={text} language="python" readOnly={false} />);
+  await userEvent.click(content());
+  expect(document.querySelector(".code-editor-hint.visible")?.textContent).toBe(
+    "Press Esc, then Tab, to leave the editor",
+  );
+  expect(content().getAttribute("aria-describedby")).toBe(
+    document.querySelector(".code-editor-hint")?.id,
+  );
+  // CodeMirror reads keyCode, which simulated typing leaves at 0. A Tab the
+  // editor does not cancel moves focus on in a browser.
+  const press = (key: string, keyCode: number) =>
+    content().dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key,
+        keyCode,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  expect(press("Tab", 9)).toBe(false);
+  const indented = text.toString();
+  expect(indented.length).toBeGreaterThan(0);
+  press("Escape", 27);
+  expect(press("Tab", 9)).toBe(true);
+  expect(text.toString()).toBe(indented);
 });

@@ -7,6 +7,7 @@ import {
   hashTicket,
   type CollaborationEvent,
 } from "./service.js";
+import { acceptsUpdate, whiteboardProjection } from "./whiteboard.js";
 
 export const MAX_DOCUMENT_CHARACTERS = 200_000;
 export const MAX_MESSAGE_BYTES = 256 * 1024;
@@ -101,14 +102,16 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       .then(async () => {
         const state = Buffer.from(Y.encodeStateAsUpdate(document));
         const text = document.getText("content").toString();
+        const whiteboard = JSON.stringify(whiteboardProjection(document));
         try {
           await pool.query(
-            `INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,persisted_at,persistence_revision)
-             VALUES ($1,$2,$3,clock_timestamp(),1)
+            `INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,whiteboard_projection,persisted_at,persistence_revision)
+             VALUES ($1,$2,$3,$4,clock_timestamp(),1)
              ON CONFLICT (collaboration_session_id) DO UPDATE SET yjs_state=excluded.yjs_state,
-               text_projection=excluded.text_projection,persisted_at=excluded.persisted_at,
+               text_projection=excluded.text_projection,
+               whiteboard_projection=excluded.whiteboard_projection,persisted_at=excluded.persisted_at,
                persistence_revision=collaboration_documents.persistence_revision+1`,
-            [sessionId, state, text],
+            [sessionId, state, text, whiteboard],
           );
         } catch (error) {
           // A session removed with its post or course has nothing left to store.
@@ -300,17 +303,25 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     async beforeSync({ type, payload, document, connection }) {
       // SyncStep2 (1) and Update (2) carry document changes.
       if (type !== 1 && type !== 2) return;
-      const probe = new Y.Doc();
-      Y.applyUpdate(probe, Y.encodeStateAsUpdate(document));
-      Y.applyUpdate(probe, payload);
-      const invalid =
-        [...probe.share.keys()].some((key) => key !== "content") ||
-        probe.getText("content").length > MAX_DOCUMENT_CHARACTERS;
-      probe.destroy();
-      if (invalid) {
+      if (!acceptsUpdate(document, payload, MAX_DOCUMENT_CHARACTERS)) {
         connection.close({ code: 1000, reason: CLOSE_REASONS.invalid });
         throw new Rejection("Invalid update");
       }
+    },
+
+    async connected({ connection, context }) {
+      // Awareness relays the server-stamped identity only to other clients,
+      // so each client learns its own name and color here.
+      connection.sendStateless(
+        JSON.stringify({
+          type: "presence",
+          user: {
+            userId: context.userId,
+            name: context.displayName,
+            color: context.color,
+          },
+        }),
+      );
     },
 
     async beforeHandleAwareness({ states, context }) {

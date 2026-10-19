@@ -525,10 +525,15 @@ integration("collaboration session HTTP contract", () => {
         documentId: `collaboration-session:${session.id}`,
         sessionStatus: "active",
         content: "",
+        whiteboard: [],
       });
       await pool.query(
-        "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,persisted_at) VALUES ($1,$2,'print(1)','2026-09-20T14:31:58Z')",
-        [session.id, Buffer.from([0, 0])],
+        "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,whiteboard_projection,persisted_at) VALUES ($1,$2,'print(1)',$3,'2026-09-20T14:31:58Z')",
+        [
+          session.id,
+          Buffer.from([0, 0]),
+          JSON.stringify([{ id: "r1", type: "rectangle", index: "a0" }]),
+        ],
       );
       const saved = await get(
         "tim",
@@ -537,6 +542,7 @@ integration("collaboration session HTTP contract", () => {
       expect(saved.headers["cache-control"]).toBe("no-store");
       expect(saved.body.data).toMatchObject({
         content: "print(1)",
+        whiteboard: [{ id: "r1", type: "rectangle", index: "a0" }],
         persistedAt: "2026-09-20T14:31:58.000Z",
       });
       expect(typeof saved.body.data.capturedAt).toBe("string");

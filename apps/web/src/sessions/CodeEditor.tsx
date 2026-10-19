@@ -13,7 +13,7 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { yCollab, yUndoManagerKeymap } from "y-codemirror.next";
 import * as Y from "yjs";
 import type { Awareness } from "y-protocols/awareness";
@@ -47,6 +47,8 @@ export function CodeEditor({
   const languageSlot = useRef(new Compartment());
   const editableSlot = useRef(new Compartment());
   const initial = useRef({ language, readOnly });
+  const [focused, setFocused] = useState(false);
+  const hintId = useId();
 
   useEffect(() => {
     if (!host.current) return;
@@ -68,6 +70,7 @@ export function CodeEditor({
           yCollab(text, awareness ?? null, { undoManager }),
           EditorView.contentAttributes.of({
             "aria-label": label,
+            "aria-describedby": hintId,
             "aria-multiline": "true",
             spellcheck: "false",
             autocorrect: "off",
@@ -82,7 +85,7 @@ export function CodeEditor({
       next.destroy();
       undoManager.destroy();
     };
-  }, [text, awareness, label]);
+  }, [text, awareness, label, hintId]);
 
   useEffect(() => {
     view.current?.dispatch({
@@ -96,5 +99,24 @@ export function CodeEditor({
     });
   }, [readOnly]);
 
-  return <div className="code-editor" ref={host} data-language={language} />;
+  // Tab indents; CodeMirror lets Escape release the next Tab to move focus on.
+  return (
+    <div
+      className="code-editor"
+      data-language={language}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          setFocused(false);
+      }}
+    >
+      <div className="code-editor-host" ref={host} />
+      <p
+        id={hintId}
+        className={`code-editor-hint${focused && !readOnly ? " visible" : ""}`}
+      >
+        Press Esc, then Tab, to leave the editor
+      </p>
+    </div>
+  );
 }

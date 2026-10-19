@@ -1,9 +1,16 @@
 // @vitest-environment node
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createServer } from "vite";
 import { describe, expect, it } from "vitest";
-import { createViteConfig } from "./vite.config.js";
+import {
+  createViteConfig,
+  EXCALIDRAW_ASSET_PATH,
+  excalidrawAssets,
+} from "./vite.config.js";
 
 describe("Vite development configuration", () => {
   it("resolves the character-reference decoder to a worker-safe implementation", async () => {
@@ -69,5 +76,54 @@ describe("Vite development configuration", () => {
       cert: readFileSync(certificatePath),
       key: readFileSync(certificatePath),
     });
+  });
+
+  it("serves Excalidraw fonts from this origin and copies them into the build", async () => {
+    const plugin = excalidrawAssets();
+    expect(createViteConfig({}).plugins?.flat()).toContainEqual(
+      expect.objectContaining({ name: plugin.name }),
+    );
+    const server = await createServer({
+      configFile: false,
+      root: mkdtempSync(join(tmpdir(), "chalktalk-vite-")),
+      logLevel: "silent",
+      plugins: [plugin],
+      server: { host: "127.0.0.1", port: 0 },
+    });
+    await server.listen();
+    try {
+      const origin = server.resolvedUrls!.local[0]!.replace(/\/$/, "");
+      const family = "Excalifont";
+      const name = readdirSync(
+        join(
+          import.meta.dirname,
+          "../../node_modules/@excalidraw/excalidraw/dist/prod/fonts",
+          family,
+        ),
+      )[0]!;
+      const font = await fetch(
+        `${origin}${EXCALIDRAW_ASSET_PATH}fonts/${family}/${name}`,
+      );
+      expect(font.status).toBe(200);
+      expect(font.headers.get("content-type")).toBe("font/woff2");
+      const escape = await fetch(
+        `${origin}${EXCALIDRAW_ASSET_PATH}fonts/..%2F..%2Fpackage.json`,
+      );
+      expect(escape.headers.get("content-type")).not.toBe("font/woff2");
+    } finally {
+      await server.close();
+    }
+
+    const output = mkdtempSync(join(tmpdir(), "chalktalk-build-"));
+    try {
+      (plugin.writeBundle as (options: { dir: string }) => void)({
+        dir: output,
+      });
+      expect(readdirSync(join(output, "excalidraw-assets", "fonts"))).toContain(
+        "Excalifont",
+      );
+    } finally {
+      rmSync(output, { recursive: true, force: true });
+    }
   });
 });
