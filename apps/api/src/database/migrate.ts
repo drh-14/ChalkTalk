@@ -1,13 +1,72 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Pool } from "pg";
+import type { Pool, PoolClient, QueryResult } from "pg";
+import * as Y from "yjs";
 import { loadEnvironment, requireDatabaseUrl } from "../config/environment.js";
 import { createPool } from "./pool.js";
 
 interface Migration {
   name: string;
   sql: string;
+}
+
+const ANSWER_DOCUMENT_BATCH_SIZE = 8;
+type AnswerProjectionRow = {
+  id: string;
+  body_markdown: string;
+  yjs_state: Buffer;
+};
+
+async function verifyAnswerProjection(client: PoolClient) {
+  // The lock keeps the preflight and DROP atomic with respect to old writers.
+  await client.query(
+    "LOCK TABLE answer_collaboration_documents IN ACCESS EXCLUSIVE MODE",
+  );
+  let cursor: string | null = null;
+  while (true) {
+    const documents: QueryResult<AnswerProjectionRow> = await client.query(
+      `SELECT a.id,a.body_markdown,d.yjs_state
+       FROM answers a JOIN answer_collaboration_documents d ON d.answer_id=a.id
+       WHERE a.deleted_at IS NULL AND ($1::uuid IS NULL OR a.id > $1::uuid)
+       ORDER BY a.id LIMIT $2`,
+      [cursor, ANSWER_DOCUMENT_BATCH_SIZE],
+    );
+    for (const row of documents.rows) {
+      // The original unseeded marker can coexist with initial Markdown text.
+      if (row.yjs_state.equals(Buffer.from([0, 0]))) continue;
+      const doc = new Y.Doc();
+      try {
+        Y.applyUpdate(doc, row.yjs_state);
+        if (doc.share.size !== 1 || !doc.share.has("content"))
+          throw new Error("unsupported document structure");
+        const text = doc.getText("content");
+        if (
+          text
+            .toDelta()
+            .some(
+              (part: { insert: unknown }) => typeof part.insert !== "string",
+            )
+        )
+          throw new Error("unsupported document structure");
+        if (text.toString() !== row.body_markdown)
+          throw new Error(`answer ${row.id} projection mismatch`);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes("projection mismatch")
+        )
+          throw error;
+        throw new Error(`answer ${row.id} Yjs state invalid`, {
+          cause: error,
+        });
+      } finally {
+        doc.destroy();
+      }
+    }
+    if (documents.rows.length < ANSWER_DOCUMENT_BATCH_SIZE) break;
+    cursor = documents.rows.at(-1)!.id;
+  }
 }
 
 export function getMigrationDirectory(): string {
@@ -59,6 +118,8 @@ export async function runMigrations(
 
       await client.query("BEGIN");
       try {
+        if (migration.name === "014_save_only_answers.sql")
+          await verifyAnswerProjection(client);
         await client.query(migration.sql);
         await client.query("INSERT INTO schema_migrations (name) VALUES ($1)", [
           migration.name,

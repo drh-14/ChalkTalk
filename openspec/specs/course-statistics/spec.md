@@ -22,7 +22,7 @@ The system SHALL record at most one view for each authenticated member, active c
 
 ### Requirement: Answer contribution activity
 
-The system SHALL record each successful answer creation and each future content-changing answer edit with the actor and timestamp. A student SHALL receive at most one contribution count per distinct answer within a selected period.
+The system SHALL record each successful answer creation and each content-changing REST or live answer edit with the actor and timestamp. A student SHALL receive at most one contribution count per distinct answer within a selected period.
 
 #### Scenario: New answer
 

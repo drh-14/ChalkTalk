@@ -457,40 +457,70 @@ On screens at or below 850px, the Show and Sort by dropdowns SHALL appear above 
 - **WHEN** a member selects Questions and Newest, then opens a post
 - **THEN** the URL reads `?filter=question&sort=newest` without new history entries, the post link keeps those parameters, and Questions stays selected
 
-### Requirement: Course resources has a placeholder page
+### Requirement: Course resources uses the shared course frame
 
-The protected `/courses/{courseId}/resources` route SHALL render inside the shared course frame and show a "Course resources" heading that explains that course files will appear there and that sharing resources is not available yet. It SHALL not request resource data and SHALL use natural page scrolling rather than the full-height discussion layout.
+The protected `/courses/{courseId}/resources` route SHALL render inside the shared course frame and use natural page scrolling rather than the full-height discussion layout. Its resource behavior is specified in the [course-files](../course-files/spec.md) and [course-resource-links](../course-resource-links/spec.md) specifications.
 
 #### Scenario: A member opens Course resources
 
 - **WHEN** a signed-in course member opens `/courses/{courseId}/resources`
-- **THEN** the shared course header shows the course name with the Course resources tab active, and the page shows the placeholder heading and explanation
+- **THEN** the shared course header shows the course name with the Course resources tab active, and the page renders the flat resources interface
 
 ### Requirement: Question detail shows the students' and instructors' answers
 
-When the detail pane shows an active question, it SHALL show a Students' answer section and an Instructors' answer section below the question, loaded from the documented answers list for that post. Notes, deleted posts, and staff duplicate review SHALL not show answer sections. Each section SHALL show loading, error with retry, and empty states. An existing answer SHALL render its Markdown safely, like post bodies, together with its creation time and its viewer-projected contributors. An anonymous answer whose contributors are hidden SHALL show "Anonymous", and an answer with no visible contributors SHALL show "Deleted user". An endorsed answer SHALL show that it is endorsed.
+When the detail pane shows an active question, it SHALL show exactly one Students' answer area in green and one Instructors' answer area in amber below the question, loaded from the documented answer list. Notes, deleted posts, and staff duplicate review SHALL not show answer areas. Each area SHALL show loading, retryable error, and empty states. A writable empty area SHALL initially show a compact click-to-start prompt rather than an expanded editor. Activating the prompt SHALL open the shared Markdown/LaTeX composer. Canceling a draft SHALL return to the prompt. Read-only empty areas SHALL state that no answer exists without a write prompt. A present answer SHALL safely render its Markdown and LaTeX immediately after creation or editing, creation or edit time, viewer-projected contributors, current endorsement, and an upvote control beneath its content. Anonymous contributors hidden by the API SHALL show "Anonymous"; no visible contributors SHALL show "Deleted user".
 
-A member whose role matches an empty section (students for the students' answer; TAs and instructors for the instructors' answer) SHALL be able to write that answer with an optional anonymity choice. The composer SHALL require a trimmed nonempty body of at most 100,000 characters, send the documented create request with CSRF and an idempotency key, prevent duplicate submission while pending, keep the draft on failure, and explain that the answer cannot be edited after posting in this phase. A `409 answer_kind_exists` response SHALL reload the answers instead of showing a second composer. TAs and instructors SHALL be able to endorse an unendorsed answer and to delete an unendorsed answer after confirming, sending the answer's current ETag. Students SHALL not see endorse or delete controls. Answer controls SHALL be unavailable when the course is archived or deleting.
+A member whose role matches an empty slot (student for student, TA or instructor for staff) SHALL be able to create its answer with optional anonymity through the shared Markdown/LaTeX composer. The composer SHALL require a trimmed nonempty body of at most 100,000 characters, send CSRF and an idempotency key, prevent duplicate submission, and retain the draft on failure. A `409 answer_kind_exists` response SHALL refresh the occupied slot while retaining the unfinished draft for comparison or copying. A present answer SHALL offer an independent local Markdown/LaTeX draft only when its server-projected `canEdit` is true. Typing SHALL have no server or peer effect until Save. A `412 version_conflict` SHALL keep the draft open, show the latest saved answer beside it, and offer explicit Continue editing, Discard my draft, and Overwrite with my draft actions. Overwrite SHALL be another conditional PATCH with the latest ETag; a further race SHALL repeat review. TAs and instructors SHALL be able to endorse an unendorsed answer and delete an unendorsed answer after confirmation, using its current ETag. A content edit SHALL update the visible rendered Markdown and may clear its current endorsement. Both student and staff answer attachments SHALL remain readable without mutation controls in view; authorized Edit and create composers SHALL expose file controls. Answer controls SHALL be unavailable in archived or deleting courses.
+
+#### Scenario: Student starts an empty answer
+
+- **WHEN** a student opens a question without a student answer and activates the student answer prompt
+- **THEN** the student composer opens with Markdown and LaTeX formatting controls and the staff area remains read-only
+
+#### Scenario: Student cancels an empty answer
+
+- **WHEN** a student cancels the empty student answer composer
+- **THEN** the compact click-to-start prompt returns and no answer is sent
+
+#### Scenario: Member switches questions with an open draft
+
+- **WHEN** a member navigates to another question while an answer draft is open
+- **THEN** the new question starts with its own answer state and does not show the previous question's draft
+
+#### Scenario: Populated answer
+
+- **WHEN** a question has a student or staff answer
+- **THEN** the matching colored area renders its answer, with its upvote control beneath the text
 
 #### Scenario: A student answers an unanswered question
 
 - **WHEN** a student opens a question with no students' answer and submits a valid answer
-- **THEN** the browser sends the documented create request and shows the created answer in the Students' answer section without a composer
+- **THEN** the browser sends the documented create request and shows the created answer in the Students' answer area without a composer
 
 #### Scenario: Another student posted first
 
 - **WHEN** a student submits an answer but the API returns `409 answer_kind_exists`
-- **THEN** the browser reloads the answers and shows the existing students' answer
+- **THEN** the browser reloads the occupied student slot and preserves the local draft
 
 #### Scenario: A TA endorses an answer
 
 - **WHEN** a TA endorses the students' answer
-- **THEN** the browser sends a conditional endorsement request and the section shows the answer as endorsed without endorse or delete controls
+- **THEN** the browser sends a conditional endorsement request and shows the current endorsement; after a content edit clears it, staff may endorse again
 
 #### Scenario: A student views a note
 
 - **WHEN** a student opens a note
-- **THEN** no answer sections or answer composers appear
+- **THEN** no answer areas or answer composers appear
+
+#### Scenario: Stale answer edit
+
+- **WHEN** an answer save receives `412 version_conflict`
+- **THEN** the editor remains open with the local draft, displays the latest saved answer for comparison, and requires an explicit Overwrite before retrying with the latest ETag
+
+#### Scenario: Member votes on an answer
+
+- **WHEN** a member toggles an answer upvote
+- **THEN** the count and viewer state beneath the answer update without changing the content version
 
 ### Requirement: Posts show when they were created
 
@@ -566,7 +596,7 @@ The title SHALL be the most prominent text on the card. The badge's label, icon,
 
 ### Requirement: Staff can pin and unpin a post from the post view
 
-When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group containing the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
+When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group immediately below the post body and before question answers. It SHALL contain the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
 
 #### Scenario: A TA pins a post
 
@@ -605,3 +635,62 @@ The course post feed SHALL restart from page one after `409 search_restart_requi
 
 - **WHEN** a member loads another page and the API rejects its semantic cursor with `search_restart_required`
 - **THEN** the feed requests page one without a cursor using the same query, sort, and filters and displays the fresh lexical/fuzzy results
+### Requirement: Question detail presents question-level followup discussions
+
+The question detail SHALL show a root followup count and a prominent zero-followup compose prompt. Members SHALL create roots and nested replies using the shared Markdown/LaTeX composer and optional anonymity. The page SHALL list roots and direct replies with cursor-based loading, render bodyless deleted parent tombstones when children remain, and show vote controls beneath active followup content. Author and staff edit/delete controls SHALL follow server-projected `canEdit`; other members SHALL not see them. Existing root and reply bodies SHALL be edited only through the version-checked REST composer. Failed REST writes and version conflicts SHALL preserve draft text and offer explicit refresh. Saved root and reply content SHALL render Markdown and LaTeX immediately after creation or editing and SHALL support separately uploaded parent-scoped attachments with centered images and document links. Existing attachments SHALL remain readable in view without mutation controls. Upload and removal controls SHALL appear only in authorized create or Edit for root followups and replies, honoring current parent edit rights and active-course status; partial upload failures SHALL preserve committed text and retryable file selections.
+
+#### Scenario: Empty followups
+
+- **WHEN** a member opens a question with no followup roots
+- **THEN** a zero count and prominent compose prompt are displayed
+
+#### Scenario: Nested followup and tombstone
+
+- **WHEN** a member opens a deleted parent with visible replies
+- **THEN** the bodyless tombstone and nested replies remain navigable
+
+#### Scenario: Followup vote and pagination
+
+- **WHEN** a member votes on a followup and loads the next root page
+- **THEN** the vote count updates beneath that followup and additional roots append without duplicate entries
+
+### Requirement: Authorized members edit posts explicitly
+The post detail SHALL provide Edit to the author or course TA/instructor only while the course is active and the visible post is not a confirmed duplicate. Anonymous display identity SHALL NOT grant ownership. Editing SHALL preserve immutable post type and use the existing title, Markdown/LaTeX, tags and anonymity authoring controls. Text changes SHALL stay local until Save. Cancel SHALL return to view without committing unsaved text. Existing Pin and Merge controls SHALL remain unchanged. A merge SHALL ask before discarding a dirty edit, retain the editor and failed-file queue if the merge fails, and prevent editing while the merge is pending. Edit buttons for posts, answers, root followups and replies SHALL use slightly increased padding and corner radius without changing their existing colors.
+
+#### Scenario: Author edits a question or note
+- **WHEN** an authorized member selects Edit, changes the draft and saves
+- **THEN** a version-checked update persists the changes and returns to rendered view
+
+#### Scenario: Read-only member views a post
+- **WHEN** a different student or a member of an archived course views the post
+- **THEN** no Edit or post file mutation controls appear, while existing images and document links remain readable
+
+#### Scenario: Cancel or save failure preserves the correct text
+- **WHEN** an editor cancels an unsaved draft or Save fails validation or network checks
+- **THEN** Cancel leaves persisted text unchanged and a failed Save retains the draft for correction or retry
+
+#### Scenario: Stale draft needs explicit review
+- **WHEN** Save receives a version conflict
+- **THEN** the draft remains intact and the editor can load the latest post for review before explicitly retrying
+
+### Requirement: Post file controls belong to authoring
+Post view SHALL show only existing images and document links without upload, selection or removal controls. Create and Edit SHALL provide the existing five-file, 100 MiB, eight-format selection and independent upload behavior. Save SHALL persist text before new file uploads. Failed files SHALL remain retryable with stable keys without resaving text or recreating posts. Successful attachment mutations SHALL refresh the parent revision without replacing locally typed text or unmounting failed-file queues. A refreshed revision MAY include concurrent remote text changes; the editor SHALL retain its local draft and MAY overwrite that remote text only on the next explicit Save using the refreshed If-Match version, without requiring Review latest post first. A further version conflict SHALL still require explicit review. Cancel SHALL not undo already persisted independent file mutations.
+
+#### Scenario: Editor retries a partial upload
+- **WHEN** text saves and one selected file succeeds while another fails
+- **THEN** saved text and successful attachments remain, and retry uploads only the failed file using its original key
+
+#### Scenario: File mutation refreshes an active draft
+- **WHEN** a file mutation refreshes the post revision and learns concurrent remote text changes while the editor has unsaved text
+- **THEN** the local draft survives without a text PATCH until Save, and the next explicit Save uses the refreshed revision to replace the remote text
+
+### Requirement: Response file controls belong to authoring
+Both shared answer slots, root followups and nested replies SHALL show existing images and document links in view without file selection, upload or removal controls. Authorized Edit SHALL expose those controls using existing permission and active-course rules, while existing create composers retain uploads. Attachment queues SHALL stay mounted across text editing and partial file failures.
+
+#### Scenario: Edit an answer or followup attachment
+- **WHEN** an authorized member views an existing answer, root followup or reply and then selects Edit
+- **THEN** file mutation controls are absent in view and available in Edit, with existing attachments readable throughout
+
+#### Scenario: Read-only response attachment
+- **WHEN** an unauthorized member or a member of an archived course views an answer, followup or reply
+- **THEN** existing attachments remain readable without Edit or file mutation controls

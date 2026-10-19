@@ -10,6 +10,7 @@ type Job = {
   kind:
     | "delete_course"
     | "delete_course_file"
+    | "delete_content_attachment"
     | "send_question_duplicate_email"
     | "index_post";
   payload: {
@@ -69,7 +70,7 @@ export class JobWorker {
         max_attempts: number;
       }>(
         `SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs
-         WHERE (kind IN ('delete_course','delete_course_file','send_question_duplicate_email')
+         WHERE (kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email')
            OR (kind='index_post' AND payload->>'generation'=$1))
            AND ((status='queued' AND available_at <= now())
              OR (status='running' AND (locked_until IS NULL OR locked_until < now())))
@@ -155,6 +156,19 @@ export class JobWorker {
       await client.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
         courseId,
       ]);
+      const attachments = await client.query<{ object_key: string }>(
+        "SELECT object_key FROM content_attachments WHERE course_id=$1 FOR UPDATE",
+        [courseId],
+      );
+      if (attachments.rows.length && !this.objectStore)
+        throw new Error("Object storage is required to delete attachments");
+      for (const attachment of attachments.rows)
+        await this.objectStore!.client.send(
+          new DeleteObjectCommand({
+            Bucket: this.objectStore!.bucket,
+            Key: attachment.object_key,
+          }),
+        );
       const answers = "SELECT id FROM answers WHERE course_id=$1";
       await client.query(
         "DELETE FROM question_creation_daily_counts WHERE course_id=$1",
@@ -176,10 +190,6 @@ export class JobWorker {
       ]);
       await client.query(
         `DELETE FROM answer_contributors WHERE answer_id IN (${answers})`,
-        [courseId],
-      );
-      await client.query(
-        `DELETE FROM answer_collaboration_documents WHERE answer_id IN (${answers})`,
         [courseId],
       );
       await client.query("DELETE FROM answers WHERE course_id=$1", [courseId]);
@@ -238,7 +248,10 @@ export class JobWorker {
         if (!job.payload.courseId)
           throw new Error("Course deletion job payload is invalid");
         await this.deleteCourse(job.payload.courseId);
-      } else if (job.kind === "delete_course_file") {
+      } else if (
+        job.kind === "delete_course_file" ||
+        job.kind === "delete_content_attachment"
+      ) {
         if (!this.objectStore || !job.payload.objectKey)
           throw new Error(
             "Object storage and key are required to delete a course file",

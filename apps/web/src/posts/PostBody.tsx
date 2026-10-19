@@ -8,22 +8,28 @@ import { mathOptions } from "./mathOptions.js";
 export function PostBody({
   bodyMarkdown,
   inertLinks = false,
+  disableImages = false,
 }: {
   bodyMarkdown: string;
   inertLinks?: boolean;
+  disableImages?: boolean;
 }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkMath]}
       rehypePlugins={[rehypeSanitize, [rehypeKatex, mathOptions]]}
-      components={
-        inertLinks
+      components={{
+        ...(inertLinks
           ? {
-              a: ({ children }) => <span>{children}</span>,
-              img: ({ alt }) => <span>{alt}</span>,
+              a: ({ children }: { children?: React.ReactNode }) => (
+                <span>{children}</span>
+              ),
             }
-          : undefined
-      }
+          : {}),
+        ...(inertLinks || disableImages
+          ? { img: ({ alt }: { alt?: string }) => <span>{alt}</span> }
+          : {}),
+      }}
     >
       {bodyMarkdown}
     </ReactMarkdown>

@@ -14,12 +14,14 @@ info:
     include `Vary: Origin` and `Access-Control-Allow-Credentials: true`, and never
     use a wildcard origin. Every unsafe request validates `Origin`; authenticated
     unsafe requests also validate the session-bound `X-CSRF-Token`. Expiring or
-    revoking a session invalidates its CSRF token and unused WebSocket tickets.
+    revoking a session invalidates its CSRF token.
     Implementation status: JSON question and note posts, shared student and staff
     answers, question-owned threaded followups, and answer/followup upvotes are live.
-    Answer editing uses versioned REST backed by durable Yjs state. Polls, multipart
-    content, attachments, download refresh, collaboration tickets, and Hocuspocus
-    remain unavailable.
+    Answer bodies support explicit save-only versioned REST editing; followups and
+    replies also use REST only. Saved questions, notes, answers, and followups
+    support separate parent-scoped file attachments; create/update text requests
+    remain JSON-only. Polls, multipart post create/update, download refresh, and
+    temporary collaboration sessions remain unavailable.
   license:
     name: MIT
     identifier: MIT
@@ -51,6 +53,252 @@ tags:
   - name: Collaboration Sessions
     description: Collaboration Sessions operations.
 paths:
+  "/courses/{courseId}/files":
+    get:
+      tags: [Resources]
+      summary: List actual course files
+      operationId: listCourseFiles
+      description: Current members of active or archived courses only. Lists live course_files, latest creation timestamp first with ID descending as tie-breaker, retaining database timestamp precision in opaque course-bound cursors. Not a snapshot across concurrent changes. Deleted and other-course files are excluded. Only cursor and limit query fields are accepted; unknown, repeated or invalid values return invalid_request.
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Cursor"
+        - "$ref": "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated live file metadata.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                additionalProperties: false
+                properties:
+                  data:
+                    type: array
+                    items: { "$ref": "#/components/schemas/CourseFile" }
+                  page: { "$ref": "#/components/schemas/Page" }
+        "400":
+          description: Invalid pagination query or cursor (invalid_request).
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "403":
+          description: Invalid read Origin.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: Missing, deleting or inaccessible course (not_found).
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "503":
+          description: File service unavailable.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+    post:
+      tags: [Resources]
+      summary: Upload an immutable original course file
+      operationId: createCourseFile
+      description: Existing file upload. Current instructors in active courses only; not TA or student. Exactly one structurally validated file up to 100 MiB; PDF, text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Safe original filename up to 255 characters. Idempotency binds uploader, course, filename, declared type and SHA-256 for 24 hours; exact retries replay 201 while visible, including after archival. Changed input or deleted-file replay returns 409 idempotency_key_reused. No resource catalog metadata.
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              additionalProperties: false
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Persisted original file, or exact idempotent replay.
+          headers:
+            Location:
+              description: Course-scoped authenticated download path.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseFile" }
+        "400":
+          description: Malformed multipart request.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "403":
+          description: Instructor role, valid Origin or CSRF required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: Course archived or idempotency key reused.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "413":
+          description: File exceeds 100 MiB.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "415":
+          description: Unsupported multipart media type or invalid file format or structure.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "422":
+          description: File parts, name or idempotency key is invalid.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "503":
+          description: Storage unavailable.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/courses/{courseId}/files/{fileId}/download":
+    get:
+      tags: [Resources]
+      summary: Download original course file bytes
+      operationId: downloadCourseFile
+      description: Existing authenticated byte stream for current members of the matching active or archived course. No public or presigned URL. Missing, wrong-course, deleted and inaccessible files return not_found.
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Exact original bytes with verified media type and length.
+          headers:
+            Content-Length:
+              schema: { type: integer }
+            Content-Disposition:
+              description: Attachment with safe filename.
+              schema: { type: string }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "403":
+          description: Invalid read Origin.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: File not found.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "503":
+          description: Storage unavailable.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+  "/courses/{courseId}/files/{fileId}":
+    delete:
+      tags: [Resources]
+      summary: Logically delete an original course file
+      operationId: deleteCourseFile
+      description: Existing API-only operation. Original uploader who remains a current instructor in an active course only. Atomically hides the file and queues durable storage cleanup before responding. No Resources deletion UI.
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "204":
+          description: File hidden and cleanup durably queued.
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "403":
+          description: Only original uploader and current instructor, valid Origin and CSRF.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: Live file not found.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: Course archived.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "503":
+          description: File service unavailable.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
   "/metrics":
     get:
       tags: [Observability]
@@ -570,7 +818,7 @@ paths:
       tags:
         - Authentication
       summary: Sign out
-      description: Sign out. Revokes the current session, its CSRF token, and its unused WebSocket connection tickets, then expires the browser cookie.
+      description: Sign out. Revokes the current session and its CSRF token, then expires the browser cookie.
       operationId: deleteCurrentSession
       security:
         - session_cookie: []
@@ -908,7 +1156,7 @@ paths:
       tags:
         - Authentication
       summary: Delete account
-      description: Delete account after validating currentPassword against the authenticated user’s stored password hash. Retained contributions are pseudonymized; all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked; and the current __Host-chalktalk_session cookie is expired. If deletion would remove the final instructor from a course, the server returns 409 Conflict and leaves the account and current session intact.
+      description: Delete account after validating currentPassword against the authenticated user’s stored password hash. Retained contributions are pseudonymized; all sessions and their CSRF tokens are revoked; and the current __Host-chalktalk_session cookie is expired. If deletion would remove the final instructor from a course, the server returns 409 Conflict and leaves the account and current session intact.
       operationId: deleteCurrentUser
       security:
         - session_cookie: []
@@ -941,7 +1189,7 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
         "204":
-          description: Retained contributions are pseudonymized; all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked; and the current browser session cookie is expired.
+          description: Retained contributions are pseudonymized; all sessions and their CSRF tokens are revoked; and the current browser session cookie is expired.
           headers:
             Set-Cookie:
               "$ref": "#/components/headers/ClearSessionCookie"
@@ -1022,7 +1270,7 @@ paths:
       tags:
         - Authentication
       summary: Change password
-      description: Change password. Success revokes the user’s other sessions together with their CSRF tokens and unused WebSocket connection tickets; the current session remains valid.
+      description: Change password. Success revokes the user’s other sessions together with their CSRF tokens; the current session remains valid.
       operationId: changeCurrentUserPassword
       security:
         - session_cookie: []
@@ -1043,7 +1291,7 @@ paths:
                       requestId: req_changeCurrentUserPassword
                       details: []
         "204":
-          description: Success revokes the user’s other sessions together with their CSRF tokens and unused WebSocket connection tickets; the current session remains valid.
+          description: Success revokes the user’s other sessions together with their CSRF tokens; the current session remains valid.
         "401":
           description: Unauthorized
           content:
@@ -1233,7 +1481,7 @@ paths:
       tags:
         - Authentication
       summary: Reset password using token
-      description: Reset password using token. Success consumes the token and revokes every existing session for the account together with its CSRF token and unused WebSocket connection tickets.
+      description: Reset password using token. Success consumes the token and revokes every existing session for the account together with its CSRF token.
       operationId: resetPassword
       security: []
       responses:
@@ -1253,7 +1501,7 @@ paths:
                       requestId: req_resetPassword
                       details: []
         "204":
-          description: Success consumes the token and revokes every existing session for the account together with its CSRF token and unused WebSocket connection tickets.
+          description: Success consumes the token and revokes every existing session for the account together with its CSRF token.
         "409":
           description: Conflict
           content:
@@ -3003,7 +3251,7 @@ paths:
       tags:
         - Posts
       summary: Create post in course
-      description: Create post in course. Currently JSON question/note only; poll and multipart definitions are future targets.
+      description: Create post in course. Currently JSON question/note only; poll and multipart post-create definitions are future targets. Upload files separately to a saved parent.
       x-implementation-status: text-posts-live
       operationId: createPost
       security:
@@ -3104,11 +3352,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 payload_too_large:
-                  summary: An attachment exceeds 25 MiB or the five-file limit.
+                  summary: A future post-multipart attachment exceeds its limit.
                   value:
                     error:
                       code: payload_too_large
-                      message: An attachment exceeds 25 MiB or the five-file limit.
+                      message: A future post-multipart attachment exceeds its limit.
                       requestId: req_createPost
                       details: []
         "415":
@@ -3220,7 +3468,7 @@ paths:
               additionalProperties: false
               required:
                 - metadata
-              description: Send metadata as application/json and repeat the attachments part up to five times. Each file may be at most 25 MiB and must be PDF, plain text, Markdown, PNG, JPEG, or WebP.
+              description: Send metadata as application/json and repeat the attachments part up to five times. This future-only post multipart operation is not implemented; use the parent-scoped upload routes below.
             encoding:
               metadata:
                 contentType: application/json
@@ -3655,7 +3903,7 @@ paths:
       tags:
         - Posts
       summary: Update post
-      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm or unmerge duplicates and change pinned. Confirmation retains the source content but returns only a canonical reference. Successful confirmation of a question duplicate transactionally queues an email to its author with the question title, the active confirming staff member's name and role, and a canonical-post link. If that staff account is deleted before delivery, the email uses an unnamed role label instead; the job does not retain the staff display name. Delivery is asynchronous and SMTP failure does not undo the merge. Suggestions, note confirmations, failed updates, and unmerges do not queue this email. A confirmed source cannot be edited until unmerged; a canonical with confirmed inbound references cannot be merged. Multipart and attachment changes are future-only. A tombstone returns 404 not_found.
+      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm or unmerge duplicates and change pinned. Confirmation retains the source content but returns only a canonical reference. Successful confirmation of a question duplicate transactionally queues an email to its author with the question title, the active confirming staff member's name and role, and a canonical-post link. If that staff account is deleted before delivery, the email uses an unnamed role label instead; the job does not retain the staff display name. Delivery is asynchronous and SMTP failure does not undo the merge. Suggestions, note confirmations, failed updates, and unmerges do not queue this email. A confirmed source cannot be edited until unmerged; a canonical with confirmed inbound references cannot be merged. Multipart post updates are future-only; use parent-scoped attachment routes for files. A tombstone returns 404 not_found.
       x-implementation-status: text-posts-live
       operationId: updatePost
       security:
@@ -4593,7 +4841,7 @@ paths:
   "/answers/{answerId}/endorsement":
     put:
       tags: [Answers]
-      summary: Endorse answer and close document
+      summary: Endorse answer
       operationId: endorseAnswer
       security:
         - session_cookie: []
@@ -5983,344 +6231,121 @@ paths:
         - "$ref": "#/components/parameters/PostId"
         - "$ref": "#/components/parameters/CsrfToken"
   "/courses/{courseId}/resources":
-    post:
-      tags:
-        - Resources
-      summary: Create resource in course
-      description: Create resource in course. Use application/json for a link resource or multipart/form-data for an upload resource. kind is immutable; convert kinds by deleting and creating a resource.
-      operationId: createResource
+    get:
+      tags: [Resources]
+      operationId: listCourseResources
+      summary: List flat original files and named external links
+      description: Current members of active or archived courses only. UNION ALL of actual live course_files and course_resource_links, ordered by exact creation timestamp DESC, ID DESC and kind DESC (upload before link on equal timestamp and ID). No wrapper rows or hidden creator metadata. Strict single limit/cursor fields only; cursors preserve PostgreSQL microseconds and bind endpoint and course. Pagination is not a snapshot across concurrent changes. Missing, deleting and inaccessible courses are hidden.
       security:
         - session_cookie: []
-      responses:
-        "201":
-          description: Use application/json for a link resource or multipart/form-data for an upload resource. kind is immutable; convert kinds by deleting and creating a resource.
-          headers:
-            Location:
-              "$ref": "#/components/headers/Location"
-            ETag:
-              "$ref": "#/components/headers/ETag"
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ResourceResponse"
-              example:
-                {
-                  "data":
-                    {
-                      "id": "resource_123",
-                      "courseId": "course_123",
-                      "kind": "link",
-                      "title": "Reference",
-                      "description": "External reading",
-                      "status": "ready",
-                      "mediaType": null,
-                      "url": "https://example.edu/reading",
-                      "downloadUrl": null,
-                      "expiresAt": null,
-                      "sizeBytes": null,
-                      "createdAt": "2026-09-20T12:00:00Z",
-                      "updatedAt": "2026-09-20T12:00:00Z",
-                      "version": 1,
-                    },
-                }
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_createResource
-                      details: []
-                permission_denied:
-                  summary: An instructor role is required.
-                  value:
-                    error:
-                      code: permission_denied
-                      message: An instructor role is required.
-                      requestId: req_createResource
-                      details: []
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                course_archived:
-                  summary: The course is archived.
-                  value:
-                    error:
-                      code: course_archived
-                      message: The course is archived.
-                      requestId: req_createResource
-                      details: []
-                idempotency_key_reused:
-                  summary: The idempotency key was already used with a different request body.
-                  value:
-                    error:
-                      code: idempotency_key_reused
-                      message: The idempotency key was already used with a different request body.
-                      requestId: req_createResource
-                      details: []
-        "413":
-          description: Content Too Large
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                payload_too_large:
-                  summary: The uploaded file exceeds 100 MiB.
-                  value:
-                    error:
-                      code: payload_too_large
-                      message: The uploaded file exceeds 100 MiB.
-                      requestId: req_createResource
-                      details: []
-        "415":
-          description: Unsupported Media Type
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                unsupported_media_type:
-                  summary: The upload media type is unsupported.
-                  value:
-                    error:
-                      code: unsupported_media_type
-                      message: The upload media type is unsupported.
-                      requestId: req_createResource
-                      details: []
-        "422":
-          description: Unprocessable Content
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                validation_failed:
-                  summary: Resource metadata is invalid.
-                  value:
-                    error:
-                      code: validation_failed
-                      message: Resource metadata is invalid.
-                      requestId: req_createResource
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_createResource
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_createResource
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_createResource
-                      details: []
       parameters:
-        - "$ref": "#/components/parameters/Origin"
         - "$ref": "#/components/parameters/CourseId"
-        - "$ref": "#/components/parameters/IdempotencyKey"
+        - "$ref": "#/components/parameters/Cursor"
+        - "$ref": "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Flat mixed resource page.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data:
+                    type: array
+                    items: { "$ref": "#/components/schemas/CourseResource" }
+                  page: { "$ref": "#/components/schemas/Page" }
+        "400":
+          description: Invalid query or cursor (invalid_request).
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: Invalid Origin.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: Course not found.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: Resource service unavailable.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+    post:
+      tags: [Resources]
+      operationId: createResource
+      summary: Create a named external link
+      description: Current instructors in active courses only. JSON link creation, never a file upload or catalog wrapper. Title is trimmed and nonblank up to 200 Unicode code points; URL must be absolute HTTP(S) with hostname up to 2048 Unicode code points, without credentials, raw Unicode whitespace (including surrounding whitespace), C0/C1 controls or backslashes before parsing. Percent-encoded bytes and ordinary non-ASCII path characters are allowed. No target fetch. Optional Idempotency-Key binds creator/course/trimmed title and accepted URL for 24 hours transactionally; exact current-instructor retries replay 201 while visible including after archive, changed input returns idempotency_key_reused. No new archived or deleting writes.
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
         - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              "$ref": "#/components/schemas/CreateLinkResourceRequest"
-            example:
-              kind: link
-              title: Reference
-              description: External reading
-              url: https://example.edu/reading
-          multipart/form-data:
-            schema:
               type: object
-              properties:
-                metadata:
-                  "$ref": "#/components/schemas/CreateUploadResourceMetadata"
-                file:
-                  type: string
-                  format: binary
-                  description: Resource file.
               additionalProperties: false
-              required:
-                - metadata
-                - file
-              description: Upload exactly one file, at most 100 MiB, as PDF, plain text, Markdown, PNG, JPEG, or WebP. metadata is application/json.
-            encoding:
-              metadata:
-                contentType: application/json
-    get:
-      tags:
-        - Resources
-      summary: List resources in course
-      description: List resources in course.
-      operationId: listCourseResources
-      security:
-        - session_cookie: []
+              required: [kind, title, url]
+              properties:
+                kind: { type: string, const: link }
+                title: { type: string, minLength: 1, maxLength: 200 }
+                url: { type: string, format: uri, maxLength: 2048, pattern: '^[Hh][Tt][Tt][Pp][Ss]?://' }
       responses:
-        "200":
-          description: List resources in course completed successfully.
+        "201":
+          description: Persisted named link or exact authorized replay.
+          headers:
+            Location:
+              description: Unified collection path.
+              schema: { type: string }
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/ResourceListResponse"
-              example:
-                data:
-                  - id: resource_123
-                    courseId: course_123
-                    kind: upload
-                    title: Lecture 1
-                    description: Introduction slides
-                    status: ready
-                    mediaType: application/pdf
-                    createdAt: "2026-09-20T12:00:00Z"
-                    updatedAt: "2026-09-20T14:00:00Z"
-                    version: 2
-                page:
-                  nextCursor:
-                  hasMore: false
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                invalid_request:
-                  summary: Filters or pagination are invalid.
-                  value:
-                    error:
-                      code: invalid_request
-                      message: Filters or pagination are invalid.
-                      requestId: req_listCourseResources
-                      details: []
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The course is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The course is absent or hidden.
-                      requestId: req_listCourseResources
-                      details: []
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseResourceLink" }
         "401":
-          description: Unauthorized
+          description: Authentication required.
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_listCourseResources
-                      details: []
-        "500":
-          description: Internal Server Error
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: Instructor role, Origin or CSRF required.
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_listCourseResources
-                      details: []
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: Course archived/deleting or idempotency key reused.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: JSON required, invalid link body or idempotency key.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
         "503":
-          description: Service Unavailable
+          description: Resource service unavailable.
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_listCourseResources
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/CourseId"
-        - name: kind
-          in: query
-          required: false
-          description: Filter by storage kind.
-          schema:
-            type: string
-            enum:
-              - upload
-              - link
-        - name: status
-          in: query
-          required: false
-          description: Filter by ingestion state.
-          schema:
-            type: string
-            enum:
-              - processing
-              - ready
-              - failed
-        - "$ref": "#/components/parameters/Cursor"
-        - "$ref": "#/components/parameters/Limit"
+              schema: { "$ref": "#/components/schemas/Error" }
   "/resources/{resourceId}":
     get:
       tags:
@@ -10425,6 +10450,99 @@ paths:
                       details: []
       parameters:
         - "$ref": "#/components/parameters/CollaborationSessionId"
+  /posts/{postId}/attachments:
+    post:
+      tags: [Posts]
+      summary: Upload one file to a saved question or note
+      description: Requires current parent edit permission and an active course. Matching-byte Idempotency-Key retries return the original 201 for 24 hours, including after archive while the caller remains authorized. Conflicting reuse returns 409. At most five live files per parent; each validated file is at most 100 MiB. Text is saved separately through JSON REST requests.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - { name: postId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false }
+      responses:
+        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "403": { description: Parent edit permission denied. }
+        "404": { description: Parent not found or not visible. }
+        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
+        "413": { description: File exceeds 100 MiB or parent already has five live files. }
+        "415": { description: Multipart required or file format or structure unsupported. }
+        "422": { description: Invalid key, filename, or multipart parts. }
+        "503": { description: Attachment storage unavailable. }
+  /answers/{answerId}/attachments:
+    post:
+      tags: [Answers]
+      summary: Upload one file to a saved answer
+      description: Same upload contract as POST /posts/{postId}/attachments. Current edit permissions enforce the answer creator-role floor; attachment changes increment the answer version and contributor history, clear current endorsement, and preserve Markdown and historical endorsement events.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - { name: answerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false } } } }
+      responses:
+        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "403": { description: Parent edit permission denied. }
+        "404": { description: Parent not found or not visible. }
+        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
+        "413": { description: File exceeds 100 MiB or parent already has five live files. }
+        "415": { description: Multipart required or file format or structure unsupported. }
+        "422": { description: Invalid key, filename, or multipart parts. }
+        "503": { description: Attachment storage unavailable. }
+  /followups/{followupId}/attachments:
+    post:
+      tags: [Answers]
+      summary: Upload one file to a saved question followup or reply
+      description: Same upload contract as POST /posts/{postId}/attachments. Only the original author or current staff may edit the parent. Attachment changes increment its version while preserving Markdown.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - { name: followupId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false } } } }
+      responses:
+        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "403": { description: Parent edit permission denied. }
+        "404": { description: Parent not found or not visible. }
+        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
+        "413": { description: File exceeds 100 MiB or parent already has five live files. }
+        "415": { description: Multipart required or file format or structure unsupported. }
+        "422": { description: Invalid key, filename, or multipart parts. }
+        "503": { description: Attachment storage unavailable. }
+  /attachments/{attachmentId}/download:
+    get:
+      tags: [Posts]
+      summary: Stream an attached file
+      description: Requires current course membership and a visible, live parent. Archived courses remain download-only. Confirmed duplicate sources and deleted parents hide their files without moving bytes.
+      security: [{ session_cookie: [] }]
+      parameters: [{ name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Validated file stream; images are inline and documents are downloads., headers: { Content-Disposition: { schema: { type: string } }, Content-Length: { schema: { type: integer } }, X-Content-Type-Options: { schema: { type: string, enum: [nosniff] } }, Cache-Control: { schema: { type: string, enum: ["private, no-store"] } } }, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        "404": { description: File or visible parent not found, or caller is not a course member. }
+        "503": { description: Attachment storage unavailable. }
+  /attachments/{attachmentId}:
+    delete:
+      tags: [Posts]
+      summary: Remove a file from its parent
+      description: Requires current parent edit permission and an active course. Immediately hides the file, increments the parent version, and queues durable physical deletion for the separate worker. Answer removals also update contributor history and clear current endorsement while preserving Markdown and historical events.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed. }
+        "403": { description: Parent edit permission denied. }
+        "404": { description: File or visible parent not found. }
+        "409": { description: Course archived. }
 components:
   securitySchemes:
     metrics_bearer:
@@ -10642,6 +10760,54 @@ components:
         minLength: 1
       example: "3600"
   schemas:
+    CourseResourceLink:
+      type: object
+      additionalProperties: false
+      required: [kind, id, courseId, title, url, createdAt]
+      properties:
+        kind: { type: string, const: link }
+        id: { type: string, format: uuid }
+        courseId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        url: { type: string, format: uri, maxLength: 2048 }
+        createdAt: { type: string, format: date-time }
+    CourseResource:
+      oneOf:
+        - "$ref": "#/components/schemas/CourseResourceLink"
+        - type: object
+          additionalProperties: false
+          required: [kind, id, courseId, fileName, mediaType, sizeBytes, createdAt]
+          properties:
+            kind: { type: string, const: upload }
+            id: { type: string, format: uuid }
+            courseId: { type: string, format: uuid }
+            fileName: { type: string }
+            mediaType: { type: string }
+            sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
+            createdAt: { type: string, format: date-time }
+    CourseFile:
+      type: object
+      additionalProperties: false
+      required: [id, courseId, fileName, mediaType, sizeBytes, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        courseId: { type: string, format: uuid }
+        fileName: { type: string, minLength: 1, maxLength: 255 }
+        mediaType:
+          type: string
+          enum:
+            [
+              application/pdf,
+              text/plain,
+              text/markdown,
+              image/png,
+              image/jpeg,
+              image/webp,
+              application/vnd.openxmlformats-officedocument.wordprocessingml.document,
+              application/vnd.openxmlformats-officedocument.presentationml.presentation,
+            ]
+        sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
+        createdAt: { type: string, format: date-time }
     ErrorDetail:
       type: object
       properties:
@@ -11115,63 +11281,18 @@ components:
         - version
     Attachment:
       type: object
+      description: A live file attached to a saved question, note, answer, or followup.
       properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        filename:
-          type: string
-          description: Original file name.
-          minLength: 1
-          maxLength: 255
+        id: { type: string, format: uuid }
+        fileName: { type: string, minLength: 1, maxLength: 255 }
         mediaType:
           type: string
-          description: Validated media type.
-          enum:
-            - application/pdf
-            - text/plain
-            - text/markdown
-            - image/png
-            - image/jpeg
-            - image/webp
-        sizeBytes:
-          type: integer
-          description: Uploaded file size in bytes.
-          minimum: 1
-          maximum: 26214400
-        status:
-          type: string
-          description: Attachment processing state.
-          enum:
-            - processing
-            - ready
-            - rejected
-            - failed
-        downloadUrl:
-          type:
-            - string
-            - "null"
-          description: Short-lived download URL when status is ready; otherwise null.
-          format: uri
-        expiresAt:
-          type:
-            - string
-            - "null"
-          description: Download URL expiry when downloadUrl is present; otherwise null.
-          format: date-time
+          enum: [application/pdf, text/plain, text/markdown, image/png, image/jpeg, image/webp, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.presentationml.presentation]
+        sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
+        createdAt: { type: string, format: date-time }
+        downloadUrl: { type: string, description: Authenticated same-origin download path, not a presigned URL. }
       additionalProperties: false
-      required:
-        - id
-        - filename
-        - mediaType
-        - sizeBytes
-        - status
-        - downloadUrl
-        - expiresAt
+      required: [id, fileName, mediaType, sizeBytes, createdAt, downloadUrl]
     PollOptionInput:
       type: object
       properties:
@@ -11762,7 +11883,7 @@ components:
           type: [array, "null"]
           items: { $ref: "#/components/schemas/Contributor" }
         anonymous: { type: boolean }
-        attachments: { type: array, maxItems: 0, items: {} }
+        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
         endorsedAt: { type: [string, "null"], format: date-time }
         endorsedBy: { type: [string, "null"] }
         createdAt: { type: string, format: date-time }
@@ -11813,6 +11934,7 @@ components:
         upvoteCount: { type: integer, minimum: 0 }
         viewerUpvoted: { type: boolean }
         replyCount: { type: integer, minimum: 0 }
+        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
       required:
         [
           id,
@@ -11829,6 +11951,7 @@ components:
           upvoteCount,
           viewerUpvoted,
           replyCount,
+          attachments,
         ]
     FollowupRead:
       $ref: "#/components/schemas/Followup"
@@ -12925,7 +13048,7 @@ components:
           format: uri
         documentId:
           type: string
-          description: Document identifier derived by the server from the collaboration session or answer.
+          description: Document identifier derived by the server from the collaboration session.
           minLength: 1
           maxLength: 255
         expiresAt:

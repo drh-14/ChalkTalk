@@ -1638,6 +1638,192 @@ it("lets staff find a canonical post and confirm a merge from post detail", asyn
   ).toEqual(["Earlier duplicate", "Old cutoff question"]);
 });
 
+it("guards merge before discarding an unsaved edit or sending its mutation", async () => {
+  const source = { ...post("source-1", "Source post"), version: 1 };
+  const target = { ...post("target-1", "Canonical post"), version: 1 };
+  const writes: RequestInit[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url.endsWith("/posts/source-1") && init?.method === "PATCH") {
+        writes.push(init);
+        if (writes.length === 1)
+          return json(
+            { error: { code: "service_unavailable", message: "Merge failed" } },
+            503,
+          );
+        return json({ data: { ...source, duplicateStatus: "confirmed" } });
+      }
+      if (url.endsWith("/posts/source-1")) return json({ data: source });
+      if (url.includes("q=canonical")) return page([target]);
+      return page([source, target]);
+    }),
+  );
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const onNavigate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="source-1"
+      onNavigate={onNavigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " draft",
+  );
+  await user.upload(
+    screen.getByLabelText("Add files"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Merge as duplicate" }));
+  await user.type(
+    screen.getByRole("searchbox", { name: "Find canonical post" }),
+    "canonical",
+  );
+  await user.click(await screen.findByRole("link", { name: "Canonical post" }));
+  await user.click(screen.getByRole("button", { name: "Confirm merge" }));
+  expect(confirm).toHaveBeenCalledWith("Discard your unsaved post edits?");
+  expect(writes).toHaveLength(0);
+  expect(onNavigate).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Source post draft",
+  );
+  expect(screen.getByText("notes.txt")).toBeTruthy();
+  confirm.mockReturnValue(true);
+  await user.click(screen.getByRole("button", { name: "Confirm merge" }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(await screen.findByText("Merge failed")).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Source post draft",
+  );
+  expect(screen.getByText("notes.txt")).toBeTruthy();
+  expect(onNavigate).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Confirm merge" }));
+  await waitFor(() => expect(writes).toHaveLength(2));
+  expect(onNavigate).toHaveBeenCalledWith("/courses/course-1/posts/target-1");
+});
+
+it("blocks opening Edit while a merge request is pending", async () => {
+  const source = { ...post("source-1", "Source post"), version: 1 };
+  const target = { ...post("target-1", "Canonical post"), version: 1 };
+  let finishMerge!: (response: Response) => void;
+  const mergeResponse = new Promise<Response>((resolve) => {
+    finishMerge = resolve;
+  });
+  const onNavigate = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url.endsWith("/posts/source-1") && init?.method === "PATCH")
+        return mergeResponse;
+      if (url.endsWith("/posts/source-1")) return json({ data: source });
+      if (url.includes("q=canonical")) return page([target]);
+      return page([source, target]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="source-1"
+      onNavigate={onNavigate}
+    />,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "Merge as duplicate" }),
+  );
+  await user.type(
+    screen.getByRole("searchbox", { name: "Find canonical post" }),
+    "canonical",
+  );
+  await user.click(await screen.findByRole("link", { name: "Canonical post" }));
+  await user.click(screen.getByRole("button", { name: "Confirm merge" }));
+  expect(screen.getByRole("button", { name: "Edit post" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  await user.click(screen.getByRole("button", { name: "Edit post" }));
+  expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
+  await act(async () =>
+    finishMerge(json({ data: { ...source, duplicateStatus: "confirmed" } })),
+  );
+  expect(onNavigate).toHaveBeenCalledWith("/courses/course-1/posts/target-1");
+});
+
+it("does not start a merge while an edit Save is pending", async () => {
+  const source = { ...post("source-1", "Source post"), version: 1 };
+  const target = { ...post("target-1", "Canonical post"), version: 1 };
+  let finishSave!: (response: Response) => void;
+  const saveResponse = new Promise<Response>((resolve) => {
+    finishSave = resolve;
+  });
+  const writes: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url.endsWith("/posts/source-1") && init?.method === "PATCH") {
+        const input = JSON.parse(init.body as string);
+        if (input.duplicateStatus) {
+          writes.push(input);
+          return json({ data: source });
+        }
+        return saveResponse;
+      }
+      if (url.endsWith("/posts/source-1")) return json({ data: source });
+      if (url.includes("q=canonical")) return page([target]);
+      return page([source, target]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="source-1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  await user.click(screen.getByRole("button", { name: "Merge as duplicate" }));
+  await user.type(
+    screen.getByRole("searchbox", { name: "Find canonical post" }),
+    "canonical",
+  );
+  await user.click(await screen.findByRole("link", { name: "Canonical post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " draft",
+  );
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  await user.click(screen.getByRole("button", { name: "Confirm merge" }));
+  expect(writes).toHaveLength(0);
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Source post draft",
+  );
+  await act(async () =>
+    finishSave(
+      json({ data: { ...source, title: "Source post draft", version: 2 } }),
+    ),
+  );
+});
+
 it("keeps search syntax accessible without showing explanatory copy", async () => {
   vi.stubGlobal(
     "fetch",
@@ -2949,7 +3135,7 @@ it("makes the post detail a focusable region beside the post listings and marks 
   expect(current[0]!.textContent).toContain("Second");
 });
 
-it("shows question content without answer sections or fetching answers", async () => {
+it("shows shared answer areas for questions and hides them for notes and tombstones", async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
     if (url.endsWith("/members/user-student"))
@@ -2967,6 +3153,8 @@ it("shows question content without answer sections or fetching answers", async (
         },
       });
     if (url.endsWith("/answers")) return json({ data: [] });
+    if (url.endsWith("/followups"))
+      return json({ data: [], meta: { total: 0, nextCursor: null } });
     return page([]);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -2988,14 +3176,14 @@ it("shows question content without answer sections or fetching answers", async (
     ),
   ).toBeTruthy();
   expect(
-    within(detail).queryByRole("region", { name: "Students' answer" }),
-  ).toBeNull();
+    await within(detail).findByRole("region", { name: "Students' answer" }),
+  ).toBeTruthy();
   expect(
-    within(detail).queryByRole("region", { name: "Instructors' answer" }),
-  ).toBeNull();
+    within(detail).getByRole("region", { name: "Instructors' answer" }),
+  ).toBeTruthy();
   expect(
     fetchMock.mock.calls.some(([url]) => String(url).endsWith("/answers")),
-  ).toBe(false);
+  ).toBe(true);
   for (const [postId, ready] of [
     ["n1", () => screen.findByRole("heading", { name: "Notice" })],
     ["d1", () => screen.findByText("This post was deleted.")],
@@ -3815,6 +4003,22 @@ function pinFixture(options: {
   return calls;
 }
 
+it("places staff actions after the post body and before answers", async () => {
+  pinFixture({});
+  const title = await screen.findByRole("heading", { name: "Pin me" });
+  const article = title.closest("article")!;
+  const body = article.querySelector(":scope > .post-markdown");
+  const actions = body?.nextElementSibling as HTMLElement | null;
+  expect(actions?.getAttribute("aria-label")).toBe("Staff actions");
+  expect(
+    actions?.nextElementSibling?.classList.contains("question-responses"),
+  ).toBe(true);
+  expect(within(actions!).getByRole("button", { name: "Pin" })).toBeTruthy();
+  expect(
+    within(actions!).getByRole("button", { name: "Merge as duplicate" }),
+  ).toBeTruthy();
+});
+
 it("lets staff pin and unpin a post with conditional requests and updates its row", async () => {
   const calls = pinFixture({});
   const user = userEvent.setup();
@@ -4430,4 +4634,657 @@ it("renders Markdown previews without dropping ordinary punctuation", async () =
   ).toBe(
     "Setup Is sqrt(x^2 - 9) equal to |3 tan(t)| when p > 2? Yes! Bold and italic with code quoted a link and a figure snake_case stays",
   );
+});
+
+it("keeps a created note and retries only its failed attachment", async () => {
+  let uploads = 0;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "/api/v1/courses/course-1/posts" && init?.method === "POST")
+      return json({ data: post("new-note", "Lecture notes") }, 201);
+    if (
+      url === "/api/v1/posts/new-note/attachments" &&
+      init?.method === "POST"
+    ) {
+      uploads++;
+      return uploads === 1
+        ? json(
+            { error: { code: "storage_unavailable", message: "Try later" } },
+            503,
+          )
+        : json(
+            {
+              data: {
+                id: "attachment-1",
+                fileName: "notes.pdf",
+                mediaType: "application/pdf",
+                sizeBytes: 4,
+                createdAt: "2026-10-18T00:00:00Z",
+                downloadUrl: "/api/v1/attachments/attachment-1/download",
+              },
+            },
+            201,
+          );
+    }
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const navigate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={navigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post type" }),
+    "note",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Lecture notes",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Summary",
+  );
+  await user.upload(
+    screen.getByLabelText("Add files"),
+    new File(["test"], "notes.pdf", { type: "application/pdf" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  expect(await screen.findByText(/notes.pdf: Try later/)).toBeTruthy();
+  expect(navigate).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Retry attachments" }));
+  await waitFor(() =>
+    expect(navigate).toHaveBeenCalledWith("/courses/course-1/posts/new-note"),
+  );
+  expect(
+    fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === "/api/v1/courses/course-1/posts" && init?.method === "POST",
+    ),
+  ).toHaveLength(1);
+  expect(uploads).toBe(2);
+});
+
+it("retains an existing post's failed file after refreshing a successful sibling upload", async () => {
+  const image = {
+    id: "image-1",
+    fileName: "diagram.png",
+    mediaType: "image/png",
+    sizeBytes: 3,
+    createdAt: "2026-10-19T00:00:00Z",
+    downloadUrl: "/api/v1/attachments/image-1/download",
+  };
+  const document = {
+    ...image,
+    id: "document-1",
+    fileName: "notes.txt",
+    mediaType: "text/plain",
+    downloadUrl: "/api/v1/attachments/document-1/download",
+  };
+  let current = {
+    ...post("p1", "Existing note"),
+    type: "note",
+    version: 1,
+    attachments: [] as (typeof image)[],
+  };
+  let failSecond!: (value: Response) => void;
+  const secondResponse = new Promise<Response>((resolve) => {
+    failSecond = resolve;
+  });
+  let reads = 0;
+  const uploads: { name: string; key: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/user-staff"))
+        return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/p1/attachments" && init?.method === "POST") {
+        const name = ((init.body as FormData).get("file") as File).name;
+        uploads.push({
+          name,
+          key: (init.headers as Record<string, string>)["Idempotency-Key"],
+        });
+        if (uploads.length === 2) return secondResponse;
+        current = {
+          ...current,
+          version: current.version + 1,
+          attachments: [
+            ...current.attachments,
+            name === "diagram.png" ? image : document,
+          ],
+        };
+        return json({ data: name === "diagram.png" ? image : document }, 201);
+      }
+      if (url === "/api/v1/posts/p1") {
+        if (++reads > 1)
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        return json({ data: current });
+      }
+      return page([current]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  await user.upload(await screen.findByLabelText("Add files"), [
+    new File(["x"], "diagram.png", { type: "image/png" }),
+    new File(["y"], "notes.txt", { type: "text/plain" }),
+  ]);
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  await screen.findByRole("img", { name: "diagram.png" });
+  failSecond(
+    json(
+      { error: { code: "service_unavailable", message: "Retry second file" } },
+      503,
+    ),
+  );
+  expect(await screen.findByText(/notes.txt: Retry second file/)).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Retry attachments" }));
+  expect(await screen.findByRole("link", { name: "notes.txt" })).toBeTruthy();
+  expect(uploads.map((value) => value.name)).toEqual([
+    "diagram.png",
+    "notes.txt",
+    "notes.txt",
+  ]);
+  expect(uploads[1].key).toBe(uploads[2].key);
+});
+
+it("shows post Edit for its author but keeps viewing attachments read-only", async () => {
+  const current = {
+    ...post("p1", "Editable note"),
+    type: "note",
+    version: 3,
+    author: {
+      userId: "author-1",
+      displayName: "Ada",
+      anonymous: false,
+      deleted: false,
+    },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/members/author-1"))
+        return json({ data: { role: "student" } });
+      if (url === "/api/v1/posts/p1") return json({ data: current });
+      return page([current]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="author-1"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Editable note" });
+  expect(screen.queryByLabelText("Add files")).toBeNull();
+  await userEvent
+    .setup()
+    .click(await screen.findByRole("button", { name: "Edit post" }));
+  expect(
+    screen.getByRole("textbox", { name: "Post title" }).getAttribute("value"),
+  ).toBe("Editable note");
+  expect(screen.getByLabelText("Add files")).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Post type" })).toBeNull();
+});
+
+it("keeps post edits local until Save, sends If-Match, and Cancel discards text", async () => {
+  let current = {
+    ...post("p1", "Original note"),
+    type: "note",
+    version: 3,
+    author: {
+      userId: "author-1",
+      displayName: "Ada",
+      anonymous: false,
+      deleted: false,
+    },
+  };
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/author-1"))
+      return json({ data: { role: "student" } });
+    if (url === "/api/v1/posts/p1") {
+      if (init?.method === "PATCH")
+        current = {
+          ...current,
+          ...JSON.parse(init.body as string),
+          version: current.version + 1,
+        };
+      return json({ data: current });
+    }
+    return page([current]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="author-1"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  await user.clear(screen.getByRole("textbox", { name: "Post title" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Discard me",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel editing" }));
+  expect(current.title).toBe("Original note");
+  await user.click(screen.getByRole("button", { name: "Edit post" }));
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toBe("Original note");
+  await user.clear(screen.getByRole("textbox", { name: "Post title" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Updated note",
+  );
+  expect(
+    fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH"),
+  ).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  await screen.findByRole("heading", { name: "Updated note" });
+  const writes = fetchMock.mock.calls.filter(
+    ([, init]) => init?.method === "PATCH",
+  );
+  expect(writes).toHaveLength(1);
+  expect(writes[0][1]?.headers).toMatchObject({
+    "If-Match": '"v3"',
+    "X-CSRF-Token": "csrf",
+  });
+  expect(JSON.parse(writes[0][1]?.body as string)).not.toHaveProperty("type");
+  expect(screen.queryByLabelText("Add files")).toBeNull();
+});
+
+it("retains a failed post draft and requires explicit latest-version review after conflict", async () => {
+  let current = { ...post("p1", "Original"), type: "note", version: 3 };
+  let attempts = 0;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+    if (url === "/api/v1/posts/p1") {
+      if (init?.method === "PATCH") {
+        attempts++;
+        if (attempts === 1)
+          return json(
+            { error: { code: "network_failure", message: "Try again later" } },
+            503,
+          );
+        if (attempts === 2) {
+          current = { ...current, title: "Remote update", version: 4 };
+          return json(
+            {
+              error: {
+                code: "version_conflict",
+                message: "Post version has changed",
+              },
+            },
+            412,
+          );
+        }
+        current = {
+          ...current,
+          ...JSON.parse(init.body as string),
+          version: 5,
+        };
+      }
+      return json({ data: current });
+    }
+    return page([current]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  const title = screen.getByRole("textbox", { name: "Post title" });
+  await user.clear(title);
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  expect(
+    await screen.findByText("Post title must be between 1 and 200 characters."),
+  ).toBeTruthy();
+  expect(attempts).toBe(0);
+  await user.type(title, "Local draft");
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  expect(await screen.findByText("Try again later")).toBeTruthy();
+  expect((title as HTMLInputElement).value).toBe("Local draft");
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Review latest post" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Remote update" }),
+  ).toBeTruthy();
+  expect((title as HTMLInputElement).value).toBe("Local draft");
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  await screen.findByRole("heading", { name: "Local draft" });
+  const writes = fetchMock.mock.calls.filter(
+    ([, init]) => init?.method === "PATCH",
+  );
+  expect(
+    writes.map(
+      ([, init]) => (init?.headers as Record<string, string>)["If-Match"],
+    ),
+  ).toEqual(['"v3"', '"v3"', '"v4"']);
+});
+
+it.each([
+  ["student", "active", "other", "none"],
+  ["student", "active", null, "none"],
+  ["ta", "archived", "author", "none"],
+  ["instructor", "active", "author", "confirmed"],
+])(
+  "keeps post read-only for %s in %s with author %s and duplicate %s",
+  async (role, status, authorId, duplicateStatus) => {
+    const current = {
+      ...post("p1", "Read-only note"),
+      type: "note",
+      version: 1,
+      duplicateStatus,
+      author: {
+        userId: authorId,
+        displayName: "Anonymous",
+        anonymous: true,
+        deleted: false,
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/members/author")) return json({ data: { role } });
+        if (url === "/api/v1/posts/p1") return json({ data: current });
+        return page([current]);
+      }),
+    );
+    render(
+      <Discussion
+        courseId={course.id}
+        course={{ ...course, status: status as "active" | "archived" }}
+        csrfToken="csrf"
+        userId="author"
+        postId="p1"
+        onNavigate={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Read-only note" });
+    expect(screen.queryByRole("button", { name: "Edit post" })).toBeNull();
+    expect(screen.queryByLabelText("Add files")).toBeNull();
+  },
+);
+
+it("removes files only in Edit and overwrites remote text only on explicit Save", async () => {
+  const file = {
+    id: "file-1",
+    fileName: "notes.txt",
+    mediaType: "text/plain",
+    sizeBytes: 3,
+    createdAt: "2026-10-19",
+    downloadUrl: "/file",
+  };
+  let current = {
+    ...post("p1", "Note"),
+    type: "note",
+    version: 3,
+    attachments: [file],
+  };
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/staff"))
+      return json({ data: { role: "instructor" } });
+    if (url === "/api/v1/attachments/file-1" && init?.method === "DELETE") {
+      current = {
+        ...current,
+        title: "Remote edit",
+        bodyMarkdown: "Remote body",
+        version: 5,
+        attachments: [],
+      };
+      return new Response(null, { status: 204 });
+    }
+    if (url === "/api/v1/posts/p1") {
+      if (init?.method === "PATCH")
+        current = {
+          ...current,
+          ...JSON.parse(init.body as string),
+          version: 6,
+        };
+      return json({ data: current });
+    }
+    return page([current]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("link", { name: "notes.txt" });
+  expect(screen.queryByRole("button", { name: "Remove notes.txt" })).toBeNull();
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " draft",
+  );
+  await user.click(screen.getByRole("button", { name: "Remove notes.txt" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("link", { name: "notes.txt" })).toBeNull(),
+  );
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toBe("Note draft");
+  expect(current.title).toBe("Remote edit");
+  expect(current.bodyMarkdown).toBe("Remote body");
+  expect(
+    fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH"),
+  ).toHaveLength(0);
+  expect(
+    screen.queryByRole("button", { name: "Review latest post" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  await screen.findByRole("heading", { name: "Note draft" });
+  const write = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "PATCH",
+  );
+  expect(write?.[1]?.headers).toMatchObject({ "If-Match": '"v5"' });
+  expect(JSON.parse(write?.[1]?.body as string)).toMatchObject({
+    title: "Note draft",
+    bodyMarkdown: post("p1", "Note").bodyMarkdown,
+  });
+});
+
+it("saves text before files and retains text typed during uploads for the next versioned Save", async () => {
+  let current = {
+    ...post("p1", "Original"),
+    type: "note",
+    version: 3,
+    attachments: [] as {
+      id: string;
+      fileName: string;
+      mediaType: string;
+      sizeBytes: number;
+      createdAt: string;
+      downloadUrl: string;
+    }[],
+  };
+  let finishUpload!: () => void;
+  const uploading = new Promise<void>((resolve) => {
+    finishUpload = resolve;
+  });
+  const writes: { version: string; title: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/p1/attachments" && init?.method === "POST") {
+        expect(current.title).toBe("First saved text");
+        await uploading;
+        const file = {
+          id: "f1",
+          fileName: "notes.txt",
+          mediaType: "text/plain",
+          sizeBytes: 2,
+          createdAt: "2026-10-19",
+          downloadUrl: "/file",
+        };
+        current = {
+          ...current,
+          version: current.version + 1,
+          attachments: [file],
+        };
+        return json({ data: file }, 201);
+      }
+      if (url === "/api/v1/posts/p1") {
+        if (init?.method === "PATCH") {
+          const input = JSON.parse(init.body as string);
+          writes.push({
+            version: (init.headers as Record<string, string>)["If-Match"],
+            title: input.title,
+          });
+          current = { ...current, ...input, version: current.version + 1 };
+        }
+        return json({ data: current });
+      }
+      return page([current]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  const title = screen.getByRole("textbox", { name: "Post title" });
+  await user.clear(title);
+  await user.type(title, "First saved text");
+  await user.upload(
+    screen.getByLabelText("Add files"),
+    new File(["hi"], "notes.txt", { type: "text/plain" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  await user.clear(title);
+  await user.type(title, "Typed during upload");
+  await act(async () => finishUpload());
+  await screen.findByRole("link", { name: "notes.txt" });
+  expect((title as HTMLInputElement).value).toBe("Typed during upload");
+  await user.click(screen.getByRole("button", { name: "Save post" }));
+  await screen.findByRole("heading", { name: "Typed during upload" });
+  expect(writes).toEqual([
+    { version: '"v3"', title: "First saved text" },
+    { version: '"v5"', title: "Typed during upload" },
+  ]);
+});
+
+it("guards unsaved post edits when opening Create or switching duplicate views", async () => {
+  const current = { ...post("p1", "Note"), type: "note", version: 1 };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/p1") return json({ data: current });
+      return page([current]);
+    }),
+  );
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " unsaved",
+  );
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  expect(confirm).toHaveBeenCalledWith("Discard your unsaved post edits?");
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toBe("Note unsaved");
+  await user.click(screen.getByRole("button", { name: "Duplicate" }));
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toBe("Note unsaved");
+});
+
+it("returns an active editor to read-only viewing when the course is archived", async () => {
+  const current = { ...post("p1", "Archived note"), type: "note", version: 1 };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/p1") return json({ data: current });
+      return page([current]);
+    }),
+  );
+  const props = {
+    courseId: course.id,
+    csrfToken: "csrf",
+    userId: "staff",
+    postId: "p1",
+    onNavigate: vi.fn(),
+  };
+  const view = render(<Discussion {...props} course={course} />);
+  await userEvent
+    .setup()
+    .click(await screen.findByRole("button", { name: "Edit post" }));
+  view.rerender(
+    <Discussion {...props} course={{ ...course, status: "archived" }} />,
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Archived note" }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
+  expect(screen.queryByLabelText("Add files")).toBeNull();
 });

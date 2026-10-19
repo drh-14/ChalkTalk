@@ -20,6 +20,7 @@ type SystemEvent =
 type JobKind =
   | "delete_course"
   | "delete_course_file"
+  | "delete_content_attachment"
   | "send_question_duplicate_email"
   | "index_post"
   | "digest_schedule"

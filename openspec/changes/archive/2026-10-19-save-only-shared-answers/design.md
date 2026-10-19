@@ -1,0 +1,7 @@
+# Design
+
+The two shared answer slots keep `body_markdown` as their only active body representation. Each editor starts from a fetched answer version, holds its own local CodeMirror Markdown/LaTeX draft, and issues `PATCH /answers/{id}` with `If-Match` only when Save is clicked. On `412`, fetch the latest answer without replacing the draft. Show both texts and explicit Continue editing, Discard my draft, and Overwrite with my draft actions. Overwrite issues another ordinary conditional PATCH with the just-fetched ETag; any further race returns to comparison. Server authorization and answer lifecycle rules run on every attempt.
+
+Before removing Yjs state, a transaction-local migration preflight scans answer documents in bounded pages, decodes each nonempty document, and checks it equals the answer projection. The original empty Yjs marker is treated as unseeded and preserves existing Markdown. Corrupt or mismatching binary state aborts the migration. The migration leaves legacy active empty answers unchanged, then drops answer document and ticket tables. Old API/collaboration writers must stop before the migration. `yjs` remains a migration-only dependency until this historical preflight is no longer needed.
+
+The existing sanitized Markdown/LaTeX display renderer is used after creation and Save. Followup/reply editing retains its existing version-checked REST flow; the new explicit comparison-and-Overwrite interaction applies only to answers. No live WebSocket, Redis process, awareness, or shared unsaved draft remains.

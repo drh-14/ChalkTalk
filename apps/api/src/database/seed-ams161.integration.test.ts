@@ -128,7 +128,7 @@ integration("AMS161 local prototype seed", () => {
       recent: true,
     });
     const answers = await pool.query(
-      "SELECT a.kind, count(*)::int AS count, count(a.endorsed_at)::int AS endorsed, bool_and(a.created_at>=p.created_at) AS after_post, bool_and(c.answer_id IS NOT NULL) AS contributed FROM answers a JOIN posts p ON p.id=a.post_id JOIN answer_collaboration_documents c ON c.answer_id=a.id WHERE a.course_id=$1 GROUP BY a.kind ORDER BY a.kind",
+      "SELECT a.kind, count(*)::int AS count, count(a.endorsed_at)::int AS endorsed, bool_and(a.created_at>=p.created_at) AS after_post, bool_and(c.answer_id IS NOT NULL) AS contributed FROM answers a JOIN posts p ON p.id=a.post_id JOIN answer_contributors c ON c.answer_id=a.id WHERE a.course_id=$1 GROUP BY a.kind ORDER BY a.kind",
       [AMS161_DEMO.courseId],
     );
     expect(answers.rows).toEqual([

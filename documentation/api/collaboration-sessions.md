@@ -4,7 +4,7 @@
 
 ### **`POST /api/v1/courses/{courseId}/collaboration-sessions`**
 
-**Future contract; this route is not implemented.** A proposed temporary collaboration session would use exactly one postId or subchannelId and a one-use connection ticket. Current answer editing uses version-checked REST requests; see the [answers API reference](answers.md).
+**Future contract; this route is not implemented.** A proposed temporary collaboration session would use exactly one postId or subchannelId and a one-use connection ticket. For implemented answer/followup editing, see the [answers API reference](answers.md) and [collaboration WebSocket contract](collaboration-websocket.md).
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

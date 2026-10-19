@@ -1,6 +1,14 @@
 import { expect, it } from "vitest";
 import { formatBody, type FormatAction } from "./formatting.js";
 
+it("formats a selection without changing unrelated document text", () => {
+  expect(formatBody("before ptr after", { from: 7, to: 10 }, "bold")).toEqual({
+    text: "before **ptr** after",
+    from: 9,
+    to: 12,
+  });
+});
+
 it.each([
   ["bold", "**ptr**", 2, 5],
   ["italic", "*ptr*", 1, 4],

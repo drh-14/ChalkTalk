@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
-import * as Y from "yjs";
 import { AuthError } from "../auth/errors.js";
+import {
+  hideAttachmentsForParent,
+  listAttachments,
+  type Attachment,
+} from "../content-attachments/service.js";
 
 type Db = Pool | PoolClient;
 type Role = "student" | "ta" | "instructor";
@@ -39,7 +43,7 @@ export type Answer = {
   bodyMarkdown: string;
   contributors: Contributor[] | null;
   anonymous: boolean;
-  attachments: [];
+  attachments: Attachment[];
   endorsedAt: string | null;
   endorsedBy: string | null;
   createdAt: string;
@@ -60,9 +64,6 @@ const STAFF = new Set<Role>(["ta", "instructor"]);
 const ROLE_RANK: Record<Role, number> = { student: 0, ta: 1, instructor: 2 };
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-// Yjs encodes an empty document as zero structs followed by an empty delete set.
-// The private Yjs document store seeds this marker from body_markdown on first load.
-const EMPTY_YJS_UPDATE = Buffer.from([0, 0]);
 
 export class AnswerService {
   constructor(private readonly pool: Pool) {}
@@ -147,7 +148,7 @@ export class AnswerService {
       bodyMarkdown: row.body_markdown!,
       contributors,
       anonymous: row.anonymous,
-      attachments: [],
+      attachments: await listAttachments(db, "answer", row.id),
       endorsedAt: row.endorsed_at?.toISOString() ?? null,
       endorsedBy:
         row.anonymous && !STAFF.has(role) ? null : row.endorsed_by_user_id,
@@ -258,10 +259,6 @@ export class AnswerService {
           ],
         );
         await db.query(
-          "INSERT INTO answer_collaboration_documents (answer_id,yjs_state) VALUES ($1,$2)",
-          [id, EMPTY_YJS_UPDATE],
-        );
-        await db.query(
           "INSERT INTO answer_contributors (answer_id,user_id) VALUES ($1,$2)",
           [id, userId],
         );
@@ -330,16 +327,6 @@ export class AnswerService {
       throw new AuthError(403, "permission_denied", "A staff role is required");
     return { row, member };
   }
-  private async closeDocument(db: PoolClient, row: AnswerRow) {
-    await db.query(
-      "UPDATE answer_collaboration_documents SET lifecycle_state='closed' WHERE answer_id=$1",
-      [row.id],
-    );
-    await db.query(
-      "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
-      [row.post_id],
-    );
-  }
   async endorse(
     answerId: string,
     userId: string,
@@ -348,6 +335,12 @@ export class AnswerService {
     return this.tx(async (db) => {
       const { row, member } = await this.staffWrite(db, answerId, userId);
       this.checkRevision(row, etag);
+      if (!row.body_markdown?.trim())
+        throw new AuthError(
+          409,
+          "answer_empty",
+          "An empty answer cannot be endorsed",
+        );
       if (row.endorsed_at) return this.project(db, row, member.role, userId);
       await db.query(
         "UPDATE answers SET endorsed_at=statement_timestamp(),endorsed_by_user_id=$2,updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
@@ -357,7 +350,10 @@ export class AnswerService {
         "INSERT INTO answer_endorsement_events (course_id,answer_id,endorsed_by_user_id,endorsed_at) SELECT course_id,id,$2,endorsed_at FROM answers WHERE id=$1",
         [answerId, userId],
       );
-      await this.closeDocument(db, row);
+      await db.query(
+        "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
+        [row.post_id],
+      );
       return this.project(
         db,
         (await this.row(db, answerId))!,
@@ -384,7 +380,11 @@ export class AnswerService {
         "UPDATE answers SET body_markdown=NULL,deleted_at=statement_timestamp(),updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [answerId],
       );
-      await this.closeDocument(db, row);
+      await hideAttachmentsForParent(db, "answer", answerId);
+      await db.query(
+        "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
+        [row.post_id],
+      );
     });
   }
   async get(answerId: string, userId: string): Promise<Answer> {
@@ -414,45 +414,6 @@ export class AnswerService {
       this.checkRevision(row, etag);
       if (bodyMarkdown === row.body_markdown)
         return this.project(db, row, member.role, userId);
-      const stored = await db.query<{
-        yjs_state: Buffer;
-        lifecycle_state: string;
-      }>(
-        "SELECT yjs_state,lifecycle_state FROM answer_collaboration_documents WHERE answer_id=$1 FOR UPDATE",
-        [answerId],
-      );
-      const document = stored.rows[0];
-      if (
-        !document ||
-        (document.lifecycle_state !== "active" &&
-          !(row.endorsed_at && document.lifecycle_state === "closed"))
-      )
-        throw new AuthError(409, "answer_closed", "Answer document is closed");
-      const ydoc = new Y.Doc();
-      try {
-        Y.applyUpdate(ydoc, document.yjs_state);
-      } catch {
-        throw new AuthError(
-          500,
-          "integrity_error",
-          "Answer document is invalid",
-        );
-      }
-      const text = ydoc.getText("content");
-      if (document.yjs_state.equals(EMPTY_YJS_UPDATE))
-        text.insert(0, row.body_markdown!);
-      else if (text.toString() !== row.body_markdown)
-        throw new AuthError(
-          500,
-          "integrity_error",
-          "Answer document disagrees with text",
-        );
-      text.delete(0, text.length);
-      text.insert(0, bodyMarkdown);
-      await db.query(
-        "UPDATE answer_collaboration_documents SET yjs_state=$2,lifecycle_state='active',persistence_revision=persistence_revision+1,persisted_at=statement_timestamp() WHERE answer_id=$1",
-        [answerId, Buffer.from(Y.encodeStateAsUpdate(ydoc))],
-      );
       await db.query(
         "UPDATE answers SET body_markdown=$2,endorsed_at=NULL,endorsed_by_user_id=NULL,version=version+1,updated_at=statement_timestamp() WHERE id=$1",
         [answerId, bodyMarkdown],

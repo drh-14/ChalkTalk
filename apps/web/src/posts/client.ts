@@ -1,5 +1,6 @@
 import { ApiError } from "../auth/client.js";
 import type { Page } from "../courses/client.js";
+import type { Attachment } from "../attachments/client.js";
 
 export type Post = {
   id: string;
@@ -16,6 +17,7 @@ export type Post = {
   };
   anonymous: boolean;
   tags: string[];
+  attachments?: Attachment[];
   createdAt: string;
   lastActivityAt: string;
   version: number;
@@ -162,6 +164,27 @@ export async function listMergedPosts(
     },
   );
   return receive<Page<MergedPost>>(response);
+}
+
+export async function updatePost(
+  post: Pick<Post, "id" | "version">,
+  input: Omit<CreatePostInput, "type">,
+  csrfToken: string,
+): Promise<Post> {
+  const result = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"v${post.version}"`,
+      },
+      body: JSON.stringify(input),
+    }),
+  );
+  return result.data;
 }
 
 export async function unmergePost(

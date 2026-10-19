@@ -34,6 +34,12 @@ import {
 import { StatisticsService } from "../statistics/service.js";
 import { CourseFileService } from "../course-files/service.js";
 import { readMultipart } from "../course-files/multipart.js";
+import {
+  ContentAttachmentService,
+  type ParentKind,
+} from "../content-attachments/service.js";
+
+import { CourseResourceService } from "../course-resources/service.js";
 
 export interface AppDependencies {
   environment: Environment;
@@ -44,7 +50,9 @@ export interface AppDependencies {
   followupService?: FollowupService;
   statisticsService?: StatisticsService;
   courseFileService?: CourseFileService;
+  courseResourceService?: CourseResourceService;
   observability?: Observability;
+  contentAttachmentService?: ContentAttachmentService;
 }
 type AuthContext = {
   credential: string;
@@ -571,7 +579,9 @@ export function createApp(
     followupService,
     statisticsService,
     courseFileService,
+    courseResourceService,
     observability,
+    contentAttachmentService,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -1229,6 +1239,196 @@ export function createApp(
       );
     return courseFileService;
   };
+  const contentAttachments = (): ContentAttachmentService => {
+    if (!contentAttachmentService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Attachment service is unavailable",
+      );
+    return contentAttachmentService;
+  };
+  for (const [kind, route, parameter] of [
+    ["post", "/api/v1/posts/:postId/attachments", "postId"],
+    ["answer", "/api/v1/answers/:answerId/attachments", "answerId"],
+    ["followup", "/api/v1/followups/:followupId/attachments", "followupId"],
+  ] as const) {
+    app.post(route, ...authenticatedUnsafe, async (request, response, next) => {
+      let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+      try {
+        const parentId = param(request.params[parameter]);
+        const userId = auth(response).session.user.id;
+        await contentAttachments().authorizeUpload(
+          kind as ParentKind,
+          parentId,
+          userId,
+          request.header("idempotency-key"),
+        );
+        upload = await readMultipart(request);
+        const value = await contentAttachments().create(
+          kind as ParentKind,
+          parentId,
+          userId,
+          upload,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set({ Location: value.downloadUrl })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      } finally {
+        await upload?.cleanup();
+      }
+    });
+  }
+  app.get(
+    "/api/v1/attachments/:attachmentId/download",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const file = await contentAttachments().download(
+          param(request.params.attachmentId),
+          current.session.user.id,
+        );
+        const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+        response.set({
+          "Content-Type": file.mediaType,
+          "Content-Length": String(file.length),
+          "Content-Disposition": `${file.mediaType.startsWith("image/") ? "inline" : "attachment"}; filename="${safeName}"`,
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "private, no-store",
+        });
+        const body = file.body as NodeJS.ReadableStream;
+        body.on("error", (error) => {
+          if (!response.headersSent) next(error);
+          else response.destroy(error);
+        });
+        body.pipe(response);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/attachments/:attachmentId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await contentAttachments().delete(
+          param(request.params.attachmentId),
+          auth(response).session.user.id,
+        );
+        response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/resources",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (
+          Object.keys(request.query).some(
+            (key) => key !== "limit" && key !== "cursor",
+          ) ||
+          (request.query.limit !== undefined &&
+            (typeof request.query.limit !== "string" ||
+              !/^[1-9]\d*$/.test(request.query.limit)))
+        )
+          throw new AuthError(400, "invalid_request", "Pagination is invalid");
+        const query = listQuery(request.query);
+        if (!courseResourceService)
+          throw new AuthError(
+            503,
+            "service_unavailable",
+            "Resource service is unavailable",
+          );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json(
+            await courseResourceService.list(
+              param(request.params.courseId),
+              current.session.user.id,
+              query.limit,
+              query.cursor,
+            ),
+          );
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/resources",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["kind", "title", "url"],
+          ["kind", "title", "url"],
+        );
+        if (body.kind !== "link")
+          throw validationError("Only named links can be created here");
+        if (!courseResourceService)
+          throw new AuthError(
+            503,
+            "service_unavailable",
+            "Resource service is unavailable",
+          );
+        const value = await courseResourceService.create(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          { title: body.title, url: body.url },
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set("Location", `/api/v1/courses/${value.courseId}/resources`)
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/files",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (
+          Object.keys(request.query).some(
+            (key) => key !== "limit" && key !== "cursor",
+          ) ||
+          (request.query.limit !== undefined &&
+            (typeof request.query.limit !== "string" ||
+              !/^[1-9]\d*$/.test(request.query.limit)))
+        )
+          throw new AuthError(400, "invalid_request", "Pagination is invalid");
+        const query = listQuery(request.query);
+        response
+          .set("Cache-Control", "private, no-store")
+          .json(
+            await courseFiles().list(
+              param(request.params.courseId),
+              current.session.user.id,
+              query.limit,
+              query.cursor,
+            ),
+          );
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.post(
     "/api/v1/courses/:courseId/files",
     ...authenticatedUnsafe,

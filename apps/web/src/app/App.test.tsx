@@ -436,7 +436,7 @@ describe("ChalkTalk auth entry", () => {
         .parentElement!.classList.contains("discussion"),
     ).toBe(false);
   });
-  it("guards drafts from All courses and Course resources and requests no resource data", async () => {
+  it("guards drafts from All courses and Course resources before requesting unified resources", async () => {
     setPath(`/courses/${course.id}`);
     const fetchMock = vi.fn(async (url: string) => {
       if (url.endsWith("/sessions/current"))
@@ -474,8 +474,10 @@ describe("ChalkTalk auth entry", () => {
       await screen.findByRole("heading", { name: "Course resources" }),
     ).toBeTruthy();
     expect(
-      fetchMock.mock.calls.some(([url]) => String(url).includes("resources")),
-    ).toBe(false);
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes(`/courses/${course.id}/resources?`),
+      ),
+    ).toBe(true);
     confirm.mockRestore();
   });
   it("shows today's date and only real courses on home", async () => {

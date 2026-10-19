@@ -115,4 +115,8 @@ docker compose --profile app --profile observability up --build --wait
 
 Open Grafana at [http://127.0.0.1:3001](http://127.0.0.1:3001) and sign in as `admin` using `GRAFANA_ADMIN_PASSWORD`. The provisioned dashboard covers API requests, worker jobs, scrape health, and sanitized logs; it is not a ChalkTalk app route. Never commit the credentials or paste metric output into public issues. For the metrics endpoint contract, privacy limits, retention, and failure behavior, see the [local observability reference](documentation/api/observability.md). Stop the profile with `docker compose --profile app --profile observability down` (omit `--volumes` to retain local telemetry).
 
+### Shared answer editing
+
+Each member edits a private Markdown/LaTeX draft. The answer changes only when they click Save. If someone else saves first, the editor keeps the draft and shows the latest answer for review before an explicit version-checked Overwrite. Followups and replies also use REST saves. There is no answer or followup WebSocket service to start.
+
 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before submitting changes.

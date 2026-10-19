@@ -209,7 +209,7 @@ The application must verify that a post and tag belong to the same course before
 - `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
 
-Content-changing edits clear current endorsement and update the authoritative Yjs state and Markdown projection in the same transaction.
+Content-changing conditional REST saves update Markdown, version, contributor history, and timestamps in one transaction and clear the current endorsement. Historical endorsement events remain.
 
 ### `answer_endorsement_events`
 
@@ -225,15 +225,7 @@ Content-changing edits clear current endorsement and update the authoritative Yj
 - `user_id`: `uuid_v7`; foreign key to `users.id`.
 - `(answer_id, user_id)`: composite primary key; records the distinct set of editors for an answer.
 
-### `answer_collaboration_documents`
-
-- `answer_id`: `uuid_v7`; primary key and foreign key to `answers.id`.
-- `yjs_state`: `bytea`.
-- `lifecycle_state`: `text`; `active`, `finalizing`, or `closed`.
-- `persisted_at`: `timestamptz`.
-- `persistence_revision`: `bigint`.
-
-The private answer document store keeps `answers.body_markdown` as the text projection of `yjs_state`. See the [answer document core specification](../openspec/specs/answer-document-core/spec.md) for seeding, lifecycle, and persistence behavior.
+The save-only migration checks nonempty historical Yjs documents in bounded pages against `answers.body_markdown` before dropping the old answer document table. It aborts on corrupt or divergent state. The original unseeded empty marker preserves the Markdown row. The Markdown column is the sole durable answer body after cutover.
 
 ### `followups`
 
@@ -250,6 +242,8 @@ The private answer document store keeps `answers.body_markdown` as the text proj
 
 Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`. Deleted roots or replies with children retain a bodyless tombstone; deleted leaves are excluded from ordinary reads.
 
+The non-deleted answer body check retains historical empty strings from former live edits, but REST creation and saves require nonblank content. Followup and reply bodies remain nonblank REST content. Deleted rows still require `body_markdown IS NULL`.
+
 ### `answer_upvotes`
 
 - `answer_id`: `uuid_v7`; foreign key to `answers.id` with cascade on physical deletion.
@@ -264,20 +258,20 @@ Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`.
 - `(followup_id, user_id)`: primary key, enforcing one vote per member per followup.
 - `created_at`: `timestamptz`.
 
-### `attachments`
+### `content_attachments`
 
 - `id`: `uuid_v7`; primary key.
-- `course_id`: `uuid_v7`.
 - `post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
 - `answer_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `answers(course_id, id)`.
 - `followup_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `followups(course_id, id)`.
 - A `CHECK` constraint requires exactly one parent foreign key to be present.
-- `object_key`: `text`, nullable and unique when present.
-- `original_filename`: `varchar(255)`.
-- `media_type`, `status`: `text`.
-- `size_bytes`: `bigint`.
-- `checksum_sha256`: `bytea`.
-- `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
+- `course_id`: required foreign key to `courses.id`; course deletion cascades to the rows.
+- `object_key`: required unique `text` key for the file-backed object store.
+- `file_name`, `media_type`: required `text` values; the upload path validates the filename and file contents.
+- `size_bytes`: required `bigint`, constrained to 1–104857600 bytes.
+- `checksum_sha256`: required 32-byte `bytea`, used for exact-byte idempotent upload replay.
+- `created_at`: `timestamptz`; `deleted_at`: nullable `timestamptz`. There is no processing status or `updated_at` column. Soft deletion hides the file immediately and queues object deletion for the separate worker; confirmed duplicate sources hide files without deleting their rows or bytes, and unmerge restores visibility.
+- Partial indexes on each parent ID and attachment ID cover live rows (`deleted_at IS NULL`). At most five live rows per parent is enforced by the upload transaction, not a database constraint.
 
 ### `post_view_events`
 
@@ -326,6 +320,18 @@ Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`.
 - `included_at`: `timestamptz`.
 
 ## Resources
+
+### `course_resource_links` (implemented flat named links)
+
+- `id`: `uuid_v7`; primary key.
+- `course_id`: `uuid_v7`; foreign key to `courses.id` with cascade deletion.
+- `title`: `text`; trimmed nonblank title, at most 200 Unicode code points (database check on trimmed length).
+- `url`: `text`; absolute HTTP(S), at most 2048 Unicode code points; API rejects credentials, missing host, raw Unicode whitespace (including surrounding whitespace), C0/C1 controls and backslashes before parsing. Database checks length and HTTP(S) prefix. Never fetched by the server.
+- `created_by_user_id`: nullable `uuid_v7`; foreign key to `users.id`, SET NULL on user deletion. Not exposed in public resource metadata.
+- `created_at`: `timestamptz`; defaults to `clock_timestamp()`.
+- `(course_id, created_at DESC, id DESC)` index supports course listing. Existing original files remain in `course_files`; unified reads use UNION ALL without wrapper/backfill rows. Link creation and its existing `idempotency_records` response commit atomically; keys are scoped to creator/course for 24 hours.
+
+The `resources` and `resource_regions` catalog structures below are deferred and are not the implemented flat resource list.
 
 ### `resources`
 
@@ -424,16 +430,4 @@ Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`.
 - `user_id`: `uuid_v7`.
 - `auth_session_id`: `uuid_v7`; with `user_id`, foreign key to `sessions(id, user_id)`.
 - `permission`: `text`; `read` or `write`.
-- `issued_at`, `expires_at`, `consumed_at`, `revoked_at`: `timestamptz`; final two are nullable.
-
-### `answer_collaboration_connection_tickets`
-
-Future schema only; the current answer editor uses REST and does not issue connection tickets.
-
-- `id`: `uuid_v7`; primary key.
-- `token_hash`: `bytea`; unique.
-- `answer_id`: `uuid_v7`; foreign key to `answers.id`.
-- `user_id`: `uuid_v7`.
-- `auth_session_id`: `uuid_v7`; with `user_id`, foreign key to `sessions(id, user_id)`.
-- `permission`: `text`; always `write`.
 - `issued_at`, `expires_at`, `consumed_at`, `revoked_at`: `timestamptz`; final two are nullable.
