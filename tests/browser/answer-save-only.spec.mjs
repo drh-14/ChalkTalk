@@ -192,7 +192,9 @@ test.describe("save-only answers and REST followups", () => {
       second.student.getByRole("textbox", { name: "Answer" }),
     ).toContainText("Second **draft**");
     await first.student.getByRole("button", { name: "Save answer" }).click();
-    await expect(first.student.locator("strong")).toContainText("saved");
+    await expect(
+      first.student.locator("strong", { hasText: /^saved$/ }),
+    ).toBeVisible();
     expect(patches).toEqual([
       { body: "First **saved** and $a^2$", etag: '"v1"' },
     ]);
@@ -235,7 +237,9 @@ test.describe("save-only answers and REST followups", () => {
       .getByRole("button", { name: "Overwrite with my draft" })
       .click();
     await expect(conflict).toHaveCount(0);
-    await expect(second.student.locator("strong")).toContainText("draft");
+    await expect(
+      second.student.locator("strong", { hasText: /^draft$/ }),
+    ).toBeVisible();
     await expect(second.student.locator(".katex")).toBeVisible();
     expect(patches.at(-1)).toEqual({
       body: "Second **draft** and $b^2$",
@@ -279,7 +283,9 @@ test.describe("save-only answers and REST followups", () => {
       .getByRole("textbox", { name: "Your answer" })
       .fill("Answer **bold** and $x^2$");
     await student.getByRole("button", { name: "Post answer" }).click();
-    await expect(student.locator("strong")).toContainText("bold");
+    await expect(
+      student.locator("strong", { hasText: /^bold$/ }),
+    ).toBeVisible();
     await expect(student.locator(".katex")).toBeVisible();
     await page
       .getByRole("button", { name: "Compose a new followup discussion" })
@@ -294,14 +300,18 @@ test.describe("save-only answers and REST followups", () => {
     const rootFollowup = page
       .getByRole("article", { name: "Followup by Browser student" })
       .first();
-    await expect(rootFollowup.locator("strong")).toContainText("bold");
+    await expect(
+      rootFollowup.locator("strong", { hasText: /^bold$/ }),
+    ).toBeVisible();
     await expect(rootFollowup.locator(".katex")).toBeVisible();
     await rootFollowup.getByRole("button", { name: "Edit followup" }).click();
     await rootFollowup
       .getByRole("textbox", { name: "Followup" })
       .fill("Edited **root** and $z^2$");
     await rootFollowup.getByRole("button", { name: "Save followup" }).click();
-    await expect(rootFollowup.locator("strong")).toContainText("root");
+    await expect(
+      rootFollowup.locator("strong", { hasText: /^root$/ }),
+    ).toBeVisible();
     await rootFollowup.getByRole("button", { name: "Reply" }).click();
     await rootFollowup
       .getByRole("textbox", { name: "Followup" })
@@ -310,7 +320,7 @@ test.describe("save-only answers and REST followups", () => {
     const reply = rootFollowup.getByRole("article", {
       name: "Followup by Browser student",
     });
-    await expect(reply.locator("strong")).toContainText("bold");
+    await expect(reply.locator("strong", { hasText: /^bold$/ })).toBeVisible();
     await expect(reply.locator(".katex")).toBeVisible();
     expect(unexpectedTickets).toEqual([]);
     expect(unexpectedSockets).toEqual([]);
