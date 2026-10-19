@@ -8,7 +8,7 @@ Keep validated original files available to current course members without commit
 
 ### Requirement: Validated instructor upload
 
-The API SHALL accept exactly one multipart file on `POST /api/v1/courses/{courseId}/files` from a current instructor in an active course. A file MUST be no more than 100 MiB and be a matching, structurally valid PDF, plain text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Processing SHALL have bounded memory. A successful persistent upload SHALL return `201`, a course-scoped `Location`, and minimal metadata including file ID, name, verified media type, length, and creation time. It SHALL not expose resource titles, descriptions, versions, processing status, or a metadata-read/list route.
+The API SHALL accept exactly one multipart file on `POST /api/v1/courses/{courseId}/files` from a current instructor in an active course. A file MUST be no more than 100 MiB and be a matching, structurally valid PDF, plain text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Processing SHALL have bounded memory. A successful persistent upload SHALL return `201`, a course-scoped `Location`, and minimal metadata including file ID, name, verified media type, length, and creation time. It SHALL not expose resource titles, descriptions, versions, processing status, or a single-file metadata-read route.
 
 #### Scenario: Valid original file
 
@@ -90,3 +90,29 @@ The API SHALL use an S3-compatible configured bucket. A local endpoint MAY use p
 
 - **WHEN** a course with live and logically deleted files is deleted
 - **THEN** all remaining object bytes and file rows are removed, or the deletion job retries after failure
+
+### Requirement: Member file listing
+
+`GET /api/v1/courses/{courseId}/files` SHALL return live course_files metadata only to authenticated current members of an active or archived course. Missing, deleting and inaccessible courses SHALL return 404. Deleted files and other courses' files SHALL be excluded. Responses SHALL use `data` and `page` with `hasMore` and nullable `nextCursor`, default limit 25 and limit 1–100. Files SHALL sort by exact creation timestamp descending, then ID descending. Opaque cursors SHALL preserve PostgreSQL microseconds and bind the course; malformed cursors, unknown query fields and invalid or repeated query values SHALL return 400. Only existing public file metadata SHALL be exposed.
+
+#### Scenario: Member pages files
+
+- **WHEN** a current student, TA or instructor lists a course's files
+- **THEN** live files are returned latest first with stable pagination, excluding deleted and other-course files
+
+#### Scenario: Archived and inaccessible courses
+
+- **WHEN** a member lists an archived course
+- **THEN** files remain readable, while outsiders and deleting or missing courses receive 404
+
+### Requirement: Course Resources file interface
+
+The Resources route SHALL display actual course files alongside named external links as specified in course-resource-links. Existing immutable file upload, authenticated original-byte download and permissions SHALL remain unchanged. File names SHALL be the download links without additional Download text or buttons. Only current active-course instructors SHALL see upload controls. Failed upload SHALL preserve the list and same-file retry SHALL reuse the idempotency key; selecting another file SHALL reset it. Loading, empty, error/retry and pagination feedback SHALL remain accessible and responsive. No file delete UI or custom viewer SHALL be added.
+
+#### Scenario: Instructor uploads
+- **WHEN** an active-course instructor uploads a supported file
+- **THEN** progress and success or failure feedback appears and success refreshes the mixed list
+
+#### Scenario: Readonly members
+- **WHEN** a TA, student or archived-course instructor opens Resources
+- **THEN** files can be downloaded and named external links opened but creation controls are absent

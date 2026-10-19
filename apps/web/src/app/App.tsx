@@ -29,6 +29,7 @@ import {
   type Course,
   type Versioned,
 } from "../courses/client.js";
+import { CourseResources } from "../course-files/views.js";
 import { CourseStatistics } from "../statistics/views.js";
 import { Discussion } from "../posts/views.js";
 import {
@@ -864,18 +865,6 @@ function CourseSwitcher({
   );
 }
 
-function CourseResources() {
-  return (
-    <section className="course-placeholder" aria-labelledby="resources-title">
-      <h2 id="resources-title">Course resources</h2>
-      <p>
-        Lecture notes, slides, and other course files will appear here. Sharing
-        resources isn't available yet.
-      </p>
-    </section>
-  );
-}
-
 function CourseFrame({
   route,
   session,
@@ -892,6 +881,10 @@ function CourseFrame({
   const courseId = route.courseId!;
   const [course, setCourse] = useState<Versioned<Course>>();
   const [staff, setStaff] = useState<boolean>();
+  const [instructor, setInstructor] = useState<{
+    courseId: string;
+    allowed: boolean;
+  }>();
   const [error, setError] = useState<{ courseId: string; message: string }>();
   const [cycle, setCycle] = useState(0);
   const beforeLeave = useRef<() => boolean>(() => true);
@@ -915,8 +908,14 @@ function CourseFrame({
   useEffect(() => {
     let active = true;
     setStaff(undefined);
+    setInstructor(undefined);
     void getMembership(courseId, session.user.id)
       .then((member) => {
+        if (active)
+          setInstructor({
+            courseId,
+            allowed: member.data.role === "instructor",
+          });
         if (active)
           setStaff(
             member.data.role === "ta" || member.data.role === "instructor",
@@ -1040,7 +1039,16 @@ function CourseFrame({
         ) : !visibleCourse ? (
           <p role="status">Loading course…</p>
         ) : section === "resources" ? (
-          <CourseResources />
+          <CourseResources
+            key={courseId}
+            courseId={courseId}
+            canUpload={
+              instructor?.courseId === courseId &&
+              instructor.allowed &&
+              visibleCourse.data.status === "active"
+            }
+            csrfToken={session.csrfToken}
+          />
         ) : section === "settings" ? (
           <CourseDetail
             key={courseId}

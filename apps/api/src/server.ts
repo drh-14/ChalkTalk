@@ -18,6 +18,7 @@ import { CourseService } from "./courses/service.js";
 import { createApp } from "./http/app.js";
 import { PostService } from "./posts/service.js";
 import { StatisticsService } from "./statistics/service.js";
+import { CourseResourceService } from "./course-resources/service.js";
 import { CourseFileService } from "./course-files/service.js";
 import { createObservability, logApiEvent } from "./observability/index.js";
 import { ContentAttachmentService } from "./content-attachments/service.js";
@@ -63,6 +64,7 @@ const app = createApp({
   followupService: new FollowupService(pool),
   statisticsService: new StatisticsService(pool),
   courseFileService: new CourseFileService(pool, s3, bucket),
+  courseResourceService: new CourseResourceService(pool),
   contentAttachmentService: new ContentAttachmentService(pool, s3, bucket),
 });
 app.listen(port, () => {

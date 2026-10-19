@@ -447,14 +447,14 @@ On screens at or below 850px, the Show and Sort by dropdowns SHALL appear above 
 - **WHEN** a member selects Questions and Newest, then opens a post
 - **THEN** the URL reads `?filter=question&sort=newest` without new history entries, the post link keeps those parameters, and Questions stays selected
 
-### Requirement: Course resources has a placeholder page
+### Requirement: Course resources uses the shared course frame
 
-The protected `/courses/{courseId}/resources` route SHALL render inside the shared course frame and show a "Course resources" heading that explains that course files will appear there and that sharing resources is not available yet. It SHALL not request resource data and SHALL use natural page scrolling rather than the full-height discussion layout.
+The protected `/courses/{courseId}/resources` route SHALL render inside the shared course frame and use natural page scrolling rather than the full-height discussion layout. Its resource behavior is specified in the [course-files](../course-files/spec.md) and [course-resource-links](../course-resource-links/spec.md) specifications.
 
 #### Scenario: A member opens Course resources
 
 - **WHEN** a signed-in course member opens `/courses/{courseId}/resources`
-- **THEN** the shared course header shows the course name with the Course resources tab active, and the page shows the placeholder heading and explanation
+- **THEN** the shared course header shows the course name with the Course resources tab active, and the page renders the flat resources interface
 
 ### Requirement: Question detail shows the students' and instructors' answers
 
