@@ -21,12 +21,12 @@
 
 ## 4. Collaboration server
 
-- [ ] 4.1 Add `apps/api/src/collaboration/main.ts` with `COLLABORATION_PORT` and `COLLABORATION_PUBLIC_URL` configuration, a `dev:collab` script added to `npm run dev`, a Vite `/collaboration` WebSocket proxy, and a Docker Compose `collaboration` service; verify a provider connects through `wss://localhost:5173/collaboration` in the browser and the Compose configuration validates
-- [ ] 4.2 Implement ticket authentication and authorization (design D3), including `Origin` rejection; verify tests that a valid ticket connects once, and that reused, expired, revoked, mismatched-document, wrong-origin, logged-out, and uninvited cases are closed
-- [ ] 4.3 Implement load and debounced store (design D5); verify tests that edits persist within 5 seconds, on last disconnect, and survive a server restart
-- [ ] 4.4 Implement update validation (design D7); verify tests that an oversized message, a write to another shared type, and content over 200,000 characters are rejected without changing or broadcasting the document
-- [ ] 4.5 Implement the `LISTEN` handler, the 15-second sweep, and the ending handshake (design D4 and D6); verify tests that removal, membership loss, and logout close connections within 5 seconds, that a dropped listener triggers a sweep on reconnect, and that ending stores the final text, marks the session ended, and closes connections with reason `session-ended`
-- [ ] 4.6 Implement server-derived presence (design D8); verify a test with two clients converging after concurrent edits at the same position, and that cursor labels come from the server map even when a client puts a fake name in awareness
+- [x] 4.1 Add `apps/api/src/collaboration/main.ts` with `COLLABORATION_PORT` and `COLLABORATION_PUBLIC_URL` configuration, a `dev:collab` script added to `npm run dev`, a Vite `/collaboration` WebSocket proxy, and a Docker Compose `collaboration` service; verify a provider connects through `wss://localhost:5173/collaboration` in the browser and the Compose configuration validates
+- [x] 4.2 Implement ticket authentication and authorization (design D3), including `Origin` rejection; verify tests that a valid ticket connects once, and that reused, expired, revoked, mismatched-document, wrong-origin, logged-out, and uninvited cases are closed
+- [x] 4.3 Implement load and debounced store (design D5); verify tests that edits persist within 5 seconds, on last disconnect, and survive a server restart
+- [x] 4.4 Implement update validation (design D7); verify tests that an oversized message, a write to another shared type, and content over 200,000 characters are rejected without changing or broadcasting the document
+- [x] 4.5 Implement the `LISTEN` handler, the 15-second sweep, and the ending handshake (design D4 and D6); verify tests that removal, membership loss, and logout close connections within 5 seconds, that a dropped listener triggers a sweep on reconnect, and that ending stores the final text, marks the session ended, and closes connections with reason `session-ended`
+- [x] 4.6 Implement server-derived presence (design D8); verify a test with two clients converging after concurrent edits at the same position, and that cursor labels come from the server map even when a client puts a fake name in awareness
 
 ## 5. Browser experience
 

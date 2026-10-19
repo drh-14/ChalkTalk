@@ -39,6 +39,12 @@ export function createViteConfig(
           target: environment.VITE_API_PROXY_TARGET ?? "http://localhost:3000",
           changeOrigin: true,
         },
+        // Live code sessions; the browser Origin header is forwarded unchanged.
+        "/collaboration": {
+          target:
+            environment.VITE_COLLABORATION_PROXY_TARGET ?? "ws://localhost:3100",
+          ws: true,
+        },
       },
       watch:
         environment.VITE_USE_POLLING === "true"

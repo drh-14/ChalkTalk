@@ -8,10 +8,11 @@
   ],
   "scripts": {
     "build": "npm run build --workspace=@chalktalk/web && npm run build --workspace=@chalktalk/api",
-    "dev": "concurrently -n web,api,worker -c cyan,green,yellow \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:worker\"",
+    "dev": "concurrently -n web,api,worker,collab -c cyan,green,yellow,magenta \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:worker\" \"npm run dev:collab\"",
     "dev:web": "npm run dev --workspace=@chalktalk/web",
     "dev:api": "npm run dev --workspace=@chalktalk/api",
     "dev:worker": "npm run dev:worker --workspace=@chalktalk/api",
+    "dev:collab": "npm run dev:collab --workspace=@chalktalk/api",
     "db:migrate": "npm run migrate --workspace=@chalktalk/api",
     "db:seed:mock": "npm run seed:mock --workspace=@chalktalk/api",
     "format": "prettier --write \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",

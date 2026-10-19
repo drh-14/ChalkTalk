@@ -68,7 +68,7 @@ Hocuspocus `onLoadDocument` reads `collaboration_documents.yjs_state`, or starts
 
 ### D6. Ending: `ending` handshake with a 5-second fallback
 
-PATCH `status: "ended"` sets `lifecycle_state='ending'` in a transaction that notifies `session_ending`. The collaboration server stores the document, sets `lifecycle_state='ended'` and `ended_at`, sends a stateless `session-ended` message, and closes the session's connections with reason `session-ended`. The API waits for `ended` by polling the row every 100 ms for up to 5 seconds, then completes the transition itself if needed. Tickets are refused once the state is `ending`. Lifecycle-driven ends (archive, post deletion) use the same path without waiting.
+PATCH `status: "ended"` sets `lifecycle_state='ending'` in a transaction that notifies `session_ending`. The collaboration server stores the document, sets `lifecycle_state='ended'` and `ended_at`, sends a stateless `session-ended` message, and closes the session's connections with reason `session-ended`. The API waits for `ended` by polling the row every 100 ms for up to 5 seconds, then completes the transition itself if needed. Tickets are refused once the state is `ending`. Lifecycle-driven ends (course archive or deletion, post deletion, duplicate confirmation) set `ended` directly inside the transaction that causes them and notify `session_ended`; the collaboration server then stores its in-memory text and closes the editors. Going through `ending` would leave sessions stuck there if the collaboration server were down, with no API request waiting to finish them.
 
 ### D7. Update validation before apply
 
