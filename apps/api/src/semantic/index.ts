@@ -17,8 +17,10 @@ export const POST_REVISION_SQL =
 function chunks(title: string, body: string): string[] {
   const content = `${title}\n${body}`;
   const parts: string[] = [];
-  for (let offset = 0; offset < content.length; offset += 1_000)
-    parts.push(content.slice(offset, offset + 1_000));
+  for (let offset = 0; offset < content.length; offset += 1_000) {
+    const part = content.slice(offset, offset + 1_000);
+    if (part.trim()) parts.push(part);
+  }
   return parts;
 }
 
@@ -72,7 +74,8 @@ export class SemanticIndex {
          locked_by=NULL,locked_until=NULL,finished_at=NULL,updated_at=now()
        WHERE (jobs.status='dead' AND jobs.updated_at < now()-interval '1 hour')
           OR (jobs.status='succeeded' AND (
-            EXISTS (SELECT 1 FROM semantic_post_catchup d WHERE d.post_id=$4)
+            EXISTS (SELECT 1 FROM semantic_post_catchup d
+                    WHERE d.post_id=$4 AND d.generation=$5)
             OR NOT EXISTS (
               SELECT 1 FROM post_embeddings e WHERE e.post_id=$4
                 AND e.generation=$5 AND e.source_revision=$6
@@ -93,10 +96,14 @@ export class SemanticIndex {
 
   async queueBackfillOne(): Promise<boolean> {
     if (!(await this.available())) return false;
-    const pending = await this.pool.query<{ post_id: string }>(
-      `SELECT d.post_id FROM semantic_post_catchup d
+    const pending = await this.pool.query<{
+      post_id: string;
+      generation: string | null;
+    }>(
+      `SELECT d.post_id,d.generation FROM semantic_post_catchup d
        JOIN posts p ON p.id=d.post_id
        WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+         AND (d.generation=$1 OR d.generation IS NULL)
          AND NOT EXISTS (
            SELECT 1 FROM jobs j WHERE j.kind='index_post'
              AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
@@ -106,11 +113,17 @@ export class SemanticIndex {
        ORDER BY d.post_id LIMIT 1`,
       [this.config.generation],
     );
-    if (
-      pending.rows[0] &&
-      (await this.enqueue(this.pool, pending.rows[0].post_id))
-    )
-      return true;
+    if (pending.rows[0]) {
+      const postId = pending.rows[0].post_id;
+      if (!pending.rows[0].generation) {
+        const claimed = await this.pool.query(
+          "UPDATE semantic_post_catchup SET generation=$2 WHERE post_id=$1 AND generation IS NULL",
+          [postId, this.config.generation],
+        );
+        if (claimed.rowCount !== 1) return false;
+      }
+      if (await this.enqueue(this.pool, postId)) return true;
+    }
     const after = this.backfillCursor;
     const scanned = await this.pool.query<{
       id: string;
@@ -225,9 +238,10 @@ export class SemanticIndex {
             `[${vector.join(",")}]`,
           ],
         );
-      await client.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [
-        postId,
-      ]);
+      await client.query(
+        "DELETE FROM semantic_post_catchup WHERE post_id=$1 AND generation=$2",
+        [postId, this.config.generation],
+      );
       await client.query("COMMIT");
       return true;
     } catch (error) {

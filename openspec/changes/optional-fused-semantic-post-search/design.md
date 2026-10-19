@@ -51,6 +51,10 @@ for the post's current revision. Deletion and confirmed-duplicate merge remove
 catch-up rows with embeddings. Pending catch-up rows, failed current-generation
 jobs, and query-provider failures disable semantic candidates for search until
 recovery; the existing lexical/fuzzy query path remains authoritative.
+Catch-up ownership carries the configured embedding generation; a no-key row
+starts unowned and a configured worker claims it. Workers claim only matching
+generation jobs and clear only their own catch-up rows after revision-checked
+vector storage. Whitespace-only chunks are skipped before provider calls.
 If health changes between relevance pages, the API rejects the semantic cursor
 with `409 search_restart_required`; the feed restarts without a cursor while
 preserving query and filters. It never presents an invented final page.

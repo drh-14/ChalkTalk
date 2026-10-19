@@ -102,6 +102,174 @@ integration("semantic post indexing", () => {
     expect(provider.embedMany.mock.calls[0]![0][0]).not.toContain(userId);
   });
 
+  it("skips whitespace-only chunks of otherwise valid post text", async () => {
+    const postId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'note','Chunk',$4)",
+      [postId, courseId, userId, `${" ".repeat(2_000)}tail`],
+    );
+    const provider = {
+      embedMany: vi.fn(async (inputs: string[]) =>
+        inputs.map((input) => {
+          if (!input.trim()) throw new Error("Embedding input is invalid");
+          return [1, 0];
+        }),
+      ),
+    };
+    const index = new SemanticIndex(pool, config, provider);
+    expect(await index.indexPost(postId)).toBe(true);
+    expect(
+      provider.embedMany.mock.calls.flatMap(([inputs]) => inputs),
+    ).toHaveLength(2);
+    expect(
+      (
+        await pool.query(
+          "SELECT chunk_ordinal FROM post_embeddings WHERE post_id=$1 ORDER BY chunk_ordinal",
+          [postId],
+        )
+      ).rows,
+    ).toEqual([{ chunk_ordinal: 0 }, { chunk_ordinal: 1 }]);
+  });
+
+  it("lets only the matching generation worker claim and clear catch-up", async () => {
+    const nextConfig = readEmbeddingConfig({
+      EMBEDDING_API_KEY: "test-key",
+      EMBEDDING_MODEL: "rolling-next-model",
+    })!;
+    const provider = {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    };
+    const oldIndex = new SemanticIndex(pool, config, provider);
+    const nextIndex = new SemanticIndex(pool, nextConfig, provider);
+    await pool.query(
+      "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,'student') ON CONFLICT DO NOTHING",
+      [courseId, userId],
+    );
+    vi.spyOn(nextIndex, "enqueue").mockRejectedValueOnce(
+      new Error("enqueue unavailable"),
+    );
+    const created = await new PostService(pool, undefined, nextIndex).create(
+      courseId,
+      userId,
+      {
+        type: "note",
+        title: "Rolling generation note",
+        bodyMarkdown: "Catch-up belongs to new model",
+      },
+    );
+    const postId = created.value.id;
+    expect(
+      (
+        await pool.query(
+          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
+          [postId],
+        )
+      ).rows,
+    ).toEqual([{ generation: nextConfig.generation }]);
+    expect(await nextIndex.queueBackfillOne()).toBe(true);
+    const oldWorker = new JobWorker(
+      pool,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      oldIndex,
+    );
+    await oldWorker.runOnce();
+    expect(
+      (
+        await pool.query(
+          "SELECT status FROM jobs WHERE kind='index_post' AND payload->>'postId'=$1 AND payload->>'generation'=$2",
+          [postId, nextConfig.generation],
+        )
+      ).rows,
+    ).toEqual([{ status: "queued" }]);
+    expect(
+      (
+        await pool.query(
+          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
+          [postId],
+        )
+      ).rows,
+    ).toEqual([{ generation: nextConfig.generation }]);
+    const nextWorker = new JobWorker(
+      pool,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      nextIndex,
+    );
+    expect(await nextWorker.runOnce()).toBe(true);
+    expect(
+      (
+        await pool.query(
+          "SELECT generation FROM post_embeddings WHERE post_id=$1",
+          [postId],
+        )
+      ).rows,
+    ).toEqual([{ generation: nextConfig.generation }]);
+    expect(
+      (
+        await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1", [
+          postId,
+        ])
+      ).rowCount,
+    ).toBe(0);
+  });
+
+  it("claims no-key catch-up for the enabled generation", async () => {
+    const enabledConfig = readEmbeddingConfig({
+      EMBEDDING_API_KEY: "test-key",
+      EMBEDDING_MODEL: "enabled-after-no-key",
+    })!;
+    const index = new SemanticIndex(pool, enabledConfig, {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    });
+    const created = await new PostService(pool).create(courseId, userId, {
+      type: "note",
+      title: "Previously no key",
+      bodyMarkdown: "Stored for later indexing",
+    });
+    const postId = created.value.id;
+    expect(await index.queueBackfillOne()).toBe(true);
+    expect(
+      (
+        await pool.query(
+          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
+          [postId],
+        )
+      ).rows,
+    ).toEqual([{ generation: enabledConfig.generation }]);
+    const worker = new JobWorker(
+      pool,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      index,
+    );
+    expect(await worker.runOnce()).toBe(true);
+    expect(
+      (
+        await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1", [
+          postId,
+        ])
+      ).rowCount,
+    ).toBe(0);
+    expect(
+      (
+        await pool.query(
+          "SELECT generation FROM post_embeddings WHERE post_id=$1",
+          [postId],
+        )
+      ).rows,
+    ).toEqual([{ generation: enabledConfig.generation }]);
+  });
+
   it("backfills an existing post through the durable job worker", async () => {
     const postId = uuidv7();
     await pool.query(

@@ -20,6 +20,7 @@ type Job = {
     staffUserId?: string;
     staffRole?: "ta" | "instructor";
     postId?: string;
+    generation?: string;
   };
   deduplicationKey: string | null;
   attempts: number;
@@ -67,7 +68,13 @@ export class JobWorker {
         attempts: number;
         max_attempts: number;
       }>(
-        `SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','send_question_duplicate_email'${this.semantic ? ",'index_post'" : ""}) AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`,
+        `SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs
+         WHERE (kind IN ('delete_course','delete_course_file','send_question_duplicate_email')
+           OR (kind='index_post' AND payload->>'generation'=$1))
+           AND ((status='queued' AND available_at <= now())
+             OR (status='running' AND (locked_until IS NULL OR locked_until < now())))
+         ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`,
+        [this.semantic?.config.generation ?? null],
       );
       const job = claimed.rows[0];
       if (!job) return undefined;
@@ -243,7 +250,11 @@ export class JobWorker {
           }),
         );
       } else if (job.kind === "index_post") {
-        if (!this.semantic || !job.payload.postId)
+        if (
+          !this.semantic ||
+          !job.payload.postId ||
+          job.payload.generation !== this.semantic.config.generation
+        )
           throw new Error("Semantic indexing job payload is invalid");
         await this.semantic.indexPost(job.payload.postId);
       } else {

@@ -77,14 +77,29 @@ integration("configured embeddings without optional schema", () => {
     const jobs = await pool.query("SELECT 1 FROM jobs WHERE kind='index_post'");
     expect(jobs.rowCount).toBe(0);
     const pending = await pool.query(
-      "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1",
+      "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
       [post.value.id],
     );
     expect(pending.rowCount).toBe(1);
+    expect(pending.rows[0]?.generation).toBe(config.generation);
+  });
+
+  it("leaves no-key catch-up unowned until a configured worker claims it", async () => {
+    const created = await new PostService(pool).create(courseId, userId, {
+      type: "note",
+      title: "No-key note",
+      bodyMarkdown: "Index after enabling a provider",
+    });
+    const pending = await pool.query(
+      "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
+      [created.value.id],
+    );
+    expect(pending.rows).toEqual([{ generation: null }]);
   });
 
   it("does not fail a post write when optional indexing is unavailable", async () => {
     const unavailable = {
+      config: readEmbeddingConfig({ EMBEDDING_API_KEY: "configured" }),
       enqueue: vi.fn(async () => {
         throw new Error("optional index unavailable");
       }),

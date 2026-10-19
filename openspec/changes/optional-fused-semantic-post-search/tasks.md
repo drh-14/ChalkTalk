@@ -14,6 +14,7 @@
 - [x] 2.5 Send the separate semantic query from Related questions.
 - [x] 2.6 Persist and drain per-post catch-up state and gate semantic search on indexing health.
 - [x] 2.7 Reject stale semantic cursors and restart the filtered feed from page one.
+- [x] 2.8 Own jobs and catch-up by embedding generation and skip blank chunks.
 
 ## 3. Verification and delivery
 

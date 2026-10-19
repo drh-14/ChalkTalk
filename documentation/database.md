@@ -149,6 +149,8 @@ Account deletion locks each affected `courses` row before testing instructor car
 
 Ordinary migration `014_semantic_post_catchup.sql` creates `semantic_post_catchup` in PostgreSQL without pgvector. Its indexed `post_id` primary key references `posts(id)` with cascading deletion. Create, title/body edit, and unmerge transactions upsert a row when enqueue is unavailable or fails, including when no provider key is configured; delete and confirmed-duplicate merge transactions remove it. The worker reads pending rows independently of the timestamp-based legacy backfill cursor and deletes each row only in the transaction that stores current-revision vectors. Failed or unavailable optional enqueue never rolls back the post write.
 
+Migration `015_semantic_catchup_generation.sql` adds nullable generation ownership to catch-up rows; null means a no-key write has not yet been claimed. A configured worker claims unowned rows for its generation. Workers only claim indexing jobs for their configured generation and only clear matching-generation catch-up rows after storing current-revision vectors.
+
 The ordinary migrations and PostgreSQL startup do not require pgvector. An operator that enables semantic post search runs `npm run migrate:semantic --workspace=@chalktalk/api` against a pgvector-capable database. This explicit migration installs `vector` in `public` and creates `post_embeddings` without changing authoritative post content.
 
 - `(post_id, generation, chunk_ordinal)`: primary key; `post_id` references `posts(id)` with cascading deletion.
