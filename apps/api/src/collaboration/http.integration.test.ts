@@ -434,9 +434,11 @@ integration("collaboration session HTTP contract", () => {
       const listener = await pool.connect();
       const events: unknown[] = [];
       await listener.query("LISTEN collaboration_events");
-      listener.on("notification", (message) =>
-        events.push(JSON.parse(message.payload!)),
-      );
+      // Notifications are database-wide, so other test schemas' events arrive too.
+      listener.on("notification", (message) => {
+        const event = JSON.parse(message.payload!);
+        if (event.sessionId === session.id) events.push(event);
+      });
       await patch("alice", session.id, '"v2"', { language: "sql" });
       await unsafe(
         request(app(as("alice"))).delete(

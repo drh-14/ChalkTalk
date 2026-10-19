@@ -42,4 +42,5 @@
 ## 7. Integration checks
 
 - [x] 7.1 Add `tests/browser/live-code-session.spec.mjs`: a student starts a Python session and invites a TA in one browser context; the TA joins in a second context; both type concurrently and see the same text and each other's cursors; the TA ends the session and both editors become read-only with the final text; verify it passes with `--workers=1`
-- [ ] 7.2 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test` with `TEST_DATABASE_URL`, and `npm run build`; verify all pass, recording any pre-existing environment-only failures with evidence from `main`
+- [x] 7.2 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test` with `TEST_DATABASE_URL`, and `npm run build`; verify all pass, recording any pre-existing environment-only failures with evidence from `main`
+  Note: format, lint, typecheck, and build pass. Every collaboration test passes when its file runs alone, and `npm run test:browser:live-sessions` passed three times in a row against the running stack. Full parallel runs on this Windows machine (repository inside OneDrive) show varying load-related timeouts in unrelated files; the two `App.test.tsx` password-reset tests fail identically on `main`. The full suite found one real regression, fixed here: the sessions panel had separated the staff actions from the answers.

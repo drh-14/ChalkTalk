@@ -2141,6 +2141,14 @@ function DiscussionContent({
                         />
                       </div>
                     )}
+                    {detail.type === "question" && (
+                      <QuestionResponses
+                        postId={detail.id}
+                        role={role}
+                        courseStatus={course?.status}
+                        csrfToken={csrfToken}
+                      />
+                    )}
                     {postView === "posts" && (
                       <SessionsPanel
                         courseId={courseId}
@@ -2150,14 +2158,6 @@ function DiscussionContent({
                         onOpen={(sessionId) =>
                           navigate(sessionRoute(courseId, sessionId))
                         }
-                      />
-                    )}
-                    {detail.type === "question" && (
-                      <QuestionResponses
-                        postId={detail.id}
-                        role={role}
-                        courseStatus={course?.status}
-                        csrfToken={csrfToken}
                       />
                     )}
                   </article>
