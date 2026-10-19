@@ -3,6 +3,10 @@ import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
+import {
+  hideAttachmentsForPostTree,
+  listAttachments,
+} from "../content-attachments/service.js";
 
 type Db = Pool | PoolClient;
 type Role = "student" | "ta" | "instructor";
@@ -168,7 +172,10 @@ export class PostService {
       },
       anonymous: row.anonymous,
       tags: await this.tags(db, row.id),
-      attachments: [],
+      attachments:
+        row.duplicate_status === "confirmed"
+          ? []
+          : await listAttachments(db, "post", row.id),
       pinned: row.pinned,
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
@@ -701,6 +708,7 @@ export class PostService {
           "Post deletion is not permitted",
         );
       await db.query("DELETE FROM post_tags WHERE post_id=$1", [id]);
+      await hideAttachmentsForPostTree(db, id);
       await db.query(
         "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [id],

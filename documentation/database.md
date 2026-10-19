@@ -245,20 +245,20 @@ The non-deleted answer body check retains historical empty strings from former l
 - `(followup_id, user_id)`: primary key, enforcing one vote per member per followup.
 - `created_at`: `timestamptz`.
 
-### `attachments`
+### `content_attachments`
 
 - `id`: `uuid_v7`; primary key.
-- `course_id`: `uuid_v7`.
 - `post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
 - `answer_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `answers(course_id, id)`.
 - `followup_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `followups(course_id, id)`.
 - A `CHECK` constraint requires exactly one parent foreign key to be present.
-- `object_key`: `text`, nullable and unique when present.
-- `original_filename`: `varchar(255)`.
-- `media_type`, `status`: `text`.
-- `size_bytes`: `bigint`.
-- `checksum_sha256`: `bytea`.
-- `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
+- `course_id`: required foreign key to `courses.id`; course deletion cascades to the rows.
+- `object_key`: required unique `text` key for the file-backed object store.
+- `file_name`, `media_type`: required `text` values; the upload path validates the filename and file contents.
+- `size_bytes`: required `bigint`, constrained to 1–104857600 bytes.
+- `checksum_sha256`: required 32-byte `bytea`, used for exact-byte idempotent upload replay.
+- `created_at`: `timestamptz`; `deleted_at`: nullable `timestamptz`. There is no processing status or `updated_at` column. Soft deletion hides the file immediately and queues object deletion for the separate worker; confirmed duplicate sources hide files without deleting their rows or bytes, and unmerge restores visibility.
+- Partial indexes on each parent ID and attachment ID cover live rows (`deleted_at IS NULL`). At most five live rows per parent is enforced by the upload transaction, not a database constraint.
 
 ### `post_view_events`
 

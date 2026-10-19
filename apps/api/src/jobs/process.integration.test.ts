@@ -15,6 +15,9 @@ const ownerId = uuidv7();
 const courseId = uuidv7();
 const jobId = uuidv7();
 const fileJobId = uuidv7();
+const attachmentJobId = uuidv7();
+const attachmentObjectKey = `courses/${courseId}/attachments/diagram.png`;
+const deletedAttachmentObjectKey = `courses/${courseId}/attachments/deleted.png`;
 const courseObjectKey = `course-files/${courseId}/notes.txt`;
 const fileObjectKey = `course-files/${courseId}/deleted.txt`;
 const serverPath = fileURLToPath(new URL("../server.ts", import.meta.url));
@@ -107,6 +110,19 @@ integration("separate HTTP and job worker processes", () => {
       "INSERT INTO jobs (id,kind,payload,max_attempts) VALUES ($1,'delete_course_file',$2,5)",
       [fileJobId, { objectKey: fileObjectKey }],
     );
+    const postId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown) VALUES ($1,$2,$3,'question','Worker attachment','Body')",
+      [postId, courseId, ownerId],
+    );
+    await pool.query(
+      "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$4,'diagram.png','image/png',1,$5)",
+      [uuidv7(), courseId, postId, attachmentObjectKey, Buffer.alloc(32)],
+    );
+    await pool.query(
+      "INSERT INTO jobs (id,kind,payload,max_attempts) VALUES ($1,'delete_content_attachment',$2,5)",
+      [attachmentJobId, { objectKey: deletedAttachmentObjectKey }],
+    );
   });
 
   afterAll(async () => {
@@ -132,9 +148,13 @@ integration("separate HTTP and job worker processes", () => {
     await new Promise((resolve) => setTimeout(resolve, 1_200));
     const queued = await pool.query<{ status: string }>(
       "SELECT status FROM jobs WHERE id=ANY($1)",
-      [[jobId, fileJobId]],
+      [[jobId, fileJobId, attachmentJobId]],
     );
-    expect(queued.rows.map((row) => row.status)).toEqual(["queued", "queued"]);
+    expect(queued.rows.map((row) => row.status)).toEqual([
+      "queued",
+      "queued",
+      "queued",
+    ]);
     expect(deletedObjects).toEqual([]);
 
     const worker = start(workerPath);
@@ -142,15 +162,20 @@ integration("separate HTTP and job worker processes", () => {
       if (worker.exitCode !== null) throw new Error("Worker process exited");
       const result = await pool.query<{ status: string }>(
         "SELECT status FROM jobs WHERE id=ANY($1)",
-        [[jobId, fileJobId]],
+        [[jobId, fileJobId, attachmentJobId]],
       );
       return (
-        result.rows.length === 2 &&
+        result.rows.length === 3 &&
         result.rows.every((row) => row.status === "succeeded")
       );
     });
     expect(deletedObjects.sort()).toEqual(
-      [courseObjectKey, fileObjectKey].sort(),
+      [
+        courseObjectKey,
+        fileObjectKey,
+        attachmentObjectKey,
+        deletedAttachmentObjectKey,
+      ].sort(),
     );
     expect((await fetch(`http://127.0.0.1:${port}/health`)).ok).toBe(true);
     worker.kill("SIGTERM");

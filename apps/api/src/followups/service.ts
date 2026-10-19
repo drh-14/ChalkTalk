@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import {
+  hideAttachmentsForParent,
+  listAttachments,
+  type Attachment,
+} from "../content-attachments/service.js";
 
 type Db = Pool | PoolClient;
 type Role = "student" | "ta" | "instructor";
@@ -33,6 +38,7 @@ export type Followup = {
   upvoteCount: number;
   viewerUpvoted: boolean;
   replyCount: number;
+  attachments: Attachment[];
 };
 export type CreateFollowup = { bodyMarkdown: string; anonymous?: boolean };
 export type FollowupPage = {
@@ -176,6 +182,9 @@ export class FollowupService {
       upvoteCount: Number(votes.rows[0].count),
       viewerUpvoted: votes.rows[0].mine,
       replyCount,
+      attachments: row.deleted_at
+        ? []
+        : await listAttachments(db, "followup", row.id),
     };
   }
 
@@ -448,6 +457,7 @@ export class FollowupService {
         "UPDATE followups SET body_markdown=NULL,deleted_at=statement_timestamp(),updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [id],
       );
+      await hideAttachmentsForParent(db, "followup", id);
       await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
