@@ -2012,3 +2012,191 @@ it.each(["root", "nested"] as const)(
     expect(within(target).getByText("Saved revision")).toBeTruthy();
   },
 );
+
+it("shows an answer image and a followup document beneath their text", async () => {
+  const image = {
+    id: "image-1",
+    fileName: "diagram.png",
+    mediaType: "image/png",
+    sizeBytes: 3,
+    createdAt: "2026-10-18T00:00:00Z",
+    downloadUrl: "/api/v1/attachments/image-1/download",
+  };
+  const document = {
+    ...image,
+    id: "doc-1",
+    fileName: "slides.pptx",
+    mediaType:
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    downloadUrl: "/api/v1/attachments/doc-1/download",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/answers")
+        ? answers([answer({ attachments: [image] })])
+        : discussions([followup({ attachments: [document] })]),
+    ),
+  );
+  render(<QuestionResponses {...props} />);
+  const student = await screen.findByRole("region", {
+    name: "Students' answer",
+  });
+  expect(
+    (
+      await within(student).findByRole("img", { name: "diagram.png" })
+    ).getAttribute("src"),
+  ).toBe(image.downloadUrl);
+  expect(
+    (await screen.findByRole("link", { name: "slides.pptx" })).getAttribute(
+      "href",
+    ),
+  ).toBe(document.downloadUrl);
+});
+
+it("keeps a shared answer after an attachment failure and retries without creating another answer", async () => {
+  let creates = 0;
+  let uploads = 0;
+  const picture = {
+    id: "attachment-1",
+    fileName: "proof.png",
+    mediaType: "image/png",
+    sizeBytes: 3,
+    createdAt: "2026-10-18T00:00:00Z",
+    downloadUrl: "/api/v1/attachments/attachment-1/download",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/posts/p1/answers" && init?.method === "POST") {
+        creates++;
+        return json({ data: answer() }, 201);
+      }
+      if (url === "/api/v1/answers/a1/attachments" && init?.method === "POST") {
+        uploads++;
+        return uploads === 1
+          ? error("storage_unavailable", 503)
+          : json({ data: picture }, 201);
+      }
+      if (url === "/api/v1/answers/a1")
+        return json({ data: answer({ attachments: [picture], version: 2 }) });
+      return answers([]);
+    }),
+  );
+  render(<AnswerSections {...props} />);
+  const student = await screen.findByRole("region", {
+    name: "Students' answer",
+  });
+  await userEvent.setup().click(
+    await within(student).findByRole("button", {
+      name: "Start students' answer",
+    }),
+  );
+  await userEvent
+    .setup()
+    .type(
+      within(student).getByRole("textbox", { name: "Your answer" }),
+      "Explanation",
+    );
+  await userEvent
+    .setup()
+    .upload(
+      within(student).getByLabelText("Add files"),
+      new File(["png"], "proof.png", { type: "image/png" }),
+    );
+  await userEvent
+    .setup()
+    .click(within(student).getByRole("button", { name: "Post answer" }));
+  expect(
+    await within(student).findByText(/proof.png: storage_unavailable/),
+  ).toBeTruthy();
+  expect(creates).toBe(1);
+  await userEvent
+    .setup()
+    .click(within(student).getByRole("button", { name: "Retry attachments" }));
+  await waitFor(() => expect(uploads).toBe(2));
+  expect(creates).toBe(1);
+  expect(
+    await within(student).findByRole("img", { name: "proof.png" }),
+  ).toBeTruthy();
+});
+
+it("retains current attachments when an independent answer draft explicitly overwrites a conflict", async () => {
+  const image = {
+    id: "image-1",
+    fileName: "diagram.png",
+    mediaType: "image/png",
+    sizeBytes: 3,
+    createdAt: "2026-10-19T00:00:00Z",
+    downloadUrl: "/api/v1/attachments/image-1/download",
+  };
+  const document = {
+    ...image,
+    id: "document-1",
+    fileName: "proof.docx",
+    mediaType:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    downloadUrl: "/api/v1/attachments/document-1/download",
+  };
+  const patches: RequestInit[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        patches.push(init);
+        return patches.length === 1
+          ? error("version_conflict", 412)
+          : json({
+              data: answer({
+                bodyMarkdown: "My **saved** answer",
+                version: 3,
+                attachments: [image, document],
+              }),
+            });
+      }
+      if (url === "/api/v1/answers/a1")
+        return json({
+          data: answer({
+            bodyMarkdown: "Peer correction",
+            version: 2,
+            attachments: [image, document],
+          }),
+        });
+      return answers([
+        answer({ bodyMarkdown: "Original", attachments: [image] }),
+      ]);
+    }),
+  );
+  render(<AnswerSections {...props} />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Edit answer" }));
+  const editor = screen.getByRole("textbox", { name: "Answer" });
+  await user.click(editor);
+  await user.keyboard("{Control>}a{/Control}My **saved** answer");
+  expect(patches).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Save answer" }));
+  const conflict = await screen.findByRole("region", {
+    name: "Answer conflict",
+  });
+  expect(within(conflict).getByText("Peer correction")).toBeTruthy();
+  expect(
+    within(conflict).getByRole("link", { name: "proof.docx" }),
+  ).toBeTruthy();
+  await user.click(
+    within(conflict).getByRole("button", { name: "Overwrite with my draft" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Answer conflict" }),
+    ).toBeNull(),
+  );
+  expect((patches[1].headers as Record<string, string>)["If-Match"]).toBe(
+    '"v2"',
+  );
+  expect(JSON.parse(patches[1].body as string)).toEqual({
+    bodyMarkdown: "My **saved** answer",
+  });
+  expect(screen.getByText("saved").tagName).toBe("STRONG");
+  expect(screen.getByRole("img", { name: "diagram.png" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "proof.docx" })).toBeTruthy();
+});

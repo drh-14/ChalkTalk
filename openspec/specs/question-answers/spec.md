@@ -102,9 +102,9 @@ Lets course members answer question posts through one shared students' answer an
 - **WHEN** staff delete an unendorsed shared slot with its current ETag
 - **THEN** it is absent from ordinary reads and that kind can be recreated
 
-### Requirement: Save-only answer editing remains attachment-free
+### Requirement: Save-only answer editing coexists with attachments
 
-`PATCH /api/v1/answers/{answerId}` SHALL accept JSON `bodyMarkdown` and a current `If-Match`. A student answer SHALL be editable by every current member; a staff answer SHALL be editable only by current members at or above its immutable TA or instructor creator-role floor. Typing and formatting SHALL remain in an independent local draft until Save. The server SHALL atomically save Markdown, answer version and timestamp, contributor, contribution event, and current endorsement state. Missing/stale ETags SHALL return `428 precondition_required`/`412 version_conflict`; insufficient role `403 permission_denied`; hidden or deleted answers `404`; inactive courses `409 course_archived`. Multipart and attachment edits SHALL remain unavailable. After a stale save the client SHALL preserve the draft, show the latest saved answer alongside it, and require explicit Overwrite before retrying with a fresh ETag. A further race SHALL repeat the review.
+`PATCH /api/v1/answers/{answerId}` SHALL accept JSON `bodyMarkdown` and a current `If-Match`. A student answer SHALL be editable by every current member; a staff answer SHALL be editable only by current members at or above its immutable TA or instructor creator-role floor. Typing and formatting SHALL remain in an independent local draft until Save. The server SHALL atomically save Markdown, answer version and timestamp, contributor, contribution event, and current endorsement state. Missing/stale ETags SHALL return `428 precondition_required`/`412 version_conflict`; insufficient role `403 permission_denied`; hidden or deleted answers `404`; inactive courses `409 course_archived`. The Markdown PATCH SHALL remain JSON-only; separate parent-scoped attachment upload/removal routes SHALL use the same edit permissions and advance the parent version without changing its Markdown. Saving or explicitly overwriting a text draft SHALL retain current attachments. After a stale save the client SHALL preserve the draft, show the latest saved answer alongside it, and require explicit Overwrite before retrying with a fresh ETag. A further race SHALL repeat the review.
 
 #### Scenario: A client tries to edit an answer
 
@@ -172,3 +172,17 @@ The API SHALL reject endorsement while a historical answer body is blank, withou
 
 - **WHEN** staff attempts to endorse a historical answer whose body is empty
 - **THEN** endorsement is rejected until nonblank content is committed
+
+### Requirement: Shared-answer attachments follow save-only editing permissions
+
+Shared answers SHALL expose active parent-scoped attachment metadata. Attachment uploads and removals SHALL be separate from save-only Markdown text updates, using the same current course membership and immutable role-floor rules as editing the answer. Each successful attachment mutation SHALL advance the answer version so an independent draft with an older ETag requires an explicit conflict decision before overwrite. No attachment operation SHALL read, write, create, or require Yjs snapshots, tickets, WebSockets, or live-edit processes.
+
+#### Scenario: Attachment changes during an independent answer draft
+
+- **WHEN** one editor uploads a file while another editor holds an earlier answer ETag
+- **THEN** the attachment is committed and the earlier draft's Save receives `412 version_conflict` without losing either the attachment or the draft
+
+#### Scenario: Markdown save races an attachment upload
+
+- **WHEN** a version-checked Markdown save and an authorized attachment upload target one answer concurrently
+- **THEN** serialized parent versions preserve the committed text and attachment, and a stale save cannot silently overwrite a newer parent revision

@@ -1,4 +1,5 @@
 import { ApiError } from "../auth/client.js";
+import type { Attachment } from "../attachments/client.js";
 
 export type Answer = {
   id: string;
@@ -8,7 +9,7 @@ export type Answer = {
   bodyMarkdown: string;
   contributors: { id: string; displayName: string }[] | null;
   anonymous: boolean;
-  attachments: [];
+  attachments: Attachment[];
   endorsedAt: string | null;
   endorsedBy: string | null;
   createdAt: string;
@@ -26,6 +27,7 @@ export type Followup = {
   author: { id: string; displayName: string } | null;
   anonymous: boolean;
   bodyMarkdown: string | null;
+  attachments?: Attachment[];
   deleted: boolean;
   createdAt: string;
   updatedAt: string;

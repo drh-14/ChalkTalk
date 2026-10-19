@@ -18,8 +18,10 @@ info:
     Implementation status: JSON question and note posts, shared student and staff
     answers, question-owned threaded followups, and answer/followup upvotes are live.
     Answer bodies support explicit save-only versioned REST editing; followups and
-    replies also use REST only. Polls, multipart content,
-    attachments, download refresh, and temporary collaboration sessions remain unavailable.
+    replies also use REST only. Saved questions, notes, answers, and followups
+    support separate parent-scoped file attachments; create/update text requests
+    remain JSON-only. Polls, multipart post create/update, download refresh, and
+    temporary collaboration sessions remain unavailable.
   license:
     name: MIT
     identifier: MIT
@@ -3003,7 +3005,7 @@ paths:
       tags:
         - Posts
       summary: Create post in course
-      description: Create post in course. Currently JSON question/note only; poll and multipart definitions are future targets.
+      description: Create post in course. Currently JSON question/note only; poll and multipart post-create definitions are future targets. Upload files separately to a saved parent.
       x-implementation-status: text-posts-live
       operationId: createPost
       security:
@@ -3104,11 +3106,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 payload_too_large:
-                  summary: An attachment exceeds 25 MiB or the five-file limit.
+                  summary: A future post-multipart attachment exceeds its limit.
                   value:
                     error:
                       code: payload_too_large
-                      message: An attachment exceeds 25 MiB or the five-file limit.
+                      message: A future post-multipart attachment exceeds its limit.
                       requestId: req_createPost
                       details: []
         "415":
@@ -3220,7 +3222,7 @@ paths:
               additionalProperties: false
               required:
                 - metadata
-              description: Send metadata as application/json and repeat the attachments part up to five times. Each file may be at most 25 MiB and must be PDF, plain text, Markdown, PNG, JPEG, or WebP.
+              description: Send metadata as application/json and repeat the attachments part up to five times. This future-only post multipart operation is not implemented; use the parent-scoped upload routes below.
             encoding:
               metadata:
                 contentType: application/json
@@ -3633,7 +3635,7 @@ paths:
       tags:
         - Posts
       summary: Update post
-      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm or unmerge duplicates and change pinned. Confirmation retains the source content but returns only a canonical reference. Successful confirmation of a question duplicate transactionally queues an email to its author with the question title, the active confirming staff member's name and role, and a canonical-post link. If that staff account is deleted before delivery, the email uses an unnamed role label instead; the job does not retain the staff display name. Delivery is asynchronous and SMTP failure does not undo the merge. Suggestions, note confirmations, failed updates, and unmerges do not queue this email. A confirmed source cannot be edited until unmerged; a canonical with confirmed inbound references cannot be merged. Multipart and attachment changes are future-only. A tombstone returns 404 not_found.
+      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm or unmerge duplicates and change pinned. Confirmation retains the source content but returns only a canonical reference. Successful confirmation of a question duplicate transactionally queues an email to its author with the question title, the active confirming staff member's name and role, and a canonical-post link. If that staff account is deleted before delivery, the email uses an unnamed role label instead; the job does not retain the staff display name. Delivery is asynchronous and SMTP failure does not undo the merge. Suggestions, note confirmations, failed updates, and unmerges do not queue this email. A confirmed source cannot be edited until unmerged; a canonical with confirmed inbound references cannot be merged. Multipart post updates are future-only; use parent-scoped attachment routes for files. A tombstone returns 404 not_found.
       x-implementation-status: text-posts-live
       operationId: updatePost
       security:
@@ -10403,6 +10405,99 @@ paths:
                       details: []
       parameters:
         - "$ref": "#/components/parameters/CollaborationSessionId"
+  /posts/{postId}/attachments:
+    post:
+      tags: [Posts]
+      summary: Upload one file to a saved question or note
+      description: Requires current parent edit permission and an active course. Matching-byte Idempotency-Key retries return the original 201 for 24 hours, including after archive while the caller remains authorized. Conflicting reuse returns 409. At most five live files per parent; each validated file is at most 100 MiB. Text is saved separately through JSON REST requests.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - { name: postId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false }
+      responses:
+        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "403": { description: Parent edit permission denied. }
+        "404": { description: Parent not found or not visible. }
+        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
+        "413": { description: File exceeds 100 MiB or parent already has five live files. }
+        "415": { description: Multipart required or file format or structure unsupported. }
+        "422": { description: Invalid key, filename, or multipart parts. }
+        "503": { description: Attachment storage unavailable. }
+  /answers/{answerId}/attachments:
+    post:
+      tags: [Answers]
+      summary: Upload one file to a saved answer
+      description: Same upload contract as POST /posts/{postId}/attachments. Current edit permissions enforce the answer creator-role floor; attachment changes increment the answer version and contributor history, clear current endorsement, and preserve Markdown and historical endorsement events.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - { name: answerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false } } } }
+      responses:
+        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "403": { description: Parent edit permission denied. }
+        "404": { description: Parent not found or not visible. }
+        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
+        "413": { description: File exceeds 100 MiB or parent already has five live files. }
+        "415": { description: Multipart required or file format or structure unsupported. }
+        "422": { description: Invalid key, filename, or multipart parts. }
+        "503": { description: Attachment storage unavailable. }
+  /followups/{followupId}/attachments:
+    post:
+      tags: [Answers]
+      summary: Upload one file to a saved question followup or reply
+      description: Same upload contract as POST /posts/{postId}/attachments. Only the original author or current staff may edit the parent. Attachment changes increment its version while preserving Markdown.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - { name: followupId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false } } } }
+      responses:
+        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "403": { description: Parent edit permission denied. }
+        "404": { description: Parent not found or not visible. }
+        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
+        "413": { description: File exceeds 100 MiB or parent already has five live files. }
+        "415": { description: Multipart required or file format or structure unsupported. }
+        "422": { description: Invalid key, filename, or multipart parts. }
+        "503": { description: Attachment storage unavailable. }
+  /attachments/{attachmentId}/download:
+    get:
+      tags: [Posts]
+      summary: Stream an attached file
+      description: Requires current course membership and a visible, live parent. Archived courses remain download-only. Confirmed duplicate sources and deleted parents hide their files without moving bytes.
+      security: [{ session_cookie: [] }]
+      parameters: [{ name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: Validated file stream; images are inline and documents are downloads., headers: { Content-Disposition: { schema: { type: string } }, Content-Length: { schema: { type: integer } }, X-Content-Type-Options: { schema: { type: string, enum: [nosniff] } }, Cache-Control: { schema: { type: string, enum: ["private, no-store"] } } }, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        "404": { description: File or visible parent not found, or caller is not a course member. }
+        "503": { description: Attachment storage unavailable. }
+  /attachments/{attachmentId}:
+    delete:
+      tags: [Posts]
+      summary: Remove a file from its parent
+      description: Requires current parent edit permission and an active course. Immediately hides the file, increments the parent version, and queues durable physical deletion for the separate worker. Answer removals also update contributor history and clear current endorsement while preserving Markdown and historical events.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed. }
+        "403": { description: Parent edit permission denied. }
+        "404": { description: File or visible parent not found. }
+        "409": { description: Course archived. }
 components:
   securitySchemes:
     metrics_bearer:
@@ -11093,63 +11188,18 @@ components:
         - version
     Attachment:
       type: object
+      description: A live file attached to a saved question, note, answer, or followup.
       properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        filename:
-          type: string
-          description: Original file name.
-          minLength: 1
-          maxLength: 255
+        id: { type: string, format: uuid }
+        fileName: { type: string, minLength: 1, maxLength: 255 }
         mediaType:
           type: string
-          description: Validated media type.
-          enum:
-            - application/pdf
-            - text/plain
-            - text/markdown
-            - image/png
-            - image/jpeg
-            - image/webp
-        sizeBytes:
-          type: integer
-          description: Uploaded file size in bytes.
-          minimum: 1
-          maximum: 26214400
-        status:
-          type: string
-          description: Attachment processing state.
-          enum:
-            - processing
-            - ready
-            - rejected
-            - failed
-        downloadUrl:
-          type:
-            - string
-            - "null"
-          description: Short-lived download URL when status is ready; otherwise null.
-          format: uri
-        expiresAt:
-          type:
-            - string
-            - "null"
-          description: Download URL expiry when downloadUrl is present; otherwise null.
-          format: date-time
+          enum: [application/pdf, text/plain, text/markdown, image/png, image/jpeg, image/webp, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.presentationml.presentation]
+        sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
+        createdAt: { type: string, format: date-time }
+        downloadUrl: { type: string, description: Authenticated same-origin download path, not a presigned URL. }
       additionalProperties: false
-      required:
-        - id
-        - filename
-        - mediaType
-        - sizeBytes
-        - status
-        - downloadUrl
-        - expiresAt
+      required: [id, fileName, mediaType, sizeBytes, createdAt, downloadUrl]
     PollOptionInput:
       type: object
       properties:
@@ -11740,7 +11790,7 @@ components:
           type: [array, "null"]
           items: { $ref: "#/components/schemas/Contributor" }
         anonymous: { type: boolean }
-        attachments: { type: array, maxItems: 0, items: {} }
+        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
         endorsedAt: { type: [string, "null"], format: date-time }
         endorsedBy: { type: [string, "null"] }
         createdAt: { type: string, format: date-time }
@@ -11791,6 +11841,7 @@ components:
         upvoteCount: { type: integer, minimum: 0 }
         viewerUpvoted: { type: boolean }
         replyCount: { type: integer, minimum: 0 }
+        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
       required:
         [
           id,
@@ -11807,6 +11858,7 @@ components:
           upvoteCount,
           viewerUpvoted,
           replyCount,
+          attachments,
         ]
     FollowupRead:
       $ref: "#/components/schemas/Followup"

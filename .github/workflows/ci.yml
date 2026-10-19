@@ -111,9 +111,9 @@ jobs:
       - name: Verify SeaweedFS object storage
         run: sh docker/test-seaweedfs-s3.sh
 
-      - name: Verify course-file API against PostgreSQL and SeaweedFS
+      - name: Verify course and discussion file APIs against PostgreSQL and SeaweedFS
         run: |
-          docker compose exec -T api sh -c 'TEST_DATABASE_URL="$DATABASE_URL" TEST_S3_ENDPOINT="$S3_ENDPOINT" npx vitest run apps/api/src/http/course-files.integration.test.ts apps/api/src/jobs/worker.integration.test.ts apps/api/src/course-files/validate.test.ts'
+          docker compose exec -T api sh -c 'TEST_DATABASE_URL="$DATABASE_URL" TEST_S3_ENDPOINT="$S3_ENDPOINT" npx vitest run apps/api/src/http/course-files.integration.test.ts apps/api/src/http/attachments.integration.test.ts apps/api/src/http/attachments.process.integration.test.ts apps/api/src/jobs/worker.integration.test.ts apps/api/src/jobs/process.integration.test.ts apps/api/src/course-files/validate.test.ts'
 
       - name: Verify stale application dependencies self-repair
         env:
@@ -193,3 +193,6 @@ jobs:
 
       - name: Run answer save-only browser scenarios
         run: npm run test:browser:answers
+
+      - name: Run discussion attachment browser scenarios
+        run: npm run test:browser:attachments

@@ -4396,3 +4396,174 @@ it("renders Markdown previews without dropping ordinary punctuation", async () =
     "Setup Is sqrt(x^2 - 9) equal to |3 tan(t)| when p > 2? Yes! Bold and italic with code quoted a link and a figure snake_case stays",
   );
 });
+
+it("keeps a created note and retries only its failed attachment", async () => {
+  let uploads = 0;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "/api/v1/courses/course-1/posts" && init?.method === "POST")
+      return json({ data: post("new-note", "Lecture notes") }, 201);
+    if (
+      url === "/api/v1/posts/new-note/attachments" &&
+      init?.method === "POST"
+    ) {
+      uploads++;
+      return uploads === 1
+        ? json(
+            { error: { code: "storage_unavailable", message: "Try later" } },
+            503,
+          )
+        : json(
+            {
+              data: {
+                id: "attachment-1",
+                fileName: "notes.pdf",
+                mediaType: "application/pdf",
+                sizeBytes: 4,
+                createdAt: "2026-10-18T00:00:00Z",
+                downloadUrl: "/api/v1/attachments/attachment-1/download",
+              },
+            },
+            201,
+          );
+    }
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const navigate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={navigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post type" }),
+    "note",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Lecture notes",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Summary",
+  );
+  await user.upload(
+    screen.getByLabelText("Add files"),
+    new File(["test"], "notes.pdf", { type: "application/pdf" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  expect(await screen.findByText(/notes.pdf: Try later/)).toBeTruthy();
+  expect(navigate).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Retry attachments" }));
+  await waitFor(() =>
+    expect(navigate).toHaveBeenCalledWith("/courses/course-1/posts/new-note"),
+  );
+  expect(
+    fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url === "/api/v1/courses/course-1/posts" && init?.method === "POST",
+    ),
+  ).toHaveLength(1);
+  expect(uploads).toBe(2);
+});
+
+it("retains an existing post's failed file after refreshing a successful sibling upload", async () => {
+  const image = {
+    id: "image-1",
+    fileName: "diagram.png",
+    mediaType: "image/png",
+    sizeBytes: 3,
+    createdAt: "2026-10-19T00:00:00Z",
+    downloadUrl: "/api/v1/attachments/image-1/download",
+  };
+  const document = {
+    ...image,
+    id: "document-1",
+    fileName: "notes.txt",
+    mediaType: "text/plain",
+    downloadUrl: "/api/v1/attachments/document-1/download",
+  };
+  let current = {
+    ...post("p1", "Existing note"),
+    type: "note",
+    version: 1,
+    attachments: [] as (typeof image)[],
+  };
+  let failSecond!: (value: Response) => void;
+  const secondResponse = new Promise<Response>((resolve) => {
+    failSecond = resolve;
+  });
+  let reads = 0;
+  const uploads: { name: string; key: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/user-staff"))
+        return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/p1/attachments" && init?.method === "POST") {
+        const name = ((init.body as FormData).get("file") as File).name;
+        uploads.push({
+          name,
+          key: (init.headers as Record<string, string>)["Idempotency-Key"],
+        });
+        if (uploads.length === 2) return secondResponse;
+        current = {
+          ...current,
+          version: current.version + 1,
+          attachments: [
+            ...current.attachments,
+            name === "diagram.png" ? image : document,
+          ],
+        };
+        return json({ data: name === "diagram.png" ? image : document }, 201);
+      }
+      if (url === "/api/v1/posts/p1") {
+        if (++reads > 1)
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        return json({ data: current });
+      }
+      return page([current]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.upload(await screen.findByLabelText("Add files"), [
+    new File(["x"], "diagram.png", { type: "image/png" }),
+    new File(["y"], "notes.txt", { type: "text/plain" }),
+  ]);
+  await user.click(
+    screen.getByRole("button", { name: "Upload selected files" }),
+  );
+  await screen.findByRole("img", { name: "diagram.png" });
+  failSecond(
+    json(
+      { error: { code: "service_unavailable", message: "Retry second file" } },
+      503,
+    ),
+  );
+  expect(await screen.findByText(/notes.txt: Retry second file/)).toBeTruthy();
+  await user.click(
+    screen.getByRole("button", { name: "Upload selected files" }),
+  );
+  expect(await screen.findByRole("link", { name: "notes.txt" })).toBeTruthy();
+  expect(uploads.map((value) => value.name)).toEqual([
+    "diagram.png",
+    "notes.txt",
+    "notes.txt",
+  ]);
+  expect(uploads[1].key).toBe(uploads[2].key);
+});

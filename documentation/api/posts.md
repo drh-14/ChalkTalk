@@ -1,6 +1,6 @@
 ## Posts
 
-**Implementation status (text-post phase):** JSON question and note creation, listing/search, retrieval, update, deletion, and daily deduplicated post views are implemented. Active text posts return `attachments: []`; questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. Poll creation, poll voting, multipart requests, attachments, and download refresh below describe the future target contract and are not live. During this phase, poll creation and multipart create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
+**Implementation status:** JSON question and note creation, listing/search, retrieval, update, deletion, and daily deduplicated post views are implemented. Active questions and notes can have files uploaded separately after saving; see the [OpenAPI attachment contract](../openapi.yaml) for current parent-scoped upload, download, and removal routes. Questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. Poll creation, poll voting, the multipart post create/update shapes and attachment-processing/download-refresh fields below remain future targets and are not live. Poll creation and multipart post create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
 
@@ -106,7 +106,7 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 
 #### Multipart parts
 
-`metadata` (`CreatePostRequest`, required, `application/json`): Send metadata as application/json and repeat the attachments part up to five times. Each file may be at most 25 MiB and must be PDF, plain text, Markdown, PNG, JPEG, or WebP.
+`metadata` (`CreatePostRequest`, required, `application/json`): Future-only post multipart contract; not implemented. For current files, use the [parent-scoped upload routes](../openapi.yaml).
 
 Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePollPostRequest.
 
@@ -150,7 +150,7 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 
 `metadata.options[].label` (string, required): Visible poll choice label.
 
-`attachments` (repeated file part, optional): Up to five files, 25 MiB each; PDF, plain text, Markdown, PNG, JPEG, or WebP.
+`attachments` (repeated file part, optional): Future-only post multipart contract; not implemented. For current files, use the [parent-scoped upload routes](../openapi.yaml).
 
 **Success:** `201 Created`.
 
@@ -186,19 +186,7 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 
 `data.attachments` (list of objects, required): Files attached to the post.
 
-`data.attachments[].id` (string, required): Opaque stable attachment identifier.
-
-`data.attachments[].filename` (string, required): Original file name.
-
-`data.attachments[].mediaType` (enum: application/pdf, text/plain, text/markdown, image/png, image/jpeg, image/webp, required): Validated file media type.
-
-`data.attachments[].sizeBytes` (integer, required): Uploaded file size in bytes.
-
-`data.attachments[].status` (enum: processing, ready, rejected, failed, required): Attachment processing state.
-
-`data.attachments[].downloadUrl` (string or null, required): Short-lived download URL when status is ready; otherwise null.
-
-`data.attachments[].expiresAt` (string or null, required): UTC expiry timestamp for downloadUrl; otherwise null.
+See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
 
@@ -293,7 +281,7 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 ##### `413 Content Too Large`
 
-`payload_too_large`: An attachment exceeds 25 MiB or the five-file limit.
+`payload_too_large`: Future-only post multipart limit; current parent-scoped uploads use the [attachment contract](../openapi.yaml).
 
 ##### `415 Unsupported Media Type`
 
@@ -405,19 +393,7 @@ None specific to this operation.
 
 `data[].attachments` (list of objects, required): Files attached to the post.
 
-`data[].attachments[].id` (string, required): Opaque stable attachment identifier.
-
-`data[].attachments[].filename` (string, required): Original file name.
-
-`data[].attachments[].mediaType` (enum: application/pdf, text/plain, text/markdown, image/png, image/jpeg, image/webp, required): Validated file media type.
-
-`data[].attachments[].sizeBytes` (integer, required): Uploaded file size in bytes.
-
-`data[].attachments[].status` (enum: processing, ready, rejected, failed, required): Attachment processing state.
-
-`data[].attachments[].downloadUrl` (string or null, required): Short-lived download URL when status is ready; otherwise null.
-
-`data[].attachments[].expiresAt` (string or null, required): UTC expiry timestamp for downloadUrl; otherwise null.
+See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data[].pinned` (boolean, required): Whether staff pinned the post.
 
@@ -595,19 +571,7 @@ None.
 
 `data.attachments` (list of objects, required): Files attached to the post.
 
-`data.attachments[].id` (string, required): Opaque stable attachment identifier.
-
-`data.attachments[].filename` (string, required): Original file name.
-
-`data.attachments[].mediaType` (enum: application/pdf, text/plain, text/markdown, image/png, image/jpeg, image/webp, required): Validated file media type.
-
-`data.attachments[].sizeBytes` (integer, required): Uploaded file size in bytes.
-
-`data.attachments[].status` (enum: processing, ready, rejected, failed, required): Attachment processing state.
-
-`data.attachments[].downloadUrl` (string or null, required): Short-lived download URL when status is ready; otherwise null.
-
-`data.attachments[].expiresAt` (string or null, required): UTC expiry timestamp for downloadUrl; otherwise null.
+See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
 
@@ -797,7 +761,7 @@ None.
 
 `metadata.removeAttachmentIds` (list of string, optional): Existing attachments to remove.
 
-`attachments` (repeated file part, optional): Up to five files, 25 MiB each; PDF, plain text, Markdown, PNG, JPEG, or WebP. At least one metadata field or attachment part is required.
+`attachments` (repeated file part, optional): Future-only post multipart contract; not implemented. For current files, use the [parent-scoped upload routes](../openapi.yaml).
 
 **Success:** `200 OK`.
 
@@ -831,19 +795,7 @@ None.
 
 `data.attachments` (list of objects, required): Files attached to the post.
 
-`data.attachments[].id` (string, required): Opaque stable attachment identifier.
-
-`data.attachments[].filename` (string, required): Original file name.
-
-`data.attachments[].mediaType` (enum: application/pdf, text/plain, text/markdown, image/png, image/jpeg, image/webp, required): Validated file media type.
-
-`data.attachments[].sizeBytes` (integer, required): Uploaded file size in bytes.
-
-`data.attachments[].status` (enum: processing, ready, rejected, failed, required): Attachment processing state.
-
-`data.attachments[].downloadUrl` (string or null, required): Short-lived download URL when status is ready; otherwise null.
-
-`data.attachments[].expiresAt` (string or null, required): UTC expiry timestamp for downloadUrl; otherwise null.
+See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
 

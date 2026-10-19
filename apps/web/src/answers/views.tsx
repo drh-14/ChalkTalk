@@ -2,6 +2,11 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "../auth/client.js";
 import { MarkdownEditorField } from "../posts/MarkdownEditorField.js";
 import { PostBody } from "../posts/PostBody.js";
+import {
+  AttachmentManager,
+  AttachmentSelection,
+} from "../attachments/views.js";
+import { useAttachmentQueue } from "../attachments/queue.js";
 import { formatPostTime } from "../posts/time.js";
 import {
   createAnswer,
@@ -163,26 +168,40 @@ function TextComposer({
   onSubmit,
   onCancel,
   onRefresh,
+  attachmentKind,
+  onComplete,
+  csrfToken,
+  onAttachmentUploaded,
 }: {
   label: string;
   initial?: string;
   anonymousAllowed?: boolean;
   submitLabel: string;
-  onSubmit: (body: string, anonymous: boolean, key: string) => Promise<void>;
+  onSubmit: (
+    body: string,
+    anonymous: boolean,
+    key: string,
+  ) => Promise<string | void>;
   onCancel?: () => void;
   onRefresh?: () => Promise<void>;
+  attachmentKind?: "answer" | "followup";
+  onComplete?: () => void;
+  csrfToken?: string;
+  onAttachmentUploaded?: (id: string) => Promise<void>;
 }) {
   const [body, setBody] = useState(initial);
   const [anonymous, setAnonymous] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [createdId, setCreatedId] = useState<string>();
+  const attachmentQueue = useAttachmentQueue();
   const attempt = useRef<{ payload: string; key: string } | undefined>(
     undefined,
   );
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (pending) return;
-    if (!body.trim() || body.length > 100000) {
+    if (!createdId && (!body.trim() || body.length > 100000)) {
       setError("Write 1 to 100,000 characters before posting.");
       return;
     }
@@ -192,7 +211,20 @@ function TextComposer({
     setPending(true);
     setError("");
     try {
-      await onSubmit(body, anonymous, attempt.current.key);
+      const id =
+        createdId ?? (await onSubmit(body, anonymous, attempt.current.key));
+      if (attachmentKind && id) {
+        setCreatedId(id);
+        const complete = await attachmentQueue.upload(
+          attachmentKind,
+          id,
+          csrfToken!,
+          async () => {
+            await onAttachmentUploaded?.(id);
+          },
+        );
+        if (complete) onComplete?.();
+      } else onComplete?.();
     } catch (caught) {
       setError(
         caught instanceof ApiError && caught.code === "version_conflict"
@@ -209,14 +241,23 @@ function TextComposer({
       onSubmit={(event) => void submit(event)}
       noValidate
     >
-      <MarkdownEditorField
-        label={label}
-        value={body}
-        onChange={setBody}
-        disableImages
-        disabled={pending}
-      />
-      {anonymousAllowed && (
+      {createdId ? (
+        <p role="status">
+          Response posted. Retry failed attachments or finish now.
+        </p>
+      ) : (
+        <MarkdownEditorField
+          label={label}
+          value={body}
+          onChange={setBody}
+          disableImages
+          disabled={pending}
+        />
+      )}
+      {attachmentKind && (
+        <AttachmentSelection queue={attachmentQueue} disabled={pending} />
+      )}
+      {anonymousAllowed && !createdId && (
         <label className="checkbox-label">
           <input
             type="checkbox"
@@ -251,7 +292,7 @@ function TextComposer({
       )}
       <div className="response-actions">
         <button className="button primary" type="submit" disabled={pending}>
-          {pending ? "Saving…" : submitLabel}
+          {pending ? "Saving…" : createdId ? "Retry attachments" : submitLabel}
         </button>
         {onCancel && (
           <button
@@ -260,7 +301,7 @@ function TextComposer({
             onClick={onCancel}
             disabled={pending}
           >
-            Cancel
+            {createdId ? "Finish" : "Cancel"}
           </button>
         )}
       </div>
@@ -386,6 +427,14 @@ function AnswerSaveEditor({
             <div className="post-markdown">
               <SavedAnswerBody bodyMarkdown={latest.answer.bodyMarkdown} />
             </div>
+            <AttachmentManager
+              kind="answer"
+              parentId={answer.id}
+              attachments={latest.answer.attachments}
+              canEdit={false}
+              csrfToken={csrfToken}
+              onChanged={() => {}}
+            />
           </div>
           <div>
             <h5>Your draft</h5>
@@ -575,6 +624,18 @@ function AnswerCard({
           <SavedAnswerBody bodyMarkdown={answer.bodyMarkdown} />
         </div>
       )}
+      <AttachmentManager
+        kind="answer"
+        parentId={answer.id}
+        attachments={answer.attachments}
+        canEdit={canWrite(props) && answer.canEdit && !editing}
+        csrfToken={props.csrfToken}
+        onMutationStart={() => {
+          reconcile.begin();
+        }}
+        onMutationFinish={reconcile.finish}
+        onChanged={() => reconcile.refresh()}
+      />
       <div className="response-actions">
         <VoteButton
           kind="answer"
@@ -629,7 +690,6 @@ export function AnswerSections(props: Props) {
   const [answers, setAnswers] = useState<Answer[]>();
   const [error, setError] = useState("");
   const [cycle, setCycle] = useState(0);
-  const [racedKind, setRacedKind] = useState<Answer["kind"]>();
   const [composingKind, setComposingKind] = useState<Answer["kind"]>();
   useEffect(() => {
     const controller = new AbortController();
@@ -714,46 +774,55 @@ export function AnswerSections(props: Props) {
                 {kind === "student" ? "students'" : "instructors'"} answer
               </button>
             )}
-            {answers &&
-              canCreate(kind) &&
-              composingKind === kind &&
-              (!found || racedKind === kind) && (
-                <TextComposer
-                  key={kind}
-                  label="Your answer"
-                  submitLabel="Post answer"
-                  anonymousAllowed
-                  onCancel={() => {
-                    setRacedKind(undefined);
-                    setComposingKind(undefined);
-                  }}
-                  onSubmit={async (body, anonymous, key) => {
-                    try {
-                      const created = await createAnswer(
-                        props.postId,
-                        { bodyMarkdown: body, anonymous },
-                        props.csrfToken,
-                        key,
-                      );
-                      setAnswers((items) => [
-                        ...(items ?? []).filter((item) => item.kind !== kind),
-                        created,
-                      ]);
-                      setRacedKind(undefined);
-                      setComposingKind(undefined);
-                    } catch (caught) {
-                      if (
-                        caught instanceof ApiError &&
-                        caught.code === "answer_kind_exists"
-                      ) {
-                        setRacedKind(kind);
-                        setAnswers(await listAnswers(props.postId));
-                      }
-                      throw caught;
+            {answers && canCreate(kind) && composingKind === kind && (
+              <TextComposer
+                key={kind}
+                label="Your answer"
+                submitLabel="Post answer"
+                anonymousAllowed
+                attachmentKind="answer"
+                csrfToken={props.csrfToken}
+                onComplete={() => {
+                  setComposingKind(undefined);
+                }}
+                onAttachmentUploaded={async (id) => {
+                  const updated = await getAnswer(id);
+                  setAnswers((items) =>
+                    items?.map((item) =>
+                      item.id === id
+                        ? applyAnswerProjection(item, updated, true)
+                        : item,
+                    ),
+                  );
+                }}
+                onCancel={() => {
+                  setComposingKind(undefined);
+                }}
+                onSubmit={async (body, anonymous, key) => {
+                  try {
+                    const created = await createAnswer(
+                      props.postId,
+                      { bodyMarkdown: body, anonymous },
+                      props.csrfToken,
+                      key,
+                    );
+                    setAnswers((items) => [
+                      ...(items ?? []).filter((item) => item.kind !== kind),
+                      created,
+                    ]);
+                    return created.id;
+                  } catch (caught) {
+                    if (
+                      caught instanceof ApiError &&
+                      caught.code === "answer_kind_exists"
+                    ) {
+                      setAnswers(await listAnswers(props.postId));
                     }
-                  }}
-                />
-              )}
+                    throw caught;
+                  }
+                }}
+              />
+            )}
           </section>
         );
       })}
@@ -884,6 +953,20 @@ function FollowupItem({
         </div>
       )}
       {!item.deleted && (
+        <AttachmentManager
+          kind="followup"
+          parentId={item.id}
+          attachments={item.attachments ?? []}
+          canEdit={canWrite(props) && item.canEdit && !editing}
+          csrfToken={props.csrfToken}
+          onMutationStart={() => {
+            reconcile.begin();
+          }}
+          onMutationFinish={reconcile.finish}
+          onChanged={() => reconcile.refresh()}
+        />
+      )}
+      {!item.deleted && (
         <div className="response-actions">
           <VoteButton
             kind="followup"
@@ -932,6 +1015,23 @@ function FollowupItem({
           label="Followup"
           submitLabel="Post reply"
           anonymousAllowed
+          attachmentKind="followup"
+          csrfToken={props.csrfToken}
+          onComplete={() => setReplying(false)}
+          onAttachmentUploaded={async (id) => {
+            const updated = await getFollowup(id);
+            setChildren(
+              (current) =>
+                current && {
+                  ...current,
+                  data: current.data.map((entry) =>
+                    entry.id === id
+                      ? applyFollowupProjection(entry, updated, true)
+                      : entry,
+                  ),
+                },
+            );
+          }}
           onCancel={() => setReplying(false)}
           onSubmit={async (body, anonymous, key) => {
             reconcile.begin();
@@ -955,8 +1055,8 @@ function FollowupItem({
                 ...current,
                 replyCount: current.replyCount + 1,
               }));
-              setReplying(false);
               changed = true;
+              return created.id;
             } finally {
               reconcile.finish(changed);
             }
@@ -1205,6 +1305,23 @@ export function FollowupSections(props: Props) {
           label="Followup"
           submitLabel="Post followup"
           anonymousAllowed
+          attachmentKind="followup"
+          csrfToken={props.csrfToken}
+          onComplete={() => setComposing(false)}
+          onAttachmentUploaded={async (id) => {
+            const updated = await getFollowup(id);
+            setPage(
+              (current) =>
+                current && {
+                  ...current,
+                  data: current.data.map((entry) =>
+                    entry.id === id
+                      ? applyFollowupProjection(entry, updated, true)
+                      : entry,
+                  ),
+                },
+            );
+          }}
           onCancel={() => setComposing(false)}
           onSubmit={async (body, anonymous, key) => {
             const created = await createFollowup(
@@ -1225,7 +1342,7 @@ export function FollowupSections(props: Props) {
                   },
               );
             else setCycle((n) => n + 1);
-            setComposing(false);
+            return created.id;
           }}
         />
       )}

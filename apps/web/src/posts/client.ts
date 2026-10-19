@@ -1,5 +1,6 @@
 import { ApiError } from "../auth/client.js";
 import type { Page } from "../courses/client.js";
+import type { Attachment } from "../attachments/client.js";
 
 export type Post = {
   id: string;
@@ -16,6 +17,7 @@ export type Post = {
   };
   anonymous: boolean;
   tags: string[];
+  attachments?: Attachment[];
   createdAt: string;
   lastActivityAt: string;
   version: number;

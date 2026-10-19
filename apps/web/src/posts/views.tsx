@@ -10,6 +10,11 @@ import {
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { QuestionResponses } from "../answers/views.js";
+import {
+  AttachmentManager,
+  AttachmentSelection,
+} from "../attachments/views.js";
+import { useAttachmentQueue } from "../attachments/queue.js";
 import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
@@ -339,6 +344,8 @@ function Composer({
   const [tags, setTags] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [published, setPublished] = useState<Post>();
+  const attachmentQueue = useAttachmentQueue();
   const [suggestions, setSuggestions] = useState<Post[]>([]);
   const [suggestionsState, setSuggestionsState] = useState<
     "idle" | "loading" | "ready" | "error"
@@ -355,7 +362,9 @@ function Composer({
         body ||
         tags ||
         anonymous ||
-        type !== "question",
+        type !== "question" ||
+        attachmentQueue.files.length > 0 ||
+        published,
       ),
       pending,
     );
@@ -368,6 +377,8 @@ function Composer({
     tags,
     title,
     type,
+    attachmentQueue.files.length,
+    published,
   ]);
 
   useEffect(() => {
@@ -408,6 +419,17 @@ function Composer({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
+    if (published) {
+      setPending(true);
+      const complete = await attachmentQueue.upload(
+        "post",
+        published.id,
+        csrfToken,
+      );
+      setPending(false);
+      if (complete) onCreated(published);
+      return;
+    }
     const input: CreatePostInput = {
       type,
       title: title.trim(),
@@ -439,7 +461,14 @@ function Composer({
     setPending(true);
     setError("");
     try {
-      onCreated(await createPost(courseId, input, csrfToken, key));
+      const created = await createPost(courseId, input, csrfToken, key);
+      setPublished(created);
+      const complete = await attachmentQueue.upload(
+        "post",
+        created.id,
+        csrfToken,
+      );
+      if (complete) onCreated(created);
     } catch (caught) {
       setError(message(caught));
     } finally {
@@ -455,57 +484,80 @@ function Composer({
         </button>
       </div>
       <form onSubmit={submit} noValidate>
-        <label>
-          Post type
-          <select
-            value={type}
-            onChange={(event) =>
-              setType(event.target.value as "question" | "note")
-            }
-          >
-            <option value="question">Question</option>
-            <option value="note">Note</option>
-          </select>
-        </label>
-        <label>
-          Post title
-          <input
-            aria-label="Post title"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            maxLength={201}
-            required
-          />
-        </label>
-        <MarkdownEditorField
-          label="Post body"
-          value={body}
-          onChange={setBody}
-          containerRef={bodyField}
-        />
-        <label>
-          Tags (comma-separated)
-          <input
-            value={tags}
-            onChange={(event) => setTags(event.target.value)}
-          />
-        </label>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={anonymous}
-            onChange={(event) => setAnonymous(event.target.checked)}
-          />
-          Post anonymously
-        </label>
+        {published ? (
+          <p role="status">
+            Post published. Retry any failed attachments, or view the post now.
+          </p>
+        ) : (
+          <>
+            <label>
+              Post type
+              <select
+                value={type}
+                onChange={(event) =>
+                  setType(event.target.value as "question" | "note")
+                }
+              >
+                <option value="question">Question</option>
+                <option value="note">Note</option>
+              </select>
+            </label>
+            <label>
+              Post title
+              <input
+                aria-label="Post title"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                maxLength={201}
+                required
+              />
+            </label>
+            <MarkdownEditorField
+              label="Post body"
+              value={body}
+              onChange={setBody}
+              containerRef={bodyField}
+            />
+            <label>
+              Tags (comma-separated)
+              <input
+                value={tags}
+                onChange={(event) => setTags(event.target.value)}
+              />
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={anonymous}
+                onChange={(event) => setAnonymous(event.target.checked)}
+              />
+              Post anonymously
+            </label>
+          </>
+        )}
+        <AttachmentSelection queue={attachmentQueue} disabled={pending} />
         {error && (
           <p className="form-message error" role="alert">
             {error}
           </p>
         )}
         <button className="button primary" type="submit" disabled={pending}>
-          {pending ? "Publishing…" : "Publish post"}
+          {pending
+            ? "Publishing…"
+            : published
+              ? "Retry attachments"
+              : "Publish post"}
         </button>
+        {published && (
+          <button
+            type="button"
+            className="text-button"
+            disabled={pending}
+            onClick={() => onCreated(published)}
+          >
+            View published post
+          </button>
+        )}
       </form>
       {type === "question" && query && (
         <div className="related-questions">
@@ -1699,6 +1751,35 @@ function DiscussionContent({
                     />
                     <div className="post-markdown">
                       <PostBody bodyMarkdown={detail.bodyMarkdown} />
+                      <AttachmentManager
+                        kind="post"
+                        parentId={detail.id}
+                        attachments={detail.attachments ?? []}
+                        canEdit={
+                          course?.status === "active" &&
+                          !!role &&
+                          (staff ||
+                            (!!userId && detail.author.userId === userId))
+                        }
+                        csrfToken={csrfToken}
+                        onChanged={async () => {
+                          const next = await getPost(detail.id);
+                          if ("redirectToPostId" in next) {
+                            setDetailCycle((value) => value + 1);
+                            return;
+                          }
+                          if (next.courseId !== courseId)
+                            throw new Error("This post is unavailable.");
+                          setDetail((current) =>
+                            current?.id === next.id &&
+                            (next.deleted ||
+                              current.deleted ||
+                              next.version >= current.version)
+                              ? next
+                              : current,
+                          );
+                        }}
+                      />
                     </div>
                     {staff && postView === "posts" && (
                       <div

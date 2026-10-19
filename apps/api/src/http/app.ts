@@ -34,6 +34,10 @@ import {
 import { StatisticsService } from "../statistics/service.js";
 import { CourseFileService } from "../course-files/service.js";
 import { readMultipart } from "../course-files/multipart.js";
+import {
+  ContentAttachmentService,
+  type ParentKind,
+} from "../content-attachments/service.js";
 
 export interface AppDependencies {
   environment: Environment;
@@ -45,6 +49,7 @@ export interface AppDependencies {
   statisticsService?: StatisticsService;
   courseFileService?: CourseFileService;
   observability?: Observability;
+  contentAttachmentService?: ContentAttachmentService;
 }
 type AuthContext = {
   credential: string;
@@ -564,6 +569,7 @@ export function createApp(
     statisticsService,
     courseFileService,
     observability,
+    contentAttachmentService,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -1221,6 +1227,94 @@ export function createApp(
       );
     return courseFileService;
   };
+  const contentAttachments = (): ContentAttachmentService => {
+    if (!contentAttachmentService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Attachment service is unavailable",
+      );
+    return contentAttachmentService;
+  };
+  for (const [kind, route, parameter] of [
+    ["post", "/api/v1/posts/:postId/attachments", "postId"],
+    ["answer", "/api/v1/answers/:answerId/attachments", "answerId"],
+    ["followup", "/api/v1/followups/:followupId/attachments", "followupId"],
+  ] as const) {
+    app.post(route, ...authenticatedUnsafe, async (request, response, next) => {
+      let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+      try {
+        const parentId = param(request.params[parameter]);
+        const userId = auth(response).session.user.id;
+        await contentAttachments().authorizeUpload(
+          kind as ParentKind,
+          parentId,
+          userId,
+          request.header("idempotency-key"),
+        );
+        upload = await readMultipart(request);
+        const value = await contentAttachments().create(
+          kind as ParentKind,
+          parentId,
+          userId,
+          upload,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set({ Location: value.downloadUrl })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      } finally {
+        await upload?.cleanup();
+      }
+    });
+  }
+  app.get(
+    "/api/v1/attachments/:attachmentId/download",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const file = await contentAttachments().download(
+          param(request.params.attachmentId),
+          current.session.user.id,
+        );
+        const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+        response.set({
+          "Content-Type": file.mediaType,
+          "Content-Length": String(file.length),
+          "Content-Disposition": `${file.mediaType.startsWith("image/") ? "inline" : "attachment"}; filename="${safeName}"`,
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "private, no-store",
+        });
+        const body = file.body as NodeJS.ReadableStream;
+        body.on("error", (error) => {
+          if (!response.headersSent) next(error);
+          else response.destroy(error);
+        });
+        body.pipe(response);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/attachments/:attachmentId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await contentAttachments().delete(
+          param(request.params.attachmentId),
+          auth(response).session.user.id,
+        );
+        response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.post(
     "/api/v1/courses/:courseId/files",
     ...authenticatedUnsafe,
