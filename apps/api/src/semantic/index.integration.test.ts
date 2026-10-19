@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { runSemanticMigration } from "../database/migrate-semantic.js";
 import { readEmbeddingConfig } from "./provider.js";
-import { SemanticIndex } from "./index.js";
+import { POST_REVISION_SQL, SemanticIndex } from "./index.js";
 import { JobWorker } from "../jobs/worker.js";
 
 const url = process.env.TEST_VECTOR_DATABASE_URL;
@@ -104,7 +104,7 @@ integration("semantic post indexing", () => {
   it("backfills an existing post through the durable job worker", async () => {
     const postId = uuidv7();
     await pool.query(
-      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'note','Legacy note','Already existed before opt-in')",
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'note','Legacy note','Already existed before opt-in','1970-01-01')",
       [postId, courseId, userId],
     );
     const provider = {
@@ -130,11 +130,54 @@ integration("semantic post indexing", () => {
     expect(provider.embedMany).toHaveBeenCalled();
   });
 
+  it("advances across bounded indexed batches before enqueuing a later post", async () => {
+    const indexedIds = Array.from({ length: 100 }, () => uuidv7());
+    await pool.query(
+      `INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at)
+       SELECT input.id,$1,$2,'note','Indexed batch','Already embedded','1990-01-01'::timestamptz
+       FROM unnest($3::uuid[]) AS input(id)`,
+      [courseId, userId, indexedIds],
+    );
+    await pool.query(
+      `INSERT INTO post_embeddings(post_id,generation,source_revision,chunk_ordinal,embedding)
+       SELECT p.id,$2,${POST_REVISION_SQL},0,'[1,0]'::public.vector
+       FROM posts p WHERE p.id=ANY($1::uuid[])`,
+      [indexedIds, config.generation],
+    );
+    const targetId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'note','Later post','Needs backfill','1990-01-02')",
+      [targetId, courseId, userId],
+    );
+    const nextId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'note','Next post','Also needs backfill','1990-01-03')",
+      [nextId, courseId, userId],
+    );
+    const index = new SemanticIndex(pool, config, {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    });
+    expect(await index.queueBackfillOne()).toBe(false);
+    expect(await index.queueBackfillOne()).toBe(true);
+    expect(await index.queueBackfillOne()).toBe(true);
+    const queued = await pool.query(
+      "SELECT payload->>'postId' AS post_id FROM jobs WHERE kind='index_post' AND payload->>'postId'=ANY($1::text[]) AND status='queued' ORDER BY payload->>'postId'",
+      [[targetId, nextId]],
+    );
+    expect(queued.rows.map((row) => row.post_id)).toEqual(
+      [targetId, nextId].sort(),
+    );
+    await pool.query(
+      "DELETE FROM jobs WHERE kind='index_post' AND payload->>'postId'=ANY($1::text[])",
+      [[targetId, nextId]],
+    );
+  });
+
   it("requeues a succeeded revision after reversion or duplicate unmerge removes its embeddings", async () => {
     const postId = uuidv7();
     const canonicalId = uuidv7();
     await pool.query(
-      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'question','Returning revision','Original body','2000-01-01')",
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES($1,$2,$3,'question','Returning revision','Original body','1980-01-01')",
       [postId, courseId, userId],
     );
     await pool.query(
@@ -183,6 +226,10 @@ integration("semantic post indexing", () => {
       [postId],
     );
     expect(jobs.rowCount).toBe(1);
+    await pool.query(
+      "DELETE FROM jobs WHERE kind='index_post' AND payload->>'postId'=$1",
+      [postId],
+    );
   });
 
   it("retries a provider failure without rolling back the post", async () => {

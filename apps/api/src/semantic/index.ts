@@ -23,6 +23,8 @@ function chunks(title: string, body: string): string[] {
 }
 
 export class SemanticIndex {
+  private backfillCursor?: { createdAt: Date; id: string };
+
   constructor(
     private readonly pool: Pool,
     readonly config: EmbeddingConfig,
@@ -72,25 +74,49 @@ export class SemanticIndex {
 
   async queueBackfillOne(): Promise<boolean> {
     if (!(await this.available())) return false;
-    const candidate = await this.pool.query<{ id: string }>(
-      `SELECT p.id FROM posts p
-       WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
-         AND NOT EXISTS (
+    const after = this.backfillCursor;
+    const scanned = await this.pool.query<{
+      id: string;
+      created_at: Date;
+      needs_enqueue: boolean;
+    }>(
+      `WITH batch AS MATERIALIZED (
+         SELECT p.id,p.created_at,p.title,p.body_markdown
+         FROM posts p
+         WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+           ${after ? "AND (p.created_at,p.id)>($2::timestamptz,$3::uuid)" : ""}
+         ORDER BY p.created_at,p.id LIMIT 100
+       ), revisions AS MATERIALIZED (
+         SELECT p.id,p.created_at,${POST_REVISION_SQL} AS source_revision
+         FROM batch p
+       )
+       SELECT p.id,p.created_at,
+         NOT EXISTS (
            SELECT 1 FROM post_embeddings e WHERE e.post_id=p.id
-             AND e.generation=$1 AND e.source_revision=${POST_REVISION_SQL}
-         )
-         AND NOT EXISTS (
+             AND e.generation=$1 AND e.source_revision=p.source_revision
+         ) AND NOT EXISTS (
            SELECT 1 FROM jobs j WHERE j.kind='index_post'
-             AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
+             AND j.deduplication_key=p.id::text||':'||$1||':'||p.source_revision
              AND (j.status IN ('queued','running')
                OR (j.status='dead' AND j.updated_at >= now()-interval '1 hour'))
-         )
-       ORDER BY p.created_at,p.id LIMIT 1`,
-      [this.config.generation],
+         ) AS needs_enqueue
+       FROM revisions p ORDER BY p.created_at,p.id`,
+      after
+        ? [this.config.generation, after.createdAt, after.id]
+        : [this.config.generation],
     );
-    return candidate.rows[0]
-      ? this.enqueue(this.pool, candidate.rows[0].id)
-      : false;
+    const last = scanned.rows.at(-1);
+    if (!last) {
+      this.backfillCursor = undefined;
+      return false;
+    }
+    for (const row of scanned.rows)
+      if (row.needs_enqueue && (await this.enqueue(this.pool, row.id))) {
+        this.backfillCursor = { createdAt: row.created_at, id: row.id };
+        return true;
+      }
+    this.backfillCursor = { createdAt: last.created_at, id: last.id };
+    return false;
   }
 
   async indexPost(postId: string): Promise<boolean> {
