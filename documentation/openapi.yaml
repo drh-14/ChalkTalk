@@ -3285,6 +3285,20 @@ paths:
                       message: The query, filters, date range, sort, or pagination are invalid.
                       requestId: req_listCoursePosts
                       details: []
+        "409":
+          description: A semantic relevance cursor cannot continue after indexing or the query provider becomes unhealthy. Restart without a cursor, preserving search filters.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                search_restart_required:
+                  value:
+                    error:
+                      code: search_restart_required
+                      message: Search ranking changed. Restart without the cursor.
+                      requestId: req_listCoursePosts
+                      details: []
         "404":
           description: Not Found
           content:

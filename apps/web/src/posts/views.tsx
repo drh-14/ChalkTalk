@@ -36,6 +36,7 @@ import {
   type FeedFilters,
 } from "../app/routes.js";
 import { formatPostTime } from "./time.js";
+import { ApiError } from "../auth/client.js";
 import {
   feedFilters,
   postStatuses,
@@ -1117,7 +1118,14 @@ function DiscussionContent({
         setCursor(page.page.nextCursor);
       })
       .catch((caught) => {
-        if (generation === currentFeed.current) setPageError(message(caught));
+        if (generation !== currentFeed.current) return;
+        if (
+          caught instanceof ApiError &&
+          caught.status === 409 &&
+          caught.code === "search_restart_required"
+        )
+          setFeedCycle((current) => current + 1);
+        else setPageError(message(caught));
       })
       .finally(() => {
         if (generation === currentFeed.current) {

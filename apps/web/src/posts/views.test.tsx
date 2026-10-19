@@ -1845,6 +1845,54 @@ it("retains first-page cards and retries the same cursor without duplicates", as
   expect(screen.getAllByText("First")).toHaveLength(1);
 });
 
+it("restarts a stale semantic page from the first lexical page with search filters", async () => {
+  let filteredFirstPages = 0;
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.endsWith("/courses/course-1")) return json({ data: course });
+    const params = new URL(url, "https://example.edu").searchParams;
+    if (params.get("type") !== "question") return page([]);
+    if (params.get("cursor"))
+      return json(
+        { error: { code: "search_restart_required", message: "Restart search" } },
+        409,
+      );
+    filteredFirstPages++;
+    return filteredFirstPages === 1
+      ? page([post("semantic", "Semantic first")], "semantic-next")
+      : page([post("lexical", "Lexical first")]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      csrfToken="csrf"
+      query="spectrometer"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(filterChoice("Show", "question"));
+  await screen.findByText("Semantic first");
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await screen.findByText("Lexical first");
+  expect(screen.queryByText("Semantic first")).toBeNull();
+  const filtered = feedRequests(fetchMock).filter(
+    (request) => request.searchParams.get("type") === "question",
+  );
+  expect(filtered.map((request) => request.searchParams.get("cursor"))).toEqual([
+    null,
+    "semantic-next",
+    null,
+  ]);
+  expect(
+    filtered.every(
+      (request) =>
+        request.searchParams.get("q") === "spectrometer" &&
+        request.searchParams.get("sort") === "relevance",
+    ),
+  ).toBe(true);
+});
+
 it("discards an old cursor response when a new live query begins", async () => {
   let releaseOld!: (response: Response) => void;
   const oldPage = new Promise<Response>((resolve) => {

@@ -51,6 +51,9 @@ for the post's current revision. Deletion and confirmed-duplicate merge remove
 catch-up rows with embeddings. Pending catch-up rows, failed current-generation
 jobs, and query-provider failures disable semantic candidates for search until
 recovery; the existing lexical/fuzzy query path remains authoritative.
+If health changes between relevance pages, the API rejects the semantic cursor
+with `409 search_restart_required`; the feed restarts without a cursor while
+preserving query and filters. It never presents an invented final page.
 
 For relevance sorting, preserve pinned-first order and then use **strict match
 tiers** within each pinned group: full-text matches, fuzzy-only matches, then

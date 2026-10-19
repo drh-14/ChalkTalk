@@ -365,6 +365,8 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `cursor` (string, optional; minimum length 1, maximum length 2048): Opaque cursor returned by the previous page.
 
+If semantic ranking becomes unhealthy between relevance pages, a semantic cursor returns `409 search_restart_required`. Restart the search without a cursor, retaining `q`, sort, and filters; the fresh response uses the established full-text and fuzzy path. Invalid or mismatched cursors still return `400 invalid_request`.
+
 `limit` (integer, optional; default 25, minimum 1, maximum 100): Page size; defaults to 25.
 
 #### Request body
@@ -514,6 +516,10 @@ curl --request GET '/api/v1/courses/course_123/posts' \
 ##### `404 Not Found`
 
 `not_found`: The course is absent or hidden.
+
+##### `409 Conflict`
+
+`search_restart_required`: Semantic ranking became unavailable after the cursor was issued. Restart from page one without the cursor.
 
 ##### `500 Internal Server Error`
 

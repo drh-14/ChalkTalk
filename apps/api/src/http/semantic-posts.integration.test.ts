@@ -266,10 +266,18 @@ integration("semantic post search HTTP contract", () => {
   });
 
   it("uses only lexical and fuzzy ranking while catch-up or a failed job is pending", async () => {
+    const semanticPage = await list("q=spectrometer&sort=relevance&limit=1");
+    expect(semanticPage.status).toBe(200);
+    expect(semanticPage.body.page.nextCursor).toBeTruthy();
     const postId = (await pool.query<{ id: string }>(
       "SELECT id FROM posts WHERE title='Spectrometer overview'",
     )).rows[0]!.id;
     await pool.query("INSERT INTO semantic_post_catchup(post_id) VALUES($1) ON CONFLICT DO NOTHING", [postId]);
+    const stale = await list(
+      `q=spectrometer&sort=relevance&limit=1&cursor=${encodeURIComponent(semanticPage.body.page.nextCursor)}`,
+    );
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe("search_restart_required");
     const pending = await list("q=spectrometer&sort=relevance");
     expect(pending.status).toBe(200);
     expect(pending.body.data.map((post: { title: string }) => post.title)).toEqual([
@@ -293,7 +301,7 @@ integration("semantic post search HTTP contract", () => {
     );
   });
 
-  it("does not repeat an earlier page if the provider fails mid-pagination", async () => {
+  it("rejects a semantic cursor when the provider fails, then permits lexical restart", async () => {
     const first = await list("q=spectrometer&sort=relevance&limit=2");
     expect(first.status).toBe(200);
     expect(first.body.page.hasMore).toBe(true);
@@ -301,9 +309,15 @@ integration("semantic post search HTTP contract", () => {
     const second = await list(
       `q=spectrometer&sort=relevance&limit=2&cursor=${encodeURIComponent(first.body.page.nextCursor)}`,
     );
-    expect(second.status).toBe(200);
-    expect(second.body.data).toEqual([]);
-    expect(second.body.page.hasMore).toBe(false);
+    expect(second.status).toBe(409);
+    expect(second.body.error.code).toBe("search_restart_required");
+    providerMock.mockRejectedValueOnce(new Error("provider unavailable"));
+    const restarted = await list("q=spectrometer&sort=relevance&limit=2");
+    expect(restarted.status).toBe(200);
+    expect(restarted.body.data.map((post: { title: string }) => post.title)).toEqual([
+      "Spectrometer overview",
+      "Spectromter overview",
+    ]);
   });
 
   it("keeps chronological ordering across semantic and lexical results", async () => {

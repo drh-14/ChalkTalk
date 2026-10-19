@@ -422,11 +422,12 @@ export class PostService {
         )
           throw Error();
         after = parsed;
-        if (options.sort === "relevance" && semanticCapable) {
-          if (parsed.tier === undefined) semanticReady = false;
-          else if (!semanticReady)
-            return { data: [], page: { nextCursor: null, hasMore: false } };
-        }
+        if (
+          options.sort === "relevance" &&
+          semanticCapable &&
+          parsed.tier === undefined
+        )
+          semanticReady = false;
       } catch {
         throw new AuthError(
           400,
@@ -435,6 +436,16 @@ export class PostService {
         );
       }
     }
+    if (
+      options.sort === "relevance" &&
+      after?.tier !== undefined &&
+      !semanticReady
+    )
+      throw new AuthError(
+        409,
+        "search_restart_required",
+        "Search ranking changed. Restart without the cursor.",
+      );
     const values: unknown[] = [courseId];
     const add = (value: unknown) => {
       values.push(value);

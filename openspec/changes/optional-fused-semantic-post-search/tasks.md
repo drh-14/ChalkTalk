@@ -13,6 +13,7 @@
 - [x] 2.4 Integrate semantic candidate union and strict relevance tiers into post search and cursor binding.
 - [x] 2.5 Send the separate semantic query from Related questions.
 - [x] 2.6 Persist and drain per-post catch-up state and gate semantic search on indexing health.
+- [x] 2.7 Reject stale semantic cursors and restart the filtered feed from page one.
 
 ## 3. Verification and delivery
 

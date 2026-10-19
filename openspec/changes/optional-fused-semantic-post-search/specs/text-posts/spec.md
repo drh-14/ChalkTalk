@@ -10,6 +10,8 @@ For ordinary `q`, semantic matches MAY join the candidate set. Explicit phrase, 
 
 Within each pinned group, relevance SHALL rank full-text matches first, fuzzy-only matches second, and semantic-only matches third. Semantic similarity SHALL order only the semantic-only tier; no similarity cutoff applies initially. Chronological sorts SHALL preserve their documented ordering across all matching visible candidates. Authorization, course, filters, confirmed duplicates, pagination, and `hasMore` SHALL be applied to the complete visible union of candidates, not a truncated global vector result. Cursors SHALL bind the semantic ranking generation and reject incompatible use. Deleted and stale-revision embeddings SHALL not match.
 
+When semantic ranking becomes unhealthy between relevance pages, a semantic cursor SHALL return `409 search_restart_required` rather than a fabricated final page. A request without that cursor SHALL return only the established lexical/fuzzy results. Invalid or mismatched cursors SHALL retain their existing `400 invalid_request` response.
+
 #### Scenario: Lexical precedence over semantic similarity
 
 - **WHEN** a member searches a course with full-text, fuzzy-only, and semantic-only candidate posts
