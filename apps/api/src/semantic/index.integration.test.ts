@@ -6,7 +6,7 @@ import { runSemanticMigration } from "../database/migrate-semantic.js";
 import { readEmbeddingConfig } from "./provider.js";
 import { POST_REVISION_SQL, SemanticIndex } from "./index.js";
 import { JobWorker } from "../jobs/worker.js";
-import { PostService } from "../posts/service.js";
+import { PostService, postEtag } from "../posts/service.js";
 
 const url = process.env.TEST_VECTOR_DATABASE_URL;
 const integration = url ? describe : describe.skip;
@@ -158,14 +158,35 @@ integration("semantic post indexing", () => {
       },
     );
     const postId = created.value.id;
+    vi.spyOn(oldIndex, "enqueue").mockRejectedValueOnce(
+      new Error("old enqueue unavailable"),
+    );
+    const oldEdit = await new PostService(pool, undefined, oldIndex).update(
+      postId,
+      userId,
+      postEtag(created.value),
+      { bodyMarkdown: "Old API edit" },
+    );
+    const noKeyEdit = await new PostService(pool).update(
+      postId,
+      userId,
+      postEtag(oldEdit as typeof created.value),
+      { bodyMarkdown: "No-key API edit" },
+    );
+    expect(noKeyEdit.version).toBe(created.value.version + 2);
     expect(
       (
         await pool.query(
-          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
+          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1 ORDER BY generation",
           [postId],
         )
       ).rows,
-    ).toEqual([{ generation: nextConfig.generation }]);
+    ).toEqual([
+      { generation: "" },
+      { generation: config.generation },
+      { generation: nextConfig.generation },
+    ].sort((a, b) => a.generation.localeCompare(b.generation)));
+    expect(await nextIndex.healthy()).toBe(false);
     expect(await nextIndex.queueBackfillOne()).toBe(true);
     const oldWorker = new JobWorker(
       pool,
@@ -188,8 +209,8 @@ integration("semantic post indexing", () => {
     expect(
       (
         await pool.query(
-          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
-          [postId],
+          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1 AND generation=$2",
+          [postId, nextConfig.generation],
         )
       ).rows,
     ).toEqual([{ generation: nextConfig.generation }]);
@@ -213,11 +234,21 @@ integration("semantic post indexing", () => {
     ).toEqual([{ generation: nextConfig.generation }]);
     expect(
       (
-        await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1", [
-          postId,
+        await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1 AND generation IN ($2,'')", [
+          postId, nextConfig.generation,
         ])
       ).rowCount,
     ).toBe(0);
+    expect(await nextIndex.healthy()).toBe(true);
+    expect(
+      (
+        await pool.query(
+          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
+          [postId],
+        )
+      ).rows,
+    ).toEqual([{ generation: config.generation }]);
+    await pool.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [postId]);
   });
 
   it("claims no-key catch-up for the enabled generation", async () => {
@@ -238,11 +269,11 @@ integration("semantic post indexing", () => {
     expect(
       (
         await pool.query(
-          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
+          "SELECT generation FROM semantic_post_catchup WHERE post_id=$1 ORDER BY generation",
           [postId],
         )
       ).rows,
-    ).toEqual([{ generation: enabledConfig.generation }]);
+    ).toEqual([{ generation: "" }, { generation: enabledConfig.generation }]);
     const worker = new JobWorker(
       pool,
       undefined,

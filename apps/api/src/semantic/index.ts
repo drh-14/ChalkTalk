@@ -42,7 +42,8 @@ export class SemanticIndex {
 
   async healthy(): Promise<boolean> {
     const result = await this.pool.query<{ unhealthy: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM semantic_post_catchup LIMIT 1)
+      `SELECT EXISTS (SELECT 1 FROM semantic_post_catchup
+                      WHERE generation IN ($1,'') LIMIT 1)
          OR EXISTS (
            SELECT 1 FROM jobs j JOIN posts p ON p.id=(j.payload->>'postId')::uuid
            WHERE j.kind='index_post' AND j.status <> 'succeeded'
@@ -75,7 +76,7 @@ export class SemanticIndex {
        WHERE (jobs.status='dead' AND jobs.updated_at < now()-interval '1 hour')
           OR (jobs.status='succeeded' AND (
             EXISTS (SELECT 1 FROM semantic_post_catchup d
-                    WHERE d.post_id=$4 AND d.generation=$5)
+                    WHERE d.post_id=$4 AND d.generation IN ($5,''))
             OR NOT EXISTS (
               SELECT 1 FROM post_embeddings e WHERE e.post_id=$4
                 AND e.generation=$5 AND e.source_revision=$6
@@ -98,12 +99,12 @@ export class SemanticIndex {
     if (!(await this.available())) return false;
     const pending = await this.pool.query<{
       post_id: string;
-      generation: string | null;
+      generation: string;
     }>(
       `SELECT d.post_id,d.generation FROM semantic_post_catchup d
        JOIN posts p ON p.id=d.post_id
        WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
-         AND (d.generation=$1 OR d.generation IS NULL)
+         AND d.generation IN ($1,'')
          AND NOT EXISTS (
            SELECT 1 FROM jobs j WHERE j.kind='index_post'
              AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
@@ -115,12 +116,11 @@ export class SemanticIndex {
     );
     if (pending.rows[0]) {
       const postId = pending.rows[0].post_id;
-      if (!pending.rows[0].generation) {
-        const claimed = await this.pool.query(
-          "UPDATE semantic_post_catchup SET generation=$2 WHERE post_id=$1 AND generation IS NULL",
+      if (pending.rows[0].generation === "") {
+        await this.pool.query(
+          "INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2) ON CONFLICT (post_id,generation) DO NOTHING",
           [postId, this.config.generation],
         );
-        if (claimed.rowCount !== 1) return false;
       }
       if (await this.enqueue(this.pool, postId)) return true;
     }
@@ -239,7 +239,7 @@ export class SemanticIndex {
           ],
         );
       await client.query(
-        "DELETE FROM semantic_post_catchup WHERE post_id=$1 AND generation=$2",
+        "DELETE FROM semantic_post_catchup WHERE post_id=$1 AND generation IN ($2,'')",
         [postId, this.config.generation],
       );
       await client.query("COMMIT");

@@ -128,8 +128,8 @@ export class PostService {
     postId: string,
   ): Promise<void> {
     await db.query(
-      "INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2) ON CONFLICT (post_id) DO UPDATE SET generation=EXCLUDED.generation",
-      [postId, this.semantic?.config.generation ?? null],
+      "INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2) ON CONFLICT (post_id,generation) DO NOTHING",
+      [postId, this.semantic?.config.generation ?? ""],
     );
   }
   private async removeEmbeddings(db: PoolClient, postId: string): Promise<void> {

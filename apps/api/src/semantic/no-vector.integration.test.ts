@@ -94,7 +94,7 @@ integration("configured embeddings without optional schema", () => {
       "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
       [created.value.id],
     );
-    expect(pending.rows).toEqual([{ generation: null }]);
+    expect(pending.rows).toEqual([{ generation: "" }]);
   });
 
   it("does not fail a post write when optional indexing is unavailable", async () => {
