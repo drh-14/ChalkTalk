@@ -8,9 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { PostBody } from "./PostBody.js";
-import { PostEditor, type PostEditorHandle } from "./PostEditor.js";
-import type { FormatAction } from "./formatting.js";
-import { AnswerSections } from "../answers/views.js";
+import { MarkdownEditorField } from "./MarkdownEditorField.js";
+import { QuestionResponses } from "../answers/views.js";
 import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
@@ -43,9 +42,6 @@ import {
   type FeedFilter,
   type PostStatus,
 } from "./types.js";
-
-// Temporarily disable answer panels and their fetches in post detail.
-const ANSWERS_ENABLED = false;
 
 /** Builds the course feed request; a search always sends its sort, otherwise only a non-default one. */
 function feedOptions(
@@ -339,8 +335,6 @@ function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [body, setBody] = useState("");
-  const [preview, setPreview] = useState(false);
-  const editor = useRef<PostEditorHandle>(null);
   const [anonymous, setAnonymous] = useState(false);
   const [tags, setTags] = useState("");
   const [pending, setPending] = useState(false);
@@ -483,70 +477,12 @@ function Composer({
             required
           />
         </label>
-        <div className="post-body-field">
-          <span className="post-body-label">Post body</span>
-          <div className="post-body-mode">
-            <button
-              type="button"
-              aria-pressed={!preview}
-              onClick={() => setPreview(false)}
-            >
-              Write
-            </button>
-            <button
-              type="button"
-              aria-pressed={preview}
-              onClick={() => setPreview(true)}
-            >
-              Preview
-            </button>
-          </div>
-          <div
-            className="post-format-toolbar"
-            role="toolbar"
-            aria-label="Post body formatting"
-            hidden={preview}
-          >
-            {(
-              [
-                ["bold", "Bold"],
-                ["italic", "Italic"],
-                ["heading", "Heading"],
-                ["link", "Link"],
-                ["bullet-list", "Bulleted list"],
-                ["numbered-list", "Numbered list"],
-                ["code", "Inline code"],
-                ["inline-math", "Inline math"],
-                ["block-math", "Block math"],
-              ] as [FormatAction, string][]
-            ).map(([action, label]) => (
-              <button
-                key={action}
-                type="button"
-                aria-label={label}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => editor.current?.format(action)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div hidden={preview} ref={bodyField}>
-            <PostEditor ref={editor} value={body} onChange={setBody} />
-          </div>
-          {preview && (
-            <div
-              className="post-markdown post-preview"
-              role="region"
-              aria-label="Post body preview"
-            >
-              <PostBody bodyMarkdown={body} />
-            </div>
-          )}
-          <small>
-            Use $…$ for inline math and standalone $$ lines for block math.
-          </small>
-        </div>
+        <MarkdownEditorField
+          label="Post body"
+          value={body}
+          onChange={setBody}
+          containerRef={bodyField}
+        />
         <label>
           Tags (comma-separated)
           <input
@@ -1764,14 +1700,6 @@ function DiscussionContent({
                     <div className="post-markdown">
                       <PostBody bodyMarkdown={detail.bodyMarkdown} />
                     </div>
-                    {ANSWERS_ENABLED && detail.type === "question" && (
-                      <AnswerSections
-                        postId={detail.id}
-                        role={role}
-                        courseStatus={course?.status}
-                        csrfToken={csrfToken}
-                      />
-                    )}
                     {staff && postView === "posts" && (
                       <div
                         className="staff-actions"
@@ -1809,6 +1737,14 @@ function DiscussionContent({
                           }}
                         />
                       </div>
+                    )}
+                    {detail.type === "question" && (
+                      <QuestionResponses
+                        postId={detail.id}
+                        role={role}
+                        courseStatus={course?.status}
+                        csrfToken={csrfToken}
+                      />
                     )}
                   </article>
                 )}

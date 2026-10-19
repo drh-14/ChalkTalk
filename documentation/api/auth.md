@@ -1,6 +1,6 @@
 ## Authentication
 
-All browser requests originate from a deployment-configured HTTPS frontend origin. The frontend and API use same-site custom domains, such as `app.example.edu` and `api.example.edu`, so browser sessions retain `SameSite=Lax`. When an authenticated safe read includes an exact allowlisted `Origin`, the API returns credentialed CORS headers, echoes that origin rather than `*`, sends `Vary: Origin`, and permits credentials; an `Origin` header is optional for those safe reads. Every `POST`, `PUT`, `PATCH`, and `DELETE` request includes `Origin`; public account and session bootstrap operations validate the origin without requiring a session or CSRF token. Authenticated unsafe requests additionally send the session-bound `X-CSRF-Token`. A missing, null, or disallowed origin fails before unsafe request processing; an allowed origin with a missing or invalid CSRF token fails with `csrf_validation_failed`. Expiring or revoking a session also invalidates its CSRF token and every unused WebSocket connection ticket issued through it.
+All browser requests originate from a deployment-configured HTTPS frontend origin. The frontend and API use same-site custom domains, such as `app.example.edu` and `api.example.edu`, so browser sessions retain `SameSite=Lax`. When an authenticated safe read includes an exact allowlisted `Origin`, the API returns credentialed CORS headers, echoes that origin rather than `*`, sends `Vary: Origin`, and permits credentials; an `Origin` header is optional for those safe reads. Every `POST`, `PUT`, `PATCH`, and `DELETE` request includes `Origin`; public account and session bootstrap operations validate the origin without requiring a session or CSRF token. Authenticated unsafe requests additionally send the session-bound `X-CSRF-Token`. A missing, null, or disallowed origin fails before unsafe request processing; an allowed origin with a missing or invalid CSRF token fails with `csrf_validation_failed`. Expiring or revoking a session also invalidates its CSRF token.
 
 <a id="createAccountVerificationRequest"></a>
 
@@ -451,7 +451,7 @@ curl --request GET '/api/v1/sessions/current' \
 
 ### **`DELETE /api/v1/sessions/current`**
 
-Ends the current authenticated session and invalidates its CSRF token and every unused WebSocket connection ticket issued through it. Success expires the browser cookie. Repeating the request after success receives `401 Unauthorized` and still leaves the expired cookie client-side.
+Ends the current authenticated session and invalidates its CSRF token. Success expires the browser cookie. Repeating the request after success receives `401 Unauthorized` and still leaves the expired cookie client-side.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -775,7 +775,7 @@ curl --request PATCH '/api/v1/users/me' \
 
 ### **`PATCH /api/v1/users/me/password`**
 
-Changes the authenticated user’s password. Success revokes the user’s other sessions together with their CSRF tokens and unused WebSocket connection tickets; the current session remains valid.
+Changes the authenticated user’s password. Success revokes the user’s other sessions together with their CSRF tokens; the current session remains valid.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -970,7 +970,7 @@ curl --request POST '/api/v1/password-reset-requests' \
 
 ### **`POST /api/v1/password-resets`**
 
-Resets an account password using a password-reset token. Success consumes the token and revokes every existing session for the account together with their CSRF tokens and unused WebSocket connection tickets.
+Resets an account password using a password-reset token. Success consumes the token and revokes every existing session for the account together with their CSRF tokens.
 
 **Authentication:** None.
 
@@ -1062,7 +1062,7 @@ curl --request POST '/api/v1/password-resets' \
 
 ### **`DELETE /api/v1/users/me`**
 
-Deletes the authenticated user’s account after validating `currentPassword` against the authenticated user’s stored password hash. Retained contributions are pseudonymized; all sessions, their CSRF tokens, and their unused WebSocket connection tickets are revoked; and the current `__Host-chalktalk_session` cookie is expired. If deletion would remove the final instructor from a course, the server returns `409 Conflict` and leaves the account and current session intact.
+Deletes the authenticated user’s account after validating `currentPassword` against the authenticated user’s stored password hash. Retained contributions are pseudonymized; all sessions and their CSRF tokens are revoked; and the current `__Host-chalktalk_session` cookie is expired. If deletion would remove the final instructor from a course, the server returns `409 Conflict` and leaves the account and current session intact.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
