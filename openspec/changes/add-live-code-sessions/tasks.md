@@ -41,5 +41,5 @@
 
 ## 7. Integration checks
 
-- [ ] 7.1 Add `tests/browser/live-code-session.spec.mjs`: a student starts a Python session and invites a TA in one browser context; the TA joins in a second context; both type concurrently and see the same text and each other's cursors; the TA ends the session and both editors become read-only with the final text; verify it passes with `--workers=1`
+- [x] 7.1 Add `tests/browser/live-code-session.spec.mjs`: a student starts a Python session and invites a TA in one browser context; the TA joins in a second context; both type concurrently and see the same text and each other's cursors; the TA ends the session and both editors become read-only with the final text; verify it passes with `--workers=1`
 - [ ] 7.2 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test` with `TEST_DATABASE_URL`, and `npm run build`; verify all pass, recording any pre-existing environment-only failures with evidence from `main`
