@@ -198,6 +198,36 @@ integration("semantic post search HTTP contract", () => {
     );
   });
 
+  it("keeps ordinary title-aware lexical order with and without embeddings", async () => {
+    const [titleId, bodyId] = [uuidv7(), uuidv7()].sort();
+    for (const [id, title, body] of [
+      [titleId, "Quasar", "Lecture notes"],
+      [bodyId, "Lecture notes", "Quasar"],
+    ])
+      await pool.query(
+        "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'question',$4,$5)",
+        [id, courseId, userId, title, body],
+      );
+    const matchingIds = (posts: { id: string }[]) =>
+      posts.map((post) => post.id).filter((id) => [titleId, bodyId].includes(id));
+    const query = "q=quasar&sort=relevance&limit=10";
+    const expanded = await list(query);
+    expect(expanded.status).toBe(200);
+    expect(matchingIds(expanded.body.data)).toEqual([titleId, bodyId]);
+
+    providerMock.mockRejectedValueOnce(new Error("provider unavailable"));
+    const failedProvider = await list(query);
+    expect(failedProvider.status).toBe(200);
+    expect(matchingIds(failedProvider.body.data)).toEqual([titleId, bodyId]);
+
+    const noKey = await new PostService(pool).list(courseId, userId, {
+      q: "quasar",
+      sort: "relevance",
+      limit: 10,
+    });
+    expect(matchingIds(noKey.data)).toEqual([titleId, bodyId]);
+  });
+
   it("falls back to lexical and fuzzy matches on provider failure", async () => {
     providerMock.mockRejectedValueOnce(new Error("provider unavailable"));
     const response = await list("q=spectrometer&sort=relevance");
