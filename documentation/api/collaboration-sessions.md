@@ -1,14 +1,16 @@
 ## Collaboration Sessions
 
+Live code sessions are private, temporary shared code documents anchored to a post. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
+
 <a id="createCollaborationSession"></a>
 
 ### **`POST /api/v1/courses/{courseId}/collaboration-sessions`**
 
-**Future contract; this route is not implemented.** A proposed temporary collaboration session would use exactly one postId or subchannelId and a one-use connection ticket. For implemented answer/followup editing, see the [answers API reference](answers.md) and [collaboration WebSocket contract](collaboration-websocket.md).
+Creates an active, private live code session anchored to a readable post in an active course. The creator becomes the first participant. The text starts empty. Create a separate one-use connection ticket before opening the collaboration WebSocket.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Course member.
+**Access:** Current member of an active course who can read the anchor post.
 
 **Request media:** `application/json`
 
@@ -38,7 +40,13 @@ None.
 
 ##### `CreateCollaborationSessionRequest` (required)
 
-`anchor` (CollaborationAnchor, required): See the named shape.
+`anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+
+`anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`title` (string, optional, 1–120 characters): Optional title, 1 to 120 characters after trimming; defaults to the post title.
+
+`language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, optional): Syntax-highlighting language. The editor never runs code.
 
 #### Multipart parts
 
@@ -50,23 +58,37 @@ None.
 
 #### Response headers
 
-`Location` (string): Relative URL of the created resource or deletion status resource.
+`Location` (string): Relative URL of the created resource.
 
-`ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
+`ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
 
 #### Response body
 
-##### `data` (object, required): Collaboration session details.
+##### `data` (object, required): The collaboration session was created.
 
-`data.id` (string, required): Opaque stable identifier.
+`data.id` (string, required, 1–255 characters): Opaque stable identifier.
 
-`data.courseId` (string, required): Opaque stable identifier.
+`data.courseId` (string, required, 1–255 characters): Opaque stable identifier.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): The resource to which the collaboration session is attached.
+`data.anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
 
-`data.createdBy` (string, required): Opaque stable identifier.
+`data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
+
+`data.language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
+
+`data.createdBy` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.participants` (list of objects, required): The creator and invited participants.
+
+`data.participants[].userId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.participants[].displayName` (string, required): Account display name.
+
+`data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -83,10 +105,10 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
     --header 'Accept: application/json' \
     --header 'Origin: https://app.example.edu' \
     --header 'Cookie: __Host-chalktalk_session=opaque_session' \
-    --header 'X-CSRF-Token: opaque_csrf_token' \
     --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
+    --header 'X-CSRF-Token: opaque_csrf_token' \
     --header 'Content-Type: application/json' \
-    --data '{"anchor":{"postId":"post_123"}}'
+    --data '{"anchor":{"postId":"post_123"},"language":"python"}'
 ```
 
 #### Example success response
@@ -100,7 +122,16 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
     "anchor": {
       "postId": "post_123"
     },
+    "title": "Why does my loop never stop?",
+    "language": "python",
     "createdBy": "user_123",
+    "participants": [
+      {
+        "userId": "user_123",
+        "displayName": "Ada Lovelace",
+        "role": "creator"
+      }
+    ],
     "endedAt": null,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
@@ -111,23 +142,29 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
 
 #### Errors
 
-##### `403 Forbidden`
-
-`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
-
 ##### `401 Unauthorized`
 
 `authentication_required`: Authentication is missing or invalid.
 
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+##### `404 Not Found`
+
+`not_found`: The course, collaboration session, or participant is absent or hidden.
+
 ##### `409 Conflict`
 
-`idempotency_key_reused`: The idempotency key was already used with a different request body.
-
 `course_archived`: The course is archived.
+
+`idempotency_key_reused`: The idempotency key was already used with a different request body.
 
 ##### `422 Unprocessable Content`
 
 `cross_course_anchor`: The anchor is invalid or belongs to another course.
+
+`validation_failed`: The request body is invalid.
 
 ##### `500 Internal Server Error`
 
@@ -143,11 +180,11 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
 
 ### **`GET /api/v1/courses/{courseId}/collaboration-sessions`**
 
-Lists collaboration-session summaries in a course.
+Lists the course's collaboration sessions visible to the caller, newest first. Hidden sessions are excluded before pagination and hasMore are calculated. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Course member.
+**Access:** Course member. Results include only sessions the caller created, was invited to, or can open as current course staff.
 
 **Request media:** None.
 
@@ -163,11 +200,11 @@ Lists collaboration-session summaries in a course.
 
 #### Query parameters
 
-`status` (enum: active, ended, optional; values active, ended): Filter by session state.
+`status` (enum: active, ended, optional): Filter by session state.
 
-`anchorType` (enum: post, subchannel, optional; values post, subchannel): Filter by anchor kind.
+`anchorType` (enum: post, optional): Filter by anchor kind. Only post anchors exist.
 
-`anchorId` (string, optional; minimum length 1, maximum length 255): Filter by the attached post or subchannel ID.
+`anchorId` (string, optional; minimum length 1, maximum length 255): Filter by the anchored post ID.
 
 `cursor` (string, optional; minimum length 1, maximum length 2048): Opaque cursor returned by the previous page.
 
@@ -187,36 +224,54 @@ None.
 
 #### Response headers
 
-None specific to this operation.
+None.
 
 #### Response body
 
-##### `data` (list of objects, required): Collaboration sessions returned by this request.
+##### `data` (list of objects, required): Collection of CollaborationSessionSummary records.
 
-`data.id` (string, required): Opaque stable identifier.
+`data[].id` (string, required, 1–255 characters): Opaque stable identifier.
 
-`data.courseId` (string, required): Opaque stable identifier.
+`data[].courseId` (string, required, 1–255 characters): Opaque stable identifier.
 
-`data.status` (enum: active, ended, required): Session lifecycle state.
+`data[].status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): The resource to which the collaboration session is attached.
+`data[].anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
 
-`data.createdBy` (string, required): Opaque stable identifier.
+`data[].anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
 
-`data.endedAt` (string or null, required): End time; null while active.
+`data[].title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
 
-`data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+`data[].language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
 
-`data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+`data[].createdBy` (string, required, 1–255 characters): Opaque stable identifier.
 
-`data.version` (integer, required): Revision number used to construct the resource ETag.
+`data[].participants` (list of objects, required): The creator and invited participants.
 
-`page` (object, required): Pagination details for the current result set.
+`data[].participants[].userId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data[].participants[].displayName` (string, required): Account display name.
+
+`data[].participants[].role` (enum: creator, invitee, required): The participant's role in the session.
+
+`data[].endedAt` (string or null, required): End time; null while active.
+
+`data[].createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+
+`data[].updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+
+`data[].version` (integer, required): Revision number used to construct the resource ETag.
+
+##### `page` (object, required): Cursor pagination state.
+
+`page.nextCursor` (string or null, required): Opaque cursor for the next page.
+
+`page.hasMore` (boolean, required): Whether another page exists.
 
 #### Example request
 
 ```bash
-curl --request GET '/api/v1/courses/course_123/collaboration-sessions' \
+curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=active&anchorType=post&anchorId=post_123' \
     --header 'Accept: application/json' \
     --header 'Cookie: __Host-chalktalk_session=opaque_session'
 ```
@@ -233,7 +288,21 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions' \
       "anchor": {
         "postId": "post_123"
       },
+      "title": "Why does my loop never stop?",
+      "language": "python",
       "createdBy": "user_123",
+      "participants": [
+        {
+          "userId": "user_123",
+          "displayName": "Ada Lovelace",
+          "role": "creator"
+        },
+        {
+          "userId": "user_456",
+          "displayName": "Grace Hopper",
+          "role": "invitee"
+        }
+      ],
       "endedAt": null,
       "createdAt": "2026-09-20T14:30:00Z",
       "updatedAt": "2026-09-20T14:30:00Z",
@@ -251,7 +320,7 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions' \
 
 ##### `400 Bad Request`
 
-`invalid_request`: Filters or pagination are invalid.
+`invalid_request`: The query parameters or cursor are invalid.
 
 ##### `401 Unauthorized`
 
@@ -259,15 +328,11 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions' \
 
 ##### `404 Not Found`
 
-`not_found`: The course is absent or hidden.
+`not_found`: The course, collaboration session, or participant is absent or hidden.
 
 ##### `500 Internal Server Error`
 
 `internal_error`: The server could not complete the request.
-
-##### `503 Service Unavailable`
-
-`service_unavailable`: A required service is temporarily unavailable.
 
 ---
 
@@ -275,11 +340,11 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions' \
 
 ### **`GET /api/v1/collaboration-sessions/{collaborationSessionId}`**
 
-Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session.
+Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Course member.
+**Access:** Session creator, current course TA or instructor, or current invitee.
 
 **Request media:** None.
 
@@ -291,7 +356,7 @@ Retrieves a collaboration session. Use the connection-ticket endpoint to obtain 
 
 #### Path parameters
 
-`collaborationSessionId` (string, required, 1–255 characters): Identifies the collaborationSession resource.
+`collaborationSessionId` (string, required, 1–255 characters): Identifies the collaboration session.
 
 #### Query parameters
 
@@ -311,21 +376,35 @@ None.
 
 #### Response headers
 
-`ETag` (string): Opaque revision token for a later `If-Match` request.
+`ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
 
 #### Response body
 
-##### `data` (object, required): Collaboration session details.
+##### `data` (object, required): The collaboration session.
 
-`data.id` (string, required): Opaque stable identifier.
+`data.id` (string, required, 1–255 characters): Opaque stable identifier.
 
-`data.courseId` (string, required): Opaque stable identifier.
+`data.courseId` (string, required, 1–255 characters): Opaque stable identifier.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): The resource to which the collaboration session is attached.
+`data.anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
 
-`data.createdBy` (string, required): Opaque stable identifier.
+`data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
+
+`data.language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
+
+`data.createdBy` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.participants` (list of objects, required): The creator and invited participants.
+
+`data.participants[].userId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.participants[].displayName` (string, required): Account display name.
+
+`data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -354,7 +433,21 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123' \
     "anchor": {
       "postId": "post_123"
     },
+    "title": "Why does my loop never stop?",
+    "language": "python",
     "createdBy": "user_123",
+    "participants": [
+      {
+        "userId": "user_123",
+        "displayName": "Ada Lovelace",
+        "role": "creator"
+      },
+      {
+        "userId": "user_456",
+        "displayName": "Grace Hopper",
+        "role": "invitee"
+      }
+    ],
     "endedAt": null,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
@@ -371,27 +464,23 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123' \
 
 ##### `404 Not Found`
 
-`not_found`: The session is absent or hidden.
+`not_found`: The course, collaboration session, or participant is absent or hidden.
 
 ##### `500 Internal Server Error`
 
 `internal_error`: The server could not complete the request.
 
-##### `503 Service Unavailable`
-
-`service_unavailable`: A required service is temporarily unavailable.
-
 ---
 
-<a id="endCollaborationSession"></a>
+<a id="updateCollaborationSession"></a>
 
 ### **`PATCH /api/v1/collaboration-sessions/{collaborationSessionId}`**
 
-Ends a collaboration session. Ended sessions retain their final snapshot.
+Changes an active session's title or language, or ends it with status ended. Only the session creator or current course staff may call it. Ending asks the collaboration server to persist the final text and waits up to 5 seconds for it to confirm; if it does not confirm in time, the session still ends with the most recently persisted text. Ended sessions become read-only and keep their final snapshot.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Session creator or staff.
+**Access:** Session creator or current course TA or instructor.
 
 **Request media:** `application/json`
 
@@ -411,7 +500,7 @@ Ends a collaboration session. Ended sessions retain their final snapshot.
 
 #### Path parameters
 
-`collaborationSessionId` (string, required, 1–255 characters): Identifies the collaborationSession resource.
+`collaborationSessionId` (string, required, 1–255 characters): Identifies the collaboration session.
 
 #### Query parameters
 
@@ -419,9 +508,15 @@ None.
 
 #### Request body
 
-##### `EndCollaborationSessionRequest` (required)
+##### `UpdateCollaborationSessionRequest` (required)
 
-`status` (literal ended, required): The only supported transition.
+`title` (string, optional, 1–120 characters): New title, 1 to 120 characters after trimming.
+
+`language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, optional): Syntax-highlighting language. The editor never runs code.
+
+`status` (literal ended, optional): Ends the session. Cannot be combined with title or language.
+
+Provide at least one property. `status` cannot be combined with `title` or `language`.
 
 #### Multipart parts
 
@@ -437,17 +532,31 @@ None.
 
 #### Response body
 
-##### `data` (object, required): Collaboration session details.
+##### `data` (object, required): The updated collaboration session.
 
-`data.id` (string, required): Opaque stable identifier.
+`data.id` (string, required, 1–255 characters): Opaque stable identifier.
 
-`data.courseId` (string, required): Opaque stable identifier.
+`data.courseId` (string, required, 1–255 characters): Opaque stable identifier.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): The resource to which the collaboration session is attached.
+`data.anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
 
-`data.createdBy` (string, required): Opaque stable identifier.
+`data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
+
+`data.language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
+
+`data.createdBy` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.participants` (list of objects, required): The creator and invited participants.
+
+`data.participants[].userId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.participants[].displayName` (string, required): Account display name.
+
+`data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -464,10 +573,10 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
     --header 'Accept: application/json' \
     --header 'Origin: https://app.example.edu' \
     --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'If-Match: "v1"' \
     --header 'X-CSRF-Token: opaque_csrf_token' \
-    --header 'If-Match: "v3"' \
     --header 'Content-Type: application/json' \
-    --data '{"status":"ended"}'
+    --data '{"language":"java"}'
 ```
 
 #### Example success response
@@ -477,15 +586,29 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
   "data": {
     "id": "collab_123",
     "courseId": "course_123",
-    "status": "ended",
+    "status": "active",
     "anchor": {
       "postId": "post_123"
     },
+    "title": "Why does my loop never stop?",
+    "language": "java",
     "createdBy": "user_123",
-    "endedAt": "2026-09-20T14:40:00Z",
+    "participants": [
+      {
+        "userId": "user_123",
+        "displayName": "Ada Lovelace",
+        "role": "creator"
+      },
+      {
+        "userId": "user_456",
+        "displayName": "Grace Hopper",
+        "role": "invitee"
+      }
+    ],
+    "endedAt": null,
     "createdAt": "2026-09-20T14:30:00Z",
-    "updatedAt": "2026-09-20T14:40:00Z",
-    "version": 4
+    "updatedAt": "2026-09-20T14:30:00Z",
+    "version": 2
   }
 }
 ```
@@ -500,11 +623,15 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
 
-`permission_denied`: The caller cannot end this session.
+`forbidden`: The caller is not the session creator or course staff.
+
+##### `404 Not Found`
+
+`not_found`: The course, collaboration session, or participant is absent or hidden.
 
 ##### `409 Conflict`
 
-`session_ended`: The session has already ended.
+`session_ended`: The collaboration session has ended.
 
 `course_archived`: The course is archived.
 
@@ -514,7 +641,7 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 ##### `422 Unprocessable Content`
 
-`validation_failed`: The status transition is invalid.
+`validation_failed`: The request body is invalid.
 
 ##### `428 Precondition Required`
 
@@ -524,9 +651,260 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 `internal_error`: The server could not complete the request.
 
-##### `503 Service Unavailable`
+---
 
-`service_unavailable`: A required service is temporarily unavailable.
+<a id="inviteCollaborationParticipant"></a>
+
+### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/participants`**
+
+Invites a current course member to an active session. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Session creator or current course TA or instructor.
+
+**Request media:** `application/json`
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+`Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+
+`Content-Type` (required): Selects one documented request media type.
+
+`X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
+
+#### Path parameters
+
+`collaborationSessionId` (string, required, 1–255 characters): Identifies the collaboration session.
+
+#### Query parameters
+
+None.
+
+#### Request body
+
+##### `InviteCollaborationParticipantRequest` (required)
+
+`userId` (string, required, 1–255 characters): Opaque stable identifier.
+
+#### Multipart parts
+
+None.
+
+**Success:** `200 OK`.
+
+**Response media:** `application/json`.
+
+#### Response headers
+
+`ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
+
+#### Response body
+
+##### `data` (object, required): The collaboration session with its updated participants.
+
+`data.id` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.courseId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.status` (enum: active, ended, required): Session lifecycle state.
+
+`data.anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+
+`data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
+
+`data.language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
+
+`data.createdBy` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.participants` (list of objects, required): The creator and invited participants.
+
+`data.participants[].userId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data.participants[].displayName` (string, required): Account display name.
+
+`data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
+
+`data.endedAt` (string or null, required): End time; null while active.
+
+`data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+
+`data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+
+`data.version` (integer, required): Revision number used to construct the resource ETag.
+
+#### Example request
+
+```bash
+curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
+    --header 'Accept: application/json' \
+    --header 'Origin: https://app.example.edu' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'X-CSRF-Token: opaque_csrf_token' \
+    --header 'Content-Type: application/json' \
+    --data '{"userId":"user_456"}'
+```
+
+#### Example success response
+
+```json
+{
+  "data": {
+    "id": "collab_123",
+    "courseId": "course_123",
+    "status": "active",
+    "anchor": {
+      "postId": "post_123"
+    },
+    "title": "Why does my loop never stop?",
+    "language": "python",
+    "createdBy": "user_123",
+    "participants": [
+      {
+        "userId": "user_123",
+        "displayName": "Ada Lovelace",
+        "role": "creator"
+      },
+      {
+        "userId": "user_456",
+        "displayName": "Grace Hopper",
+        "role": "invitee"
+      }
+    ],
+    "endedAt": null,
+    "createdAt": "2026-09-20T14:30:00Z",
+    "updatedAt": "2026-09-20T14:30:00Z",
+    "version": 1
+  }
+}
+```
+
+#### Errors
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+`forbidden`: The caller is not the session creator or course staff.
+
+##### `404 Not Found`
+
+`not_found`: The course, collaboration session, or participant is absent or hidden.
+
+##### `409 Conflict`
+
+`session_ended`: The collaboration session has ended.
+
+`course_archived`: The course is archived.
+
+##### `422 Unprocessable Content`
+
+`not_course_member`: The user is not a current member of the course.
+
+`validation_failed`: The request body is invalid.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+---
+
+<a id="removeCollaborationParticipant"></a>
+
+### **`DELETE /api/v1/collaboration-sessions/{collaborationSessionId}/participants/{userId}`**
+
+Removes an invitee from an active session. Only the session creator or current course staff may remove. The invitee's unused tickets are revoked and their open connections close within 5 seconds.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Session creator or current course TA or instructor.
+
+**Request media:** None.
+
+#### Request headers
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+`Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+
+`X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
+
+#### Path parameters
+
+`collaborationSessionId` (string, required, 1–255 characters): Identifies the collaboration session.
+
+`userId` (string, required, 1–255 characters): Identifies the participant's user.
+
+#### Query parameters
+
+None.
+
+#### Request body
+
+None.
+
+#### Multipart parts
+
+None.
+
+**Success:** `204 No Content`.
+
+**Response media:** None.
+
+#### Response headers
+
+None.
+
+#### Response body
+
+None.
+
+#### Example request
+
+```bash
+curl --request DELETE '/api/v1/collaboration-sessions/collab_123/participants/user_456' \
+    --header 'Origin: https://app.example.edu' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'X-CSRF-Token: opaque_csrf_token'
+```
+
+#### Errors
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+`forbidden`: The caller is not the session creator or course staff.
+
+##### `404 Not Found`
+
+`not_found`: The course, collaboration session, or participant is absent or hidden.
+
+##### `409 Conflict`
+
+`session_ended`: The collaboration session has ended.
+
+##### `422 Unprocessable Content`
+
+`creator_not_removable`: The session creator cannot be removed.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
 
 ---
 
@@ -534,11 +912,11 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/connection-tickets`**
 
-Creates a short-lived, one-use ticket for an active temporary collaboration session. The ticket is bound to the authenticated REST session, user, course, collaboration session, document, and effective permission. See [Collaboration WebSocket protocol](collaboration-websocket.md).
+Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with write permission, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Current course member while the course and collaboration session are active.
+**Access:** Session creator, current course TA or instructor, or current invitee, while the course and session are active.
 
 **Request media:** None.
 
@@ -574,19 +952,19 @@ None.
 
 #### Response headers
 
-`Cache-Control` (literal `no-store`): Prevents storage of the ticket response.
+`Cache-Control` (literal `no-store`): Prevents storage of the response.
 
 #### Response body
 
 ##### `data` (object, required): One-use connection credentials.
 
-`data.ticket` (string, required): Opaque secret consumed by the first WebSocket authentication attempt.
+`data.ticket` (string, required): Opaque one-use secret, sent as the Hocuspocus token when opening the WebSocket.
 
 `data.webSocketUrl` (string, required): Credential-free WebSocket URL.
 
-`data.documentId` (string, required): Document identifier derived by the server from the collaboration session.
+`data.documentId` (string, required, 1–255 characters): Document name to open, derived by the server as collaboration-session:{id}.
 
-`data.expiresAt` (string, required): UTC expiry timestamp, five minutes after issuance.
+`data.expiresAt` (string, required): UTC expiry timestamp, five minutes after ticket issuance.
 
 #### Example request
 
@@ -604,8 +982,8 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-ticket
 {
   "data": {
     "ticket": "opaque_one_use_ticket",
-    "webSocketUrl": "wss://api.example.edu/collaboration",
-    "documentId": "collab_123",
+    "webSocketUrl": "wss://app.example.edu/collaboration",
+    "documentId": "collaboration-session:collab_123",
     "expiresAt": "2026-09-20T14:35:00Z"
   }
 }
@@ -613,27 +991,23 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-ticket
 
 #### Errors
 
-##### `403 Forbidden`
-
-`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
-
 ##### `401 Unauthorized`
 
 `authentication_required`: Authentication is missing or invalid.
 
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
 ##### `404 Not Found`
 
-`not_found`: The collaboration session is absent or hidden.
+`not_found`: The course, collaboration session, or participant is absent or hidden.
 
 ##### `409 Conflict`
 
 `session_ended`: The collaboration session has ended.
 
 `course_archived`: The course is archived.
-
-##### `429 Too Many Requests`
-
-`rate_limited`: Too many ticket requests were made; retry after the duration in `Retry-After`.
 
 ##### `500 Internal Server Error`
 
@@ -649,11 +1023,11 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-ticket
 
 ### **`GET /api/v1/collaboration-sessions/{collaborationSessionId}/snapshot`**
 
-Retrieves the latest plain-text snapshot of an active or ended collaboration session.
+Retrieves the most recently persisted plain text of an active or ended session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Current course member.
+**Access:** Session creator, current course TA or instructor, or current invitee.
 
 **Request media:** None.
 
@@ -685,19 +1059,19 @@ None.
 
 #### Response headers
 
-`Cache-Control` (literal `no-store`): Prevents storage of the collaboration snapshot.
+`Cache-Control` (literal `no-store`): Prevents storage of the response.
 
 #### Response body
 
-##### `data` (object, required): Persisted collaboration text and capture metadata.
+##### `data` (object, required): The persisted collaboration text.
 
-`data.collaborationSessionId` (string, required): Opaque stable collaboration-session identifier.
+`data.collaborationSessionId` (string, required, 1–255 characters): Opaque stable collaboration-session identifier.
 
-`data.documentId` (string, required): Document identifier derived from the collaboration session.
+`data.documentId` (string, required, 1–255 characters): Document name derived from the collaboration session.
 
-`data.sessionStatus` (enum: active, ended, required): Session state when captured.
+`data.sessionStatus` (enum: active, ended, required): Collaboration-session state when the snapshot was captured.
 
-`data.content` (string, required): Plain text from `Y.Text('content').toString()`.
+`data.content` (string, required, at most 200000 characters): Plain-text projection of Y.Text('content'), at most 200,000 characters.
 
 `data.persistedAt` (string, required): UTC timestamp of the returned snapshot.
 
@@ -717,9 +1091,9 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123/snapshot' \
 {
   "data": {
     "collaborationSessionId": "collab_123",
-    "documentId": "collab_123",
+    "documentId": "collaboration-session:collab_123",
     "sessionStatus": "active",
-    "content": "Shared explanation in progress.",
+    "content": "for i in range(3):\n    print(i)\n",
     "persistedAt": "2026-09-20T14:31:58Z",
     "capturedAt": "2026-09-20T14:32:00Z"
   }
@@ -734,12 +1108,8 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123/snapshot' \
 
 ##### `404 Not Found`
 
-`not_found`: The collaboration session is absent or hidden.
+`not_found`: The course, collaboration session, or participant is absent or hidden.
 
 ##### `500 Internal Server Error`
 
 `internal_error`: The server could not complete the request.
-
-##### `503 Service Unavailable`
-
-`service_unavailable`: A required service is temporarily unavailable.

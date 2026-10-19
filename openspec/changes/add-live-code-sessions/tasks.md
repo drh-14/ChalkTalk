@@ -7,8 +7,8 @@
 
 ## 2. Data model and contract
 
-- [ ] 2.1 Add `database/migrations/020_collaboration_sessions.sql` creating `collaboration_sessions` (with `title`, `language`, and `lifecycle_state`, and without `subchannel_id`), `collaboration_documents`, `collaboration_participants`, and `collaboration_connection_tickets`, with the keys, checks, and indexes from design D9, and update `documentation/database.md` to match; verify `npm run db:migrate` applies cleanly twice and a PostgreSQL integration test asserts the language check, the title length check, participant uniqueness, and ticket-hash uniqueness
-- [ ] 2.2 Update `documentation/api/collaboration-sessions.md`, `documentation/openapi.yaml`, and `documentation/api/collaboration-websocket.md` to the behavior in the spec and design D11; verify the YAML parses, `openapi.contract.test.ts` passes, and every route in the Markdown reference has a matching OpenAPI path and operation
+- [x] 2.1 Add `database/migrations/020_collaboration_sessions.sql` creating `collaboration_sessions` (with `title`, `language`, and `lifecycle_state`, and without `subchannel_id`), `collaboration_documents`, `collaboration_participants`, and `collaboration_connection_tickets`, with the keys, checks, and indexes from design D9, and update `documentation/database.md` to match; verify `npm run db:migrate` applies cleanly twice and a PostgreSQL integration test asserts the language check, the title length check, participant uniqueness, and ticket-hash uniqueness
+- [x] 2.2 Update `documentation/api/collaboration-sessions.md`, `documentation/openapi.yaml`, and `documentation/api/collaboration-websocket.md` to the behavior in the spec and design D11; verify the YAML parses, `openapi.contract.test.ts` passes, and every route in the Markdown reference has a matching OpenAPI path and operation
 
 ## 3. REST API
 

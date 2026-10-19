@@ -375,34 +375,48 @@ The non-deleted answer body check retains historical empty strings from former l
 
 ## Collaboration
 
+Live code sessions are private, temporary shared code documents anchored to a post. Subchannel anchors are future work and have no column until channels exist.
+
 ### `collaboration_sessions`
 
 - `id`: `uuid_v7`; primary key.
-- `course_id`: `uuid_v7`; foreign key to `courses.id`.
-- `(course_id, id)`: unique key used by course-bound tickets.
-- `post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
-- `subchannel_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `subchannels(course_id, id)`.
-- Exactly one of `post_id` or `subchannel_id` is present.
-- `lifecycle_state`: `text`; `active`, `ending`, or `ended`.
+- `course_id`: `uuid_v7`; foreign key to `courses.id`, deleted with the course.
+- `(course_id, id)`: unique key used by course-bound participants and tickets.
+- `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`, deleted with the post row.
+- `title`: `text`; trimmed, 1–120 characters.
+- `language`: `text`; one of `plaintext`, `python`, `java`, `c`, `cpp`, `javascript`, `typescript`, or `sql`; defaults to `plaintext`.
+- `lifecycle_state`: `text`; `active`, `ending`, or `ended`. `ending` is held only while the collaboration server persists the final text.
 - `created_by_user_id`: `uuid_v7`; foreign key to `users.id`.
-- `ended_at`, `created_at`, `updated_at`: `timestamptz`; `ended_at` is nullable.
-- `version`: `bigint`.
+- `ended_at`, `created_at`, `updated_at`: `timestamptz`; `ended_at` is non-null exactly when `lifecycle_state` is `ended`.
+- `version`: `bigint`; positive revision used for the session `ETag`.
+- Indexes: `(post_id, created_at DESC, id DESC)` and `(course_id, created_at DESC, id DESC)` for listing; partial `(course_id)` where the session is not ended, for lifecycle sweeps.
 
 ### `collaboration_documents`
 
-- `collaboration_session_id`: `uuid_v7`; primary key and foreign key to `collaboration_sessions.id`.
-- `yjs_state`: `bytea`.
-- `text_projection`: `text`.
+- `collaboration_session_id`: `uuid_v7`; primary key and foreign key to `collaboration_sessions.id`, deleted with the session.
+- `yjs_state`: `bytea`; the complete encoded Yjs document state.
+- `text_projection`: `text`; `Y.Text('content').toString()`, at most 200,000 characters.
 - `persisted_at`: `timestamptz`.
-- `persistence_revision`: `bigint`.
+- `persistence_revision`: `bigint`; non-negative, incremented on each store.
+
+### `collaboration_participants`
+
+- `collaboration_session_id`, `course_id`, `user_id`: `uuid_v7`; primary key `(collaboration_session_id, user_id)`.
+- `(course_id, collaboration_session_id)`: foreign key to `collaboration_sessions(course_id, id)`, deleted with the session.
+- `(course_id, user_id)`: foreign key to `course_memberships(course_id, user_id)`, deleted with the membership, so leaving or being removed from a course removes session access.
+- `invited_by_user_id`: `uuid_v7`; foreign key to `users.id`. The creator's row names the creator.
+- `created_at`: `timestamptz`.
+- Index: `(course_id, user_id)`.
+
+Course staff can open any session in their course without a participant row; access is checked against current membership and role.
 
 ### `collaboration_connection_tickets`
 
 - `id`: `uuid_v7`; primary key.
-- `token_hash`: `bytea`; unique.
-- `collaboration_session_id`: `uuid_v7`.
-- `course_id`: `uuid_v7`; with `collaboration_session_id`, foreign key to `collaboration_sessions(course_id, id)`.
-- `user_id`: `uuid_v7`.
-- `auth_session_id`: `uuid_v7`; with `user_id`, foreign key to `sessions(id, user_id)`.
+- `token_hash`: `bytea`; unique SHA-256 hash of the one-use ticket, exactly 32 bytes. The ticket itself is never stored.
+- `collaboration_session_id`, `course_id`: `uuid_v7`; foreign key to `collaboration_sessions(course_id, id)`, deleted with the session.
+- `user_id`: `uuid_v7`; foreign key to `users.id`.
+- `auth_session_id`: `uuid_v7`; foreign key to `sessions.id`, deleted with the login session.
 - `permission`: `text`; `read` or `write`.
-- `issued_at`, `expires_at`, `consumed_at`, `revoked_at`: `timestamptz`; final two are nullable.
+- `issued_at`, `expires_at`, `consumed_at`, `revoked_at`: `timestamptz`; the final two are nullable, and `expires_at` is after `issued_at`.
+- Index: partial `(collaboration_session_id, user_id)` over unused tickets, for revocation.
