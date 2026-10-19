@@ -172,7 +172,7 @@ integration("semantic post indexing", () => {
       "UPDATE posts SET duplicate_status='confirmed',duplicate_of_post_id=$2 WHERE id=$1",
       [postId, canonicalId],
     );
-    await index.removePost(pool, postId);
+    await pool.query("DELETE FROM post_embeddings WHERE post_id=$1", [postId]);
     await pool.query(
       "UPDATE posts SET duplicate_status='none',duplicate_of_post_id=NULL WHERE id=$1",
       [postId],

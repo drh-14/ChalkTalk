@@ -391,7 +391,7 @@ integration("semantic post search HTTP contract", () => {
     expect(replay.body.error.code).toBe("invalid_request");
   });
 
-  it("rolls back deletion and merge when embedding cleanup fails", async () => {
+  it("cleans up embeddings without a key and rolls back on cleanup failure", async () => {
     await pool.query(
       "UPDATE course_memberships SET role='instructor' WHERE course_id=$1 AND user_id=$2",
       [courseId, userId],
@@ -413,24 +413,27 @@ integration("semantic post search HTTP contract", () => {
     });
     await index.indexPost(source.value.id);
     await index.indexPost(deleted.value.id);
-    const failing = new PostService(
-      pool,
-      undefined,
-      {
-        removePost: vi.fn(async () => {
-          throw new Error("embedding cleanup failed");
-        }),
-      } as unknown as SemanticIndex,
+    await pool.query(
+      "CREATE FUNCTION fail_embedding_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'embedding cleanup failed'; END; $$",
     );
-    await expect(
-      failing.update(source.value.id, userId, '"v1"', {
-        duplicateStatus: "confirmed",
-        duplicateOfPostId: canonical.value.id,
-      }),
-    ).rejects.toThrow("embedding cleanup failed");
-    await expect(
-      failing.delete(deleted.value.id, userId, '"v1"'),
-    ).rejects.toThrow("embedding cleanup failed");
+    await pool.query(
+      "CREATE TRIGGER fail_embedding_cleanup BEFORE DELETE ON post_embeddings FOR EACH ROW EXECUTE FUNCTION fail_embedding_cleanup()",
+    );
+    const noKey = new PostService(pool);
+    try {
+      await expect(
+        noKey.update(source.value.id, userId, '"v1"', {
+          duplicateStatus: "confirmed",
+          duplicateOfPostId: canonical.value.id,
+        }),
+      ).rejects.toThrow("embedding cleanup failed");
+      await expect(
+        noKey.delete(deleted.value.id, userId, '"v1"'),
+      ).rejects.toThrow("embedding cleanup failed");
+    } finally {
+      await pool.query("DROP TRIGGER fail_embedding_cleanup ON post_embeddings");
+      await pool.query("DROP FUNCTION fail_embedding_cleanup()");
+    }
     const unchanged = await pool.query<{
       id: string;
       duplicate_status: string;
@@ -451,11 +454,11 @@ integration("semantic post search HTTP contract", () => {
     );
     expect(embeddingsBefore.rowCount).toBe(2);
 
-    await service.update(source.value.id, userId, '"v1"', {
+    await noKey.update(source.value.id, userId, '"v1"', {
       duplicateStatus: "confirmed",
       duplicateOfPostId: canonical.value.id,
     });
-    await service.delete(deleted.value.id, userId, '"v1"');
+    await noKey.delete(deleted.value.id, userId, '"v1"');
     const embeddingsAfter = await pool.query(
       "SELECT post_id FROM post_embeddings WHERE post_id=ANY($1::uuid[])",
       [[source.value.id, deleted.value.id]],

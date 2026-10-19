@@ -70,11 +70,6 @@ export class SemanticIndex {
     return queued.rowCount === 1;
   }
 
-  async removePost(db: Db, postId: string): Promise<void> {
-    if (await this.available(db))
-      await db.query("DELETE FROM post_embeddings WHERE post_id=$1", [postId]);
-  }
-
   async queueBackfillOne(): Promise<boolean> {
     if (!(await this.available())) return false;
     const candidate = await this.pool.query<{ id: string }>(
