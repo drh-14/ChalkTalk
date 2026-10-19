@@ -1853,7 +1853,9 @@ it("restarts a stale semantic page from the first lexical page with search filte
     if (params.get("type") !== "question") return page([]);
     if (params.get("cursor"))
       return json(
-        { error: { code: "search_restart_required", message: "Restart search" } },
+        {
+          error: { code: "search_restart_required", message: "Restart search" },
+        },
         409,
       );
     filteredFirstPages++;
@@ -1879,11 +1881,9 @@ it("restarts a stale semantic page from the first lexical page with search filte
   const filtered = feedRequests(fetchMock).filter(
     (request) => request.searchParams.get("type") === "question",
   );
-  expect(filtered.map((request) => request.searchParams.get("cursor"))).toEqual([
-    null,
-    "semantic-next",
-    null,
-  ]);
+  expect(filtered.map((request) => request.searchParams.get("cursor"))).toEqual(
+    [null, "semantic-next", null],
+  );
   expect(
     filtered.every(
       (request) =>

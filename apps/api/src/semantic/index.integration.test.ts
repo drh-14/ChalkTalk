@@ -244,10 +244,12 @@ integration("semantic post indexing", () => {
           [postId],
         )
       ).rows,
-    ).toEqual([
-      { generation: config.generation },
-      { generation: nextConfig.generation },
-    ].sort((a, b) => a.generation.localeCompare(b.generation)));
+    ).toEqual(
+      [
+        { generation: config.generation },
+        { generation: nextConfig.generation },
+      ].sort((a, b) => a.generation.localeCompare(b.generation)),
+    );
     expect(await nextIndex.healthy()).toBe(false);
     expect(await nextIndex.queueBackfillOne()).toBe(true);
     const oldWorker = new JobWorker(
@@ -296,9 +298,10 @@ integration("semantic post indexing", () => {
     ).toEqual([{ generation: nextConfig.generation }]);
     expect(
       (
-        await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1 AND generation=$2", [
-          postId, nextConfig.generation,
-        ])
+        await pool.query(
+          "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1 AND generation=$2",
+          [postId, nextConfig.generation],
+        )
       ).rowCount,
     ).toBe(0);
     expect(await nextIndex.healthy()).toBe(true);
@@ -310,7 +313,9 @@ integration("semantic post indexing", () => {
         )
       ).rows,
     ).toEqual([{ generation: config.generation }]);
-    await pool.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [postId]);
+    await pool.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [
+      postId,
+    ]);
   });
 
   it("backfills no-key writes for a newly registered generation", async () => {
@@ -349,9 +354,10 @@ integration("semantic post indexing", () => {
     expect(await worker.runOnce()).toBe(true);
     expect(
       (
-        await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1 AND generation=$2", [
-          postId, enabledConfig.generation,
-        ])
+        await pool.query(
+          "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1 AND generation=$2",
+          [postId, enabledConfig.generation],
+        )
       ).rowCount,
     ).toBe(0);
     expect(
@@ -362,7 +368,9 @@ integration("semantic post indexing", () => {
         )
       ).rows,
     ).toEqual([{ generation: enabledConfig.generation }]);
-    await pool.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [postId]);
+    await pool.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [
+      postId,
+    ]);
   });
 
   it("keeps new-generation no-key work after an old worker succeeds", async () => {
@@ -528,18 +536,26 @@ integration("semantic post indexing", () => {
     const created = await creating;
     const postId = created.value.id;
     expect(
-      (await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1", [
-        postId,
-      ])).rowCount,
+      (
+        await pool.query(
+          "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1",
+          [postId],
+        )
+      ).rowCount,
     ).toBe(1);
     expect(await index.queueBackfillOne()).toBe(true);
     expect(await index.indexPost(postId)).toBe(true);
     expect(
-      (await pool.query("SELECT 1 FROM semantic_post_catchup WHERE post_id=$1", [
-        postId,
-      ])).rowCount,
+      (
+        await pool.query(
+          "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1",
+          [postId],
+        )
+      ).rowCount,
     ).toBe(0);
-    await pool.query("DELETE FROM jobs WHERE kind='index_post' AND status='queued'");
+    await pool.query(
+      "DELETE FROM jobs WHERE kind='index_post' AND status='queued'",
+    );
   });
 
   it("advances across bounded indexed batches before enqueuing a later post", async () => {
@@ -688,15 +704,23 @@ integration("semantic post indexing", () => {
     );
     expect(await index.enqueue(pool, postId)).toBe(false);
 
-    await pool.query("UPDATE posts SET body_markdown='Edited body' WHERE id=$1", [postId]);
+    await pool.query(
+      "UPDATE posts SET body_markdown='Edited body' WHERE id=$1",
+      [postId],
+    );
     expect(await index.indexPost(postId)).toBe(true);
-    await pool.query("UPDATE posts SET body_markdown='Original body' WHERE id=$1", [postId]);
+    await pool.query(
+      "UPDATE posts SET body_markdown='Original body' WHERE id=$1",
+      [postId],
+    );
     expect(await index.enqueue(pool, postId)).toBe(true);
     expect(
-      (await pool.query(
-        "SELECT status FROM jobs WHERE kind='index_post' AND payload->>'postId'=$1",
-        [postId],
-      )).rows[0]?.status,
+      (
+        await pool.query(
+          "SELECT status FROM jobs WHERE kind='index_post' AND payload->>'postId'=$1",
+          [postId],
+        )
+      ).rows[0]?.status,
     ).toBe("queued");
 
     expect(await index.indexPost(postId)).toBe(true);

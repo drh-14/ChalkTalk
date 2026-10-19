@@ -209,7 +209,9 @@ integration("semantic post search HTTP contract", () => {
         [id, courseId, userId, title, body],
       );
     const matchingIds = (posts: { id: string }[]) =>
-      posts.map((post) => post.id).filter((id) => [titleId, bodyId].includes(id));
+      posts
+        .map((post) => post.id)
+        .filter((id) => [titleId, bodyId].includes(id));
     const query = "q=quasar&sort=relevance&limit=10";
     const expanded = await list(query);
     expect(expanded.status).toBe(200);
@@ -245,7 +247,9 @@ integration("semantic post search HTTP contract", () => {
     );
     expect(ranks.rows[0]?.rank).toBe(ranks.rows[1]?.rank);
     const matchingIds = (posts: { id: string }[]) =>
-      posts.map((post) => post.id).filter((id) => [titleId, bodyId].includes(id));
+      posts
+        .map((post) => post.id)
+        .filter((id) => [titleId, bodyId].includes(id));
     const query = "q=AI&sort=relevance&limit=20";
     const expanded = await list(query);
     expect(expanded.status).toBe(200);
@@ -269,10 +273,15 @@ integration("semantic post search HTTP contract", () => {
     const semanticPage = await list("q=spectrometer&sort=relevance&limit=1");
     expect(semanticPage.status).toBe(200);
     expect(semanticPage.body.page.nextCursor).toBeTruthy();
-    const postId = (await pool.query<{ id: string }>(
-      "SELECT id FROM posts WHERE title='Spectrometer overview'",
-    )).rows[0]!.id;
-    await pool.query("INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2) ON CONFLICT DO NOTHING", [postId, config.generation]);
+    const postId = (
+      await pool.query<{ id: string }>(
+        "SELECT id FROM posts WHERE title='Spectrometer overview'",
+      )
+    ).rows[0]!.id;
+    await pool.query(
+      "INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2) ON CONFLICT DO NOTHING",
+      [postId, config.generation],
+    );
     const stale = await list(
       `q=spectrometer&sort=relevance&limit=1&cursor=${encodeURIComponent(semanticPage.body.page.nextCursor)}`,
     );
@@ -280,21 +289,21 @@ integration("semantic post search HTTP contract", () => {
     expect(stale.body.error.code).toBe("search_restart_required");
     const pending = await list("q=spectrometer&sort=relevance");
     expect(pending.status).toBe(200);
-    expect(pending.body.data.map((post: { title: string }) => post.title)).toEqual([
-      "Spectrometer overview",
-      "Spectromter overview",
+    expect(
+      pending.body.data.map((post: { title: string }) => post.title),
+    ).toEqual(["Spectrometer overview", "Spectromter overview"]);
+    await pool.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [
+      postId,
     ]);
-    await pool.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [postId]);
     await pool.query(
       "UPDATE jobs SET status='queued',last_error='provider unavailable' WHERE kind='index_post' AND payload->>'postId'=$1",
       [postId],
     );
     const failed = await list("q=spectrometer&sort=relevance");
     expect(failed.status).toBe(200);
-    expect(failed.body.data.map((post: { title: string }) => post.title)).toEqual([
-      "Spectrometer overview",
-      "Spectromter overview",
-    ]);
+    expect(
+      failed.body.data.map((post: { title: string }) => post.title),
+    ).toEqual(["Spectrometer overview", "Spectromter overview"]);
     await pool.query(
       "UPDATE jobs SET last_error=NULL WHERE kind='index_post' AND payload->>'postId'=$1",
       [postId],
@@ -314,10 +323,9 @@ integration("semantic post search HTTP contract", () => {
     providerMock.mockRejectedValueOnce(new Error("provider unavailable"));
     const restarted = await list("q=spectrometer&sort=relevance&limit=2");
     expect(restarted.status).toBe(200);
-    expect(restarted.body.data.map((post: { title: string }) => post.title)).toEqual([
-      "Spectrometer overview",
-      "Spectromter overview",
-    ]);
+    expect(
+      restarted.body.data.map((post: { title: string }) => post.title),
+    ).toEqual(["Spectrometer overview", "Spectromter overview"]);
   });
 
   it("keeps chronological ordering across semantic and lexical results", async () => {
@@ -473,7 +481,9 @@ integration("semantic post search HTTP contract", () => {
         noKey.delete(deleted.value.id, userId, '"v1"'),
       ).rejects.toThrow("embedding cleanup failed");
     } finally {
-      await pool.query("DROP TRIGGER fail_embedding_cleanup ON post_embeddings");
+      await pool.query(
+        "DROP TRIGGER fail_embedding_cleanup ON post_embeddings",
+      );
       await pool.query("DROP FUNCTION fail_embedding_cleanup()");
     }
     const unchanged = await pool.query<{

@@ -94,12 +94,14 @@ integration("configured embeddings without optional schema", () => {
       "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
       [created.value.id],
     );
-    expect(pending.rows).toEqual([{
-      generation: readEmbeddingConfig({
-        EMBEDDING_API_KEY: "configured",
-        EMBEDDING_MODEL: "test",
-      })!.generation,
-    }]);
+    expect(pending.rows).toEqual([
+      {
+        generation: readEmbeddingConfig({
+          EMBEDDING_API_KEY: "configured",
+          EMBEDDING_MODEL: "test",
+        })!.generation,
+      },
+    ]);
   });
 
   it("does not fail a post write when optional indexing is unavailable", async () => {
@@ -121,10 +123,12 @@ integration("configured embeddings without optional schema", () => {
     ]);
     expect(row.rows[0]?.title).toBe("Fallback note");
     expect(
-      (await pool.query(
-        "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1",
-        [created.value.id],
-      )).rowCount,
+      (
+        await pool.query(
+          "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1",
+          [created.value.id],
+        )
+      ).rowCount,
     ).toBe(1);
   });
 });
