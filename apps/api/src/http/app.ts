@@ -39,6 +39,8 @@ import {
   type ParentKind,
 } from "../content-attachments/service.js";
 
+import { CourseResourceService } from "../course-resources/service.js";
+
 export interface AppDependencies {
   environment: Environment;
   authService?: AuthService;
@@ -48,6 +50,7 @@ export interface AppDependencies {
   followupService?: FollowupService;
   statisticsService?: StatisticsService;
   courseFileService?: CourseFileService;
+  courseResourceService?: CourseResourceService;
   observability?: Observability;
   contentAttachmentService?: ContentAttachmentService;
 }
@@ -568,6 +571,7 @@ export function createApp(
     followupService,
     statisticsService,
     courseFileService,
+    courseResourceService,
     observability,
     contentAttachmentService,
   } = dependencies;
@@ -1310,6 +1314,108 @@ export function createApp(
           auth(response).session.user.id,
         );
         response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/resources",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (
+          Object.keys(request.query).some(
+            (key) => key !== "limit" && key !== "cursor",
+          ) ||
+          (request.query.limit !== undefined &&
+            (typeof request.query.limit !== "string" ||
+              !/^[1-9]\d*$/.test(request.query.limit)))
+        )
+          throw new AuthError(400, "invalid_request", "Pagination is invalid");
+        const query = listQuery(request.query);
+        if (!courseResourceService)
+          throw new AuthError(
+            503,
+            "service_unavailable",
+            "Resource service is unavailable",
+          );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json(
+            await courseResourceService.list(
+              param(request.params.courseId),
+              current.session.user.id,
+              query.limit,
+              query.cursor,
+            ),
+          );
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/resources",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["kind", "title", "url"],
+          ["kind", "title", "url"],
+        );
+        if (body.kind !== "link")
+          throw validationError("Only named links can be created here");
+        if (!courseResourceService)
+          throw new AuthError(
+            503,
+            "service_unavailable",
+            "Resource service is unavailable",
+          );
+        const value = await courseResourceService.create(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          { title: body.title, url: body.url },
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set("Location", `/api/v1/courses/${value.courseId}/resources`)
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/files",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (
+          Object.keys(request.query).some(
+            (key) => key !== "limit" && key !== "cursor",
+          ) ||
+          (request.query.limit !== undefined &&
+            (typeof request.query.limit !== "string" ||
+              !/^[1-9]\d*$/.test(request.query.limit)))
+        )
+          throw new AuthError(400, "invalid_request", "Pagination is invalid");
+        const query = listQuery(request.query);
+        response
+          .set("Cache-Control", "private, no-store")
+          .json(
+            await courseFiles().list(
+              param(request.params.courseId),
+              current.session.user.id,
+              query.limit,
+              query.cursor,
+            ),
+          );
       } catch (error) {
         next(error);
       }

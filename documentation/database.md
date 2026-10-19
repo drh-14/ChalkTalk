@@ -308,6 +308,18 @@ The non-deleted answer body check retains historical empty strings from former l
 
 ## Resources
 
+### `course_resource_links` (implemented flat named links)
+
+- `id`: `uuid_v7`; primary key.
+- `course_id`: `uuid_v7`; foreign key to `courses.id` with cascade deletion.
+- `title`: `text`; trimmed nonblank title, at most 200 Unicode code points (database check on trimmed length).
+- `url`: `text`; absolute HTTP(S), at most 2048 Unicode code points; API rejects credentials, missing host, raw Unicode whitespace (including surrounding whitespace), C0/C1 controls and backslashes before parsing. Database checks length and HTTP(S) prefix. Never fetched by the server.
+- `created_by_user_id`: nullable `uuid_v7`; foreign key to `users.id`, SET NULL on user deletion. Not exposed in public resource metadata.
+- `created_at`: `timestamptz`; defaults to `clock_timestamp()`.
+- `(course_id, created_at DESC, id DESC)` index supports course listing. Existing original files remain in `course_files`; unified reads use UNION ALL without wrapper/backfill rows. Link creation and its existing `idempotency_records` response commit atomically; keys are scoped to creator/course for 24 hours.
+
+The `resources` and `resource_regions` catalog structures below are deferred and are not the implemented flat resource list.
+
 ### `resources`
 
 - `id`: `uuid_v7`; primary key.

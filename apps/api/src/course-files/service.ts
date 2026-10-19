@@ -83,6 +83,69 @@ export class CourseFileService {
     return found.rows[0].status;
   }
 
+  async list(courseId: string, userId: string, limit: number, cursor?: string) {
+    const status = await this.authorize(this.pool, courseId, userId, false);
+    if (status !== "active" && status !== "archived")
+      throw new AuthError(404, "not_found", "Course is not found");
+    let after: { timestamp: string; id: string } | undefined;
+    if (cursor !== undefined) {
+      try {
+        if (!/^[A-Za-z0-9_-]+$/.test(cursor) || cursor.length > 2048)
+          throw new Error("Invalid encoding");
+        const bytes = Buffer.from(cursor, "base64url");
+        if (bytes.toString("base64url") !== cursor)
+          throw new Error("Invalid encoding");
+        const value: unknown = JSON.parse(bytes.toString("utf8"));
+        if (
+          !Array.isArray(value) ||
+          value.length !== 3 ||
+          value[0] !== courseId ||
+          typeof value[1] !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value[1]) ||
+          value[1].startsWith("0000-") ||
+          !Number.isFinite(Date.parse(value[1])) ||
+          new Date(value[1]).toISOString() !== value[1].slice(0, 23) + "Z" ||
+          typeof value[2] !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+            value[2],
+          )
+        )
+          throw new Error("Invalid cursor");
+        after = { timestamp: value[1], id: value[2] };
+      } catch {
+        throw new AuthError(
+          400,
+          "invalid_request",
+          "Pagination cursor is invalid",
+        );
+      }
+    }
+    const found = await this.pool.query<Row & { cursor_timestamp: string }>(
+      `SELECT ${select},to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_timestamp
+       FROM course_files WHERE course_id=$1 AND deleted_at IS NULL
+       ${after ? "AND (created_at,id)<($3::timestamptz,$4::uuid)" : ""}
+       ORDER BY created_at DESC,id DESC LIMIT $2`,
+      after
+        ? [courseId, limit + 1, after.timestamp, after.id]
+        : [courseId, limit + 1],
+    );
+    const rows = found.rows.slice(0, limit);
+    const hasMore = found.rows.length > limit;
+    const last = rows.at(-1);
+    return {
+      data: rows.map(project),
+      page: {
+        hasMore,
+        nextCursor:
+          hasMore && last
+            ? Buffer.from(
+                JSON.stringify([courseId, last.cursor_timestamp, last.id]),
+              ).toString("base64url")
+            : null,
+      },
+    };
+  }
+
   async authorizeUpload(
     courseId: string,
     userId: string,
