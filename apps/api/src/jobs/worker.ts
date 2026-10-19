@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import type { EmailSender } from "../auth/service.js";
+import type { Observability } from "../observability/index.js";
 
 type Job = {
   id: string;
@@ -30,6 +31,7 @@ export class JobWorker {
     private readonly emailSender?: EmailSender,
     private readonly frontendBaseUrl?: string,
     private readonly objectStore?: { client: S3Client; bucket: string },
+    private readonly observability?: Observability,
   ) {}
 
   private async transaction<T>(
@@ -215,6 +217,9 @@ export class JobWorker {
   async runOnce(): Promise<boolean> {
     const job = await this.claim();
     if (!job) return false;
+    const started = process.hrtime.bigint();
+    this.observability?.recordJobStart(job.kind);
+    const duration = () => Number(process.hrtime.bigint() - started) / 1e9;
     try {
       if (job.kind === "delete_course") {
         if (!job.payload.courseId)
@@ -235,8 +240,13 @@ export class JobWorker {
         await this.sendQuestionDuplicateEmail(job);
       }
       await this.succeed(job);
+      this.observability?.recordJob(job.kind, "succeeded", duration());
     } catch (error) {
-      await this.fail(job, error);
+      try {
+        await this.fail(job, error);
+      } finally {
+        this.observability?.recordJob(job.kind, "failed", duration());
+      }
     }
     return true;
   }

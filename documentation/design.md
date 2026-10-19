@@ -151,7 +151,7 @@ AI features,  such as AI responses to student questions, are accessed through a 
 * Bring your own key (BYOK): The instance calls a hosted AI provider using an API key supplied by the operator and stored as a server-side secret. In the managed deployment, the ChalkTalk team provides this key; in a self-hosted deployment, the administrator supplies their own.
 * Local model: The instance calls a model running on the operator's own hardware through an OpenAI-compatible endpoint. The model can run as an additional container in the Docker Compose deployment, so no data leaves the self-hoster's infrastructure.
 
-In the managed deployment, system metrics and request logs are collected with AWS CloudWatch, which covers the 60-second metrics interval and one-year log retention in the nonfunctional requirements.
+In the managed deployment, system metrics and request logs are planned for AWS CloudWatch, which must cover the 60-second metrics interval and one-year log retention in the nonfunctional requirements. The implemented local monitoring stack has a separate retention policy; see [local observability](api/observability.md).
 
 ### **Background jobs**
 

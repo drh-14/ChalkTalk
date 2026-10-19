@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import type { EmailSender } from "../auth/service.js";
+import type { Observability } from "../observability/index.js";
 
 type OutboxRow = {
   id: string;
@@ -68,6 +69,7 @@ export class DigestService {
     private readonly sender: EmailSender,
     private readonly frontendBaseUrl: string,
     private readonly workerId = `digest-worker-${process.pid}`,
+    private readonly observability?: Observability,
   ) {}
 
   private async transaction<T>(
@@ -255,9 +257,14 @@ export class DigestService {
   async deliverOnce(now = new Date()): Promise<boolean> {
     const row = await this.claim(now);
     if (!row) return false;
+    const started = process.hrtime.bigint();
+    const duration = () => Number(process.hrtime.bigint() - started) / 1e9;
+    this.observability?.recordJobStart("digest_delivery");
     try {
       await this.deliver(row);
+      this.observability?.recordJob("digest_delivery", "succeeded", duration());
     } catch (error) {
+      this.observability?.recordJob("digest_delivery", "failed", duration());
       const message =
         error instanceof Error ? error.message : "Unknown SMTP failure";
       await this.pool.query(

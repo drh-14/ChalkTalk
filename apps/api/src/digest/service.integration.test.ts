@@ -8,6 +8,10 @@ import { hashOpaqueToken } from "../auth/crypto.js";
 import { loadEnvironment } from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { createApp } from "../http/app.js";
+import {
+  createObservability,
+  createWorkerMetricsApp,
+} from "../observability/index.js";
 import { PostService } from "../posts/service.js";
 import { DigestService } from "./service.js";
 
@@ -801,6 +805,67 @@ integration("daily course email digest", () => {
     expect(
       (await pool.query("SELECT status FROM digest_outbox")).rows[0].status,
     ).toBe("canceled");
+  });
+
+  it("records digest delivery outcomes at the retry boundary without email content", async () => {
+    await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Sensitive digest title",
+    );
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    const events: string[] = [];
+    const observability = createObservability({
+      token: "digest-test-operator-token-long-enough",
+      stdout: (line) => events.push(line),
+    });
+    const observedDigest = new DigestService(
+      pool,
+      sender,
+      environment.frontendBaseUrl,
+      "digest-observed",
+      observability,
+    );
+    try {
+      sender.fail = true;
+      expect(
+        await observedDigest.deliverOnce(new Date("2026-10-15T00:00:01Z")),
+      ).toBe(true);
+      expect(
+        (await pool.query("SELECT status FROM digest_outbox")).rows[0].status,
+      ).toBe("queued");
+      expect(
+        await observedDigest.deliverOnce(new Date("2026-10-15T00:00:01Z")),
+      ).toBe(false);
+      sender.fail = false;
+      await pool.query(
+        "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+      );
+      expect(
+        await observedDigest.deliverOnce(new Date("2026-10-15T00:00:03Z")),
+      ).toBe(true);
+      expect(
+        (await pool.query("SELECT status FROM digest_outbox")).rows[0].status,
+      ).toBe("sent");
+      const metrics = await request(createWorkerMetricsApp(observability))
+        .get("/metrics")
+        .set("Authorization", "Bearer digest-test-operator-token-long-enough");
+      expect(metrics.text).toContain(
+        'chalktalk_jobs_total{kind="digest_delivery",outcome="failed"} 1',
+      );
+      expect(metrics.text).toContain(
+        'chalktalk_jobs_total{kind="digest_delivery",outcome="succeeded"} 1',
+      );
+      expect(
+        events.filter((line) => line.includes('"event":"job_start"')),
+      ).toHaveLength(2);
+      expect(events.join("\n")).not.toContain("Sensitive digest title");
+      expect(events.join("\n")).not.toContain("alice@example.edu");
+      expect(events.join("\n")).not.toContain("SMTP down");
+    } finally {
+      await observability.close();
+    }
   });
 
   it("waits until UTC midnight and uses half-open UTC dates", async () => {

@@ -3,6 +3,7 @@ import {
   HeadBucketCommand,
   CreateBucketCommand,
 } from "@aws-sdk/client-s3";
+import { join } from "node:path";
 import { createEmailSender } from "./auth/email.js";
 import { FollowupService } from "./followups/service.js";
 import { AnswerService } from "./answers/service.js";
@@ -18,9 +19,18 @@ import { createApp } from "./http/app.js";
 import { PostService } from "./posts/service.js";
 import { StatisticsService } from "./statistics/service.js";
 import { CourseFileService } from "./course-files/service.js";
+import { createObservability, logApiEvent } from "./observability/index.js";
 
 const environment = loadEnvironment();
 const { port } = environment;
+const observability = environment.observability.enabled
+  ? createObservability({
+      token: environment.observability.metricsToken!,
+      spool: {
+        directory: join(environment.observability.spoolDirectory!, "api"),
+      },
+    })
+  : undefined;
 const pool = createPool(requireDatabaseUrl(environment));
 const emailSender = createEmailSender(environment);
 const { bucket, endpoint, client } = loadObjectStorageConfig();
@@ -39,17 +49,20 @@ if (endpoint) {
     await s3.send(new CreateBucketCommand({ Bucket: bucket }));
   }
 }
-
+pool.on("error", () => {
+  logApiEvent(observability, "database_pool_error");
+});
 const app = createApp({
   environment,
+  observability,
   authService: new AuthService(pool, environment, emailSender),
   courseService: new CourseService(pool),
-  postService: new PostService(pool),
+  postService: new PostService(pool, observability),
   answerService: new AnswerService(pool),
   followupService: new FollowupService(pool),
   statisticsService: new StatisticsService(pool),
   courseFileService: new CourseFileService(pool, s3, bucket),
 });
 app.listen(port, () => {
-  console.info(`ChalkTalk API listening on port ${port}`);
+  logApiEvent(observability, "api_started");
 });

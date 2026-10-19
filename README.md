@@ -103,4 +103,14 @@ docker compose --profile app run --rm migrate
 
 Stop the full stack with `docker compose --profile app down`. The default `docker compose up -d` starts PostgreSQL, Mailpit, and SeaweedFS.
 
+### Local API monitoring
+
+An opt-in Compose profile adds Prometheus, Grafana, Logstash, and Elasticsearch to the full application stack. In your **ignored** `.env`, set `OBSERVABILITY_ENABLED=true`, set `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` to **different** outputs of `openssl rand -hex 32`, then run:
+
+```bash
+docker compose --profile app --profile observability up --build --wait
+```
+
+Open Grafana at [http://127.0.0.1:3001](http://127.0.0.1:3001) and sign in as `admin` using `GRAFANA_ADMIN_PASSWORD`. The provisioned dashboard covers API requests, worker jobs, scrape health, and sanitized logs; it is not a ChalkTalk app route. Never commit the credentials or paste metric output into public issues. For the metrics endpoint contract, privacy limits, retention, and failure behavior, see the [local observability reference](documentation/api/observability.md). Stop the profile with `docker compose --profile app --profile observability down` (omit `--volumes` to retain local telemetry).
+
 Run `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` before submitting changes.
