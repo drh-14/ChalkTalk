@@ -401,6 +401,12 @@ integration("semantic post indexing", () => {
       (await pool.query("SELECT title FROM posts WHERE id=$1", [postId]))
         .rows[0].title,
     ).toBe("Retry note");
+    await pool.query(
+      "UPDATE jobs SET status='dead',updated_at=now()-interval '2 hours' WHERE kind='index_post' AND payload->>'postId'=$1",
+      [postId],
+    );
+    expect(await index.enqueue(pool, postId)).toBe(true);
+    expect(await index.healthy()).toBe(false);
     unavailable = false;
     await pool.query(
       "UPDATE jobs SET available_at=now() WHERE kind='index_post' AND payload->>'postId'=$1",

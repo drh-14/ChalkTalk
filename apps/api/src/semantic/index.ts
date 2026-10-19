@@ -69,7 +69,7 @@ export class SemanticIndex {
        VALUES ($1,'index_post',$2,$3)
        ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL
        DO UPDATE SET status='queued', attempts=0, available_at=now(),
-         locked_by=NULL,locked_until=NULL,last_error=NULL,finished_at=NULL,updated_at=now()
+         locked_by=NULL,locked_until=NULL,finished_at=NULL,updated_at=now()
        WHERE (jobs.status='dead' AND jobs.updated_at < now()-interval '1 hour')
           OR (jobs.status='succeeded' AND (
             EXISTS (SELECT 1 FROM semantic_post_catchup d WHERE d.post_id=$4)
