@@ -128,9 +128,26 @@ export class PostService {
     postId: string,
   ): Promise<void> {
     await db.query(
-      "INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2) ON CONFLICT (post_id,generation) DO NOTHING",
-      [postId, this.semantic?.config.generation ?? ""],
+      "SELECT pg_advisory_xact_lock(hashtext('semantic_embedding_generations'))",
     );
+    if (this.semantic) {
+      await db.query(
+        "INSERT INTO semantic_embedding_generations(generation) VALUES($1) ON CONFLICT (generation) DO UPDATE SET last_seen_at=now()",
+        [this.semantic.config.generation],
+      );
+      await db.query(
+        "INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2) ON CONFLICT (post_id,generation) DO NOTHING",
+        [postId, this.semantic.config.generation],
+      );
+    } else {
+      await db.query(
+        `INSERT INTO semantic_post_catchup(post_id,generation)
+         SELECT $1,generation FROM semantic_embedding_generations
+         WHERE last_seen_at >= now()-interval '1 day'
+         ON CONFLICT (post_id,generation) DO NOTHING`,
+        [postId],
+      );
+    }
   }
   private async removeEmbeddings(db: PoolClient, postId: string): Promise<void> {
     const table = await db.query<{ relation: string | null }>(

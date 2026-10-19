@@ -272,7 +272,7 @@ integration("semantic post search HTTP contract", () => {
     const postId = (await pool.query<{ id: string }>(
       "SELECT id FROM posts WHERE title='Spectrometer overview'",
     )).rows[0]!.id;
-    await pool.query("INSERT INTO semantic_post_catchup(post_id) VALUES($1) ON CONFLICT DO NOTHING", [postId]);
+    await pool.query("INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2) ON CONFLICT DO NOTHING", [postId, config.generation]);
     const stale = await list(
       `q=spectrometer&sort=relevance&limit=1&cursor=${encodeURIComponent(semanticPage.body.page.nextCursor)}`,
     );

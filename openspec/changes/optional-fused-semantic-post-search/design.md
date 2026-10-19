@@ -52,11 +52,14 @@ catch-up rows with embeddings. Pending catch-up rows, failed current-generation
 jobs, and query-provider failures disable semantic candidates for search until
 recovery; the existing lexical/fuzzy query path remains authoritative.
 Catch-up rows are keyed by post and embedding generation, so old-model and
-no-key API writes cannot overwrite new-model work. A no-key row has an empty
-generation; a configured worker creates its own generation row before enqueueing.
-Workers claim only matching-generation jobs and clear their own row and any
-no-key row after revision-checked vector storage. Health checks ignore rows
-from other generations. Whitespace-only chunks are skipped before provider calls.
+no-key API writes cannot overwrite new-model work. An ordinary PostgreSQL
+registry tracks generations active in the last day. No-key edits atomically
+create separate catch-up rows for each active generation; registration and
+no-key writes serialize. Newly registered generations begin their own initial
+backfill, including writes made before any generation was registered. Workers
+claim only matching-generation jobs and clear only their own rows after
+revision-checked vector storage. Health checks ignore rows from other
+generations. Whitespace-only chunks are skipped before provider calls.
 If health changes between relevance pages, the API rejects the semantic cursor
 with `409 search_restart_required`; the feed restarts without a cursor while
 preserving query and filters. It never presents an invented final page.

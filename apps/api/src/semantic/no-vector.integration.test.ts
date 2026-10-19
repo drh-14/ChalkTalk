@@ -84,7 +84,7 @@ integration("configured embeddings without optional schema", () => {
     expect(pending.rows[0]?.generation).toBe(config.generation);
   });
 
-  it("leaves no-key catch-up unowned until a configured worker claims it", async () => {
+  it("fans out no-key catch-up to a registered generation", async () => {
     const created = await new PostService(pool).create(courseId, userId, {
       type: "note",
       title: "No-key note",
@@ -94,7 +94,12 @@ integration("configured embeddings without optional schema", () => {
       "SELECT generation FROM semantic_post_catchup WHERE post_id=$1",
       [created.value.id],
     );
-    expect(pending.rows).toEqual([{ generation: "" }]);
+    expect(pending.rows).toEqual([{
+      generation: readEmbeddingConfig({
+        EMBEDDING_API_KEY: "configured",
+        EMBEDDING_MODEL: "test",
+      })!.generation,
+    }]);
   });
 
   it("does not fail a post write when optional indexing is unavailable", async () => {
