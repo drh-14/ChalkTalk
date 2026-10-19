@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 import { Buffer } from "node:buffer";
+import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -7,10 +8,9 @@ import { createServer } from "vite";
 import { expect, test } from "@playwright/test";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const screenshotDirectory = resolve(
-  root,
-  "docs/pr-screenshots/discussion-attachments",
-);
+const screenshotDirectory =
+  process.env.TEST_EVIDENCE_DIR ??
+  resolve(root, "docs/pr-screenshots/discussion-attachments");
 const attachment = (id, fileName, mediaType) => ({
   id,
   fileName,
@@ -106,7 +106,7 @@ test.describe("rendered discussion attachments", () => {
     await vite?.close();
   });
 
-  async function mockApi(page) {
+  async function mockApi(page, options = {}) {
     await page.route("**/api/v1/**", async (route) => {
       const url = new URL(route.request().url());
       const path = url.pathname;
@@ -133,7 +133,7 @@ test.describe("rendered discussion attachments", () => {
           id: "m1",
           courseId: "course-1",
           user: { id: "u1", displayName: "Ada" },
-          role: "student",
+          role: options.role ?? "student",
           createdAt: "2026-10-01T00:00:00Z",
           updatedAt: "2026-10-01T00:00:00Z",
           version: 1,
@@ -152,14 +152,27 @@ test.describe("rendered discussion attachments", () => {
         return json(post("p1", "question", [picture]));
       if (path === "/api/v1/posts/p2" && method === "GET")
         return json(post("p2", "note", [picture]));
-      if (path === "/api/v1/posts/p1/answers") return json([answer]);
+      if (path === "/api/v1/posts/p1/answers")
+        return json([
+          {
+            ...answer,
+            kind: options.answerKind ?? "student",
+            canEdit: options.canEdit ?? true,
+          },
+        ]);
       if (path === "/api/v1/posts/p1/followups")
         return route.fulfill({
-          json: { data: [followup], meta: { total: 1, nextCursor: null } },
+          json: {
+            data: [{ ...followup, canEdit: options.canEdit ?? true }],
+            meta: { total: 1, nextCursor: null },
+          },
         });
       if (path === "/api/v1/followups/f1/replies")
         return route.fulfill({
-          json: { data: [reply], meta: { total: 1, nextCursor: null } },
+          json: {
+            data: [{ ...reply, canEdit: options.canEdit ?? true }],
+            meta: { total: 1, nextCursor: null },
+          },
         });
       return route.fulfill({
         status: 404,
@@ -585,13 +598,17 @@ test.describe("rendered discussion attachments", () => {
     });
     await page.goto(`${origin}/attachments-fixture.html?post=p1`);
     const card = page.getByRole("region", { name: "Answer by Ada" });
+    await expect(
+      card.getByRole("button", { name: "Remove lecture.pptx" }),
+    ).toHaveCount(0);
+    await card.getByRole("button", { name: "Edit answer" }).click();
     await card.getByRole("button", { name: "Remove lecture.pptx" }).click();
     await expect(card.getByRole("link", { name: "lecture.pptx" })).toHaveCount(
       0,
     );
     expect(removed).toBe(true);
     await card.screenshot({
-      path: resolve(screenshotDirectory, "removed-answer-document.png"),
+      path: resolve(screenshotDirectory, "edited-answer-document-removed.png"),
     });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(
@@ -654,6 +671,7 @@ test.describe("rendered discussion attachments", () => {
       return route.fallback();
     });
     await page.goto(`${origin}/attachments-fixture.html?post=p2`);
+    await page.getByRole("button", { name: "Edit post", exact: true }).click();
     await page.getByLabel("Add files").setInputFiles([
       { name: "diagram.png", mimeType: "image/png", buffer: png },
       {
@@ -662,7 +680,7 @@ test.describe("rendered discussion attachments", () => {
         buffer: Buffer.from("mocked-slides"),
       },
     ]);
-    await page.getByRole("button", { name: "Upload selected files" }).click();
+    await page.getByRole("button", { name: "Save post" }).click();
     await expect(page.getByRole("img", { name: "diagram.png" })).toBeVisible();
     failSecond();
     await expect(page.getByRole("alert")).toContainText(
@@ -672,7 +690,7 @@ test.describe("rendered discussion attachments", () => {
       path: resolve(screenshotDirectory, "existing-post-partial-retry.png"),
       fullPage: true,
     });
-    await page.getByRole("button", { name: "Upload selected files" }).click();
+    await page.getByRole("button", { name: "Retry attachments" }).click();
     await expect(
       page.getByRole("link", { name: "lecture.pptx" }),
     ).toBeVisible();
@@ -698,15 +716,14 @@ test.describe("rendered discussion attachments", () => {
       });
     });
     await page.goto(`${origin}/attachments-fixture.html?post=p2`);
-    await page
-      .getByLabel("Add files")
-      .setInputFiles(
-        Array.from({ length: 6 }, (_, index) => ({
-          name: `image-${index}.png`,
-          mimeType: "image/png",
-          buffer: png,
-        })),
-      );
+    await page.getByRole("button", { name: "Edit post", exact: true }).click();
+    await page.getByLabel("Add files").setInputFiles(
+      Array.from({ length: 6 }, (_, index) => ({
+        name: `image-${index}.png`,
+        mimeType: "image/png",
+        buffer: png,
+      })),
+    );
     await expect(page.getByRole("alert")).toContainText("at most five files");
     expect(uploads).toBe(0);
     await page.screenshot({
@@ -714,4 +731,159 @@ test.describe("rendered discussion attachments", () => {
       fullPage: true,
     });
   });
+
+  for (const [size, viewport] of [
+    ["desktop", { width: 1440, height: 1080 }],
+    ["mobile", { width: 390, height: 844 }],
+  ]) {
+    test.describe(`${size} response authoring controls`, () => {
+      test.use({ viewport });
+      for (const [kind, role] of [
+        ["student", "student"],
+        ["staff", "ta"],
+      ]) {
+        test(`${kind} answer, root and reply expose files only in Edit`, async ({
+          page,
+        }) => {
+          await mockApi(page, { answerKind: kind, role });
+          await page.goto(`${origin}/attachments-fixture.html?post=p1`);
+          const answerCard = page.getByRole("region", {
+            name: "Answer by Ada",
+          });
+          const rootCard = page
+            .getByRole("article", { name: "Followup by Ada" })
+            .first();
+          await rootCard
+            .getByRole("button", { name: "Show 1 replies" })
+            .click();
+          const replyCard = page.locator(".followup-replies > .followup-item");
+          for (const [card, editName] of [
+            [answerCard, "Edit answer"],
+            [rootCard, "Edit followup"],
+            [replyCard, "Edit followup"],
+          ]) {
+            const attachments = card.locator(":scope > .content-attachments");
+            await expect(
+              attachments.getByRole("link", { name: "lecture.pptx" }),
+            ).toBeVisible();
+            await expect(attachments.getByLabel("Add files")).toHaveCount(0);
+            await expect(
+              attachments.getByRole("button", { name: "Remove lecture.pptx" }),
+            ).toHaveCount(0);
+            const edit = card
+              .locator(":scope > .response-actions")
+              .getByRole("button", { name: editName });
+            const style = await edit.evaluate((node) => {
+              const value = globalThis.getComputedStyle(node);
+              return {
+                radius: parseFloat(value.borderTopLeftRadius),
+                padding: parseFloat(value.paddingLeft),
+                color: value.color,
+                background: value.backgroundColor,
+                border: value.borderTopColor,
+              };
+            });
+            expect(style.radius).toBeGreaterThanOrEqual(13);
+            expect(style.padding).toBeGreaterThanOrEqual(20);
+            expect(style.color).toBe("rgb(59, 102, 85)");
+            expect(style.background).toBe("rgba(0, 0, 0, 0)");
+            expect(style.border).toBe(style.color);
+          }
+          await page.screenshot({
+            path: resolve(
+              screenshotDirectory,
+              `${size}-${kind}-response-view.png`,
+            ),
+            fullPage: true,
+          });
+          for (const [card, editName, label] of [
+            [answerCard, "Edit answer", "answer"],
+            [rootCard, "Edit followup", "root"],
+            [replyCard, "Edit followup", "reply"],
+          ]) {
+            await card
+              .locator(":scope > .response-actions")
+              .getByRole("button", { name: editName })
+              .click();
+            const attachments = card.locator(":scope > .content-attachments");
+            await expect(attachments.getByLabel("Add files")).toBeVisible();
+            await expect(
+              attachments.getByRole("button", { name: "Remove lecture.pptx" }),
+            ).toBeVisible();
+            await card.screenshot({
+              path: resolve(
+                screenshotDirectory,
+                `${size}-${kind}-${label}-edit.png`,
+              ),
+            });
+          }
+          if (role === "ta") {
+            const editStyle = await page
+              .getByRole("button", { name: "Edit post" })
+              .evaluate((node) => {
+                const value = globalThis.getComputedStyle(node);
+                return {
+                  radius: parseFloat(value.borderTopLeftRadius),
+                  padding: parseFloat(value.paddingLeft),
+                  color: value.color,
+                  background: value.backgroundColor,
+                };
+              });
+            const pinStyle = await page
+              .getByRole("button", { name: "Pin", exact: true })
+              .evaluate((node) => {
+                const value = globalThis.getComputedStyle(node);
+                return {
+                  color: value.color,
+                  background: value.backgroundColor,
+                };
+              });
+            expect(editStyle.radius).toBeGreaterThanOrEqual(13);
+            expect(editStyle.padding).toBeGreaterThanOrEqual(20);
+            expect(editStyle.color).toBe(pinStyle.color);
+            expect(editStyle.background).toBe(pinStyle.background);
+          }
+        });
+      }
+      for (const [state, status, canEdit] of [
+        ["archived", "archived", true],
+        ["unauthorized", "active", false],
+      ]) {
+        test(`${state} responses retain links without file controls`, async ({
+          page,
+        }) => {
+          await mockApi(page, { canEdit });
+          await page.goto(
+            `${origin}/attachments-fixture.html?post=p1&status=${status}`,
+          );
+          const rootCard = page
+            .getByRole("article", { name: "Followup by Ada" })
+            .first();
+          await rootCard
+            .getByRole("button", { name: "Show 1 replies" })
+            .click();
+          await expect(
+            page.getByRole("link", { name: "lecture.pptx" }),
+          ).toHaveCount(3);
+          await expect(page.getByLabel("Add files")).toHaveCount(0);
+          await expect(
+            page.getByRole("button", { name: "Remove lecture.pptx" }),
+          ).toHaveCount(0);
+          await expect(
+            page.getByRole("button", { name: "Edit answer" }),
+          ).toHaveCount(0);
+          await expect(
+            page.getByRole("button", { name: "Edit followup" }),
+          ).toHaveCount(0);
+          await page.screenshot({
+            path: resolve(
+              screenshotDirectory,
+              `${size}-${state}-responses-view.png`,
+            ),
+            fullPage: true,
+          });
+        });
+      }
+    });
+  }
 });

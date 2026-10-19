@@ -2077,6 +2077,14 @@ a:focus-visible {
   text-decoration-color: #b3cbbd;
   text-underline-offset: 3px;
 }
+.edit-button {
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-5);
+}
+.text-button.edit-button {
+  border: 1px solid currentColor;
+  text-decoration: none;
+}
 .button.secondary {
   background: #e9eee5;
   color: var(--accent-ink);
