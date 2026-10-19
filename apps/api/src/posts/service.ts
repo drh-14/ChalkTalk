@@ -149,13 +149,18 @@ export class PostService {
       );
     }
   }
-  private async removeEmbeddings(db: PoolClient, postId: string): Promise<void> {
+  private async removeEmbeddings(
+    db: PoolClient,
+    postId: string,
+  ): Promise<void> {
     const table = await db.query<{ relation: string | null }>(
       "SELECT to_regclass('post_embeddings')::text AS relation",
     );
     if (table.rows[0]?.relation)
       await db.query("DELETE FROM post_embeddings WHERE post_id=$1", [postId]);
-    await db.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [postId]);
+    await db.query("DELETE FROM semantic_post_catchup WHERE post_id=$1", [
+      postId,
+    ]);
   }
   private async membership(
     db: Db,
@@ -805,8 +810,7 @@ export class PostService {
       );
       if (body.tags !== undefined)
         await this.replaceTags(db, id, row.course_id, body.tags);
-      if (status === "confirmed")
-        await this.removeEmbeddings(db, id);
+      if (status === "confirmed") await this.removeEmbeddings(db, id);
       else if (
         body.title !== undefined ||
         body.bodyMarkdown !== undefined ||

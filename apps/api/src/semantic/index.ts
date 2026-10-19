@@ -200,9 +200,7 @@ export class SemanticIndex {
          ORDER BY j.updated_at,j.id LIMIT 1`,
         [this.config.generation],
       );
-      return retry.rows[0]
-        ? this.enqueue(this.pool, retry.rows[0].id)
-        : false;
+      return retry.rows[0] ? this.enqueue(this.pool, retry.rows[0].id) : false;
     }
     for (const row of scanned.rows)
       if (row.needs_enqueue && (await this.enqueue(this.pool, row.id))) {

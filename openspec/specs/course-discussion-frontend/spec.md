@@ -60,12 +60,17 @@ The browser SHALL support `/courses/{courseId}/posts/{postId}` as a direct link,
 
 ### Requirement: Pagination is isolated to the current course and query
 
-The feed SHALL append subsequent cursor pages without duplicate cards and SHALL not mix pages or stale responses from another course or applied live query. A later-page failure SHALL retain previously visible cards and allow a retry using the same cursor. Loading and retry controls SHALL prevent duplicate concurrent page requests. A new applied live query SHALL clear the old page and cursor before showing its results.
+The feed SHALL append subsequent cursor pages without duplicate cards and SHALL not mix pages or stale responses from another course or applied live query. A later-page failure SHALL retain previously visible cards and allow a retry using the same cursor, except that `409 search_restart_required` on a semantic relevance cursor SHALL restart at page one without a cursor, preserving the current query, sort, and filters and replacing the stale page. Loading and retry controls SHALL prevent duplicate concurrent page requests. A new applied live query SHALL clear the old page and cursor before showing its results.
 
 #### Scenario: A later page fails and is retried
 
 - **WHEN** loading more posts fails after an initial page succeeded
 - **THEN** the first page remains visible and a retry can load the next page without duplicate cards
+
+#### Scenario: Semantic ranking becomes unhealthy between pages
+
+- **WHEN** the API rejects a semantic relevance cursor with `409 search_restart_required`
+- **THEN** the feed restarts from page one with the same query, sort, and filters and displays the fresh lexical/fuzzy results without duplicates
 
 #### Scenario: An old search response arrives late
 
@@ -93,7 +98,7 @@ The accessible create control SHALL open a composer for type, title, Markdown bo
 
 ### Requirement: Question drafts offer bounded related-question suggestions
 
-While a question is being composed, changes to either its title or body SHALL trigger a debounced search after approximately 300 ms. The browser SHALL use the existing course-scoped posts list endpoint with `type=question`, `sort=relevance`, and `limit=10`, and SHALL display at most ten server-returned questions in a scrollable Related questions panel below the draft. Its generated `q` SHALL include every distinct searchable word from the full title, plus up to four distinct recent body words, as an `OR`-joined candidate query no longer than the API's 500-character limit. Searchable words are case-normalized Unicode letter/digit tokens of at least two code units; draft punctuation and typed search operators SHALL not become executable search syntax. At least one eligible body word SHALL be included when present. The body SHALL not be sent wholesale. A note draft or a question draft with no eligible query term SHALL not request suggestions. The API's returned relevance order SHALL be preserved; no semantic similarity or title weighting is promised.
+While a question is being composed, changes to either its title or body SHALL trigger a debounced search after approximately 300 ms. The browser SHALL use the existing course-scoped posts list endpoint with `type=question`, `sort=relevance`, and `limit=10`, and SHALL display at most ten server-returned questions in a scrollable Related questions panel below the draft. Its generated `q` SHALL include every distinct searchable word from the full title, plus up to four distinct recent body words, as an `OR`-joined candidate query no longer than the API's 500-character limit. Searchable words are case-normalized Unicode letter/digit tokens of at least two code units; draft punctuation and typed search operators SHALL not become executable search syntax. At least one eligible body word SHALL be included when present. The browser SHALL also send a separate `semanticQuery` of at most 500 characters, containing the trimmed title and a bounded sample from the start of the body. It SHALL leave the `OR` expression in `q` unchanged, and SHALL not send the body wholesale. A note draft or a question draft with no eligible query term SHALL not request suggestions. The API's returned relevance order SHALL be preserved.
 
 The panel SHALL have loading, empty, and error states; superseded responses SHALL not replace newer suggestions. While the question draft has eligible query terms, the panel SHALL remain visible regardless of pointer exit, focus departure, or Escape, and SHALL not have separate close or reopen controls. It MAY disappear when the draft changes to a note, no eligible query terms remain, or the composer closes. A suggestion SHALL link to its shareable post in a new tab with safe link attributes, preserving the unsent draft. Suggestions SHALL never block creation.
 
@@ -101,6 +106,11 @@ The panel SHALL have loading, empty, and error states; superseded responses SHAL
 
 - **WHEN** a member edits the full title and then the body of a question draft
 - **THEN** each edit updates the debounced course-scoped question search without exceeding 500 characters of `q`, each request sets `limit=10`, and the panel shows no more than 10 results
+
+#### Scenario: A question draft supplies a separate semantic query
+
+- **WHEN** a member types a question title and body
+- **THEN** each eligible debounced request sends both the existing `OR` expression in `q` and a bounded natural-language `semanticQuery`, while a note draft sends neither
 
 #### Scenario: A member inspects a related question
 
