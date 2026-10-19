@@ -163,6 +163,41 @@ integration("semantic post search HTTP contract", () => {
     ).toContain("Optical instrument overview");
   });
 
+  it("keeps explicit-query lexical order when semantic expansion succeeds or fails", async () => {
+    const ids = [uuidv7(), uuidv7(), uuidv7()];
+    for (const [id, title, body] of [
+      [ids[0], "Interference", "Diffraction"],
+      [ids[1], "Lecture notes", "Interference diffraction diffraction"],
+      [ids[2], "Diffraction examples", "Interference interference"],
+    ])
+      await pool.query(
+        "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'question',$4,$5)",
+        [id, courseId, userId, title, body],
+      );
+    const expected = (
+      await pool.query<{ id: string }>(
+        `SELECT id FROM posts WHERE id=ANY($1::uuid[])
+         ORDER BY round(ts_rank_cd(search_vector,websearch_to_tsquery('english',$2))::numeric,6) DESC,id DESC`,
+        [ids, "interference OR diffraction"],
+      )
+    ).rows.map((row) => row.id);
+    const query =
+      "q=interference+OR+diffraction&semanticQuery=optical+instrument&sort=relevance&limit=10";
+    const expanded = await list(query);
+    expect(expanded.status).toBe(200);
+    expect(
+      expanded.body.data
+        .map((post: { id: string }) => post.id)
+        .filter((id: string) => ids.includes(id)),
+    ).toEqual(expected);
+    providerMock.mockRejectedValueOnce(new Error("provider unavailable"));
+    const fallback = await list(query);
+    expect(fallback.status).toBe(200);
+    expect(fallback.body.data.map((post: { id: string }) => post.id)).toEqual(
+      expected,
+    );
+  });
+
   it("falls back to lexical and fuzzy matches on provider failure", async () => {
     providerMock.mockRejectedValueOnce(new Error("provider unavailable"));
     const response = await list("q=spectrometer&sort=relevance");

@@ -54,14 +54,14 @@ it("sends only bounded text and model to a configurable compatible endpoint", as
     EMBEDDING_MODEL: "course-model",
   })!;
   const provider = new EmbeddingProvider(config);
-  expect(await provider.embed("related question")).toEqual([1, 0]);
+  expect(await provider.embedMany(["related question"])).toEqual([[1, 0]]);
   expect(fetchMock).toHaveBeenCalledWith(
     "https://embeddings.example/v1/embeddings",
     expect.objectContaining({
       method: "POST",
       headers: expect.objectContaining({ Authorization: "Bearer secret-key" }),
       body: JSON.stringify({
-        input: "related question",
+        input: ["related question"],
         model: "course-model",
         encoding_format: "float",
       }),
@@ -84,7 +84,7 @@ it("rejects invalid vectors rather than passing them to SQL", async () => {
   const provider = new EmbeddingProvider(
     readEmbeddingConfig({ EMBEDDING_API_KEY: "secret", EMBEDDING_MODEL: "m" })!,
   );
-  await expect(provider.embed("query")).rejects.toThrow(/embedding/i);
+  await expect(provider.embedMany(["query"])).rejects.toThrow(/embedding/i);
 });
 
 it("validates ordering and dimensions of bounded batch embeddings", async () => {
@@ -121,5 +121,5 @@ it("rejects a streamed provider response above one MiB", async () => {
   const provider = new EmbeddingProvider(
     readEmbeddingConfig({ EMBEDDING_API_KEY: "secret", EMBEDDING_MODEL: "m" })!,
   );
-  await expect(provider.embed("query")).rejects.toThrow(/too large/i);
+  await expect(provider.embedMany(["query"])).rejects.toThrow(/too large/i);
 });

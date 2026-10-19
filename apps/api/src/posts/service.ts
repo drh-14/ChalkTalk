@@ -527,8 +527,6 @@ export class PostService {
             SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,
               ${ANSWERED} AS answered,canonical.title AS canonical_title,
               p.search_vector @@ ${searchQuery} AS lexical_match,
-              (ts_rank_cd(p.search_vector,${searchQuery})
-                + ts_rank_cd(to_tsvector('english',p.title),${searchQuery})) AS lexical_score,
               COALESCE((SELECT avg(greatest(
                 public.strict_word_similarity(t.term,coalesce(p.title,'')),
                 0.75*public.strict_word_similarity(t.term,coalesce(p.body_markdown,''))
@@ -539,7 +537,6 @@ export class PostService {
               AND p.id IN (SELECT id FROM candidate_ids)
           ), ranked AS (
             SELECT candidates.*,
-              row_number() OVER (PARTITION BY lexical_match ORDER BY lexical_score DESC,id DESC) AS lexical_position,
               row_number() OVER (ORDER BY fuzzy_score DESC,id DESC) AS fuzzy_position
             FROM candidates
           ), listed AS (
@@ -547,7 +544,7 @@ export class PostService {
               CASE WHEN lexical_match THEN 2 WHEN fuzzy_match THEN 1 ELSE 0 END AS match_tier,
               ${
                 options.sort === "relevance"
-                  ? `round(CASE WHEN lexical_match THEN 1.0+1.5/(60+lexical_position)+1.0/(60+fuzzy_position)
+                  ? `round(CASE WHEN lexical_match THEN 1.0+round(ts_rank_cd(search_vector,${searchQuery})::numeric,6)
                      WHEN fuzzy_match THEN 1.0/(60+fuzzy_position)
                      ELSE (1.0+semantic_score)/2.0 END::numeric,12)`
                   : sortExpression.replaceAll("p.", "ranked.")
@@ -574,8 +571,6 @@ export class PostService {
             SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,
               ${ANSWERED} AS answered,canonical.title AS canonical_title,
               p.search_vector @@ ${searchQuery} AS lexical_match,
-              (ts_rank_cd(p.search_vector,${searchQuery})
-                + ts_rank_cd(to_tsvector('english',p.title),${searchQuery})) AS lexical_score,
               COALESCE((SELECT avg(greatest(
                 public.strict_word_similarity(t.term,coalesce(p.title,'')),
                 0.75*public.strict_word_similarity(t.term,coalesce(p.body_markdown,''))
@@ -583,11 +578,10 @@ export class PostService {
             ${source} AND p.id IN (SELECT id FROM candidate_ids)
           ), ranked AS (
             SELECT candidates.*,
-              row_number() OVER (PARTITION BY lexical_match ORDER BY lexical_score DESC,id DESC) AS lexical_position,
               row_number() OVER (ORDER BY fuzzy_score DESC,id DESC) AS fuzzy_position
-            FROM candidates
+          FROM candidates
           ), listed AS (
-            SELECT ranked.*,round(CASE WHEN lexical_match THEN 1.0+1.5/(60+lexical_position)+1.0/(60+fuzzy_position) ELSE 1.0/(60+fuzzy_position) END,12) AS rank_value FROM ranked
+            SELECT ranked.*,round(CASE WHEN lexical_match THEN 1.0+round(ts_rank_cd(search_vector,${searchQuery})::numeric,6) ELSE 1.0/(60+fuzzy_position) END,12) AS rank_value FROM ranked
           )`
               : `listed AS (
             SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value

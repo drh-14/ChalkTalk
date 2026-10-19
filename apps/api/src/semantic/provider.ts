@@ -41,22 +41,17 @@ export function readEmbeddingConfig(
 export class EmbeddingProvider {
   constructor(private readonly config: EmbeddingConfig) {}
 
-  async embed(input: string, timeoutMs = 2_000): Promise<number[]> {
-    return (await this.request(input, 1, timeoutMs))[0]!;
-  }
-
   async embedMany(inputs: string[], timeoutMs = 10_000): Promise<number[][]> {
     if (inputs.length < 1 || inputs.length > 8)
       throw new Error("Embedding batch size is invalid");
-    return this.request(inputs, inputs.length, timeoutMs);
+    return this.request(inputs, timeoutMs);
   }
 
   private async request(
-    input: string | string[],
-    count: number,
+    inputs: string[],
     timeoutMs: number,
   ): Promise<number[][]> {
-    const inputs = typeof input === "string" ? [input] : input;
+    const count = inputs.length;
     if (inputs.some((item) => !item.trim() || item.length > 8_192))
       throw new Error("Embedding input is invalid");
     const response = await fetch(this.config.endpoint, {
@@ -66,7 +61,7 @@ export class EmbeddingProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        input,
+        input: inputs,
         model: this.config.model,
         encoding_format: "float",
       }),
