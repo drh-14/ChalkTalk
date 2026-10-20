@@ -13,7 +13,9 @@ import type { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { ApiError } from "../auth/client.js";
 import { listMembers, type Membership } from "../courses/client.js";
+import { getPost } from "../posts/client.js";
 import { CodeEditor } from "./CodeEditor.js";
+import { PostToDiscussion, type PostContent } from "./PostToDiscussion.js";
 import {
   connectWithHocuspocus,
   type Connect,
@@ -122,6 +124,12 @@ export function SessionView({
   const [inviting, setInviting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [self, setSelf] = useState<Presence>();
+  const [viewOnly, setViewOnly] = useState(false);
+  const [anchorIsQuestion, setAnchorIsQuestion] = useState(false);
+  const [posting, setPosting] = useState<PostContent>();
+  const [invitePermission, setInvitePermission] = useState<"edit" | "view">(
+    "edit",
+  );
   const online = useAwarenessUsers(awareness);
 
   const refresh = useCallback(async () => {
@@ -178,6 +186,7 @@ export function SessionView({
           const ticket = await createTicket(sessionId, csrfToken);
           first = ticket.ticket;
           url = ticket.webSocketUrl;
+          setViewOnly(ticket.permission === "read");
         } catch (caught) {
           if (!active) return;
           if (caught instanceof ApiError && caught.code === "session_ended")
@@ -265,10 +274,27 @@ export function SessionView({
   const manager = Boolean(
     session && (staff || session.data.createdBy === viewerId),
   );
-  const editable = state === "connected" || state === "reconnecting";
+  const editable =
+    (state === "connected" || state === "reconnecting") && !viewOnly;
   const postPath = session
     ? `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(session.data.anchor.postId)}`
     : `/courses/${encodeURIComponent(courseId)}`;
+
+  // Answers and followups exist only on questions.
+  const anchorPostId = session?.data.anchor.postId;
+  useEffect(() => {
+    if (!anchorPostId) return;
+    let active = true;
+    void getPost(anchorPostId)
+      .then((post) => {
+        if (active)
+          setAnchorIsQuestion("type" in post && post.type === "question");
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [anchorPostId]);
 
   useEffect(() => {
     if (!manager || state === "ended" || state === "removed" || members) return;
@@ -362,6 +388,7 @@ export function SessionView({
     if (self) colors.set(viewerId, self.color);
   }
   const sessionActive = state !== "ended" && state !== "removed";
+  const canPost = sessionActive && !viewOnly && anchorIsQuestion;
   const languageLabel = SESSION_LANGUAGES.find(
     (option) => option.value === session.data.language,
   )?.label;
@@ -391,6 +418,9 @@ export function SessionView({
           <p className="session-meta">Live session</p>
         </div>
         <div className="session-header-actions">
+          {viewOnly && state !== "ended" && state !== "removed" && (
+            <p className="session-view-only">View only</p>
+          )}
           <p
             className={`session-state session-state-${state}`}
             role="status"
@@ -496,6 +526,21 @@ export function SessionView({
                       {languageLabel}
                     </span>
                   )}
+                  {canPost && (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={() =>
+                        setPosting({
+                          kind: "code",
+                          code: text.toString(),
+                          language: session.data.language,
+                        })
+                      }
+                    >
+                      Post to discussion
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="button secondary"
@@ -549,6 +594,11 @@ export function SessionView({
                       visible={tab === "whiteboard"}
                       title={session.data.title}
                       actions={boardActions}
+                      onPost={
+                        canPost
+                          ? (file) => setPosting({ kind: "board", file })
+                          : undefined
+                      }
                     />
                   </Suspense>
                 )}
@@ -578,9 +628,15 @@ export function SessionView({
                   if (!inviteeId) return;
                   void act(async () => {
                     setSession(
-                      await inviteParticipant(sessionId, inviteeId, csrfToken),
+                      await inviteParticipant(
+                        sessionId,
+                        inviteeId,
+                        csrfToken,
+                        invitePermission,
+                      ),
                     );
                     setInviteeId("");
+                    setInvitePermission("edit");
                     setInviting(false);
                   });
                 }}
@@ -606,6 +662,26 @@ export function SessionView({
                     </option>
                   ))}
                 </select>
+                <fieldset className="session-invite-permission">
+                  <legend className="visually-hidden">Permission</legend>
+                  {(
+                    [
+                      ["edit", "Can edit"],
+                      ["view", "Can view"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label key={value}>
+                      <input
+                        type="radio"
+                        name="session-invite-permission"
+                        value={value}
+                        checked={invitePermission === value}
+                        onChange={() => setInvitePermission(value)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </fieldset>
                 <div className="session-invite-actions">
                   <button
                     type="submit"
@@ -649,7 +725,9 @@ export function SessionView({
                       <span className="session-participant-note">
                         {participant.role === "creator"
                           ? "Started this"
-                          : "Invited"}
+                          : participant.permission === "view"
+                            ? "Invited · Viewer"
+                            : "Invited"}
                       </span>
                       <span className="visually-hidden">
                         {isOnline ? ", online" : ", offline"}
@@ -684,6 +762,18 @@ export function SessionView({
           </section>
         </aside>
       </div>
+      {posting && (
+        <PostToDiscussion
+          postId={session.data.anchor.postId}
+          postPath={postPath}
+          sessionTitle={session.data.title}
+          staff={staff}
+          csrfToken={csrfToken}
+          content={posting}
+          onClose={() => setPosting(undefined)}
+          onNavigate={onNavigate}
+        />
+      )}
     </section>
   );
 }

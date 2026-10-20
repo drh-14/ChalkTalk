@@ -90,6 +90,8 @@ None.
 
 `data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
+`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+
 `data.endedAt` (string or null, required): End time; null while active.
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -129,7 +131,8 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
       {
         "userId": "user_123",
         "displayName": "Ada Lovelace",
-        "role": "creator"
+        "role": "creator",
+        "permission": "edit"
       }
     ],
     "endedAt": null,
@@ -258,6 +261,8 @@ None.
 
 `data[].participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
+`data[].participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+
 `data[].endedAt` (string or null, required): End time; null while active.
 
 `data[].createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -299,12 +304,14 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=act
         {
           "userId": "user_123",
           "displayName": "Ada Lovelace",
-          "role": "creator"
+          "role": "creator",
+          "permission": "edit"
         },
         {
           "userId": "user_456",
           "displayName": "Grace Hopper",
-          "role": "invitee"
+          "role": "invitee",
+          "permission": "edit"
         }
       ],
       "endedAt": null,
@@ -416,6 +423,8 @@ None.
 
 `data[].participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
+`data[].participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+
 `data[].endedAt` (string or null, required): End time; null while active.
 
 `data[].createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -458,12 +467,14 @@ curl --request GET '/api/v1/users/me/collaboration-sessions?status=active' \
         {
           "userId": "user_123",
           "displayName": "Ada Lovelace",
-          "role": "creator"
+          "role": "creator",
+          "permission": "edit"
         },
         {
           "userId": "user_456",
           "displayName": "Grace Hopper",
-          "role": "invitee"
+          "role": "invitee",
+          "permission": "edit"
         }
       ],
       "endedAt": null,
@@ -565,6 +576,8 @@ None.
 
 `data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
+`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+
 `data.endedAt` (string or null, required): End time; null while active.
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -599,12 +612,14 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123' \
       {
         "userId": "user_123",
         "displayName": "Ada Lovelace",
-        "role": "creator"
+        "role": "creator",
+        "permission": "edit"
       },
       {
         "userId": "user_456",
         "displayName": "Grace Hopper",
-        "role": "invitee"
+        "role": "invitee",
+        "permission": "edit"
       }
     ],
     "endedAt": null,
@@ -717,6 +732,8 @@ None.
 
 `data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
+`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+
 `data.endedAt` (string or null, required): End time; null while active.
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -756,12 +773,14 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
       {
         "userId": "user_123",
         "displayName": "Ada Lovelace",
-        "role": "creator"
+        "role": "creator",
+        "permission": "edit"
       },
       {
         "userId": "user_456",
         "displayName": "Grace Hopper",
-        "role": "invitee"
+        "role": "invitee",
+        "permission": "edit"
       }
     ],
     "endedAt": null,
@@ -816,7 +835,7 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/participants`**
 
-Invites a current course member to an active session. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only if the session and course are still active and the invitee is still a participant and member when it runs. Inviting an existing participant sends no email.
+Invites a current course member to an active session as an editor or, with `permission: "view"`, as a viewer whose connection is read-only. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication and leaves their permission unchanged; to change it, remove and re-invite them. Course staff always edit, whatever permission they were invited with. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only if the session and course are still active and the invitee is still a participant and member when it runs. Inviting an existing participant sends no email.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -849,6 +868,8 @@ None.
 ##### `InviteCollaborationParticipantRequest` (required)
 
 `userId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`permission` (enum: edit, view, optional; default edit): Edit or view only. Ignored when the user is already a participant.
 
 #### Multipart parts
 
@@ -890,6 +911,8 @@ None.
 
 `data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
+`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+
 `data.endedAt` (string or null, required): End time; null while active.
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -928,12 +951,14 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
       {
         "userId": "user_123",
         "displayName": "Ada Lovelace",
-        "role": "creator"
+        "role": "creator",
+        "permission": "edit"
       },
       {
         "userId": "user_456",
         "displayName": "Grace Hopper",
-        "role": "invitee"
+        "role": "invitee",
+        "permission": "edit"
       }
     ],
     "endedAt": null,
@@ -1071,7 +1096,7 @@ curl --request DELETE '/api/v1/collaboration-sessions/collab_123/participants/us
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/connection-tickets`**
 
-Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with write permission, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with `read` permission for a viewer and `write` otherwise, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -1125,6 +1150,8 @@ None.
 
 `data.expiresAt` (string, required): UTC expiry timestamp, five minutes after ticket issuance.
 
+`data.permission` (enum: read, write, required): `read` for a viewer, whose connection is read-only; `write` otherwise.
+
 #### Example request
 
 ```bash
@@ -1143,7 +1170,8 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-ticket
     "ticket": "opaque_one_use_ticket",
     "webSocketUrl": "wss://app.example.edu/collaboration",
     "documentId": "collaboration-session:collab_123",
-    "expiresAt": "2026-09-20T14:35:00Z"
+    "expiresAt": "2026-09-20T14:35:00Z",
+    "permission": "write"
   }
 }
 ```

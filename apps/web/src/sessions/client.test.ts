@@ -126,6 +126,7 @@ it("invites and removes participants", async () => {
   );
   expect(JSON.parse(String(call(fetchMock)[1].body))).toEqual({
     userId: "u-2",
+    permission: "edit",
   });
   fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
   await expect(

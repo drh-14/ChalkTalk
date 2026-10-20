@@ -3150,6 +3150,96 @@ a:focus-visible {
   gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
+.session-post-backdrop {
+  align-items: center;
+  background: rgb(15 23 20 / 45%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: var(--space-4);
+  position: fixed;
+  z-index: 50;
+}
+.session-post-dialog {
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  box-shadow: 0 20px 50px rgb(0 0 0 / 25%);
+  display: grid;
+  gap: var(--space-3);
+  max-width: 32rem;
+  padding: var(--space-5, 1.5rem);
+  width: 100%;
+}
+.session-post-dialog h3 {
+  margin: 0;
+}
+.session-post-dialog form {
+  display: grid;
+  gap: var(--space-3);
+}
+.session-post-note {
+  display: grid;
+  font-size: 0.85rem;
+  font-weight: 600;
+  gap: var(--space-1);
+}
+.session-post-note textarea {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-weight: 400;
+  padding: 0.5rem;
+  resize: vertical;
+}
+.session-post-destination {
+  border: 0;
+  display: flex;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+}
+.session-post-destination legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+.session-post-destination label {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-1);
+}
+.session-post-hint {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+.session-post-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+.session-invite-permission {
+  border: 0;
+  display: flex;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+}
+.session-invite-permission label {
+  align-items: center;
+  display: inline-flex;
+  font-size: 0.85rem;
+  gap: var(--space-1);
+}
+.session-view-only {
+  background: var(--badge-pin-bg);
+  border-radius: 999px;
+  color: var(--badge-pin-ink);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0;
+  padding: 0.35rem 0.8rem;
+}
 .session-invite-actions {
   align-items: center;
   display: flex;
