@@ -159,6 +159,21 @@ export async function listSessions(
   );
 }
 
+export type MySession = CodeSession & { courseName: string };
+
+/** The viewer's own sessions, created or invited, across their courses. */
+export async function listMySessions(
+  options: { status?: "active" | "ended"; signal?: AbortSignal } = {},
+): Promise<Page<MySession>> {
+  const query = options.status ? `?status=${options.status}` : "";
+  return receive<Page<MySession>>(
+    await read(
+      `/api/v1/users/me/collaboration-sessions${query}`,
+      options.signal,
+    ),
+  );
+}
+
 export async function createSession(
   courseId: string,
   input: { postId: string; language: SessionLanguage; title?: string },

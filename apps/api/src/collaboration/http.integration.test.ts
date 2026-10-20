@@ -556,4 +556,180 @@ integration("collaboration session HTTP contract", () => {
       ).toBe(404);
     });
   });
+
+  describe("invitations and the viewer's own sessions", () => {
+    const jobsFor = async (sessionId: string) =>
+      (
+        await pool.query<{
+          payload: Record<string, string>;
+          deduplication_key: string;
+        }>(
+          "SELECT payload,deduplication_key FROM jobs WHERE kind='send_collaboration_invitation_email' AND payload->>'sessionId'=$1 ORDER BY created_at",
+          [sessionId],
+        )
+      ).rows;
+
+    it("queues one invitation email per new invitation", async () => {
+      const session = await started("alice");
+      expect(await jobsFor(session.id)).toEqual([]);
+      expect((await invite("alice", session.id, as("tim"))).status).toBe(200);
+      const [first, ...rest] = await jobsFor(session.id);
+      expect(rest).toEqual([]);
+      expect(first!.payload).toEqual({
+        sessionId: session.id,
+        inviteeUserId: as("tim"),
+        inviterUserId: as("alice"),
+      });
+      const invited = await pool.query<{ ms: string }>(
+        "SELECT floor(extract(epoch FROM created_at)*1000)::bigint AS ms FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2",
+        [session.id, as("tim")],
+      );
+      expect(first!.deduplication_key).toBe(
+        `${session.id}:${as("tim")}:${invited.rows[0]!.ms}`,
+      );
+
+      expect((await invite("alice", session.id, as("tim"))).status).toBe(200);
+      expect(await jobsFor(session.id)).toHaveLength(1);
+
+      expect(
+        (
+          await unsafe(
+            request(app(as("alice"))).delete(
+              `/api/v1/collaboration-sessions/${session.id}/participants/${as("tim")}`,
+            ),
+          )
+        ).status,
+      ).toBe(204);
+      expect((await invite("alice", session.id, as("tim"))).status).toBe(200);
+      expect(await jobsFor(session.id)).toHaveLength(2);
+    });
+
+    it("lists the viewer's own sessions across active courses", async () => {
+      await pool.query("UPDATE courses SET name='Second course' WHERE id=$1", [
+        other.courseId,
+      ]);
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'ta') ON CONFLICT DO NOTHING",
+        [other.courseId, as("tim")],
+      );
+      const here = await started("bob");
+      await invite("bob", here.id, as("tim"));
+      const elsewhere = (
+        await service.create(other.courseId, as("olga"), {
+          postId: other.postId,
+        })
+      ).value;
+      await service.invite(elsewhere.id, as("olga"), as("tim"));
+      const notMine = await started("carol");
+
+      const mine = await get(
+        "tim",
+        "/api/v1/users/me/collaboration-sessions?status=active",
+      );
+      expect(mine.status).toBe(200);
+      const ids = mine.body.data.map((item: { id: string }) => item.id);
+      expect(ids).toContain(here.id);
+      expect(ids).toContain(elsewhere.id);
+      expect(ids).not.toContain(notMine.id);
+      expect(
+        mine.body.data.find((item: { id: string }) => item.id === elsewhere.id),
+      ).toMatchObject({
+        courseId: other.courseId,
+        courseName: "Second course",
+        status: "active",
+        anchor: { postId: other.postId },
+        participants: expect.arrayContaining([
+          expect.objectContaining({ userId: as("tim"), role: "invitee" }),
+        ]),
+      });
+
+      // Paging walks the same set, newest first, with a cursor bound to it.
+      const first = await get(
+        "tim",
+        "/api/v1/users/me/collaboration-sessions?status=active&limit=1",
+      );
+      expect(first.body.data).toHaveLength(1);
+      expect(first.body.page.hasMore).toBe(true);
+      const second = await get(
+        "tim",
+        `/api/v1/users/me/collaboration-sessions?status=active&limit=1&cursor=${first.body.page.nextCursor}`,
+      );
+      expect(second.body.data[0].id).not.toBe(first.body.data[0].id);
+      expect(
+        (
+          await get(
+            "tim",
+            `/api/v1/users/me/collaboration-sessions?status=ended&cursor=${first.body.page.nextCursor}`,
+          )
+        ).status,
+      ).toBe(400);
+      expect(
+        (
+          await get(
+            "tim",
+            "/api/v1/users/me/collaboration-sessions?status=open",
+          )
+        ).status,
+      ).toBe(400);
+
+      // Ended sessions move to the ended filter.
+      const current = await get(
+        "bob",
+        `/api/v1/collaboration-sessions/${here.id}`,
+      );
+      await patch("bob", here.id, current.headers.etag!, { status: "ended" });
+      const ended = await get(
+        "tim",
+        "/api/v1/users/me/collaboration-sessions?status=ended",
+      );
+      expect(ended.body.data.map((item: { id: string }) => item.id)).toContain(
+        here.id,
+      );
+
+      // Archived courses, left courses, and deleted posts drop out.
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        other.courseId,
+      ]);
+      const archived = await get(
+        "tim",
+        "/api/v1/users/me/collaboration-sessions",
+      );
+      expect(
+        archived.body.data.map((item: { id: string }) => item.id),
+      ).not.toContain(elsewhere.id);
+      await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+        other.courseId,
+      ]);
+      const visible = async () =>
+        (
+          await get("tim", "/api/v1/users/me/collaboration-sessions")
+        ).body.data.map((item: { id: string }) => item.id);
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [other.courseId, as("tim")],
+      );
+      expect(await visible()).not.toContain(elsewhere.id);
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'ta')",
+        [other.courseId, as("tim")],
+      );
+      await service.invite(elsewhere.id, as("olga"), as("tim"));
+      expect(await visible()).toContain(elsewhere.id);
+      await pool.query(
+        "UPDATE posts SET deleted_at=now(),author_user_id=NULL,title=NULL,body_markdown=NULL WHERE id=$1",
+        [other.postId],
+      );
+      expect(await visible()).not.toContain(elsewhere.id);
+    });
+
+    it("requires a signed-in user", async () => {
+      expect(
+        (
+          await request(app(as("tim"))).get(
+            "/api/v1/users/me/collaboration-sessions",
+          )
+        ).status,
+      ).toBe(401);
+    });
+  });
 });
