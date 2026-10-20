@@ -2066,6 +2066,26 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/users/me/collaboration-sessions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { limit, cursor, filter } = listQuery(request.query, {
+          key: "status",
+          values: ["active", "ended"],
+        });
+        const result = await collaboration().listForUser(
+          current.session.user.id,
+          { limit, cursor, status: filter as "active" | "ended" | undefined },
+        );
+        response.json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/collaboration-sessions/:sessionId",
     optionalReadOrigin,
     async (request, response, next) => {

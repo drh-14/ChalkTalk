@@ -9944,6 +9944,104 @@ paths:
                       message: The server could not complete the request.
                       requestId: req_listCourseCollaborationSessions
                       details: []
+  "/users/me/collaboration-sessions":
+    get:
+      tags:
+        - Collaboration Sessions
+      summary: List the caller's collaboration sessions
+      description: Lists the sessions the caller created or was invited to, newest first, across courses that are active and of which the caller is still a member. Sessions whose post is deleted or a confirmed duplicate are excluded. Staff see only their own sessions here; the course list shows every session in a course.
+      operationId: listMyCollaborationSessions
+      security:
+        - session_cookie: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter by session state.
+          schema:
+            type: string
+            enum:
+              - active
+              - ended
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The caller's collaboration sessions.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MyCollaborationSessionListResponse"
+              example:
+                data:
+                  - id: collab_123
+                    courseId: course_123
+                    courseName: CS 101
+                    status: active
+                    anchor:
+                      postId: post_123
+                    title: Why does my loop never stop?
+                    language: python
+                    createdBy: user_123
+                    participants:
+                      - userId: user_123
+                        displayName: Ada Lovelace
+                        role: creator
+                      - userId: user_456
+                        displayName: Grace Hopper
+                        role: invitee
+                    endedAt: null
+                    createdAt: "2026-09-20T14:30:00Z"
+                    updatedAt: "2026-09-20T14:30:00Z"
+                    version: 1
+                page:
+                  nextCursor: null
+                  hasMore: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                invalid_request:
+                  summary: The query parameters or cursor are invalid.
+                  value:
+                    error:
+                      code: invalid_request
+                      message: The query parameters or cursor are invalid.
+                      requestId: req_listMyCollaborationSessions
+                      details: []
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_listMyCollaborationSessions
+                      details: []
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                internal_error:
+                  summary: The server could not complete the request.
+                  value:
+                    error:
+                      code: internal_error
+                      message: The server could not complete the request.
+                      requestId: req_listMyCollaborationSessions
+                      details: []
   /collaboration-sessions/{collaborationSessionId}:
     get:
       tags:
@@ -13259,6 +13357,96 @@ components:
         - createdAt
         - updatedAt
         - version
+    MyCollaborationSession:
+      type: object
+      description: A collaboration session the caller created or was invited to, with its course name.
+      properties:
+        courseName:
+          type: string
+          description: Name of the session's course.
+          minLength: 1
+        id:
+          type: string
+          description: Opaque stable identifier.
+          minLength: 1
+          maxLength: 255
+        courseId:
+          type: string
+          description: Opaque stable identifier.
+          minLength: 1
+          maxLength: 255
+        status:
+          type: string
+          description: Session lifecycle state.
+          enum:
+            - active
+            - ended
+        anchor:
+          "$ref": "#/components/schemas/CollaborationAnchor"
+        title:
+          type: string
+          description: Session title, trimmed, 1 to 120 characters.
+          minLength: 1
+          maxLength: 120
+        language:
+          "$ref": "#/components/schemas/CollaborationLanguage"
+        createdBy:
+          type: string
+          description: Opaque stable identifier.
+          minLength: 1
+          maxLength: 255
+        participants:
+          type: array
+          description: The creator and invited participants.
+          items:
+            "$ref": "#/components/schemas/CollaborationParticipant"
+        endedAt:
+          type:
+            - string
+            - "null"
+          description: End time; null while active.
+          format: date-time
+        createdAt:
+          type: string
+          description: UTC timestamp in ISO 8601 date-time format.
+          format: date-time
+        updatedAt:
+          type: string
+          description: UTC timestamp in ISO 8601 date-time format.
+          format: date-time
+        version:
+          type: integer
+          description: Revision number used to construct the resource ETag.
+          minimum: 1
+      additionalProperties: false
+      required:
+        - courseName
+        - id
+        - courseId
+        - status
+        - anchor
+        - title
+        - language
+        - createdBy
+        - participants
+        - endedAt
+        - createdAt
+        - updatedAt
+        - version
+    MyCollaborationSessionListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            "$ref": "#/components/schemas/MyCollaborationSession"
+          description: Collection of MyCollaborationSession records.
+        page:
+          "$ref": "#/components/schemas/Page"
+      additionalProperties: false
+      required:
+        - data
+        - page
     CollaborationSession:
       type: object
       properties:

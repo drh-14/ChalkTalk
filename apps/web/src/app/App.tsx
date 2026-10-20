@@ -33,6 +33,8 @@ import { CourseResources } from "../course-files/views.js";
 import { CourseStatistics } from "../statistics/views.js";
 import { Discussion } from "../posts/views.js";
 import { SessionView } from "../sessions/SessionView.js";
+import { YourLiveSessions } from "../sessions/LiveSessionLists.js";
+import { sessionRoute } from "../sessions/client.js";
 import {
   initializeRoute,
   navigate,
@@ -686,6 +688,12 @@ function Home({
           <h1>Welcome back, {firstName}</h1>
           <p>Pick up where your courses left off.</p>
         </section>
+        <YourLiveSessions
+          viewerId={session.user.id}
+          onOpen={(courseId, sessionId) =>
+            onNavigate(sessionRoute(courseId, sessionId))
+          }
+        />
         <CourseHome csrfToken={session.csrfToken} onOpenCourse={onOpenCourse} />
       </main>
     </>

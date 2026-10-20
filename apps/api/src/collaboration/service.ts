@@ -441,6 +441,82 @@ export class CollaborationSessionService {
     };
   }
 
+  /** The viewer's own sessions across their active courses, newest first. */
+  async listForUser(
+    userId: string,
+    query: Omit<ListCollaborationSessions, "anchorId">,
+  ) {
+    // Cursors carry this scope so a course-list cursor cannot be replayed here.
+    const scope = "me";
+    const filters = JSON.stringify([query.status ?? null]);
+    const values: unknown[] = [userId];
+    const add = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    const clauses = ["p.deleted_at IS NULL", "p.duplicate_status<>'confirmed'"];
+    if (query.status === "ended") clauses.push("s.lifecycle_state='ended'");
+    if (query.status === "active") clauses.push("s.lifecycle_state<>'ended'");
+    if (query.cursor) {
+      let decoded: {
+        c?: string;
+        u?: string;
+        f?: string;
+        t?: string;
+        i?: string;
+      };
+      try {
+        decoded = JSON.parse(
+          Buffer.from(query.cursor, "base64url").toString("utf8"),
+        );
+      } catch {
+        throw invalidRequest("Pagination cursor is invalid");
+      }
+      if (
+        decoded.c !== scope ||
+        decoded.u !== userId ||
+        decoded.f !== filters ||
+        typeof decoded.t !== "string" ||
+        Number.isNaN(Date.parse(decoded.t)) ||
+        typeof decoded.i !== "string" ||
+        !UUID_PATTERN.test(decoded.i)
+      )
+        throw invalidRequest("Pagination cursor is invalid");
+      clauses.push(
+        `(s.created_at,s.id)<(${add(decoded.t)}::timestamptz,${add(decoded.i)}::uuid)`,
+      );
+    }
+    // The creator always has a participant row, so one join covers both roles.
+    const rows = await this.pool.query<SessionRow & { course_name: string }>(
+      `SELECT s.*,c.name AS course_name
+       FROM collaboration_participants cp
+       JOIN collaboration_sessions s ON s.id=cp.collaboration_session_id
+       JOIN courses c ON c.id=s.course_id AND c.status='active'
+       JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$1
+       JOIN posts p ON p.id=s.post_id
+       WHERE cp.user_id=$1 AND ${clauses.join(" AND ")}
+       ORDER BY s.created_at DESC,s.id DESC LIMIT ${add(query.limit + 1)}`,
+      values,
+    );
+    const hasMore = rows.rows.length > query.limit;
+    const page = rows.rows.slice(0, query.limit);
+    const data = [];
+    for (const row of page)
+      data.push({
+        ...(await this.project(this.pool, row)),
+        courseName: row.course_name,
+      });
+    return {
+      data,
+      page: {
+        nextCursor: hasMore
+          ? this.cursorFor(scope, userId, filters, page.at(-1)!)
+          : null,
+        hasMore,
+      },
+    };
+  }
+
   async get(sessionId: string, userId: string) {
     const access = await this.access(this.pool, sessionId, userId);
     return this.project(this.pool, access.row);
@@ -544,11 +620,28 @@ export class CollaborationSessionService {
           "not_course_member",
           "The user is not a current member of the course",
         );
-      const inserted = await db.query(
-        "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      const inserted = await db.query<{ created_at: Date }>(
+        "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING created_at",
         [sessionId, access.row.course_id, targetUserId, userId],
       );
-      if (inserted.rowCount) await this.touch(db, sessionId);
+      const invitation = inserted.rows[0];
+      if (invitation) {
+        await this.touch(db, sessionId);
+        // The participant's created_at keys the email, so a new invitation
+        // after a removal sends again while a retried job does not.
+        await db.query(
+          "INSERT INTO jobs (id,kind,payload,deduplication_key) VALUES ($1,'send_collaboration_invitation_email',$2,$3) ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING",
+          [
+            uuidv7(),
+            {
+              sessionId,
+              inviteeUserId: targetUserId,
+              inviterUserId: userId,
+            },
+            `${sessionId}:${targetUserId}:${invitation.created_at.getTime()}`,
+          ],
+        );
+      }
       return this.project(db, await this.reload(db, sessionId));
     });
   }

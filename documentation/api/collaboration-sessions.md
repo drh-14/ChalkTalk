@@ -336,6 +336,161 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=act
 
 ---
 
+<a id="listMyCollaborationSessions"></a>
+
+### **`GET /api/v1/users/me/collaboration-sessions`**
+
+Lists the sessions the caller created or was invited to, newest first, across courses that are active and of which the caller is still a member. Sessions whose post is deleted or a confirmed duplicate are excluded before pagination and hasMore are calculated. Staff see only their own sessions here; the [course list](#listCourseCollaborationSessions) shows every session in a course.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Any signed-in user. Results include only the caller's own sessions.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+#### Path parameters
+
+None.
+
+#### Query parameters
+
+`status` (enum: active, ended, optional): Filter by session state.
+
+`cursor` (string, optional; minimum length 1, maximum length 2048): Opaque cursor returned by the previous page.
+
+`limit` (integer, optional; default 25, minimum 1, maximum 100): Page size; defaults to 25.
+
+#### Request body
+
+None.
+
+#### Multipart parts
+
+None.
+
+**Success:** `200 OK`.
+
+**Response media:** `application/json`.
+
+#### Response headers
+
+None.
+
+#### Response body
+
+##### `data` (list of objects, required): Collection of MyCollaborationSession records.
+
+`data[].courseName` (string, required): Name of the session's course.
+
+`data[].id` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data[].courseId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data[].status` (enum: active, ended, required): Session lifecycle state.
+
+`data[].anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+
+`data[].anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data[].title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
+
+`data[].language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
+
+`data[].createdBy` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data[].participants` (list of objects, required): The creator and invited participants.
+
+`data[].participants[].userId` (string, required, 1–255 characters): Opaque stable identifier.
+
+`data[].participants[].displayName` (string, required): Account display name.
+
+`data[].participants[].role` (enum: creator, invitee, required): The participant's role in the session.
+
+`data[].endedAt` (string or null, required): End time; null while active.
+
+`data[].createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+
+`data[].updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+
+`data[].version` (integer, required): Revision number used to construct the resource ETag.
+
+##### `page` (object, required): Cursor pagination state.
+
+`page.nextCursor` (string or null, required): Opaque cursor for the next page.
+
+`page.hasMore` (boolean, required): Whether another page exists.
+
+#### Example request
+
+```bash
+curl --request GET '/api/v1/users/me/collaboration-sessions?status=active' \
+    --header 'Accept: application/json' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session'
+```
+
+#### Example success response
+
+```json
+{
+  "data": [
+    {
+      "id": "collab_123",
+      "courseId": "course_123",
+      "courseName": "CS 101",
+      "status": "active",
+      "anchor": {
+        "postId": "post_123"
+      },
+      "title": "Why does my loop never stop?",
+      "language": "python",
+      "createdBy": "user_123",
+      "participants": [
+        {
+          "userId": "user_123",
+          "displayName": "Ada Lovelace",
+          "role": "creator"
+        },
+        {
+          "userId": "user_456",
+          "displayName": "Grace Hopper",
+          "role": "invitee"
+        }
+      ],
+      "endedAt": null,
+      "createdAt": "2026-09-20T14:30:00Z",
+      "updatedAt": "2026-09-20T14:30:00Z",
+      "version": 1
+    }
+  ],
+  "page": {
+    "nextCursor": null,
+    "hasMore": false
+  }
+}
+```
+
+#### Errors
+
+##### `400 Bad Request`
+
+`invalid_request`: The query parameters or cursor are invalid.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+---
+
 <a id="getCollaborationSession"></a>
 
 ### **`GET /api/v1/collaboration-sessions/{collaborationSessionId}`**
@@ -657,7 +812,7 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/participants`**
 
-Invites a current course member to an active session. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication.
+Invites a current course member to an active session. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only if the session and course are still active and the invitee is still a participant and member when it runs. Inviting an existing participant sends no email.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

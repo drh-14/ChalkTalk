@@ -10,7 +10,8 @@ type Job = {
     | "delete_course"
     | "delete_course_file"
     | "delete_content_attachment"
-    | "send_question_duplicate_email";
+    | "send_question_duplicate_email"
+    | "send_collaboration_invitation_email";
   payload: {
     courseId?: string;
     objectKey?: string;
@@ -18,6 +19,9 @@ type Job = {
     canonicalPostId?: string;
     staffUserId?: string;
     staffRole?: "ta" | "instructor";
+    sessionId?: string;
+    inviteeUserId?: string;
+    inviterUserId?: string;
   };
   deduplicationKey: string | null;
   attempts: number;
@@ -64,7 +68,7 @@ export class JobWorker {
         attempts: number;
         max_attempts: number;
       }>(
-        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
+        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email','send_collaboration_invitation_email') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
       );
       const job = claimed.rows[0];
       if (!job) return undefined;
@@ -137,6 +141,53 @@ export class JobWorker {
       to: post.email,
       subject: "Your post has been marked as a duplicate",
       text: `Your question "${title}" was marked as a duplicate by ${byline}.\n\n${canonicalUrl}`,
+    });
+  }
+
+  private async sendCollaborationInvitationEmail(job: Job): Promise<void> {
+    if (!this.emailSender || !this.frontendBaseUrl)
+      throw new Error("Invitation email delivery is not configured");
+    const { sessionId, inviteeUserId, inviterUserId } = job.payload;
+    if (!sessionId || !inviteeUserId || !inviterUserId)
+      throw new Error("Invitation email job payload is invalid");
+    // Sends only while the invitation that queued this job still stands.
+    const invitation = await this.pool.query<{
+      title: string;
+      course_id: string;
+      course_name: string;
+      email: string;
+      inviter_name: string;
+      invited_at_ms: string;
+    }>(
+      `SELECT s.title,s.course_id,c.name AS course_name,invitee.email,
+              inviter.display_name AS inviter_name,
+              floor(extract(epoch FROM cp.created_at)*1000)::bigint AS invited_at_ms
+       FROM collaboration_sessions s
+       JOIN courses c ON c.id=s.course_id AND c.status='active'
+       JOIN collaboration_participants cp ON cp.collaboration_session_id=s.id AND cp.user_id=$2
+       JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$2
+       JOIN users invitee ON invitee.id=$2 AND invitee.deleted_at IS NULL
+       JOIN users inviter ON inviter.id=$3 AND inviter.deleted_at IS NULL
+       WHERE s.id=$1 AND s.lifecycle_state='active'`,
+      [sessionId, inviteeUserId, inviterUserId],
+    );
+    const row = invitation.rows[0];
+    if (
+      !row ||
+      job.deduplicationKey !==
+        `${sessionId}:${inviteeUserId}:${row.invited_at_ms}`
+    )
+      return;
+    const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+    const inviter = clean(row.inviter_name);
+    const url = new URL(
+      `/courses/${encodeURIComponent(row.course_id)}/sessions/${encodeURIComponent(sessionId)}`,
+      this.frontendBaseUrl,
+    ).toString();
+    await this.emailSender.send({
+      to: row.email,
+      subject: `${inviter} invited you to a live session`,
+      text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly invited participants and course staff can open it.`,
     });
   }
 
@@ -251,6 +302,8 @@ export class JobWorker {
             Key: job.payload.objectKey,
           }),
         );
+      } else if (job.kind === "send_collaboration_invitation_email") {
+        await this.sendCollaborationInvitationEmail(job);
       } else {
         await this.sendQuestionDuplicateEmail(job);
       }

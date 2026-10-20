@@ -2647,6 +2647,64 @@ a:focus-visible {
 }
 
 /* Live sessions */
+.live-sessions-card,
+.course-live-sessions {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+.live-sessions-card {
+  margin-bottom: var(--space-4);
+}
+.course-live-sessions {
+  margin: var(--space-3) var(--space-4);
+}
+.live-sessions-card h2,
+.course-live-sessions h2 {
+  align-items: center;
+  display: flex;
+  font-size: 1rem;
+  gap: var(--space-2);
+  margin: 0;
+}
+.course-live-sessions-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.live-sessions-list {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.live-sessions-list li {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+.live-sessions-list li > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.live-sessions-meta {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+.live-sessions-dot {
+  background: var(--accent);
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 0.55rem;
+  width: 0.55rem;
+}
 .active-session-link {
   align-items: center;
   background: var(--accent-soft);

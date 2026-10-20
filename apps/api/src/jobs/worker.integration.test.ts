@@ -20,6 +20,7 @@ import { JobWorker } from "./worker.js";
 import { PostService, postEtag } from "../posts/service.js";
 import { AnswerService, answerEtag } from "../answers/service.js";
 import type { EmailSender } from "../auth/service.js";
+import { CollaborationSessionService } from "../collaboration/service.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
@@ -893,5 +894,114 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       'chalktalk_jobs_total{kind="send_question_duplicate_email",outcome="succeeded"} 1',
     );
     await observability.close();
+  });
+
+  describe("live session invitation email", () => {
+    // Jobs left by earlier tests would otherwise be claimed first.
+    async function fresh() {
+      while (await worker.runOnce());
+      delivered.length = 0;
+    }
+    async function seedInvitation() {
+      sequence += 1;
+      const studentId = uuidv7();
+      const taId = uuidv7();
+      const courseId = uuidv7();
+      await pool.query(
+        "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$3,$4,'Sam   Student','x'),($2,$3,$5,'Tara TA','x')",
+        [
+          studentId,
+          taId,
+          organizationId,
+          `student-${sequence}@jobs.example.edu`,
+          `ta-${sequence}@jobs.example.edu`,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,'ABCDEFGH')",
+        [courseId, organizationId, taId, `CS ${sequence}`],
+      );
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'ta')",
+        [courseId, studentId, taId],
+      );
+      const post = await new PostService(pool).create(courseId, studentId, {
+        type: "question",
+        title: "Loops",
+        bodyMarkdown: "Body",
+      });
+      const sessions = new CollaborationSessionService(pool, {
+        webSocketUrl: "wss://app.example.edu/collaboration",
+      });
+      const session = (
+        await sessions.create(courseId, studentId, {
+          postId: post.value.id,
+          title: "Why does my\nloop never stop?",
+        })
+      ).value;
+      await sessions.invite(session.id, studentId, taId);
+      const jobs = await pool.query<{ id: string }>(
+        "SELECT id FROM jobs WHERE kind='send_collaboration_invitation_email' AND payload->>'sessionId'=$1",
+        [session.id],
+      );
+      expect(jobs.rowCount).toBe(1);
+      return {
+        courseId,
+        studentId,
+        taId,
+        sessionId: session.id,
+        sessions,
+        jobId: jobs.rows[0]!.id,
+      };
+    }
+    const status = async (jobId: string) =>
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId])).rows[0]
+        ?.status;
+
+    it("emails the invitee who invited them, to what, and a link", async () => {
+      await fresh();
+      const { courseId, sessionId, jobId } = await seedInvitation();
+      expect(await worker.runOnce()).toBe(true);
+      expect(delivered).toEqual([
+        {
+          to: `ta-${sequence}@jobs.example.edu`,
+          subject: "Sam Student invited you to a live session",
+          text: `Sam Student invited you to the live session "Why does my loop never stop?" in CS ${sequence}.\n\nhttps://app.example.edu/courses/${courseId}/sessions/${sessionId}\n\nOnly invited participants and course staff can open it.`,
+        },
+      ]);
+      expect(await status(jobId)).toBe("succeeded");
+    });
+
+    it("sends nothing once the invitation no longer stands", async () => {
+      await fresh();
+      const removed = await seedInvitation();
+      await removed.sessions.remove(
+        removed.sessionId,
+        removed.studentId,
+        removed.taId,
+      );
+      const ended = await seedInvitation();
+      await pool.query(
+        "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=now() WHERE id=$1",
+        [ended.sessionId],
+      );
+      const archived = await seedInvitation();
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        archived.courseId,
+      ]);
+      while (await worker.runOnce());
+      expect(delivered).toEqual([]);
+      for (const { jobId } of [removed, ended, archived])
+        expect(await status(jobId)).toBe("succeeded");
+    });
+
+    it("does not send a stale job for an earlier invitation of the same member", async () => {
+      await fresh();
+      const first = await seedInvitation();
+      await first.sessions.remove(first.sessionId, first.studentId, first.taId);
+      await first.sessions.invite(first.sessionId, first.studentId, first.taId);
+      while (await worker.runOnce());
+      expect(delivered).toHaveLength(1);
+    });
   });
 });

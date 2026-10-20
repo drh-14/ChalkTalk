@@ -9,6 +9,7 @@ import {
 } from "react";
 import { ApiError } from "../auth/client.js";
 import { ActiveSessionLink, SessionsPanel } from "../sessions/SessionsPanel.js";
+import { CourseLiveSessions } from "../sessions/LiveSessionLists.js";
 import { sessionRoute, type CodeSession } from "../sessions/client.js";
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
@@ -1519,6 +1520,13 @@ function DiscussionContent({
         </header>
       )}
       {courseError && <p role="alert">{courseError}</p>}
+      <CourseLiveSessions
+        courseId={courseId}
+        staff={staff}
+        onOpen={(sessionCourseId, sessionId) =>
+          navigate(sessionRoute(sessionCourseId, sessionId))
+        }
+      />
       <div
         className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}${desktopFilters && filtersCollapsed ? " filters-collapsed" : ""}`}
       >
