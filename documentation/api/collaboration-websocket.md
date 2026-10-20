@@ -30,6 +30,10 @@ For every entry an update adds or changes, the server requires:
 
 The map may hold at most 5,000 entries, counting soft-deleted ones, and the whole document may encode to at most 5 MiB. A rejected update closes the connection with `invalid-update`.
 
+## Idle sessions
+
+The collaboration server records when each session last had a connected participant: every sweep (15 seconds) while anyone is connected, and when the last participant disconnects. An active session with nobody connected for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends as if its creator had ended it. A session with a connected participant never ends for inactivity.
+
 ## Presence
 
 Clients publish cursor and selection positions through Yjs awareness. On the whiteboard they also publish `whiteboardPointer`: `{ x, y, tool, button }` in scene coordinates, with `tool` either `pointer` or `laser` and `button` either `up` or `down`, or `null` after leaving the whiteboard. Before applying or relaying any awareness update, the server overwrites each state's `user` field with `{ userId, name, color }` from the authenticated connection, so cursor and pointer labels always show the participant's real account display name. Sessions are private, so participants see each other's names even when the anchor post is anonymous.
@@ -50,7 +54,7 @@ Hocuspocus reports a document-level close to the client with code `1000`; the re
 
 | Reason           | Meaning                                                                                       | Client action                                                                  |
 | ---------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `session-ended`  | The session ended, or its course was archived or its post removed.                            | Show the final text read-only from the snapshot route. Do not reconnect.       |
+| `session-ended`  | The session ended, went idle, or its course was archived or its post removed.                 | Show the final text read-only from the snapshot route. Do not reconnect.       |
 | `access-removed` | The user was removed from the session, left or lost the course, or their login session ended. | Show an access-removed state. Do not reconnect.                                |
 | `invalid-update` | The client sent an oversized message or an update outside the allowed document shape.         | Keep the local text visible as unsaved; reconnect with a new ticket to resync. |
 

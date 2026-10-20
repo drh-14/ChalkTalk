@@ -10,6 +10,8 @@ const collaboration = createCollaborationServer({
   databaseUrl,
   frontendOrigins: environment.frontendOrigins,
   port: environment.collaboration.port,
+  idleEndMinutes: environment.collaboration.idleEndMinutes,
+  metricsToken: environment.observability.metricsToken,
 });
 
 await collaboration.start();

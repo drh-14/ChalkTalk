@@ -12,3 +12,8 @@ scrape_configs:
     bearer_token_file: /tmp/metrics-token
     static_configs:
       - targets: [worker:3000]
+  - job_name: chalktalk-collaboration
+    metrics_path: /metrics
+    bearer_token_file: /tmp/metrics-token
+    static_configs:
+      - targets: [collaboration:3100]

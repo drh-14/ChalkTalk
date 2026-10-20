@@ -69,6 +69,10 @@ const app = createApp({
   contentAttachmentService: new ContentAttachmentService(pool, s3, bucket),
   collaborationSessionService: new CollaborationSessionService(pool, {
     webSocketUrl: environment.collaboration.publicUrl,
+    rateLimits: {
+      createPerHour: environment.rateLimits.collaborationCreatePerUser,
+      ticketsPerTenMinutes: environment.rateLimits.collaborationTicketPerUser,
+    },
   }),
 });
 app.listen(port, () => {

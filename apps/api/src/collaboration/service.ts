@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { consumeRateLimit } from "../database/rate-limit.js";
 
 export const COLLABORATION_LANGUAGES = [
   "plaintext",
@@ -106,6 +107,8 @@ export type CollaborationSessionServiceOptions = {
   /** How long ending waits for the collaboration server to persist the final text. */
   endTimeoutMs?: number;
   endPollMs?: number;
+  /** Per-user limits: sessions created per hour and tickets per 10 minutes. */
+  rateLimits?: { createPerHour: number; ticketsPerTenMinutes: number };
 };
 
 export class CollaborationSessionService {
@@ -320,6 +323,14 @@ export class CollaborationSessionService {
         );
       const title =
         body.title ?? post.rows[0].title.trim().slice(0, 120).trim();
+      // After the idempotent replay check, so a replay is never limited.
+      await consumeRateLimit(
+        db,
+        "collaboration-create",
+        userId,
+        this.options.rateLimits?.createPerHour ?? 30,
+        3600,
+      );
       const id = uuidv7();
       await db.query(
         "INSERT INTO collaboration_sessions (id,course_id,post_id,title,language,created_by_user_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,clock_timestamp(),clock_timestamp())",
@@ -686,6 +697,13 @@ export class CollaborationSessionService {
     return this.tx(async (db) => {
       const access = await this.access(db, sessionId, userId, true);
       this.active(access);
+      await consumeRateLimit(
+        db,
+        "collaboration-ticket",
+        userId,
+        this.options.rateLimits?.ticketsPerTenMinutes ?? 300,
+        600,
+      );
       const ticket = randomBytes(32).toString("base64url");
       const issued = await db.query<{ expires_at: Date }>(
         "INSERT INTO collaboration_connection_tickets (id,token_hash,collaboration_session_id,course_id,user_id,auth_session_id,permission,issued_at,expires_at) VALUES ($1,$2,$3,$4,$5,$6,'write',now(),now()+make_interval(secs => $7)) RETURNING expires_at",

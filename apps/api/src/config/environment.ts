@@ -50,6 +50,8 @@ export interface Environment {
     resetPerEmail: number;
     resetPerIp: number;
     signupPerIp: number;
+    collaborationCreatePerUser: number;
+    collaborationTicketPerUser: number;
   };
   observability: {
     enabled: boolean;
@@ -59,6 +61,7 @@ export interface Environment {
   collaboration: {
     port: number;
     publicUrl: string;
+    idleEndMinutes: number;
   };
   smtp: {
     host: string;
@@ -160,6 +163,11 @@ export function loadEnvironment(
     `${frontendBaseUrl.replace(/^https:/, "wss:")}/collaboration`;
   if (!/^wss?:\/\//.test(collaborationPublicUrl))
     throw new Error("COLLABORATION_PUBLIC_URL must be a ws or wss URL");
+  const idleEndMinutes = positiveInteger("COLLABORATION_IDLE_END_MINUTES", 120);
+  if (idleEndMinutes > 10_080)
+    throw new Error(
+      "COLLABORATION_IDLE_END_MINUTES must be at most 10080 (one week)",
+    );
 
   return {
     databaseUrl: source.DATABASE_URL,
@@ -176,6 +184,14 @@ export function loadEnvironment(
       resetPerEmail: positiveInteger("RATE_LIMIT_RESET_EMAIL", 5),
       resetPerIp: positiveInteger("RATE_LIMIT_RESET_IP", 100),
       signupPerIp: positiveInteger("RATE_LIMIT_SIGNUP_IP", 100),
+      collaborationCreatePerUser: positiveInteger(
+        "RATE_LIMIT_COLLABORATION_CREATE_USER",
+        30,
+      ),
+      collaborationTicketPerUser: positiveInteger(
+        "RATE_LIMIT_COLLABORATION_TICKET_USER",
+        300,
+      ),
     },
     observability: {
       enabled: observabilityEnabled,
@@ -187,6 +203,7 @@ export function loadEnvironment(
     collaboration: {
       port: collaborationPort,
       publicUrl: collaborationPublicUrl,
+      idleEndMinutes,
     },
     smtp: {
       host: source.SMTP_HOST ?? "localhost",

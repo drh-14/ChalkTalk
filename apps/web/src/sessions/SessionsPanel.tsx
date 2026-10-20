@@ -1,4 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
+import { ApiError } from "../auth/client.js";
 import {
   SESSION_LANGUAGES,
   createSession,
@@ -130,9 +131,11 @@ export function SessionsPanel({
       onOpen(created.data.id);
     } catch (caught) {
       setStartError(
-        caught instanceof Error
-          ? caught.message
-          : "The session could not start.",
+        caught instanceof ApiError && caught.code === "rate_limited"
+          ? "You have started a lot of sessions recently. Try again in a little while."
+          : caught instanceof Error
+            ? caught.message
+            : "The session could not start.",
       );
       setPending(false);
     }

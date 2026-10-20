@@ -84,6 +84,8 @@ function testEnvironment(): Environment {
       resetPerEmail: 5,
       resetPerIp: 100,
       signupPerIp: 100,
+      collaborationCreatePerUser: 30,
+      collaborationTicketPerUser: 300,
     },
     observability: {
       enabled: false,
@@ -93,6 +95,7 @@ function testEnvironment(): Environment {
     collaboration: {
       port: 3100,
       publicUrl: "wss://localhost:5173/collaboration",
+      idleEndMinutes: 120,
     },
     smtp: {
       host: "localhost",

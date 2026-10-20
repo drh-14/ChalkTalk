@@ -16,6 +16,7 @@ import { createTestSchema, seedCourse } from "./test-fixtures.js";
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
 const ORIGIN = "https://app.example.edu";
+const METRICS_TOKEN = "metrics-token-for-collaboration-tests";
 
 function socketClass(origin: string) {
   return class extends WebSocket {
@@ -54,6 +55,7 @@ integration("collaboration server", () => {
       maxDebounce: 800,
       sweepIntervalMs: 60_000,
       listenerRetryMs: 100,
+      metricsToken: METRICS_TOKEN,
     });
     return collaboration.start();
   }
@@ -333,6 +335,113 @@ integration("collaboration server", () => {
       );
       expect(timState?.user.userId).toBe(fixture.users.tim);
       expect(timState?.cursor).toEqual({ anchor: 0, head: 0 });
+    });
+  });
+
+  describe("metrics", () => {
+    it("serves token-guarded metrics without identifiers", async () => {
+      const url = `${collaboration.server.webSocketURL.replace(/^ws/, "http")}/metrics`;
+      expect((await fetch(url)).status).toBe(401);
+      expect(
+        (await fetch(url, { headers: { Authorization: "Bearer wrong" } }))
+          .status,
+      ).toBe(401);
+
+      const sessionId = await newSession();
+      const watcher = join("bob", sessionId);
+      const rejected = join("alice", sessionId);
+      await until(
+        () => watcher.provider.isSynced && rejected.provider.isSynced,
+      );
+      rejected.document.getMap("other").set("x", 1);
+      await until(() => rejected.state.closeReason === CLOSE_REASONS.invalid);
+
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${METRICS_TOKEN}` },
+      });
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      for (const series of [
+        "chalktalk_collaboration_connections",
+        "chalktalk_collaboration_documents",
+        "chalktalk_collaboration_store_duration_seconds",
+        "chalktalk_collaboration_rejected_updates_total",
+        "chalktalk_collaboration_closes_total",
+        "chalktalk_collaboration_sessions_ended_total",
+      ])
+        expect(text).toContain(`# TYPE ${series}`);
+      expect(text).toMatch(/^chalktalk_collaboration_connections [1-9]/m);
+      expect(text).toMatch(
+        /^chalktalk_collaboration_rejected_updates_total [1-9]/m,
+      );
+      expect(text).toContain(
+        `chalktalk_collaboration_closes_total{reason="invalid-update"}`,
+      );
+      expect(text).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+      );
+    });
+  });
+
+  describe("idle sessions", () => {
+    const lifecycle = async (sessionId: string) =>
+      (
+        await pool.query<{ lifecycle_state: string; last_active_at: Date }>(
+          "SELECT lifecycle_state,last_active_at FROM collaboration_sessions WHERE id=$1",
+          [sessionId],
+        )
+      ).rows[0]!;
+    const idleFor = (sessionId: string, minutes: number) =>
+      pool.query(
+        "UPDATE collaboration_sessions SET last_active_at=now()-make_interval(mins => $2) WHERE id=$1",
+        [sessionId, minutes],
+      );
+
+    it("ends a session nobody has joined for the idle period", async () => {
+      const sessionId = await newSession();
+      await idleFor(sessionId, 119);
+      expect(await collaboration.endIdle()).not.toContain(sessionId);
+      await idleFor(sessionId, 121);
+      expect(await collaboration.endIdle()).toContain(sessionId);
+      expect((await lifecycle(sessionId)).lifecycle_state).toBe("ended");
+      const active = await service.list(
+        fixture.courseId,
+        fixture.users.alice!,
+        {
+          status: "active",
+          limit: 100,
+        },
+      );
+      expect(active.data.map((session) => session.id)).not.toContain(sessionId);
+    });
+
+    it("never ends a session someone is connected to, however quiet", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      await idleFor(sessionId, 600);
+      expect(await collaboration.endIdle()).not.toContain(sessionId);
+      const row = await lifecycle(sessionId);
+      expect(row.lifecycle_state).toBe("active");
+      expect(Date.now() - row.last_active_at.getTime()).toBeLessThan(60_000);
+    });
+
+    it("counts the idle period from the last disconnect, across a restart", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      await idleFor(sessionId, 600);
+      alice.provider.destroy();
+      await until(
+        async () =>
+          Date.now() - (await lifecycle(sessionId)).last_active_at.getTime() <
+          60_000,
+      );
+      await collaboration.stop();
+      await startServer();
+      expect(await collaboration.endIdle()).not.toContain(sessionId);
+      await idleFor(sessionId, 121);
+      expect(await collaboration.endIdle()).toContain(sessionId);
     });
   });
 
