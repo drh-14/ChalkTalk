@@ -48,6 +48,7 @@ export type CreatePostInput = {
 export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
   q?: string;
+  semanticQuery?: string;
   sort?: PostSort;
   cursor?: string;
   type?: "question" | "note";
@@ -84,6 +85,7 @@ export async function listPosts(
 ): Promise<Page<Post>> {
   const query = new URLSearchParams();
   if (options.q) query.set("q", options.q);
+  if (options.semanticQuery) query.set("semanticQuery", options.semanticQuery);
   if (options.sort) query.set("sort", options.sort);
   if (options.cursor) query.set("cursor", options.cursor);
   if (options.type) query.set("type", options.type);

@@ -196,3 +196,35 @@ jobs:
 
       - name: Run discussion attachment browser scenarios
         run: npm run test:browser:attachments
+
+  semantic-search:
+    runs-on: ubuntu-26.04
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: chalktalk
+          POSTGRES_USER: chalktalk
+          POSTGRES_PASSWORD: chalktalk
+        options: >-
+          --health-cmd "pg_isready -U chalktalk -d chalktalk"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      TEST_VECTOR_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+      AUTH_TOKEN_SECRET: ci-only-auth-token-secret-at-least-32-characters
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify optional semantic index and HTTP search
+        run: npx vitest run apps/api/src/semantic/index.integration.test.ts apps/api/src/http/semantic-posts.integration.test.ts

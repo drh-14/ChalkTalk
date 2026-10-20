@@ -422,6 +422,7 @@ function answerCreateBody(value: unknown): CreateAnswer {
 function postListQuery(query: Request["query"]): ListPosts {
   const allowed = new Set([
     "q",
+    "semanticQuery",
     "type",
     "tag",
     "tagMatch",
@@ -448,6 +449,12 @@ function postListQuery(query: Request["query"]): ListPosts {
   const q = one("q")?.trim();
   if (q !== undefined && (q.length < 1 || q.length > 500))
     throw new AuthError(400, "invalid_request", "Search query is invalid");
+  const semanticQuery = one("semanticQuery")?.trim();
+  if (
+    semanticQuery !== undefined &&
+    (!q || semanticQuery.length < 1 || semanticQuery.length > 500)
+  )
+    throw new AuthError(400, "invalid_request", "Semantic query is invalid");
   const type = one("type");
   if (type !== undefined && type !== "question" && type !== "note")
     throw new AuthError(400, "invalid_request", "Type is invalid");
@@ -522,6 +529,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     throw new AuthError(400, "invalid_request", "Pagination cursor is invalid");
   return {
     q,
+    semanticQuery,
     type: type as ListPosts["type"],
     tags,
     // Any and all agree below two tags, so only a distinct all-match binds cursors.
