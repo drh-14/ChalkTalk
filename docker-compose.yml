@@ -133,6 +133,29 @@ services:
       seaweedfs:
         condition: service_healthy
 
+  collaboration:
+    profiles: ["app"]
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
+    restart: unless-stopped
+    build: *development-build
+    working_dir: /app
+    env_file:
+      - ${COMPOSE_ENV_FILE:-.env}
+    environment: *api-environment
+    command: npm run dev:collab --workspace=@chalktalk/api
+    volumes:
+      - .:/app
+      - collaboration-node-modules:/app/node_modules
+    expose:
+      - "3100"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   seed-mock:
     profiles: ["app"]
     build: *development-build
@@ -156,6 +179,7 @@ services:
       - ${COMPOSE_ENV_FILE:-.env}
     environment:
       VITE_API_PROXY_TARGET: http://api:3000
+      VITE_COLLABORATION_PROXY_TARGET: ws://collaboration:3100
       VITE_TLS_KEY_PATH: /certificates/localhost-key.pem
       VITE_TLS_CERT_PATH: /certificates/localhost.pem
       VITE_USE_POLLING: "true"
@@ -281,6 +305,7 @@ volumes:
   seaweedfs-data:
   api-node-modules:
   worker-node-modules:
+  collaboration-node-modules:
   web-node-modules:
   api-log-spool:
   worker-log-spool:

@@ -56,6 +56,10 @@ export interface Environment {
     metricsToken: string | undefined;
     spoolDirectory: string | undefined;
   };
+  collaboration: {
+    port: number;
+    publicUrl: string;
+  };
   smtp: {
     host: string;
     port: number;
@@ -142,6 +146,21 @@ export function loadEnvironment(
       "LOG_SPOOL_DIRECTORY is required when observability is enabled",
     );
 
+  const collaborationPort = Number(source.COLLABORATION_PORT ?? "3100");
+  if (
+    !Number.isInteger(collaborationPort) ||
+    collaborationPort < 1 ||
+    collaborationPort > 65535
+  )
+    throw new Error(
+      "COLLABORATION_PORT must be an integer between 1 and 65535",
+    );
+  const collaborationPublicUrl =
+    source.COLLABORATION_PUBLIC_URL ??
+    `${frontendBaseUrl.replace(/^https:/, "wss:")}/collaboration`;
+  if (!/^wss?:\/\//.test(collaborationPublicUrl))
+    throw new Error("COLLABORATION_PUBLIC_URL must be a ws or wss URL");
+
   return {
     databaseUrl: source.DATABASE_URL,
     port,
@@ -164,6 +183,10 @@ export function loadEnvironment(
       spoolDirectory: observabilityEnabled
         ? source.LOG_SPOOL_DIRECTORY
         : undefined,
+    },
+    collaboration: {
+      port: collaborationPort,
+      publicUrl: collaborationPublicUrl,
     },
     smtp: {
       host: source.SMTP_HOST ?? "localhost",

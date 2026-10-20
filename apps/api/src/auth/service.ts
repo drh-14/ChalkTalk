@@ -9,6 +9,7 @@ import {
   tokensMatch,
 } from "./crypto.js";
 import { AuthError } from "./errors.js";
+import { collaborationAccessChanged } from "../collaboration/lifecycle.js";
 
 export interface EmailSender {
   send(
@@ -604,9 +605,13 @@ export class AuthService {
   }
 
   async logout(sessionId: string): Promise<void> {
-    await this.pool.query(
-      "UPDATE sessions SET revoked_at = now() WHERE id = $1",
+    const revoked = await this.pool.query<{ user_id: string }>(
+      "UPDATE sessions SET revoked_at = now() WHERE id = $1 RETURNING user_id",
       [sessionId],
+    );
+    await collaborationAccessChanged(
+      this.pool,
+      revoked.rows.map((row) => row.user_id),
     );
   }
 
@@ -761,6 +766,7 @@ export class AuthService {
         "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
         [session.user.id, session.id],
       );
+      await collaborationAccessChanged(client, [session.user.id]);
     });
   }
 
@@ -856,6 +862,7 @@ export class AuthService {
         "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
         [record.user_id],
       );
+      await collaborationAccessChanged(client, [record.user_id]);
     });
   }
 
@@ -934,6 +941,7 @@ export class AuthService {
         "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
         [session.user.id],
       );
+      await collaborationAccessChanged(client, [session.user.id]);
     });
   }
 }

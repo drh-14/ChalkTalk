@@ -24,6 +24,7 @@ import { createObservability, logApiEvent } from "./observability/index.js";
 import { EmbeddingProvider, readEmbeddingConfig } from "./semantic/provider.js";
 import { SemanticIndex } from "./semantic/index.js";
 import { ContentAttachmentService } from "./content-attachments/service.js";
+import { CollaborationSessionService } from "./collaboration/service.js";
 
 const environment = loadEnvironment();
 const { port } = environment;
@@ -76,6 +77,9 @@ const app = createApp({
   courseFileService: new CourseFileService(pool, s3, bucket),
   courseResourceService: new CourseResourceService(pool),
   contentAttachmentService: new ContentAttachmentService(pool, s3, bucket),
+  collaborationSessionService: new CollaborationSessionService(pool, {
+    webSocketUrl: environment.collaboration.publicUrl,
+  }),
 });
 app.listen(port, () => {
   logApiEvent(observability, "api_started");

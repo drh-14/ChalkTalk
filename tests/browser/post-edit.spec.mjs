@@ -186,6 +186,42 @@ for (const [size, viewport] of [
 ]) {
   test.describe(size, () => {
     test.use({ viewport });
+    for (const type of ["question", "note"]) {
+      test(`${type} Edit follows rendered body without screenshot capture`, async ({
+        page,
+      }) => {
+        const api = await mockApi(page, { type });
+        await page.goto(`${origin}/attachments-fixture.html`);
+        const post = page.locator(".discussion-detail article").first();
+        const edit = post.getByRole("button", {
+          name: "Edit post",
+          exact: true,
+        });
+        await expect(edit).toBeVisible();
+        const body = await post
+          .locator(":scope > .post-markdown")
+          .boundingBox();
+        const action = await edit.boundingBox();
+        expect(action.y).toBeGreaterThanOrEqual(body.y + body.height);
+        await expect(post.locator('input[type="file"]')).toHaveCount(0);
+        await edit.click();
+        const input = page.getByLabel("Add files");
+        await expect(input).toHaveAttribute("type", "file");
+        const chooser = page.waitForEvent("filechooser");
+        await input.click();
+        await (
+          await chooser
+        ).setFiles({
+          name: "extra.txt",
+          mimeType: "text/plain",
+          buffer: Buffer.from("extra"),
+        });
+        await expect(
+          page.getByRole("list", { name: "Selected files" }),
+        ).toContainText("extra.txt");
+        expect(api.uploads).toHaveLength(0);
+      });
+    }
     test("view is read-only; authorized Edit saves and retains image/document", async ({
       page,
     }) => {

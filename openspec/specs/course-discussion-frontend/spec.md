@@ -596,7 +596,7 @@ The title SHALL be the most prominent text on the card. The badge's label, icon,
 
 ### Requirement: Staff can pin and unpin a post from the post view
 
-When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group immediately below the post body and before question answers. It SHALL contain the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
+When a TA or instructor views an ordinary post, the post view SHALL show a "Staff actions" group after the post content and any Edit action (see "Post Edit follows the rendered body") and before question answers. It SHALL contain the existing Merge as duplicate control and, while the course is active, a Pin or Unpin button reflecting the post's `pinned` state. Activating it SHALL send the documented conditional post update with the post's current ETag and CSRF token, disable itself while pending, and update both the post view and that post's feed row on success. A failed update SHALL show the error and reload the post, so a stale revision is replaced. Students SHALL not see the Staff actions group, and no member SHALL see Pin or Unpin in an archived or deleting course.
 
 #### Scenario: A TA pins a post
 
@@ -618,23 +618,6 @@ When a TA or instructor views an ordinary post, the post view SHALL show a "Staf
 - **WHEN** a student opens a post
 - **THEN** no Staff actions group or Pin control appears
 
-### Requirement: Related questions search preserves query meaning
-
-For a draft question, Related questions SHALL continue sending its existing bounded lexical `OR` expression as `q`, and SHALL additionally send a bounded natural-language `semanticQuery` derived from the title and body sample. It SHALL remain useful when semantic search is disabled, and SHALL not send either query for notes.
-
-#### Scenario: A draft question suggests semantically related posts
-
-- **WHEN** a member types a question title and body
-- **THEN** the debounced request sends `q` and `semanticQuery` separately while retaining the same result limit and cancellation behavior
-
-### Requirement: Restart stale semantic pagination
-
-The course post feed SHALL restart from page one after `409 search_restart_required` on a semantic relevance cursor, preserving the active query, sort, and filters. It SHALL replace the stale page rather than append duplicates or show an empty final page.
-
-#### Scenario: Semantic search becomes unhealthy while loading more
-
-- **WHEN** a member loads another page and the API rejects its semantic cursor with `search_restart_required`
-- **THEN** the feed requests page one without a cursor using the same query, sort, and filters and displays the fresh lexical/fuzzy results
 ### Requirement: Question detail presents question-level followup discussions
 
 The question detail SHALL show a root followup count and a prominent zero-followup compose prompt. Members SHALL create roots and nested replies using the shared Markdown/LaTeX composer and optional anonymity. The page SHALL list roots and direct replies with cursor-based loading, render bodyless deleted parent tombstones when children remain, and show vote controls beneath active followup content. Author and staff edit/delete controls SHALL follow server-projected `canEdit`; other members SHALL not see them. Existing root and reply bodies SHALL be edited only through the version-checked REST composer. Failed REST writes and version conflicts SHALL preserve draft text and offer explicit refresh. Saved root and reply content SHALL render Markdown and LaTeX immediately after creation or editing and SHALL support separately uploaded parent-scoped attachments with centered images and document links. Existing attachments SHALL remain readable in view without mutation controls. Upload and removal controls SHALL appear only in authorized create or Edit for root followups and replies, honoring current parent edit rights and active-course status; partial upload failures SHALL preserve committed text and retryable file selections.
@@ -655,42 +638,62 @@ The question detail SHALL show a root followup count and a prominent zero-follow
 - **THEN** the vote count updates beneath that followup and additional roots append without duplicate entries
 
 ### Requirement: Authorized members edit posts explicitly
+
 The post detail SHALL provide Edit to the author or course TA/instructor only while the course is active and the visible post is not a confirmed duplicate. Anonymous display identity SHALL NOT grant ownership. Editing SHALL preserve immutable post type and use the existing title, Markdown/LaTeX, tags and anonymity authoring controls. Text changes SHALL stay local until Save. Cancel SHALL return to view without committing unsaved text. Existing Pin and Merge controls SHALL remain unchanged. A merge SHALL ask before discarding a dirty edit, retain the editor and failed-file queue if the merge fails, and prevent editing while the merge is pending. Edit buttons for posts, answers, root followups and replies SHALL use slightly increased padding and corner radius without changing their existing colors.
 
 #### Scenario: Author edits a question or note
+
 - **WHEN** an authorized member selects Edit, changes the draft and saves
 - **THEN** a version-checked update persists the changes and returns to rendered view
 
 #### Scenario: Read-only member views a post
+
 - **WHEN** a different student or a member of an archived course views the post
 - **THEN** no Edit or post file mutation controls appear, while existing images and document links remain readable
 
 #### Scenario: Cancel or save failure preserves the correct text
+
 - **WHEN** an editor cancels an unsaved draft or Save fails validation or network checks
 - **THEN** Cancel leaves persisted text unchanged and a failed Save retains the draft for correction or retry
 
 #### Scenario: Stale draft needs explicit review
+
 - **WHEN** Save receives a version conflict
 - **THEN** the draft remains intact and the editor can load the latest post for review before explicitly retrying
 
 ### Requirement: Post file controls belong to authoring
+
 Post view SHALL show only existing images and document links without upload, selection or removal controls. Create and Edit SHALL provide the existing five-file, 100 MiB, eight-format selection and independent upload behavior. Save SHALL persist text before new file uploads. Failed files SHALL remain retryable with stable keys without resaving text or recreating posts. Successful attachment mutations SHALL refresh the parent revision without replacing locally typed text or unmounting failed-file queues. A refreshed revision MAY include concurrent remote text changes; the editor SHALL retain its local draft and MAY overwrite that remote text only on the next explicit Save using the refreshed If-Match version, without requiring Review latest post first. A further version conflict SHALL still require explicit review. Cancel SHALL not undo already persisted independent file mutations.
 
 #### Scenario: Editor retries a partial upload
+
 - **WHEN** text saves and one selected file succeeds while another fails
 - **THEN** saved text and successful attachments remain, and retry uploads only the failed file using its original key
 
 #### Scenario: File mutation refreshes an active draft
+
 - **WHEN** a file mutation refreshes the post revision and learns concurrent remote text changes while the editor has unsaved text
 - **THEN** the local draft survives without a text PATCH until Save, and the next explicit Save uses the refreshed revision to replace the remote text
 
 ### Requirement: Response file controls belong to authoring
+
 Both shared answer slots, root followups and nested replies SHALL show existing images and document links in view without file selection, upload or removal controls. Authorized Edit SHALL expose those controls using existing permission and active-course rules, while existing create composers retain uploads. Attachment queues SHALL stay mounted across text editing and partial file failures.
 
 #### Scenario: Edit an answer or followup attachment
+
 - **WHEN** an authorized member views an existing answer, root followup or reply and then selects Edit
 - **THEN** file mutation controls are absent in view and available in Edit, with existing attachments readable throughout
 
 #### Scenario: Read-only response attachment
+
 - **WHEN** an unauthorized member or a member of an archived course views an answer, followup or reply
 - **THEN** existing attachments remain readable without Edit or file mutation controls
+
+### Requirement: Post Edit follows the rendered body
+
+An authorized question or note view SHALL place its existing Edit action below the rendered post body and existing attachments, before staff and response actions. Permissions, disabled behavior, rounded padded same-color presentation, editor behavior and read-only attachment viewing SHALL remain unchanged. Native file-picker appearance SHALL remain unchanged.
+
+#### Scenario: Author reads a question or note
+
+- **WHEN** an authorized member reads the post
+- **THEN** its Edit action follows the body and attachment display instead of preceding the title

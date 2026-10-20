@@ -38,6 +38,14 @@ import {
   ContentAttachmentService,
   type ParentKind,
 } from "../content-attachments/service.js";
+import {
+  COLLABORATION_LANGUAGES,
+  CollaborationSessionService,
+  collaborationEtag,
+  type CollaborationLanguage,
+  type CreateCollaborationSession,
+  type UpdateCollaborationSession,
+} from "../collaboration/service.js";
 
 import { CourseResourceService } from "../course-resources/service.js";
 
@@ -53,6 +61,7 @@ export interface AppDependencies {
   courseResourceService?: CourseResourceService;
   observability?: Observability;
   contentAttachmentService?: ContentAttachmentService;
+  collaborationSessionService?: CollaborationSessionService;
 }
 type AuthContext = {
   credential: string;
@@ -80,6 +89,10 @@ function testEnvironment(): Environment {
       enabled: false,
       metricsToken: undefined,
       spoolDirectory: undefined,
+    },
+    collaboration: {
+      port: 3100,
+      publicUrl: "wss://localhost:5173/collaboration",
     },
     smtp: {
       host: "localhost",
@@ -533,6 +546,78 @@ function postListQuery(query: Request["query"]): ListPosts {
     cursor,
   };
 }
+function collaborationTitle(value: unknown): string {
+  if (typeof value !== "string") throw validationError("Title is invalid");
+  const title = value.trim();
+  if (title.length < 1 || title.length > 120)
+    throw validationError("Title is invalid");
+  return title;
+}
+
+function collaborationLanguage(value: unknown): CollaborationLanguage {
+  if (
+    typeof value !== "string" ||
+    !(COLLABORATION_LANGUAGES as readonly string[]).includes(value)
+  )
+    throw validationError("Language is invalid");
+  return value as CollaborationLanguage;
+}
+
+function collaborationCreateBody(value: unknown): CreateCollaborationSession {
+  const body = strictBody(value, ["anchor", "title", "language"], ["anchor"]);
+  const anchor = strictBody(body.anchor, ["postId"], ["postId"]);
+  return {
+    postId: stringWithin(anchor.postId, "Anchor", 1, 255),
+    ...(body.title === undefined
+      ? {}
+      : { title: collaborationTitle(body.title) }),
+    ...(body.language === undefined
+      ? {}
+      : { language: collaborationLanguage(body.language) }),
+  };
+}
+
+function collaborationUpdateBody(value: unknown): UpdateCollaborationSession {
+  const body = strictBody(value, ["title", "language", "status"]);
+  if (!Object.keys(body).length)
+    throw validationError("Request body must change something");
+  if (body.status !== undefined) {
+    if (body.status !== "ended" || Object.keys(body).length !== 1)
+      throw validationError("Status must be ended and cannot be combined");
+    return { status: "ended" };
+  }
+  return {
+    ...(body.title === undefined
+      ? {}
+      : { title: collaborationTitle(body.title) }),
+    ...(body.language === undefined
+      ? {}
+      : { language: collaborationLanguage(body.language) }),
+  };
+}
+
+function collaborationListQuery(query: Request["query"]) {
+  const { limit, cursor, filter } = listQuery(query, {
+    key: "status",
+    values: ["active", "ended"],
+  });
+  if (query.anchorType !== undefined && query.anchorType !== "post")
+    throw new AuthError(400, "invalid_request", "Filter is invalid");
+  if (
+    query.anchorId !== undefined &&
+    (typeof query.anchorId !== "string" ||
+      query.anchorId.length < 1 ||
+      query.anchorId.length > 255)
+  )
+    throw new AuthError(400, "invalid_request", "Filter is invalid");
+  return {
+    limit,
+    cursor,
+    status: filter as "active" | "ended" | undefined,
+    anchorId: query.anchorId as string | undefined,
+  };
+}
+
 function postUpdateBody(value: unknown): UpdatePost {
   const body = strictBody(value, [
     "title",
@@ -582,6 +667,7 @@ export function createApp(
     courseResourceService,
     observability,
     contentAttachmentService,
+    collaborationSessionService,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -1931,6 +2017,159 @@ export function createApp(
           request.header("if-match"),
         );
         response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  const collaboration = (): CollaborationSessionService => {
+    if (!collaborationSessionService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Collaboration service is unavailable",
+      );
+    return collaborationSessionService;
+  };
+  app.post(
+    "/api/v1/courses/:courseId/collaboration-sessions",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = collaborationCreateBody(request.body);
+        const result = await collaboration().create(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          body,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(result.status)
+          .set({
+            Location: `/api/v1/collaboration-sessions/${result.value.id}`,
+            ETag: collaborationEtag(result.value),
+          })
+          .json({ data: result.value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/collaboration-sessions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const result = await collaboration().list(
+          param(request.params.courseId),
+          current.session.user.id,
+          collaborationListQuery(request.query),
+        );
+        response.json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/collaboration-sessions/:sessionId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await collaboration().get(
+          param(request.params.sessionId),
+          current.session.user.id,
+        );
+        response.set("ETag", collaborationEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/collaboration-sessions/:sessionId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = collaborationUpdateBody(request.body);
+        const value = await collaboration().update(
+          param(request.params.sessionId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body,
+        );
+        response.set("ETag", collaborationEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/collaboration-sessions/:sessionId/participants",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["userId"], ["userId"]);
+        const value = await collaboration().invite(
+          param(request.params.sessionId),
+          auth(response).session.user.id,
+          stringWithin(body.userId, "User", 1, 255),
+        );
+        response.set("ETag", collaborationEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/collaboration-sessions/:sessionId/participants/:userId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await collaboration().remove(
+          param(request.params.sessionId),
+          auth(response).session.user.id,
+          param(request.params.userId),
+        );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/collaboration-sessions/:sessionId/connection-tickets",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const current = auth(response).session;
+        const data = await collaboration().ticket(
+          param(request.params.sessionId),
+          current.user.id,
+          current.id,
+        );
+        response.status(201).set("Cache-Control", "no-store").json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/collaboration-sessions/:sessionId/snapshot",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await collaboration().snapshot(
+          param(request.params.sessionId),
+          current.session.user.id,
+        );
+        response.set("Cache-Control", "no-store").json({ data });
       } catch (error) {
         next(error);
       }

@@ -8,6 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError } from "../auth/client.js";
+import { SessionsPanel } from "../sessions/SessionsPanel.js";
+import { sessionRoute } from "../sessions/client.js";
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { QuestionResponses } from "../answers/views.js";
@@ -2033,37 +2035,27 @@ function DiscussionContent({
                   <p>This post was deleted.</p>
                 ) : (
                   <article>
-                    {canEditDetail &&
-                      (editingPostId === detail.id ? (
-                        <div inert={mergePending}>
-                          <PostEditor
-                            key={detail.id}
-                            post={detail}
-                            csrfToken={csrfToken}
-                            onClose={() => setEditingPostId(undefined)}
-                            onChanged={(next) => {
-                              setDetail(next);
-                              setItems((current) =>
-                                current.map((item) =>
-                                  item.id === next.id ? next : item,
-                                ),
-                              );
-                            }}
-                            onStateChange={(dirty, pending) => {
-                              editorState.current = { dirty, pending };
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          className="button secondary edit-button"
-                          disabled={mergePending}
-                          onClick={() => setEditingPostId(detail.id)}
-                        >
-                          Edit post
-                        </button>
-                      ))}
+                    {canEditDetail && editingPostId === detail.id && (
+                      <div inert={mergePending}>
+                        <PostEditor
+                          key={detail.id}
+                          post={detail}
+                          csrfToken={csrfToken}
+                          onClose={() => setEditingPostId(undefined)}
+                          onChanged={(next) => {
+                            setDetail(next);
+                            setItems((current) =>
+                              current.map((item) =>
+                                item.id === next.id ? next : item,
+                              ),
+                            );
+                          }}
+                          onStateChange={(dirty, pending) => {
+                            editorState.current = { dirty, pending };
+                          }}
+                        />
+                      </div>
+                    )}
                     {(editingPostId !== detail.id || !canEditDetail) && (
                       <>
                         <p className="post-kind">
@@ -2106,6 +2098,16 @@ function DiscussionContent({
                             }}
                           />
                         </div>
+                        {canEditDetail && (
+                          <button
+                            type="button"
+                            className="button secondary edit-button"
+                            disabled={mergePending}
+                            onClick={() => setEditingPostId(detail.id)}
+                          >
+                            Edit post
+                          </button>
+                        )}
                       </>
                     )}
                     {staff && postView === "posts" && (
@@ -2159,6 +2161,17 @@ function DiscussionContent({
                         role={role}
                         courseStatus={course?.status}
                         csrfToken={csrfToken}
+                      />
+                    )}
+                    {postView === "posts" && (
+                      <SessionsPanel
+                        courseId={courseId}
+                        postId={detail.id}
+                        courseStatus={course?.status}
+                        csrfToken={csrfToken}
+                        onOpen={(sessionId) =>
+                          navigate(sessionRoute(courseId, sessionId))
+                        }
                       />
                     )}
                   </article>

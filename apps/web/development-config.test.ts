@@ -38,6 +38,21 @@ describe("Vite development configuration", () => {
     });
   });
 
+  it("proxies live code session WebSockets without rewriting the browser origin", () => {
+    const local = createViteConfig({}).server?.proxy as Record<
+      string,
+      { target: string; ws?: boolean; changeOrigin?: boolean }
+    >;
+    expect(local["/collaboration"]).toEqual({
+      target: "ws://localhost:3100",
+      ws: true,
+    });
+    const compose = createViteConfig({
+      VITE_COLLABORATION_PROXY_TARGET: "ws://collaboration:3100",
+    }).server?.proxy as Record<string, { target: string }>;
+    expect(compose["/collaboration"]!.target).toBe("ws://collaboration:3100");
+  });
+
   it("uses the configured internal API target and TLS certificate files", () => {
     const certificatePath = "apps/web/index.html";
     const configuration = createViteConfig({

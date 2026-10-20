@@ -2,6 +2,10 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v5 as uuidv5, v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import {
+  collaborationAccessChanged,
+  endCollaborationSessions,
+} from "../collaboration/lifecycle.js";
 
 const MEMBERSHIP_NAMESPACE = "7b174ec2-cfac-4b7c-9d15-67ff4bb54a23";
 const UUID_PATTERN =
@@ -652,6 +656,8 @@ export class CourseService {
         "UPDATE courses SET name=$1,status=$2,version=version+1,updated_at=now() WHERE id=$3 RETURNING id,organization_id,name,status,join_code,created_at,updated_at,version",
         [name, status, courseId],
       );
+      if (status !== "active")
+        await endCollaborationSessions(client, { courseId });
       return course(result.rows[0]!, true);
     });
   }
@@ -711,6 +717,7 @@ export class CourseService {
         "UPDATE course_memberships m SET role=$1,version=m.version+1,updated_at=now() FROM users u WHERE m.course_id=$2 AND m.user_id=$3 AND u.id=m.user_id RETURNING m.course_id,m.user_id,u.display_name,m.role,m.created_at,m.updated_at,m.version",
         [role, courseId, targetId],
       );
+      await collaborationAccessChanged(client, [targetId], courseId);
       return member(updated.rows[0]!);
     });
   }
@@ -782,6 +789,7 @@ export class CourseService {
         "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
         [courseId, targetId],
       );
+      await collaborationAccessChanged(client, [targetId], courseId);
     });
   }
   async delete(
@@ -815,6 +823,7 @@ export class CourseService {
         "UPDATE courses SET status='deleting',version=version+1,updated_at=now() WHERE id=$1 RETURNING id,organization_id,name,status,join_code,created_at,updated_at,version",
         [courseId],
       );
+      await endCollaborationSessions(client, { courseId });
       await client.query(
         "INSERT INTO jobs (id,kind,payload,deduplication_key) VALUES ($1,'delete_course',$2,$3) ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING",
         [uuidv7(), { courseId }, `course-delete:${courseId}`],
