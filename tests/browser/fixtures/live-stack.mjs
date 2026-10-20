@@ -23,6 +23,7 @@ export async function seed() {
   const people = {
     student: { id: uuidv7(), name: `Sam Student ${suffix}`, role: "student" },
     ta: { id: uuidv7(), name: `Tara TA ${suffix}`, role: "ta" },
+    classmate: { id: uuidv7(), name: `Cam Classmate ${suffix}`, role: "student" },
   };
   try {
     await pool.query("INSERT INTO organizations (id,domain,name) VALUES ($1,$2,'E2E University')", [

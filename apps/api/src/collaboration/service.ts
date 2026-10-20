@@ -41,6 +41,7 @@ export type CollaborationParticipant = {
   userId: string;
   displayName: string;
   role: "creator" | "invitee";
+  permission: "edit" | "view";
 };
 export type CollaborationSession = {
   id: string;
@@ -213,8 +214,9 @@ export class CollaborationSessionService {
     const participants = await db.query<{
       user_id: string;
       display_name: string;
+      permission: "edit" | "view";
     }>(
-      "SELECT p.user_id,u.display_name FROM collaboration_participants p JOIN users u ON u.id=p.user_id WHERE p.collaboration_session_id=$1 ORDER BY (p.user_id=$2) DESC,p.created_at,p.user_id",
+      "SELECT p.user_id,u.display_name,p.permission FROM collaboration_participants p JOIN users u ON u.id=p.user_id WHERE p.collaboration_session_id=$1 ORDER BY (p.user_id=$2) DESC,p.created_at,p.user_id",
       [row.id, row.created_by_user_id],
     );
     return {
@@ -232,6 +234,10 @@ export class CollaborationSessionService {
           participant.user_id === row.created_by_user_id
             ? "creator"
             : "invitee",
+        permission:
+          participant.user_id === row.created_by_user_id
+            ? "edit"
+            : participant.permission,
       })),
       endedAt: row.ended_at?.toISOString() ?? null,
       createdAt: row.created_at.toISOString(),
@@ -617,7 +623,12 @@ export class CollaborationSessionService {
       });
   }
 
-  async invite(sessionId: string, userId: string, targetUserId: string) {
+  async invite(
+    sessionId: string,
+    userId: string,
+    targetUserId: string,
+    permission: "edit" | "view" = "edit",
+  ) {
     return this.tx(async (db) => {
       const access = await this.access(db, sessionId, userId, true);
       this.manager(access, userId);
@@ -632,8 +643,8 @@ export class CollaborationSessionService {
           "The user is not a current member of the course",
         );
       const inserted = await db.query<{ created_at: Date }>(
-        "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING created_at",
-        [sessionId, access.row.course_id, targetUserId, userId],
+        "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id,permission) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING created_at",
+        [sessionId, access.row.course_id, targetUserId, userId, permission],
       );
       const invitation = inserted.rows[0];
       if (invitation) {
@@ -704,9 +715,17 @@ export class CollaborationSessionService {
         this.options.rateLimits?.ticketsPerTenMinutes ?? 300,
         600,
       );
+      // Staff and the creator always edit; other viewers get read tickets.
+      const viewer = STAFF.has(access.role)
+        ? undefined
+        : await db.query(
+            "SELECT 1 FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2 AND permission='view'",
+            [sessionId, userId],
+          );
+      const permission = viewer?.rowCount ? "read" : "write";
       const ticket = randomBytes(32).toString("base64url");
       const issued = await db.query<{ expires_at: Date }>(
-        "INSERT INTO collaboration_connection_tickets (id,token_hash,collaboration_session_id,course_id,user_id,auth_session_id,permission,issued_at,expires_at) VALUES ($1,$2,$3,$4,$5,$6,'write',now(),now()+make_interval(secs => $7)) RETURNING expires_at",
+        "INSERT INTO collaboration_connection_tickets (id,token_hash,collaboration_session_id,course_id,user_id,auth_session_id,permission,issued_at,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$8,now(),now()+make_interval(secs => $7)) RETURNING expires_at",
         [
           uuidv7(),
           hashTicket(ticket),
@@ -715,10 +734,12 @@ export class CollaborationSessionService {
           userId,
           authSessionId,
           TICKET_LIFETIME_MS / 1000,
+          permission,
         ],
       );
       return {
         ticket,
+        permission,
         webSocketUrl: this.options.webSocketUrl,
         documentId: documentName(sessionId),
         expiresAt: issued.rows[0]!.expires_at.toISOString(),

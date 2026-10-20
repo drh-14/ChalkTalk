@@ -2129,11 +2129,26 @@ export function createApp(
     async (request, response, next) => {
       try {
         requireJsonRequest(request);
-        const body = strictBody(request.body, ["userId"], ["userId"]);
+        const body = strictBody(
+          request.body,
+          ["userId", "permission"],
+          ["userId"],
+        );
+        if (
+          body.permission !== undefined &&
+          body.permission !== "edit" &&
+          body.permission !== "view"
+        )
+          throw new AuthError(
+            422,
+            "validation_failed",
+            "Permission must be edit or view",
+          );
         const value = await collaboration().invite(
           param(request.params.sessionId),
           auth(response).session.user.id,
           stringWithin(body.userId, "User", 1, 255),
+          body.permission as "edit" | "view" | undefined,
         );
         response.set("ETag", collaborationEtag(value)).json({ data: value });
       } catch (error) {

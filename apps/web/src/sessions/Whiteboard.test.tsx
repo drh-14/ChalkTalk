@@ -254,3 +254,25 @@ it("derives safe file names", () => {
   );
   expect(whiteboardFileName("???")).toBe("session-whiteboard.png");
 });
+
+it("hands the board to Post to discussion as a named PNG", async () => {
+  const onPost = vi.fn();
+  render(
+    <Whiteboard
+      board={new Y.Doc().getMap("whiteboard")}
+      awareness={null}
+      readOnly={false}
+      visible
+      title="Loops"
+      actions={actions}
+      onPost={onPost}
+    />,
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Post to discussion" }),
+  );
+  await waitFor(() => expect(onPost).toHaveBeenCalled());
+  const file = onPost.mock.calls[0]![0] as File;
+  expect(file.name).toBe("loops-whiteboard.png");
+  expect(file.type).toBe("image/png");
+});

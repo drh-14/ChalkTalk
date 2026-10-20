@@ -419,6 +419,7 @@ Live sessions are private, temporary shared code and whiteboard documents anchor
 - `(course_id, collaboration_session_id)`: foreign key to `collaboration_sessions(course_id, id)`, deleted with the session.
 - `(course_id, user_id)`: foreign key to `course_memberships(course_id, user_id)`, deleted with the membership, so leaving or being removed from a course removes session access.
 - `invited_by_user_id`: `uuid_v7`; foreign key to `users.id`. The creator's row names the creator.
+- `permission`: `text`; `edit` (default) or `view`. Viewers get `read` connection tickets unless they are course staff; the creator's row is always `edit`.
 - `created_at`: `timestamptz`.
 - Index: `(course_id, user_id)`.
 

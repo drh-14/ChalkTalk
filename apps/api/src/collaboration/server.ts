@@ -44,6 +44,8 @@ export type ConnectionContext = {
   sessionId: string;
   displayName: string;
   color: string;
+  /** `read` connections are read-only: their updates are dropped. */
+  permission: "read" | "write";
 };
 
 export type CollaborationServerOptions = {
@@ -329,7 +331,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       if (!sessionIdOf(name)) throw new Rejection("Unknown document");
     },
 
-    async onAuthenticate({ token, documentName: name }) {
+    async onAuthenticate({ token, documentName: name, connectionConfig }) {
       const sessionId = sessionIdOf(name);
       if (!sessionId || typeof token !== "string" || !token)
         throw new Rejection("Not authorized");
@@ -340,8 +342,9 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
           user_id: string;
           auth_session_id: string;
           collaboration_session_id: string;
+          permission: "read" | "write";
         }>(
-          "UPDATE collaboration_connection_tickets SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() RETURNING user_id,auth_session_id,collaboration_session_id",
+          "UPDATE collaboration_connection_tickets SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() RETURNING user_id,auth_session_id,collaboration_session_id,permission",
           [hashTicket(token)],
         );
         const ticket = consumed.rows[0];
@@ -357,7 +360,10 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
           sessionId,
           displayName: user.rows[0]?.display_name ?? "Participant",
           color: colorFor(ticket.user_id),
+          permission: ticket.permission,
         };
+        // Hocuspocus neither applies nor broadcasts a read-only connection's updates.
+        connectionConfig.readOnly = ticket.permission === "read";
         if (!(await stillAuthorized(context)))
           throw new Rejection("Not authorized");
         await client.query(
@@ -398,6 +404,12 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     async beforeSync({ type, payload, document, connection }) {
       // SyncStep2 (1) and Update (2) carry document changes.
       if (type !== 1 && type !== 2) return;
+      // A viewer's updates are dropped unapplied, so they are not validated.
+      if (
+        (connection.context as ConnectionContext | undefined)?.permission ===
+        "read"
+      )
+        return;
       if (!acceptsUpdate(document, payload, MAX_DOCUMENT_CHARACTERS)) {
         metrics.rejectedUpdates.inc();
         close(connection, CLOSE_REASONS.invalid);

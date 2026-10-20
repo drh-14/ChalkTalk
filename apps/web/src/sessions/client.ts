@@ -40,6 +40,7 @@ export type SessionParticipant = {
   userId: string;
   displayName: string;
   role: "creator" | "invitee";
+  permission: "edit" | "view";
 };
 export type CodeSession = {
   id: string;
@@ -61,6 +62,8 @@ export type ConnectionTicket = {
   webSocketUrl: string;
   documentId: string;
   expiresAt: string;
+  /** `read` tickets open read-only connections for viewers. */
+  permission: "read" | "write";
 };
 export type SessionSnapshot = {
   collaborationSessionId: string;
@@ -218,10 +221,12 @@ export async function inviteParticipant(
   sessionId: string,
   userId: string,
   csrfToken: string,
+  permission: "edit" | "view" = "edit",
 ): Promise<Versioned<CodeSession>> {
   return versioned(
     await write("POST", `${sessionPath(sessionId)}/participants`, csrfToken, {
       userId,
+      permission,
     }),
   );
 }

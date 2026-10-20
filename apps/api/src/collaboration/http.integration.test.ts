@@ -293,8 +293,18 @@ integration("collaboration session HTTP contract", () => {
       expect(invited.status).toBe(200);
       expect(invited.headers.etag).toBe('"v2"');
       expect(invited.body.data.participants).toEqual([
-        { userId: as("alice"), displayName: "alice", role: "creator" },
-        { userId: as("bob"), displayName: "bob", role: "invitee" },
+        {
+          userId: as("alice"),
+          displayName: "alice",
+          role: "creator",
+          permission: "edit",
+        },
+        {
+          userId: as("bob"),
+          displayName: "bob",
+          role: "invitee",
+          permission: "edit",
+        },
       ]);
       const again = await invite("tim", session.id, as("bob"));
       expect(again.body.data.participants).toHaveLength(2);
@@ -825,6 +835,79 @@ integration("collaboration session HTTP contract", () => {
         600,
       );
       expect(await tickets()).toBe(2);
+    });
+  });
+
+  describe("viewers", () => {
+    const inviteWith = (
+      sessionId: string,
+      userId: string,
+      permission?: unknown,
+    ) =>
+      unsafe(
+        request(app(as("alice"))).post(
+          `/api/v1/collaboration-sessions/${sessionId}/participants`,
+        ),
+      ).send(permission === undefined ? { userId } : { userId, permission });
+    const ticketFor = (name: string, sessionId: string) =>
+      unsafe(
+        request(app(as(name))).post(
+          `/api/v1/collaboration-sessions/${sessionId}/connection-tickets`,
+        ),
+      ).send();
+    const permissionOf = (
+      body: {
+        data: { participants: { userId: string; permission: string }[] };
+      },
+      userId: string,
+    ) =>
+      body.data.participants.find(
+        (participant) => participant.userId === userId,
+      )?.permission;
+
+    it("invites as editor by default or as viewer, and keeps an existing permission", async () => {
+      const session = await started("alice");
+      const editor = await inviteWith(session.id, as("bob"));
+      expect(editor.status).toBe(200);
+      expect(permissionOf(editor.body, as("bob"))).toBe("edit");
+      expect(permissionOf(editor.body, as("alice"))).toBe("edit");
+      const viewer = await inviteWith(session.id, as("carol"), "view");
+      expect(permissionOf(viewer.body, as("carol"))).toBe("view");
+      const again = await inviteWith(session.id, as("carol"), "edit");
+      expect(again.status).toBe(200);
+      expect(permissionOf(again.body, as("carol"))).toBe("view");
+      const invalid = await inviteWith(session.id, as("tim"), "admin");
+      expect(invalid.status).toBe(422);
+      expect(invalid.body.error.code).toBe("validation_failed");
+      const read = await get(
+        "alice",
+        `/api/v1/collaboration-sessions/${session.id}`,
+      );
+      expect(permissionOf(read.body, as("carol"))).toBe("view");
+    });
+
+    it("issues read tickets to viewers and write tickets to editors and staff", async () => {
+      const session = await started("alice");
+      await inviteWith(session.id, as("bob"));
+      await inviteWith(session.id, as("carol"), "view");
+      await inviteWith(session.id, as("tim"), "view");
+      const permissions: Record<string, string> = {};
+      for (const name of ["alice", "bob", "carol", "tim"]) {
+        const response = await ticketFor(name, session.id);
+        expect(response.status).toBe(201);
+        permissions[name] = response.body.data.permission;
+      }
+      expect(permissions).toEqual({
+        alice: "write",
+        bob: "write",
+        carol: "read",
+        tim: "write",
+      });
+      const stored = await pool.query<{ permission: string }>(
+        "SELECT permission FROM collaboration_connection_tickets WHERE collaboration_session_id=$1 AND user_id=$2",
+        [session.id, as("carol")],
+      );
+      expect(stored.rows.map((row) => row.permission)).toEqual(["read"]);
     });
   });
 });

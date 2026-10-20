@@ -16,6 +16,10 @@ Each session has one Yjs document with two shared types: the code text, `Y.Text(
 
 The server persists the full Yjs state, the plain-text projection, and the whiteboard projection to PostgreSQL within 5 seconds of an accepted edit while editing continues, when the last participant disconnects, and when the session ends. Edits accepted within the last persistence interval can be lost if the collaboration server crashes. A reconnecting client always receives the most recently persisted state merged with its own unsaved local edits.
 
+## Viewers
+
+A ticket with `read` permission, issued to a participant invited as a viewer, opens a read-only connection. The viewer receives the document and other participants' presence live and may publish presence, but the server neither applies nor broadcasts their document updates, and the connection stays open.
+
 ## Whiteboard
 
 `Y.Map('whiteboard')` maps each element's `id` to the whole element: an Excalidraw 0.18 element stored as a plain JSON object, never a nested Yjs type. Writes to different keys merge. For concurrent writes to one key, clients keep the copy with the higher `version`, then `versionNonce`, and write it back if Yjs kept the other. Deletion is soft: an element with `isDeleted: true` stays in the map.

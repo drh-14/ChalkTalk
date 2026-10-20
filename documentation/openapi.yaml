@@ -9892,9 +9892,11 @@ paths:
                       - userId: user_123
                         displayName: Ada Lovelace
                         role: creator
+                        permission: edit
                       - userId: user_456
                         displayName: Grace Hopper
                         role: invitee
+                        permission: edit
                     endedAt: null
                     createdAt: "2026-09-20T14:30:00Z"
                     updatedAt: "2026-09-20T14:30:00Z"
@@ -10005,9 +10007,11 @@ paths:
                       - userId: user_123
                         displayName: Ada Lovelace
                         role: creator
+                        permission: edit
                       - userId: user_456
                         displayName: Grace Hopper
                         role: invitee
+                        permission: edit
                     endedAt: null
                     createdAt: "2026-09-20T14:30:00Z"
                     updatedAt: "2026-09-20T14:30:00Z"
@@ -10645,6 +10649,7 @@ paths:
                   webSocketUrl: wss://app.example.edu/collaboration
                   documentId: collaboration-session:collab_123
                   expiresAt: "2026-09-20T14:35:00Z"
+                  permission: write
         "401":
           description: Unauthorized
           content:
@@ -13318,11 +13323,18 @@ components:
           enum:
             - creator
             - invitee
+        permission:
+          type: string
+          description: Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+          enum:
+            - edit
+            - view
       additionalProperties: false
       required:
         - userId
         - displayName
         - role
+        - permission
     CollaborationSessionSummary:
       type: object
       properties:
@@ -13573,12 +13585,19 @@ components:
           type: string
           description: UTC expiry timestamp, five minutes after ticket issuance.
           format: date-time
+        permission:
+          type: string
+          description: read for a viewer, whose connection is read-only; write otherwise.
+          enum:
+            - read
+            - write
       additionalProperties: false
       required:
         - ticket
         - webSocketUrl
         - documentId
         - expiresAt
+        - permission
     CollaborationSnapshot:
       type: object
       properties:
@@ -14725,6 +14744,13 @@ components:
           description: Opaque stable identifier.
           minLength: 1
           maxLength: 255
+        permission:
+          type: string
+          description: edit (the default) or view. Ignored when the user is already a participant.
+          enum:
+            - edit
+            - view
+          default: edit
       additionalProperties: false
       required:
         - userId

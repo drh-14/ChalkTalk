@@ -92,6 +92,8 @@ function api(
     sessionStatus?: number;
     snapshot?: string;
     whiteboard?: object[];
+    ticketPermission?: "read" | "write";
+    postType?: "question" | "note";
   } = {},
 ) {
   const calls: Calls = [];
@@ -116,10 +118,15 @@ function api(
               webSocketUrl: "wss://app.example.edu/collaboration",
               documentId: "collaboration-session:s-1",
               expiresAt: "2026-10-19T00:05:00Z",
+              permission: overrides.ticketPermission ?? "write",
             },
           },
           201,
         );
+      if (url === "/api/v1/posts/p-1" && overrides.postType)
+        return json({
+          data: { id: "p-1", courseId: "c-1", type: overrides.postType },
+        });
       if (url.endsWith("/snapshot"))
         return json({
           data: {
@@ -298,7 +305,10 @@ it("invites from course members who are not yet participants", async () => {
   await user.click(screen.getByRole("button", { name: "Invite" }));
   await screen.findByText(/^Tim/);
   const invite = calls.find((call) => call.url.endsWith("/participants"))!;
-  expect(JSON.parse(String(invite.init!.body))).toEqual({ userId: "tim" });
+  expect(JSON.parse(String(invite.init!.body))).toEqual({
+    userId: "tim",
+    permission: "edit",
+  });
   expect(invite.init!.headers).toMatchObject({ "X-CSRF-Token": "csrf" });
 });
 
@@ -479,4 +489,86 @@ it("keeps each tab's actions in the tab bar and copies the code", async () => {
     true,
   );
   expect(screen.queryByText(/Live session ·/)).toBeNull();
+});
+
+it("invites a member as a viewer", async () => {
+  const calls = api();
+  const { connect } = fakeConnect();
+  view("alice", connect);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "+ Invite" }),
+  );
+  const picker = (await screen.findByLabelText(
+    "Invite a course member",
+  )) as HTMLSelectElement;
+  await waitFor(() => expect(picker.disabled).toBe(false));
+  await userEvent.selectOptions(picker, "tim");
+  await userEvent.click(screen.getByRole("radio", { name: "Can view" }));
+  await userEvent.click(screen.getByRole("button", { name: "Invite" }));
+  await screen.findByText(/^Tim/);
+  const invite = calls.find((call) => call.url.endsWith("/participants"))!;
+  expect(JSON.parse(String(invite.init!.body))).toEqual({
+    userId: "tim",
+    permission: "view",
+  });
+});
+
+it("keeps a viewer read-only and marks viewers in the participant list", async () => {
+  api({
+    ticketPermission: "read",
+    session: {
+      participants: [
+        {
+          userId: "alice",
+          displayName: "Alice",
+          role: "creator",
+          permission: "edit",
+        },
+        {
+          userId: "bob",
+          displayName: "Bob",
+          role: "invitee",
+          permission: "view",
+        },
+      ],
+    },
+  });
+  const { connect, opened } = fakeConnect();
+  view("bob", connect);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  act(() => opened.options!.onSynced());
+  expect(await screen.findByText("View only")).toBeTruthy();
+  expect(status()).toBe("Connected");
+  expect(editor().getAttribute("contenteditable")).toBe("false");
+  expect(screen.getByText(/Bob \(you\)/).closest("li")!.textContent).toContain(
+    "Invited · Viewer",
+  );
+});
+
+it("offers posting to the discussion only on questions and only to editors", async () => {
+  const post = () =>
+    screen.queryByRole("button", { name: "Post to discussion" });
+  for (const [postType, ticketPermission, offered] of [
+    ["question", "write", true],
+    ["note", "write", false],
+    ["question", "read", false],
+  ] as const) {
+    api({ postType, ticketPermission });
+    const { connect, opened } = fakeConnect();
+    view("bob", connect);
+    await waitFor(() => expect(connect).toHaveBeenCalled());
+    act(() => opened.options!.onSynced());
+    if (offered) {
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Post to discussion" }),
+      );
+      expect(
+        screen.getByRole("dialog", { name: "Post code to the discussion" }),
+      ).toBeTruthy();
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(post()).toBeNull();
+    }
+    cleanup();
+  }
 });

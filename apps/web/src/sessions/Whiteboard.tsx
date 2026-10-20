@@ -43,6 +43,7 @@ export default function Whiteboard({
   visible,
   title,
   actions,
+  onPost,
 }: {
   board: Y.Map<unknown>;
   awareness: Awareness | null;
@@ -51,6 +52,8 @@ export default function Whiteboard({
   title: string;
   /** Where the tab bar holds this tab's actions. */
   actions?: HTMLElement | null;
+  /** Offered as Post to discussion; receives the board as a PNG file. */
+  onPost?: (file: File) => void;
 }) {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const [exportError, setExportError] = useState<string>();
@@ -116,16 +119,32 @@ export default function Whiteboard({
     [awareness],
   );
 
+  const exportBlob = (current: ExcalidrawImperativeAPI) =>
+    exportToBlob({
+      elements: current.getSceneElements(),
+      appState: { exportBackground: true, viewBackgroundColor: "#ffffff" },
+      files: null,
+      mimeType: "image/png",
+    });
+
+  async function postBoard() {
+    if (!api || !onPost) return;
+    setExportError(undefined);
+    try {
+      const blob = await exportBlob(api);
+      onPost(
+        new File([blob], whiteboardFileName(title), { type: "image/png" }),
+      );
+    } catch {
+      setExportError("The whiteboard couldn't be exported. Try again.");
+    }
+  }
+
   async function exportPng() {
     if (!api) return;
     setExportError(undefined);
     try {
-      const blob = await exportToBlob({
-        elements: api.getSceneElements(),
-        appState: { exportBackground: true, viewBackgroundColor: "#ffffff" },
-        files: null,
-        mimeType: "image/png",
-      });
+      const blob = await exportBlob(api);
       const url = URL.createObjectURL(blob);
       const link = window.document.createElement("a");
       link.href = url;
@@ -146,6 +165,16 @@ export default function Whiteboard({
               <span className="form-message error" role="alert">
                 {exportError}
               </span>
+            )}
+            {onPost && (
+              <button
+                type="button"
+                className="button secondary"
+                disabled={!api}
+                onClick={() => void postBoard()}
+              >
+                Post to discussion
+              </button>
             )}
             <button
               type="button"

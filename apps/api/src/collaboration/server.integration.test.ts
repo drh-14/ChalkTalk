@@ -338,6 +338,37 @@ integration("collaboration server", () => {
     });
   });
 
+  describe("viewers", () => {
+    it("lets a viewer follow along without applying their edits", async () => {
+      const sessionId = await newSession("alice", ["bob"]);
+      await service.invite(
+        sessionId,
+        fixture.users.alice!,
+        fixture.users.carol!,
+        "view",
+      );
+      const alice = join("alice", sessionId);
+      const carol = join("carol", sessionId);
+      await until(() => alice.provider.isSynced && carol.provider.isSynced);
+      alice.text.insert(0, "print('demo')");
+      await until(() => carol.text.toString() === "print('demo')");
+
+      carol.text.insert(0, "# viewer was here\n");
+      carol.document.getMap("whiteboard").set("x", { id: "x", type: "iframe" });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const server = collaboration.hocuspocus.documents.get(
+        documentName(sessionId),
+      );
+      expect(server?.getText("content").toString()).toBe("print('demo')");
+      expect(server?.getMap("whiteboard").size).toBe(0);
+      expect(alice.text.toString()).toBe("print('demo')");
+      expect(carol.state.closeReason).toBeUndefined();
+
+      alice.text.insert(alice.text.length, "\nprint('more')");
+      await until(() => carol.text.toString().includes("print('more')"));
+    });
+  });
+
   describe("metrics", () => {
     it("serves token-guarded metrics without identifiers", async () => {
       const url = `${collaboration.server.webSocketURL.replace(/^ws/, "http")}/metrics`;
