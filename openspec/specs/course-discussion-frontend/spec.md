@@ -618,23 +618,6 @@ When a TA or instructor views an ordinary post, the post view SHALL show a "Staf
 - **WHEN** a student opens a post
 - **THEN** no Staff actions group or Pin control appears
 
-### Requirement: Related questions search preserves query meaning
-
-For a draft question, Related questions SHALL continue sending its existing bounded lexical `OR` expression as `q`, and SHALL additionally send a bounded natural-language `semanticQuery` derived from the title and body sample. It SHALL remain useful when semantic search is disabled, and SHALL not send either query for notes.
-
-#### Scenario: A draft question suggests semantically related posts
-
-- **WHEN** a member types a question title and body
-- **THEN** the debounced request sends `q` and `semanticQuery` separately while retaining the same result limit and cancellation behavior
-
-### Requirement: Restart stale semantic pagination
-
-The course post feed SHALL restart from page one after `409 search_restart_required` on a semantic relevance cursor, preserving the active query, sort, and filters. It SHALL replace the stale page rather than append duplicates or show an empty final page.
-
-#### Scenario: Semantic search becomes unhealthy while loading more
-
-- **WHEN** a member loads another page and the API rejects its semantic cursor with `search_restart_required`
-- **THEN** the feed requests page one without a cursor using the same query, sort, and filters and displays the fresh lexical/fuzzy results
 ### Requirement: Question detail presents question-level followup discussions
 
 The question detail SHALL show a root followup count and a prominent zero-followup compose prompt. Members SHALL create roots and nested replies using the shared Markdown/LaTeX composer and optional anonymity. The page SHALL list roots and direct replies with cursor-based loading, render bodyless deleted parent tombstones when children remain, and show vote controls beneath active followup content. Author and staff edit/delete controls SHALL follow server-projected `canEdit`; other members SHALL not see them. Existing root and reply bodies SHALL be edited only through the version-checked REST composer. Failed REST writes and version conflicts SHALL preserve draft text and offer explicit refresh. Saved root and reply content SHALL render Markdown and LaTeX immediately after creation or editing and SHALL support separately uploaded parent-scoped attachments with centered images and document links. Existing attachments SHALL remain readable in view without mutation controls. Upload and removal controls SHALL appear only in authorized create or Edit for root followups and replies, honoring current parent edit rights and active-course status; partial upload failures SHALL preserve committed text and retryable file selections.
