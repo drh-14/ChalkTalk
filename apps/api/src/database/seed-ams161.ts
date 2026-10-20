@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import argon2 from "argon2";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { isValidPassword } from "../auth/crypto.js";
 
@@ -10,12 +10,14 @@ export const AMS161_DEMO = {
   courseId: "01a0e5a4-2985-7445-b435-1927a9a02715",
   joinCode: "AMS16101",
   instructorEmail: "maya.chen@ams161.mock.chalktalk.invalid",
+  studentId: "01a0e5f1-37c2-7430-8af5-85df56452e17",
+  studentEmail: "riley.nguyen@ams161.mock.chalktalk.invalid",
 } as const;
 
 // Existing local volumes may already have this organization marker.
 const LEGACY_AMS161_ORGANIZATION_ID = "a1610000-0000-7000-8000-000000000001";
 
-type Person = "maya" | "sam" | "alex" | "jordan" | "taylor" | "casey";
+type Person = "maya" | "sam" | "alex" | "jordan" | "taylor" | "casey" | "riley";
 
 const members: {
   key: Person;
@@ -59,6 +61,12 @@ const members: {
     email: "casey.morgan@ams161.mock.chalktalk.invalid",
     role: "student",
   },
+  {
+    key: "riley",
+    name: "Riley Nguyen",
+    email: AMS161_DEMO.studentEmail,
+    role: "student",
+  },
 ];
 
 const HOUR = 60;
@@ -67,6 +75,8 @@ const DAY = 24 * HOUR;
 type SeedAnswer = {
   author: Person;
   body: string;
+  /** Exact original fixture text, never a pattern for user-authored content. */
+  legacyBody?: string;
   /** Minutes before the seed ran. */
   age: number;
   endorsedBy?: Person;
@@ -77,6 +87,8 @@ type SeedPost = {
   author: Person;
   title: string;
   body: string;
+  /** Exact original fixture text, never a pattern for user-authored content. */
+  legacyBody?: string;
   /** Minutes before the seed ran; spread so feeds show relative and full dates. */
   age: number;
   tags: string[];
@@ -100,12 +112,16 @@ const posts: SeedPost[] = [
     type: "question",
     author: "jordan",
     title: "Does the integral of 1/x^p from 1 to infinity converge when p = 1?",
-    body: "I know it converges for p > 2, but what happens exactly at p = 1? My antiderivative turns into ln(x) and I'm not sure how to take the limit.",
+    legacyBody:
+      "I know it converges for p > 2, but what happens exactly at p = 1? My antiderivative turns into ln(x) and I'm not sure how to take the limit.",
+    body: "I know it converges for $p > 2$, but what happens exactly at $p = 1$? My antiderivative turns into $\\ln(x)$ and I'm not sure how to take the limit.",
     age: 110 * DAY,
     tags: ["improper-integrals"],
     staffAnswer: {
       author: "maya",
-      body: "At p = 1 the antiderivative is ln(x), and ln(b) grows without bound as b goes to infinity, so the integral **diverges**. The p-test says the integral converges exactly when **p > 1**, not p > 2.",
+      legacyBody:
+        "At p = 1 the antiderivative is ln(x), and ln(b) grows without bound as b goes to infinity, so the integral **diverges**. The p-test says the integral converges exactly when **p > 1**, not p > 2.",
+      body: "At $p = 1$ the antiderivative is $\\ln(x)$, and $\\ln(b)$ grows without bound as b goes to infinity, so the integral **diverges**. The p-test says the integral converges exactly when **$p > 1$**, not $p > 2$.",
       age: 109 * DAY,
     },
   },
@@ -113,17 +129,23 @@ const posts: SeedPost[] = [
     type: "question",
     author: "taylor",
     title: "How do I parametrize an arc length problem?",
-    body: "For y = x^(3/2) from x = 0 to x = 4, where does the square root in the arc length formula come from?",
+    legacyBody:
+      "For y = x^(3/2) from x = 0 to x = 4, where does the square root in the arc length formula come from?",
+    body: "For $y = x^{3/2}$ from $x = 0$ to $x = 4$, where does the square root in the arc length formula come from?",
     age: 60 * DAY,
     tags: ["arc-length"],
     studentAnswer: {
       author: "alex",
-      body: "Think of a tiny piece of the curve as the hypotenuse of a right triangle with legs dx and dy. Its length is sqrt(dx^2 + dy^2) = sqrt(1 + (dy/dx)^2) dx.",
+      legacyBody:
+        "Think of a tiny piece of the curve as the hypotenuse of a right triangle with legs dx and dy. Its length is sqrt(dx^2 + dy^2) = sqrt(1 + (dy/dx)^2) dx.",
+      body: "Think of a tiny piece of the curve as the hypotenuse of a right triangle with legs dx and dy. Its length is $\\sqrt{dx^2 + dy^2} = \\sqrt{1 + (dy/dx)^2}\\,dx$.",
       age: 59 * DAY,
     },
     staffAnswer: {
       author: "sam",
-      body: "Alex's picture is exactly right. Here dy/dx = (3/2) x^(1/2), so the integrand becomes sqrt(1 + 9x/4). A u-substitution with u = 1 + 9x/4 finishes it.",
+      legacyBody:
+        "Alex's picture is exactly right. Here dy/dx = (3/2) x^(1/2), so the integrand becomes sqrt(1 + 9x/4). A u-substitution with u = 1 + 9x/4 finishes it.",
+      body: "Alex's picture is exactly right. Here $\\frac{dy}{dx} = \\frac{3}{2}x^{1/2}$, so the integrand becomes $\\sqrt{1 + 9x/4}$. A u-substitution with $u = 1 + 9x/4$ finishes it.",
       age: 58 * DAY,
     },
   },
@@ -131,18 +153,24 @@ const posts: SeedPost[] = [
     type: "question",
     author: "alex",
     title: "When should I use integration by parts?",
-    body: "I can integrate x e^x, but how do I choose u and dv for products like x^2 ln(x)? Is there a useful rule for deciding?",
+    legacyBody:
+      "I can integrate x e^x, but how do I choose u and dv for products like x^2 ln(x)? Is there a useful rule for deciding?",
+    body: "I can integrate $xe^x$, but how do I choose u and dv for products like $x^2\\ln(x)$? Is there a useful rule for deciding?",
     age: 45 * DAY,
     tags: ["integration"],
     studentAnswer: {
       author: "jordan",
-      body: "Pick u = ln(x) because its derivative 1/x is simpler, and dv = x^2 dx because it is easy to integrate.",
+      legacyBody:
+        "Pick u = ln(x) because its derivative 1/x is simpler, and dv = x^2 dx because it is easy to integrate.",
+      body: "Pick $u = \\ln(x)$ because its derivative $1/x$ is simpler, and $dv = x^2\\,dx$ because it is easy to integrate.",
       age: 44 * DAY,
       endorsedBy: "maya",
     },
     staffAnswer: {
       author: "maya",
-      body: "A handy rule of thumb is **LIATE**: choose u from the first type that appears in the list\n\n1. Logarithmic\n2. Inverse trig\n3. Algebraic\n4. Trigonometric\n5. Exponential\n\nFor x^2 ln(x), that makes u = ln(x).",
+      legacyBody:
+        "A handy rule of thumb is **LIATE**: choose u from the first type that appears in the list\n\n1. Logarithmic\n2. Inverse trig\n3. Algebraic\n4. Trigonometric\n5. Exponential\n\nFor x^2 ln(x), that makes u = ln(x).",
+      body: "A handy rule of thumb is **LIATE**: choose u from the first type that appears in the list\n\n1. Logarithmic\n2. Inverse trig\n3. Algebraic\n4. Trigonometric\n5. Exponential\n\nFor $x^2\\ln(x)$, that makes $u = \\ln(x)$.",
       age: 44 * DAY - 3 * HOUR,
     },
   },
@@ -150,12 +178,16 @@ const posts: SeedPost[] = [
     type: "question",
     author: "jordan",
     title: "How do I set up a disk or washer volume?",
-    body: "For the region between y = x^2 and y = 2x, rotated around the x-axis, why does the washer method use two radii?",
+    legacyBody:
+      "For the region between y = x^2 and y = 2x, rotated around the x-axis, why does the washer method use two radii?",
+    body: "For the region between $y = x^2$ and $y = 2x$, rotated around the x-axis, why does the washer method use two radii?",
     age: 30 * DAY,
     tags: ["volumes"],
     studentAnswer: {
       author: "taylor",
-      body: "The region has a hole in it once you rotate it. The outer radius is the top curve (2x) and the inner radius is the bottom curve (x^2), so each slice is pi(R^2 - r^2) dx.",
+      legacyBody:
+        "The region has a hole in it once you rotate it. The outer radius is the top curve (2x) and the inner radius is the bottom curve (x^2), so each slice is pi(R^2 - r^2) dx.",
+      body: "The region has a hole in it once you rotate it. The outer radius is the top curve $(2x)$ and the inner radius is the bottom curve $(x^2)$, so each slice is $\\pi(R^2-r^2)\\,dx$.",
       age: 29 * DAY,
     },
   },
@@ -163,7 +195,9 @@ const posts: SeedPost[] = [
     type: "question",
     author: "taylor",
     title: "How do I find the radius for cylindrical shells?",
-    body: "For the same region between y = x^2 and y = 2x rotated around the y-axis, what are the shell radius and height?",
+    legacyBody:
+      "For the same region between y = x^2 and y = 2x rotated around the y-axis, what are the shell radius and height?",
+    body: "For the same region between $y = x^2$ and $y = 2x$ rotated around the y-axis, what are the shell radius and height?",
     age: 29 * DAY,
     tags: ["volumes"],
   },
@@ -171,13 +205,17 @@ const posts: SeedPost[] = [
     type: "question",
     author: "taylor",
     title: "Partial fractions with a repeated linear factor",
-    body: "For (3x + 5)/(x - 1)^2, do I need both A/(x - 1) and B/(x - 1)^2, or is one term enough?",
+    legacyBody:
+      "For (3x + 5)/(x - 1)^2, do I need both A/(x - 1) and B/(x - 1)^2, or is one term enough?",
+    body: "For $\\frac{3x+5}{(x-1)^2}$, do I need both $\\frac{A}{x-1}$ and $\\frac{B}{(x-1)^2}$, or is one term enough?",
     age: 20 * DAY,
     tags: ["integration"],
     anonymous: true,
     studentAnswer: {
       author: "jordan",
-      body: "You need both. A repeated factor (x - 1)^2 contributes one term for each power: A/(x - 1) + B/(x - 1)^2.",
+      legacyBody:
+        "You need both. A repeated factor (x - 1)^2 contributes one term for each power: A/(x - 1) + B/(x - 1)^2.",
+      body: "You need both. A repeated factor $(x-1)^2$ contributes one term for each power: $\\frac{A}{x-1}+\\frac{B}{(x-1)^2}$.",
       age: 19 * DAY,
     },
   },
@@ -185,12 +223,16 @@ const posts: SeedPost[] = [
     type: "question",
     author: "alex",
     title: "Does the harmonic series converge?",
-    body: "The terms 1/n approach zero, but the harmonic series still diverges. What does the divergence test actually establish?",
+    legacyBody:
+      "The terms 1/n approach zero, but the harmonic series still diverges. What does the divergence test actually establish?",
+    body: "The terms $1/n$ approach zero, but the harmonic series still diverges. What does the divergence test actually establish?",
     age: 14 * DAY,
     tags: ["series"],
     staffAnswer: {
       author: "sam",
-      body: "The divergence test only works in one direction: if the terms **don't** go to zero, the series diverges. Terms going to zero tells you nothing. For 1/n, compare with the integral of 1/x, which diverges.",
+      legacyBody:
+        "The divergence test only works in one direction: if the terms **don't** go to zero, the series diverges. Terms going to zero tells you nothing. For 1/n, compare with the integral of 1/x, which diverges.",
+      body: "The divergence test only works in one direction: if the terms **don't** go to zero, the series diverges. Terms going to zero tells you nothing. For $1/n$, compare with the integral of $1/x$, which diverges.",
       age: 13 * DAY,
     },
   },
@@ -198,12 +240,16 @@ const posts: SeedPost[] = [
     type: "question",
     author: "alex",
     title: "Why does the alternating series test work here?",
-    body: "For sum (-1)^n/n, the absolute series diverges. Which conditions make the alternating series converge?",
+    legacyBody:
+      "For sum (-1)^n/n, the absolute series diverges. Which conditions make the alternating series converge?",
+    body: "For $\\sum_{n=1}^{\\infty}\\frac{(-1)^n}{n}$, the absolute series diverges. Which conditions make the alternating series converge?",
     age: 12 * DAY,
     tags: ["series"],
     studentAnswer: {
       author: "casey",
-      body: "Two conditions: the terms 1/n decrease, and they go to zero. The partial sums then bounce back and forth in smaller and smaller steps, so they settle down. It converges conditionally, not absolutely.",
+      legacyBody:
+        "Two conditions: the terms 1/n decrease, and they go to zero. The partial sums then bounce back and forth in smaller and smaller steps, so they settle down. It converges conditionally, not absolutely.",
+      body: "Two conditions: the terms $1/n$ decrease, and they go to zero. The partial sums then bounce back and forth in smaller and smaller steps, so they settle down. It converges conditionally, not absolutely.",
       age: 11 * DAY,
     },
   },
@@ -234,12 +280,16 @@ const posts: SeedPost[] = [
     type: "question",
     author: "jordan",
     title: "How accurate is a Taylor polynomial?",
-    body: "For approximating sin(x) near zero with a cubic Taylor polynomial, how do I bound the remainder?",
+    legacyBody:
+      "For approximating sin(x) near zero with a cubic Taylor polynomial, how do I bound the remainder?",
+    body: "For approximating $\\sin(x)$ near zero with a cubic Taylor polynomial, how do I bound the remainder?",
     age: 5 * DAY,
     tags: ["taylor-series"],
     staffAnswer: {
       author: "maya",
-      body: "Use the Lagrange remainder: |R_3(x)| <= M |x|^4 / 4!, where M bounds the fourth derivative. Every derivative of sin is at most 1, so M = 1.",
+      legacyBody:
+        "Use the Lagrange remainder: |R_3(x)| <= M |x|^4 / 4!, where M bounds the fourth derivative. Every derivative of sin is at most 1, so M = 1.",
+      body: "Use the Lagrange remainder: $|R_3(x)| \\leq \\frac{M|x|^4}{4!}$, where M bounds the fourth derivative. Every derivative of sin is at most 1, so $M = 1$.",
       age: 4 * DAY,
     },
   },
@@ -255,7 +305,9 @@ const posts: SeedPost[] = [
     type: "question",
     author: "casey",
     title: "Choosing u for integration by parts",
-    body: "When integrating x squared times log x, should I pick logarithm as u or the polynomial?",
+    legacyBody:
+      "When integrating x squared times log x, should I pick logarithm as u or the polynomial?",
+    body: "When integrating $x^2\\ln(x)$, should I pick logarithm as u or the polynomial?",
     age: 2 * DAY,
     tags: ["integration"],
   },
@@ -279,7 +331,9 @@ const posts: SeedPost[] = [
     type: "question",
     author: "jordan",
     title: "Which convergence test fits this series?",
-    body: "For sum of n/(n^3 + 1), is a comparison with 1/n^2 enough, or should I use the integral test?",
+    legacyBody:
+      "For sum of n/(n^3 + 1), is a comparison with 1/n^2 enough, or should I use the integral test?",
+    body: "For $\\sum_{n=1}^{\\infty}\\frac{n}{n^3+1}$, is a comparison with $1/n^2$ enough, or should I use the integral test?",
     age: 6 * HOUR,
     tags: ["series"],
   },
@@ -287,7 +341,9 @@ const posts: SeedPost[] = [
     type: "question",
     author: "taylor",
     title: "How do I find the interval of convergence?",
-    body: "I found radius 2 for a power series centered at 1. How do I test the endpoints x = -1 and x = 3 separately?",
+    legacyBody:
+      "I found radius 2 for a power series centered at 1. How do I test the endpoints x = -1 and x = 3 separately?",
+    body: "I found radius 2 for a power series centered at 1. How do I test the endpoints $x = -1$ and $x = 3$ separately?",
     age: 6 * HOUR - 20,
     tags: ["series", "power-series"],
   },
@@ -300,7 +356,9 @@ const posts: SeedPost[] = [
     tags: ["series"],
     staffAnswer: {
       author: "sam",
-      body: "Yes. A limit of exactly 1 tells you nothing, since both 1/n and 1/n^2 give 1. Try a comparison test instead.",
+      legacyBody:
+        "Yes. A limit of exactly 1 tells you nothing, since both 1/n and 1/n^2 give 1. Try a comparison test instead.",
+      body: "Yes. A limit of exactly 1 tells you nothing, since both $1/n$ and $1/n^2$ give 1. Try a comparison test instead.",
       age: 2 * HOUR,
     },
   },
@@ -308,7 +366,9 @@ const posts: SeedPost[] = [
     type: "question",
     author: "alex",
     title: "Volume by washers around the x axis",
-    body: "I have y equals x squared and y equals 2x. Which curve gives the outside radius when revolving about the x-axis?",
+    legacyBody:
+      "I have y equals x squared and y equals 2x. Which curve gives the outside radius when revolving about the x-axis?",
+    body: "I have $y=x^2$ and $y=2x$. Which curve gives the outside radius when revolving about the x-axis?",
     age: 3 * HOUR,
     tags: ["volumes"],
   },
@@ -316,7 +376,9 @@ const posts: SeedPost[] = [
     type: "question",
     author: "alex",
     title: "Sign error in trig substitution with secant",
-    body: "When I substitute x = 3 sec(t) into sqrt(x^2 - 9), should I get 3 tan(t) or |3 tan(t)|?",
+    legacyBody:
+      "When I substitute x = 3 sec(t) into sqrt(x^2 - 9), should I get 3 tan(t) or |3 tan(t)|?",
+    body: "When I substitute $x = 3\\sec(t)$ into $\\sqrt{x^2-9}$, should I get $3\\tan(t)$ or $|3\\tan(t)|$?",
     age: 50,
     tags: ["integration"],
   },
@@ -324,7 +386,8 @@ const posts: SeedPost[] = [
     type: "question",
     author: "jordan",
     title: "Why is 1 over n divergent?",
-    body: "If 1/n tends to zero, why does its infinite sum not converge?",
+    legacyBody: "If 1/n tends to zero, why does its infinite sum not converge?",
+    body: "If $1/n$ tends to zero, why does its infinite sum not converge?",
     age: 25,
     tags: ["series"],
     anonymous: true,
@@ -338,12 +401,169 @@ export const AMS161_FIXTURE = {
   notes: posts.filter((post) => post.type === "note").length,
 } as const;
 
-// Answer collaboration documents start from an empty Yjs update, as in the answers service.
+async function repairFixtureMath(client: PoolClient): Promise<void> {
+  let changedPosts = 0;
+  let changedAnswers = 0;
+  let candidates = 0;
+  for (const post of posts) {
+    const postEmail = members.find(
+      (member) => member.key === post.author,
+    )!.email;
+    for (const [kind, answer] of [
+      ["student", post.studentAnswer],
+      ["staff", post.staffAnswer],
+    ] as const) {
+      if (answer?.legacyBody === undefined) continue;
+      candidates++;
+      const email = members.find(
+        (member) => member.key === answer.author,
+      )!.email;
+      const changed = await client.query(
+        `UPDATE answers a SET body_markdown=$1,version=a.version+1
+         FROM posts p,users author,users contributor
+         WHERE a.course_id=$2 AND a.post_id=p.id AND p.course_id=$2
+         AND p.title=$3 AND p.type=$4 AND p.author_user_id=author.id AND author.email=$5
+         AND author.organization_id=(SELECT organization_id FROM courses WHERE id=$2)
+         AND a.kind=$6 AND a.body_markdown=$7 AND a.deleted_at IS NULL AND p.deleted_at IS NULL
+         AND a.created_by_user_id=contributor.id AND contributor.email=$8
+         AND contributor.organization_id=author.organization_id
+         AND EXISTS (SELECT 1 FROM answer_contributors c WHERE c.answer_id=a.id AND c.user_id=contributor.id)`,
+        [
+          answer.body,
+          AMS161_DEMO.courseId,
+          post.title,
+          post.type,
+          postEmail,
+          kind,
+          answer.legacyBody,
+          email,
+        ],
+      );
+      changedAnswers += changed.rowCount ?? 0;
+    }
+    if (post.legacyBody !== undefined) {
+      candidates++;
+      const changed = await client.query(
+        `UPDATE posts p SET body_markdown=$1,version=p.version+1
+         FROM users u WHERE p.course_id=$2 AND p.title=$3 AND p.type=$4
+         AND p.author_user_id=u.id AND u.email=$5 AND u.organization_id=(SELECT organization_id FROM courses WHERE id=$2)
+         AND p.body_markdown=$6 AND p.deleted_at IS NULL`,
+        [
+          post.body,
+          AMS161_DEMO.courseId,
+          post.title,
+          post.type,
+          postEmail,
+          post.legacyBody,
+        ],
+      );
+      changedPosts += changed.rowCount ?? 0;
+    }
+  }
+  console.info(
+    `AMS161 math repair: ${changedPosts} posts changed, ${changedAnswers} answers changed, ${Math.max(0, candidates - changedPosts - changedAnswers)} fixture bodies skipped.`,
+  );
+}
+
+async function recordFixtureStatistics(client: PoolClient): Promise<void> {
+  await client.query(
+    `INSERT INTO question_creation_daily_counts(course_id,user_id,created_on,question_count)
+     SELECT course_id,author_user_id,(created_at AT TIME ZONE 'UTC')::date,count(*)::int
+     FROM posts WHERE course_id=$1 AND type='question' AND deleted_at IS NULL
+     GROUP BY course_id,author_user_id,(created_at AT TIME ZONE 'UTC')::date`,
+    [AMS161_DEMO.courseId],
+  );
+  await client.query(
+    `INSERT INTO answer_contribution_events(course_id,answer_id,user_id,contributed_at)
+     SELECT a.course_id,a.id,c.user_id,a.created_at FROM answers a
+     JOIN answer_contributors c ON c.answer_id=a.id WHERE a.course_id=$1`,
+    [AMS161_DEMO.courseId],
+  );
+}
+
+async function repairFixtureStatistics(client: PoolClient): Promise<void> {
+  // Aggregate counts cannot establish whether a particular old seed post was counted.
+  // Never guess or recompute historical counts. Lock only tracking tables: runtime
+  // writes not yet visible here will record their activity after this transaction.
+  await client.query(
+    "LOCK TABLE question_creation_daily_counts, answer_contribution_events IN SHARE ROW EXCLUSIVE MODE",
+  );
+  const existing = await client.query(
+    `SELECT 1 FROM question_creation_daily_counts WHERE course_id=$1
+     UNION ALL SELECT 1 FROM answer_contribution_events WHERE course_id=$1 LIMIT 1`,
+    [AMS161_DEMO.courseId],
+  );
+  if (existing.rowCount) {
+    console.info(
+      "AMS161 statistics repair skipped: existing activity preserved.",
+    );
+    return;
+  }
+  await recordFixtureStatistics(client);
+}
+
+async function ensureDemoStudent(
+  client: PoolClient,
+  organizationId: string,
+  password: string | undefined,
+): Promise<void> {
+  const existing = await client.query<{
+    id: string;
+    email: string;
+    organization_id: string;
+    deleted_at: Date | null;
+  }>(
+    "SELECT id,email,organization_id,deleted_at FROM users WHERE id=$1 OR email=$2",
+    [AMS161_DEMO.studentId, AMS161_DEMO.studentEmail],
+  );
+  if (existing.rowCount) {
+    const account = existing.rows[0]!;
+    if (
+      existing.rows.length !== 1 ||
+      account.id !== AMS161_DEMO.studentId ||
+      account.email !== AMS161_DEMO.studentEmail ||
+      account.organization_id !== organizationId ||
+      account.deleted_at
+    )
+      throw new Error(
+        "AMS161 mock-data student identity collides with existing data",
+      );
+  } else {
+    await client.query(
+      "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,'Riley Nguyen',$4)",
+      [
+        AMS161_DEMO.studentId,
+        organizationId,
+        AMS161_DEMO.studentEmail,
+        await argon2.hash(password ?? randomBytes(32).toString("base64url"), {
+          type: argon2.argon2id,
+        }),
+      ],
+    );
+  }
+  const membership = await client.query<{ role: string }>(
+    "SELECT role FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+    [AMS161_DEMO.courseId, AMS161_DEMO.studentId],
+  );
+  if (membership.rowCount && membership.rows[0]!.role !== "student")
+    throw new Error(
+      "AMS161 mock-data student membership collides with existing data",
+    );
+  await client.query(
+    "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student') ON CONFLICT (course_id,user_id) DO NOTHING",
+    [AMS161_DEMO.courseId, AMS161_DEMO.studentId],
+  );
+}
 
 export async function seedAms161(
   pool: Pool,
   source: Partial<
-    Record<"MOCK_DATA" | "AMS161_DEMO_INSTRUCTOR_PASSWORD", string>
+    Record<
+      | "MOCK_DATA"
+      | "AMS161_DEMO_INSTRUCTOR_PASSWORD"
+      | "AMS161_DEMO_STUDENT_PASSWORD",
+      string
+    >
   >,
 ): Promise<"disabled" | "created" | "already-seeded"> {
   if (source.MOCK_DATA === undefined || source.MOCK_DATA === "false")
@@ -354,6 +574,12 @@ export async function seedAms161(
   if (!isValidPassword(password))
     throw new Error(
       "AMS161_DEMO_INSTRUCTOR_PASSWORD must be 12 to 128 characters when MOCK_DATA=true",
+    );
+
+  const studentPassword = source.AMS161_DEMO_STUDENT_PASSWORD;
+  if (studentPassword !== undefined && !isValidPassword(studentPassword))
+    throw new Error(
+      "AMS161_DEMO_STUDENT_PASSWORD must be 12 to 128 characters when provided",
     );
 
   const client = await pool.connect();
@@ -381,6 +607,27 @@ export async function seedAms161(
           throw new Error(
             "AMS161 mock-data organization marker collides with existing data",
           );
+        const course = await client.query<{
+          organization_id: string;
+          status: string;
+        }>("SELECT organization_id,status FROM courses WHERE id=$1 FOR SHARE", [
+          AMS161_DEMO.courseId,
+        ]);
+        if (!course.rowCount) {
+          await client.query("COMMIT");
+          return "already-seeded";
+        }
+        if (course.rows[0]!.organization_id !== marker.rows[0]!.id)
+          throw new Error(
+            "AMS161 mock-data student course marker collides with existing data",
+          );
+        if (course.rows[0]!.status === "deleting") {
+          await client.query("COMMIT");
+          return "already-seeded";
+        }
+        await ensureDemoStudent(client, marker.rows[0]!.id, studentPassword);
+        await repairFixtureMath(client);
+        await repairFixtureStatistics(client);
         await client.query("COMMIT");
         return "already-seeded";
       }
@@ -393,8 +640,12 @@ export async function seedAms161(
           "AMS161 mock-data course ID or join code collides with existing data",
         );
       const emailCollision = await client.query(
-        "SELECT email FROM users WHERE email = ANY($1::text[]) AND deleted_at IS NULL LIMIT 1",
-        [members.map((member) => member.email)],
+        "SELECT email FROM users WHERE (email = ANY($1::text[]) AND deleted_at IS NULL) OR id=$2 OR email=$3 LIMIT 1",
+        [
+          members.map((member) => member.email),
+          AMS161_DEMO.studentId,
+          AMS161_DEMO.studentEmail,
+        ],
       );
       if (emailCollision.rowCount)
         throw new Error(
@@ -409,10 +660,11 @@ export async function seedAms161(
           "AMS161 Prototype",
         ],
       );
-      // Only the instructor can sign in; everyone else gets a discarded random password.
+      // Only configured demo logins are usable; other mock credentials are discarded.
       const ids = {} as Record<Person, string>;
       for (const member of members) {
-        ids[member.key] = uuidv7();
+        ids[member.key] =
+          member.key === "riley" ? AMS161_DEMO.studentId : uuidv7();
         await client.query(
           "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,$4,$5)",
           [
@@ -423,7 +675,9 @@ export async function seedAms161(
             await argon2.hash(
               member.key === "maya"
                 ? password
-                : randomBytes(32).toString("base64url"),
+                : member.key === "riley" && studentPassword !== undefined
+                  ? studentPassword
+                  : randomBytes(32).toString("base64url"),
               { type: argon2.argon2id },
             ),
           ],
@@ -512,6 +766,7 @@ export async function seedAms161(
             );
         }
       }
+      await recordFixtureStatistics(client);
       await client.query("COMMIT");
       return "created";
     } catch (error) {
