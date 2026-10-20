@@ -1004,4 +1004,87 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       expect(delivered).toHaveLength(1);
     });
   });
+
+  describe("announcement email", () => {
+    async function fresh() {
+      while (await worker.runOnce());
+      delivered.length = 0;
+    }
+    async function seedAnnouncement(body = "Thursday 3pm instead.") {
+      sequence += 1;
+      const instructorId = uuidv7();
+      const studentId = uuidv7();
+      const courseId = uuidv7();
+      await pool.query(
+        "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$3,$4,'Ina   Instructor','x'),($2,$3,$5,'Sam Student','x')",
+        [
+          instructorId,
+          studentId,
+          organizationId,
+          `ina-${sequence}@jobs.example.edu`,
+          `sam-${sequence}@jobs.example.edu`,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,'ABCDEFGH')",
+        [courseId, organizationId, instructorId, `Physics ${sequence}`],
+      );
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'instructor'),($1,$3,'student')",
+        [courseId, instructorId, studentId],
+      );
+      const post = await new PostService(pool).create(courseId, instructorId, {
+        type: "note",
+        title: "Office  hours moved",
+        bodyMarkdown: body,
+        announcement: true,
+      });
+      return { courseId, instructorId, studentId, postId: post.value.id };
+    }
+
+    it("emails each other member the announcement with a link", async () => {
+      await fresh();
+      const { courseId, postId } = await seedAnnouncement();
+      while (await worker.runOnce());
+      expect(delivered).toEqual([
+        {
+          to: `sam-${sequence}@jobs.example.edu`,
+          subject: `[Physics ${sequence}] Office hours moved`,
+          text: `Ina Instructor posted an announcement in Physics ${sequence}:\n\nOffice hours moved\n\nThursday 3pm instead.\n\nhttps://app.example.edu/courses/${courseId}/posts/${postId}`,
+        },
+      ]);
+    });
+
+    it("truncates a long body", async () => {
+      await fresh();
+      await seedAnnouncement("a".repeat(2_500));
+      while (await worker.runOnce());
+      expect(delivered[0]!.text).toContain(`${"a".repeat(2_000)}…\n\n`);
+      expect(delivered[0]!.text).not.toContain("a".repeat(2_001));
+    });
+
+    it("sends nothing once the announcement or recipient no longer qualifies", async () => {
+      await fresh();
+      const deleted = await seedAnnouncement();
+      await pool.query(
+        "UPDATE posts SET deleted_at=now(),author_user_id=NULL,title=NULL,body_markdown=NULL WHERE id=$1",
+        [deleted.postId],
+      );
+      const archived = await seedAnnouncement();
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        archived.courseId,
+      ]);
+      const left = await seedAnnouncement();
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [left.courseId, left.studentId],
+      );
+      const gone = await seedAnnouncement();
+      await pool.query("UPDATE users SET deleted_at=now() WHERE id=$1", [
+        gone.studentId,
+      ]);
+      while (await worker.runOnce());
+      expect(delivered).toEqual([]);
+    });
+  });
 });

@@ -390,24 +390,70 @@ function postTags(value: unknown): string[] | undefined {
     throw validationError("Tags are invalid");
   return names;
 }
+function pollOptions(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 10)
+    throw validationError("A poll needs 2 to 10 options");
+  const labels = value.map((item) => {
+    const label =
+      item && typeof item === "object" && !Array.isArray(item)
+        ? (item as { label?: unknown }).label
+        : undefined;
+    if (
+      typeof label !== "string" ||
+      Object.keys(item as object).some((key) => key !== "label")
+    )
+      throw validationError("Poll options are invalid");
+    const trimmed = label.trim();
+    if (!trimmed || trimmed.length > 200)
+      throw validationError("Poll option labels must be 1 to 200 characters");
+    return trimmed;
+  });
+  if (
+    new Set(labels.map((label) => label.toLowerCase())).size !== labels.length
+  )
+    throw validationError("Poll options must be distinct");
+  return labels;
+}
 function postCreateBody(value: unknown): CreatePost {
   const body = strictBody(
     value,
-    ["type", "title", "bodyMarkdown", "anonymous", "tags"],
+    [
+      "type",
+      "title",
+      "bodyMarkdown",
+      "anonymous",
+      "tags",
+      "options",
+      "announcement",
+    ],
     ["type", "title", "bodyMarkdown"],
   );
-  if (body.type !== "question" && body.type !== "note")
+  if (body.type !== "question" && body.type !== "note" && body.type !== "poll")
     throw validationError("Post type is invalid");
   const title = stringWithin(body.title, "Title", 1, 200);
   const bodyMarkdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
   if (body.anonymous !== undefined && typeof body.anonymous !== "boolean")
     throw validationError("Anonymous is invalid");
+  if (
+    body.type === "poll"
+      ? body.options === undefined
+      : body.options !== undefined
+  )
+    throw validationError("Only polls have options");
+  if (body.announcement !== undefined && typeof body.announcement !== "boolean")
+    throw validationError("Announcement is invalid");
+  if (body.announcement && body.type !== "note")
+    throw validationError("Only notes can be announcements");
+  if (body.announcement && body.anonymous)
+    throw validationError("Announcements cannot be anonymous");
   return {
     type: body.type,
     title,
     bodyMarkdown,
     anonymous: body.anonymous as boolean | undefined,
     tags: postTags(body.tags),
+    ...(body.type === "poll" ? { options: pollOptions(body.options) } : {}),
+    ...(body.announcement ? { announcement: true } : {}),
   };
 }
 function answerCreateBody(value: unknown): CreateAnswer {
@@ -433,6 +479,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "createdBefore",
     "answered",
     "pinned",
+    "announcement",
     "authorRole",
     "duplicateStatus",
     "sort",
@@ -452,7 +499,12 @@ function postListQuery(query: Request["query"]): ListPosts {
   if (q !== undefined && (q.length < 1 || q.length > 500))
     throw new AuthError(400, "invalid_request", "Search query is invalid");
   const type = one("type");
-  if (type !== undefined && type !== "question" && type !== "note")
+  if (
+    type !== undefined &&
+    type !== "question" &&
+    type !== "note" &&
+    type !== "poll"
+  )
     throw new AuthError(400, "invalid_request", "Type is invalid");
   const rawTags =
     query.tag === undefined
@@ -497,6 +549,9 @@ function postListQuery(query: Request["query"]): ListPosts {
   const rawPinned = one("pinned");
   if (rawPinned !== undefined && rawPinned !== "true" && rawPinned !== "false")
     throw new AuthError(400, "invalid_request", "Pinned is invalid");
+  const rawAnnouncement = one("announcement");
+  if (rawAnnouncement !== undefined && rawAnnouncement !== "true")
+    throw new AuthError(400, "invalid_request", "Announcement is invalid");
   const authorRole = one("authorRole");
   if (
     authorRole !== undefined &&
@@ -534,6 +589,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     createdBefore,
     answered: rawAnswered === undefined ? undefined : rawAnswered === "true",
     pinned: rawPinned === undefined ? undefined : rawPinned === "true",
+    announcement: rawAnnouncement === "true" ? true : undefined,
     authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
@@ -1703,6 +1759,39 @@ export function createApp(
           param(request.params.postId),
           auth(response).session.user.id,
           request.header("if-match"),
+        );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/posts/:postId/vote",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["optionId"], ["optionId"]);
+        const value = await posts().vote(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          stringWithin(body.optionId, "Option", 1, 255),
+        );
+        response.json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/posts/:postId/vote",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await posts().unvote(
+          param(request.params.postId),
+          auth(response).session.user.id,
         );
         response.status(204).send();
       } catch (error) {

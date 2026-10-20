@@ -11,7 +11,8 @@ type Job = {
     | "delete_course_file"
     | "delete_content_attachment"
     | "send_question_duplicate_email"
-    | "send_collaboration_invitation_email";
+    | "send_collaboration_invitation_email"
+    | "send_announcement_email";
   payload: {
     courseId?: string;
     objectKey?: string;
@@ -22,6 +23,8 @@ type Job = {
     sessionId?: string;
     inviteeUserId?: string;
     inviterUserId?: string;
+    postId?: string;
+    userId?: string;
   };
   deduplicationKey: string | null;
   attempts: number;
@@ -68,7 +71,7 @@ export class JobWorker {
         attempts: number;
         max_attempts: number;
       }>(
-        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email','send_collaboration_invitation_email') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
+        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email','send_collaboration_invitation_email','send_announcement_email') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
       );
       const job = claimed.rows[0];
       if (!job) return undefined;
@@ -191,6 +194,50 @@ export class JobWorker {
     });
   }
 
+  private async sendAnnouncementEmail(job: Job): Promise<void> {
+    if (!this.emailSender || !this.frontendBaseUrl)
+      throw new Error("Announcement email delivery is not configured");
+    const { postId, userId } = job.payload;
+    if (!postId || !userId)
+      throw new Error("Announcement email job payload is invalid");
+    // Sends only while the announcement stands and the recipient is a member.
+    const found = await this.pool.query<{
+      title: string;
+      body_markdown: string;
+      course_id: string;
+      course_name: string;
+      author_name: string;
+      email: string;
+    }>(
+      `SELECT p.title,p.body_markdown,p.course_id,c.name AS course_name,
+              author.display_name AS author_name,recipient.email
+       FROM posts p
+       JOIN courses c ON c.id=p.course_id AND c.status='active'
+       JOIN users author ON author.id=p.author_user_id
+       JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
+       JOIN users recipient ON recipient.id=$2 AND recipient.deleted_at IS NULL
+       WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL`,
+      [postId, userId],
+    );
+    const row = found.rows[0];
+    if (!row || job.deduplicationKey !== `${postId}:${userId}`) return;
+    const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+    const limit = 2000;
+    const body =
+      row.body_markdown.length > limit
+        ? `${row.body_markdown.slice(0, limit).trimEnd()}…`
+        : row.body_markdown;
+    const url = new URL(
+      `/courses/${encodeURIComponent(row.course_id)}/posts/${encodeURIComponent(postId)}`,
+      this.frontendBaseUrl,
+    ).toString();
+    await this.emailSender.send({
+      to: row.email,
+      subject: `[${clean(row.course_name)}] ${clean(row.title)}`,
+      text: `${clean(row.author_name)} posted an announcement in ${clean(row.course_name)}:\n\n${clean(row.title)}\n\n${body}\n\n${url}`,
+    });
+  }
+
   private async deleteCourse(courseId: string): Promise<void> {
     await this.transaction(async (client) => {
       await client.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
@@ -302,6 +349,8 @@ export class JobWorker {
             Key: job.payload.objectKey,
           }),
         );
+      } else if (job.kind === "send_announcement_email") {
+        await this.sendAnnouncementEmail(job);
       } else if (job.kind === "send_collaboration_invitation_email") {
         await this.sendCollaborationInvitationEmail(job);
       } else {

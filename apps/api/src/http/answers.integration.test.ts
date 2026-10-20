@@ -76,7 +76,7 @@ function read(userId: string, path: string) {
   return request(app(userId)).get(path).set("Cookie", cookie);
 }
 async function insertPost(
-  type: "question" | "note" = "question",
+  type: "question" | "note" | "poll" = "question",
   courseId = ids.course,
 ): Promise<string> {
   const id = uuidv7();
@@ -389,6 +389,10 @@ integration("answers HTTP contract: create and read", () => {
     const noteList = await read(ids.author, `/api/v1/posts/${note}/answers`);
     expect(noteList.status).toBe(422);
     expect(noteList.body.error.code).toBe("not_a_question");
+    const poll = await insertPost("poll");
+    const pollCreate = await answer(ids.author, poll);
+    expect(pollCreate.status).toBe(409);
+    expect(pollCreate.body.error.code).toBe("not_a_question");
 
     const deleted = await insertPost();
     await pool.query(

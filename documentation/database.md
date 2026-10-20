@@ -99,7 +99,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `attempts`, `max_attempts`: `integer`.
 - `available_at`, `locked_until`, `finished_at`, `created_at`, `updated_at`: `timestamptz`; lock and completion times are nullable.
 - `locked_by`, `last_error`: `text`, nullable.
-- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
+- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
 
 ## Courses and membership
 
@@ -137,6 +137,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `title`: `varchar(200)`, nullable.
 - `body_markdown`: `text`, nullable.
 - `anonymous`, `pinned`: `boolean`.
+- `announcement`: `boolean`, default false; only a non-anonymous note can be an announcement (`posts_announcement_check`). Announcements are created pinned by staff and emailed to the course; see [Create post](api/posts.md#createPost).
 - `duplicate_of_post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
 - `duplicate_status`: `text`; `none`, `suggested`, or `confirmed`.
 - Confirming a duplicate retains the original title and body in this row. Application reads exclude confirmed rows from ordinary lists and search, redirect direct links to the active canonical row, and expose only restricted title/target metadata to staff review. Unmerge restores the retained content. The application blocks deleting or merging a canonical row while confirmed rows refer to it; this lifecycle rule is not enforced by the foreign key alone.
@@ -169,8 +170,9 @@ The application must verify that a post and tag belong to the same course before
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`.
 - `(course_id, id)`: unique key.
 - `(course_id, post_id, id)`: unique key for poll-vote validation.
-- `position`: `smallint`; unique with `post_id`.
-- `label`: `varchar(200)`.
+- `position`: `smallint`, 0–9; unique with `post_id`, giving the options their order.
+- `label`: `varchar(200)`, nonempty.
+- Options are fixed at creation and deleted with their post.
 
 ### `poll_votes`
 
@@ -178,7 +180,8 @@ The application must verify that a post and tag belong to the same course before
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`; part of the primary key.
 - `user_id`: `uuid_v7`; foreign key to `users.id`; part of the primary key.
 - `option_id`: `uuid_v7`; with `course_id` and `post_id`, foreign key to `poll_options(course_id, post_id, id)`.
-- `created_at`, `updated_at`: `timestamptz`.
+- `created_at`, `updated_at`: `timestamptz`; `updated_at` changes when a member changes their vote.
+- One vote per member per poll; votes are deleted with their poll. Counts are public within the course, while individual votes are never exposed.
 
 ### `answers`
 

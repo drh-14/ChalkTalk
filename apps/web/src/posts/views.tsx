@@ -46,6 +46,7 @@ import {
   type FeedFilters,
 } from "../app/routes.js";
 import { formatPostTime } from "./time.js";
+import { PollCard } from "./PollCard.js";
 import {
   feedFilters,
   postStatuses,
@@ -320,9 +321,12 @@ function relatedQuery(title: string, body: string): string {
   return selected.join(" OR ");
 }
 
+const MAX_POLL_OPTIONS = 10;
+
 function Composer({
   courseId,
   csrfToken,
+  staff = false,
   onCreated,
   onClose,
   onStateChange,
@@ -330,13 +334,17 @@ function Composer({
 }: {
   courseId: string;
   csrfToken: string;
+  /** TAs and instructors may post polls and announcements. */
+  staff?: boolean;
   onCreated: (post: Post) => void;
   onClose: () => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
   /** A starting title, such as a search the reader chose to ask as a question. */
   initialTitle?: string;
 }) {
-  const [type, setType] = useState<"question" | "note">("question");
+  const [type, setType] = useState<"question" | "note" | "poll">("question");
+  const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [announcement, setAnnouncement] = useState(false);
   const [title, setTitle] = useState(initialTitle);
   const bodyField = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -436,16 +444,40 @@ function Composer({
       if (complete) onCreated(published);
       return;
     }
+    const announcing = type === "note" && announcement;
+    const labels = pollOptions.map((label) => label.trim());
     const input: CreatePostInput = {
       type,
       title: title.trim(),
       bodyMarkdown: body,
-      anonymous,
+      anonymous: announcing ? false : anonymous,
       tags: tags
         .split(",")
         .map((tag) => tag.trim())
         .filter(Boolean),
+      ...(type === "poll"
+        ? { options: labels.filter(Boolean).map((label) => ({ label })) }
+        : {}),
+      ...(announcing ? { announcement: true } : {}),
     };
+    if (type === "poll") {
+      const filled = labels.filter(Boolean);
+      if (filled.length < 2) {
+        setError("A poll needs at least 2 options.");
+        return;
+      }
+      if (filled.some((label) => label.length > 200)) {
+        setError("Poll options must be at most 200 characters.");
+        return;
+      }
+      if (
+        new Set(filled.map((label) => label.toLowerCase())).size !==
+        filled.length
+      ) {
+        setError("Poll options must be different from each other.");
+        return;
+      }
+    }
     if (!input.title || input.title.length > 200) {
       setError("Post title must be between 1 and 200 characters.");
       return;
@@ -501,11 +533,12 @@ function Composer({
               <select
                 value={type}
                 onChange={(event) =>
-                  setType(event.target.value as "question" | "note")
+                  setType(event.target.value as "question" | "note" | "poll")
                 }
               >
                 <option value="question">Question</option>
                 <option value="note">Note</option>
+                {staff && <option value="poll">Poll</option>}
               </select>
             </label>
             <label>
@@ -524,6 +557,52 @@ function Composer({
               onChange={setBody}
               containerRef={bodyField}
             />
+            {type === "poll" && (
+              <fieldset className="poll-options-editor">
+                <legend>Poll options</legend>
+                {pollOptions.map((label, index) => (
+                  <div key={index} className="poll-option-row">
+                    <input
+                      aria-label={`Option ${index + 1}`}
+                      value={label}
+                      maxLength={201}
+                      onChange={(event) =>
+                        setPollOptions((current) =>
+                          current.map((value, position) =>
+                            position === index ? event.target.value : value,
+                          ),
+                        )
+                      }
+                    />
+                    {pollOptions.length > 2 && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        aria-label={`Remove option ${index + 1}`}
+                        onClick={() =>
+                          setPollOptions((current) =>
+                            current.filter((_, position) => position !== index),
+                          )
+                        }
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {pollOptions.length < MAX_POLL_OPTIONS && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() =>
+                      setPollOptions((current) => [...current, ""])
+                    }
+                  >
+                    + Add option
+                  </button>
+                )}
+              </fieldset>
+            )}
             <label>
               Tags (comma-separated)
               <input
@@ -531,10 +610,21 @@ function Composer({
                 onChange={(event) => setTags(event.target.value)}
               />
             </label>
+            {staff && type === "note" && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={announcement}
+                  onChange={(event) => setAnnouncement(event.target.checked)}
+                />
+                Post as announcement (pinned and emailed to the class)
+              </label>
+            )}
             <label className="checkbox-label">
               <input
                 type="checkbox"
-                checked={anonymous}
+                checked={anonymous && !(type === "note" && announcement)}
+                disabled={type === "note" && announcement}
                 onChange={(event) => setAnonymous(event.target.checked)}
               />
               Post anonymously
@@ -1934,6 +2024,7 @@ function DiscussionContent({
                   initialTitle={composerSeed?.title}
                   courseId={courseId}
                   csrfToken={csrfToken}
+                  staff={staff}
                   onClose={leaveComposer}
                   onStateChange={(dirty, pending) => {
                     composerState.current = { dirty, pending };
@@ -2083,6 +2174,30 @@ function DiscussionContent({
                         )}
                         <div className="post-markdown">
                           <PostBody bodyMarkdown={detail.bodyMarkdown} />
+                          {detail.type === "poll" && detail.options && (
+                            <PollCard
+                              key={detail.id}
+                              postId={detail.id}
+                              options={detail.options}
+                              totalVotes={detail.totalVotes ?? 0}
+                              closed={course?.status !== "active"}
+                              csrfToken={csrfToken}
+                              onChange={(state) => {
+                                setDetail((current) =>
+                                  current?.id === detail.id && !current.deleted
+                                    ? { ...current, ...state }
+                                    : current,
+                                );
+                                setItems((current) =>
+                                  current.map((item) =>
+                                    item.id === detail.id
+                                      ? { ...item, ...state }
+                                      : item,
+                                  ),
+                                );
+                              }}
+                            />
+                          )}
                           <AttachmentManager
                             kind="post"
                             parentId={detail.id}

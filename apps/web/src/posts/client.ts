@@ -2,10 +2,18 @@ import { ApiError } from "../auth/client.js";
 import type { Page } from "../courses/client.js";
 import type { Attachment } from "../attachments/client.js";
 
+export type PollOption = {
+  id: string;
+  label: string;
+  voteCount: number;
+  /** Whether the viewer chose this option. */
+  selected: boolean;
+};
+export type PollState = { options: PollOption[]; totalVotes: number };
 export type Post = {
   id: string;
   courseId: string;
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   deleted: false;
   title: string;
   bodyMarkdown: string;
@@ -24,7 +32,12 @@ export type Post = {
   duplicateStatus?: "none" | "suggested" | "confirmed";
   duplicateOfPostId?: string | null;
   pinned?: boolean;
+  /** Staff notes pinned and emailed to the course. */
+  announcement?: boolean;
   answered?: boolean;
+  /** Present on polls. */
+  options?: PollOption[];
+  totalVotes?: number;
 };
 export type PostDetail = Post | { id: string; courseId: string; deleted: true };
 export type MergedPost = {
@@ -39,18 +52,21 @@ export type MergedPost = {
 };
 export type PostRedirect = { redirectToPostId: string };
 export type CreatePostInput = {
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   title: string;
   bodyMarkdown: string;
   anonymous: boolean;
   tags: string[];
+  options?: { label: string }[];
+  announcement?: boolean;
 };
 export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
   q?: string;
   sort?: PostSort;
   cursor?: string;
-  type?: "question" | "note";
+  type?: "question" | "note" | "poll";
+  announcement?: true;
   answered?: boolean;
   pinned?: boolean;
   authorId?: string;
@@ -90,6 +106,7 @@ export async function listPosts(
   if (options.answered !== undefined)
     query.set("answered", String(options.answered));
   if (options.pinned !== undefined) query.set("pinned", String(options.pinned));
+  if (options.announcement) query.set("announcement", "true");
   if (options.authorId) query.set("authorId", options.authorId);
   if (options.authorRole) query.set("authorRole", options.authorRole);
   const tags = options.tags ?? [];
@@ -249,6 +266,42 @@ export async function setPostPinned(
     }),
   );
   return payload.data;
+}
+
+/** Casts or changes the viewer's single vote on a poll. */
+export async function votePoll(
+  postId: string,
+  optionId: string,
+  csrfToken: string,
+): Promise<PollState & { postId: string }> {
+  const payload = await receive<{ data: PollState & { postId: string } }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/vote`, {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+      },
+      body: JSON.stringify({ optionId }),
+    }),
+  );
+  return payload.data;
+}
+
+export async function retractVote(
+  postId: string,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/posts/${encodeURIComponent(postId)}/vote`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    },
+  );
+  if (!response.ok) await receive<never>(response);
 }
 
 export async function createPost(
