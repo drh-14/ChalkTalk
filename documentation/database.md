@@ -387,7 +387,7 @@ The `resources` and `resource_regions` catalog structures below are deferred and
 
 ## Collaboration
 
-Live code sessions are private, temporary shared code documents anchored to a post. Subchannel anchors are future work and have no column until channels exist.
+Live sessions are private, temporary shared code and whiteboard documents anchored to a post. Subchannel anchors are future work and have no column until channels exist.
 
 ### `collaboration_sessions`
 
@@ -408,6 +408,7 @@ Live code sessions are private, temporary shared code documents anchored to a po
 - `collaboration_session_id`: `uuid_v7`; primary key and foreign key to `collaboration_sessions.id`, deleted with the session.
 - `yjs_state`: `bytea`; the complete encoded Yjs document state.
 - `text_projection`: `text`; `Y.Text('content').toString()`, at most 200,000 characters.
+- `whiteboard_projection`: `jsonb`; a JSON array, default `[]`. The non-deleted elements of `Y.Map('whiteboard')` in drawing order (fractional `index`, then `id`), written in the same statement as `yjs_state`.
 - `persisted_at`: `timestamptz`.
 - `persistence_revision`: `bigint`; non-negative, incremented on each store.
 

@@ -144,6 +144,25 @@ integration("collaboration session schema", () => {
     });
   });
 
+  it("defaults the whiteboard projection to an empty array and keeps it an array", async () => {
+    const id = await insertSession({});
+    await pool.query(
+      "INSERT INTO collaboration_documents (collaboration_session_id, yjs_state) VALUES ($1, $2)",
+      [id, Buffer.from([0, 0])],
+    );
+    const saved = await pool.query(
+      "SELECT whiteboard_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+      [id],
+    );
+    expect(saved.rows[0].whiteboard_projection).toEqual([]);
+    await expect(
+      pool.query(
+        "UPDATE collaboration_documents SET whiteboard_projection='{}' WHERE collaboration_session_id=$1",
+        [id],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+  });
+
   it("removes sessions and their data when the post or course is removed", async () => {
     const id = await insertSession({});
     await pool.query(

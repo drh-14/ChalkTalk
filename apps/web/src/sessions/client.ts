@@ -13,6 +13,29 @@ export const SESSION_LANGUAGES = [
 ] as const;
 export type SessionLanguage = (typeof SESSION_LANGUAGES)[number]["value"];
 
+const TAG_LANGUAGES: Record<string, SessionLanguage> = {
+  python: "python",
+  py: "python",
+  java: "java",
+  c: "c",
+  cpp: "cpp",
+  "c++": "cpp",
+  javascript: "javascript",
+  js: "javascript",
+  typescript: "typescript",
+  ts: "typescript",
+  sql: "sql",
+};
+
+/** The first post tag that names a session language, else plain text. */
+export function languageFromTags(tags: readonly string[]): SessionLanguage {
+  for (const tag of tags) {
+    const language = TAG_LANGUAGES[tag.trim().toLowerCase()];
+    if (language) return language;
+  }
+  return "plaintext";
+}
+
 export type SessionParticipant = {
   userId: string;
   displayName: string;
@@ -44,6 +67,8 @@ export type SessionSnapshot = {
   documentId: string;
   sessionStatus: "active" | "ended";
   content: string;
+  /** Excalidraw elements, non-deleted, in drawing order. */
+  whiteboard: ({ id: string; type: string } & Record<string, unknown>)[];
   persistedAt: string;
   capturedAt: string;
 };

@@ -336,6 +336,117 @@ integration("collaboration server", () => {
     });
   });
 
+  describe("whiteboard", () => {
+    const shape = (id: string, overrides: Record<string, unknown> = {}) => ({
+      id,
+      type: "rectangle",
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 10,
+      version: 1,
+      versionNonce: 7,
+      index: "a0",
+      isDeleted: false,
+      ...overrides,
+    });
+    const board = (client: { document: Y.Doc }) =>
+      client.document.getMap("whiteboard");
+
+    it("merges drawings, rejects unsafe elements without broadcast, and persists a projection", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      const bob = join("bob", sessionId);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
+      board(alice).set("r1", shape("r1", { index: "a1" }));
+      board(bob).set("a1", shape("a1", { type: "arrow", index: "a0" }));
+      board(bob).set("x1", shape("x1", { isDeleted: true }));
+      await until(() => board(alice).size === 3 && board(bob).size === 3);
+
+      for (const unsafe of [
+        shape("bad", { type: "iframe" }),
+        shape("bad", { link: "javascript:alert(1)" }),
+      ]) {
+        const attacker = join("alice", sessionId);
+        await until(() => attacker.provider.isSynced);
+        board(attacker).set("bad", unsafe);
+        await until(() => attacker.state.closeReason === CLOSE_REASONS.invalid);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(board(bob).has("bad")).toBe(false);
+      expect(
+        collaboration.hocuspocus.documents
+          .get(documentName(sessionId))
+          ?.getMap("whiteboard")
+          .has("bad"),
+      ).toBe(false);
+
+      const projection = async () =>
+        (
+          await pool.query(
+            "SELECT whiteboard_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+            [sessionId],
+          )
+        ).rows[0]?.whiteboard_projection as { id: string }[] | undefined;
+      await until(async () => (await projection())?.length === 2);
+      expect((await projection())!.map(({ id }) => id)).toEqual(["a1", "r1"]);
+
+      alice.provider.destroy();
+      bob.provider.destroy();
+      await collaboration.stop();
+      await startServer();
+      const again = join("tim", sessionId);
+      await until(() => again.provider.isSynced);
+      await until(() => board(again).size === 3);
+      expect(board(again).get("r1")).toMatchObject({ type: "rectangle" });
+      const snapshot = await service.snapshot(sessionId, fixture.users.bob!);
+      expect(snapshot.whiteboard.map((e) => (e as { id: string }).id)).toEqual([
+        "a1",
+        "r1",
+      ]);
+    });
+
+    it("tells each client its own server-stamped identity once connected", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.state.stateless.length > 0);
+      expect(JSON.parse(alice.state.stateless[0]!)).toEqual({
+        type: "presence",
+        user: {
+          userId: fixture.users.alice,
+          name: "alice",
+          color: expect.stringMatching(/^#[0-9a-f]{6}$/),
+        },
+      });
+    });
+
+    it("stamps whiteboard pointers with the server identity", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      const bob = join("bob", sessionId);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
+      bob.provider.setAwarenessField("user", { name: "Impostor" });
+      bob.provider.setAwarenessField("whiteboardPointer", {
+        x: 5,
+        y: 6,
+        tool: "pointer",
+        button: "up",
+      });
+      const bobState = () =>
+        [...alice.provider.awareness!.getStates().values()].find(
+          (state) => state.whiteboardPointer,
+        );
+      await until(() => bobState()?.user?.name === "bob");
+      expect(bobState()?.user.userId).toBe(fixture.users.bob);
+      expect(bobState()?.whiteboardPointer).toEqual({
+        x: 5,
+        y: 6,
+        tool: "pointer",
+        button: "up",
+      });
+    });
+  });
+
   describe("revocation and ending", () => {
     it("closes a removed invitee within 5 seconds", async () => {
       const sessionId = await newSession();

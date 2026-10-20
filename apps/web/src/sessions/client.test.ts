@@ -4,6 +4,7 @@ import {
   createTicket,
   getSession,
   getSnapshot,
+  languageFromTags,
   inviteParticipant,
   listSessions,
   removeParticipant,
@@ -179,4 +180,12 @@ it("routes a direct session link", () => {
     courseId: "c-1",
     sessionId: "s-1",
   });
+});
+
+it("picks the first tag that names a session language", () => {
+  expect(languageFromTags(["hw2", "Python", "java"])).toBe("python");
+  expect(languageFromTags(["C++"])).toBe("cpp");
+  expect(languageFromTags([" js "])).toBe("javascript");
+  expect(languageFromTags(["recursion"])).toBe("plaintext");
+  expect(languageFromTags([])).toBe("plaintext");
 });

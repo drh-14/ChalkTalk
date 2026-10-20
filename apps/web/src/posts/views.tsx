@@ -8,8 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError } from "../auth/client.js";
-import { SessionsPanel } from "../sessions/SessionsPanel.js";
-import { sessionRoute } from "../sessions/client.js";
+import { ActiveSessionLink, SessionsPanel } from "../sessions/SessionsPanel.js";
+import { sessionRoute, type CodeSession } from "../sessions/client.js";
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { QuestionResponses } from "../answers/views.js";
@@ -1047,6 +1047,10 @@ function DiscussionContent({
     detail.duplicateStatus !== "confirmed" &&
     (staff || (!!userId && detail.author.userId === userId));
   const [editingPostId, setEditingPostId] = useState<string>();
+  const [postSessions, setPostSessions] = useState<{
+    postId: string;
+    sessions: CodeSession[];
+  }>();
   const [mergePending, setMergePending] = useState(false);
   const [selectedReviewId, setSelectedReviewId] = useState<string>();
   const [reviewDetail, setReviewDetail] = useState<Post>();
@@ -2057,6 +2061,18 @@ function DiscussionContent({
                           active={tags}
                           onSelect={selectTag}
                         />
+                        {postView === "posts" && (
+                          <ActiveSessionLink
+                            sessions={
+                              postSessions?.postId === detail.id
+                                ? postSessions.sessions
+                                : undefined
+                            }
+                            onOpen={(sessionId) =>
+                              navigate(sessionRoute(courseId, sessionId))
+                            }
+                          />
+                        )}
                         <div className="post-markdown">
                           <PostBody bodyMarkdown={detail.bodyMarkdown} />
                           <AttachmentManager
@@ -2153,6 +2169,10 @@ function DiscussionContent({
                       <SessionsPanel
                         courseId={courseId}
                         postId={detail.id}
+                        tags={detail.tags}
+                        onLoaded={(sessions) =>
+                          setPostSessions({ postId: detail.id, sessions })
+                        }
                         courseStatus={course?.status}
                         csrfToken={csrfToken}
                         onOpen={(sessionId) =>

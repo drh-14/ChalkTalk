@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import {
   SESSION_LANGUAGES,
   createSession,
+  languageFromTags,
   listSessions,
   type CodeSession,
   type SessionLanguage,
@@ -41,19 +42,47 @@ function SessionRow({
   );
 }
 
-/** Live code sessions on a post that the viewer may open, and a way to start one. */
+/** Links to the viewer's active session on a post, for the post header. */
+export function ActiveSessionLink({
+  sessions,
+  onOpen,
+}: {
+  sessions: readonly CodeSession[] | undefined;
+  onOpen: (sessionId: string) => void;
+}) {
+  const active = sessions?.find((session) => session.status === "active");
+  if (!active) return null;
+  return (
+    <button
+      type="button"
+      className="active-session-link"
+      onClick={() => onOpen(active.id)}
+    >
+      <span className="active-session-dot" aria-hidden="true" />
+      Live session active
+      <span className="visually-hidden">: join {active.title}</span>
+    </button>
+  );
+}
+
+/** Live sessions on a post that the viewer may open, and a way to start one. */
 export function SessionsPanel({
   courseId,
   postId,
+  tags = [],
   courseStatus,
   csrfToken,
   onOpen,
+  onLoaded,
 }: {
   courseId: string;
   postId: string;
+  tags?: readonly string[];
   courseStatus?: string;
   csrfToken: string;
   onOpen: (sessionId: string) => void;
+  /** Receives the sessions this panel lists, so the post header can link to one. */
+  onLoaded?: (sessions: CodeSession[]) => void;
 }) {
   const headingId = useId();
   const [sessions, setSessions] = useState<CodeSession[]>();
@@ -70,7 +99,10 @@ export function SessionsPanel({
     setSessions(undefined);
     setError(undefined);
     void listSessions(courseId, { postId, signal: controller.signal })
-      .then((page) => setSessions(page.data))
+      .then((page) => {
+        setSessions(page.data);
+        onLoaded?.(page.data);
+      })
       .catch((caught) => {
         if (!controller.signal.aborted)
           setError(
@@ -80,6 +112,8 @@ export function SessionsPanel({
           );
       });
     return () => controller.abort();
+    // onLoaded reports this post's sessions; a new callback alone is no reason to refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId, postId]);
 
   async function start(event: FormEvent<HTMLFormElement>) {
@@ -111,14 +145,17 @@ export function SessionsPanel({
   return (
     <section className="sessions-panel" aria-labelledby={headingId}>
       <div className="sessions-header">
-        <h3 id={headingId}>Live code sessions</h3>
+        <h3 id={headingId}>Live sessions</h3>
         {courseStatus === "active" && !starting && (
           <button
             type="button"
             className="button secondary compact"
-            onClick={() => setStarting(true)}
+            onClick={() => {
+              setLanguage(languageFromTags(tags));
+              setStarting(true);
+            }}
           >
-            Start live code session
+            Start live session
           </button>
         )}
       </div>
@@ -126,7 +163,7 @@ export function SessionsPanel({
         <form
           className="sessions-start"
           onSubmit={start}
-          aria-label="Start a live code session"
+          aria-label="Start a live session"
         >
           <label>
             Language
@@ -189,9 +226,7 @@ export function SessionsPanel({
           ))}
         </ul>
       ) : (
-        <p className="sessions-empty">
-          No active live code sessions on this post.
-        </p>
+        <p className="sessions-empty">No active live sessions on this post.</p>
       )}
       {ended.length > 0 && (
         <>

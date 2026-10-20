@@ -1,12 +1,12 @@
 ## Collaboration Sessions
 
-Live code sessions are private, temporary shared code documents anchored to a post. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
+Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
 
 <a id="createCollaborationSession"></a>
 
 ### **`POST /api/v1/courses/{courseId}/collaboration-sessions`**
 
-Creates an active, private live code session anchored to a readable post in an active course. The creator becomes the first participant. The text starts empty. Create a separate one-use connection ticket before opening the collaboration WebSocket.
+Creates an active, private live session anchored to a readable post in an active course. The creator becomes the first participant. The text starts empty. Create a separate one-use connection ticket before opening the collaboration WebSocket.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -1073,6 +1073,8 @@ None.
 
 `data.content` (string, required, at most 200000 characters): Plain-text projection of Y.Text('content'), at most 200,000 characters.
 
+`data.whiteboard` (array of objects, required, at most 5000 items): Non-deleted whiteboard elements as last persisted, in drawing order (fractional index, then id). Each is an Excalidraw 0.18 element with at least `id` and `type` (rectangle, ellipse, diamond, line, arrow, freedraw, or text); other fields are kept as drawn. See the [collaboration WebSocket protocol](collaboration-websocket.md#whiteboard) for the element rules.
+
 `data.persistedAt` (string, required): UTC timestamp of the returned snapshot.
 
 `data.capturedAt` (string, required): UTC timestamp when the response projection was captured.
@@ -1094,6 +1096,23 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123/snapshot' \
     "documentId": "collaboration-session:collab_123",
     "sessionStatus": "active",
     "content": "for i in range(3):\n    print(i)\n",
+    "whiteboard": [
+      {
+        "id": "r1",
+        "type": "rectangle",
+        "x": 40,
+        "y": 30,
+        "width": 120,
+        "height": 60,
+        "strokeColor": "#1e1e1e",
+        "backgroundColor": "transparent",
+        "version": 3,
+        "versionNonce": 1046,
+        "index": "a0",
+        "isDeleted": false,
+        "link": null
+      }
+    ],
     "persistedAt": "2026-09-20T14:31:58Z",
     "capturedAt": "2026-09-20T14:32:00Z"
   }

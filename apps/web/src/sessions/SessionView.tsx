@@ -1,9 +1,12 @@
 import {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type MouseEvent,
 } from "react";
 import type { Awareness } from "y-protocols/awareness";
@@ -29,6 +32,15 @@ import {
   type SessionLanguage,
   type Versioned,
 } from "./client.js";
+
+// Excalidraw is large, so it loads only when someone opens the whiteboard.
+const Whiteboard = lazy(() => import("./Whiteboard.js"));
+
+type Tab = "code" | "whiteboard";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "code", label: "Code" },
+  { id: "whiteboard", label: "Whiteboard" },
+];
 
 const STATE_TEXT: Record<ConnectionState, string> = {
   connecting: "Connecting…",
@@ -103,6 +115,13 @@ export function SessionView({
   const connection = useRef<SessionConnection | null>(null);
   const finalState = useRef(false);
   const text = useMemo(() => document.getText("content"), [document]);
+  const board = useMemo(() => document.getMap("whiteboard"), [document]);
+  const [tab, setTab] = useState<Tab>("code");
+  const [whiteboardOpened, setWhiteboardOpened] = useState(false);
+  const [boardActions, setBoardActions] = useState<HTMLDivElement | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [self, setSelf] = useState<Presence>();
   const online = useAwarenessUsers(awareness);
 
   const refresh = useCallback(async () => {
@@ -127,6 +146,9 @@ export function SessionView({
         const snapshot = await getSnapshot(sessionId);
         const finished = new Y.Doc();
         finished.getText("content").insert(0, snapshot.content);
+        const finishedBoard = finished.getMap("whiteboard");
+        for (const element of snapshot.whiteboard ?? [])
+          finishedBoard.set(element.id, element);
         setDocument(finished);
       } catch {
         // Keep the text already on screen if the snapshot cannot be read.
@@ -221,6 +243,8 @@ export function SessionView({
             }
             if (message.type === "session-ended") void showFinalText("ended");
             if (message.type === "session-updated") void refresh();
+            if (message.type === "presence")
+              setSelf((message as { user?: Presence }).user);
           },
         });
         connection.current = opened;
@@ -271,6 +295,20 @@ export function SessionView({
       setPending(false);
     }
   }
+  const choose = (next: Tab) => {
+    setTab(next);
+    if (next === "whiteboard") setWhiteboardOpened(true);
+  };
+  const moveTab = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const step =
+      event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const index = TABS.findIndex((item) => item.id === tab);
+    const next = TABS[(index + step + TABS.length) % TABS.length]!.id;
+    choose(next);
+    window.document.getElementById(`session-tab-${next}`)?.focus();
+  };
   const follow = (event: MouseEvent<HTMLAnchorElement>, path: string) => {
     if (
       event.button !== 0 ||
@@ -315,10 +353,28 @@ export function SessionView({
         (participant) => participant.userId === member.user.id,
       ),
   );
+  const colors = new Map(online.map((user) => [user.userId, user.color]));
   const onlineIds = new Set(online.map((user) => user.userId));
-  // The server labels other clients' presence; the viewer is online while connected.
-  if (state === "connected") onlineIds.add(viewerId);
+  // Awareness relays this viewer's presence only to others; the server sends
+  // the viewer their own color when they connect.
+  if (state === "connected") {
+    onlineIds.add(viewerId);
+    if (self) colors.set(viewerId, self.color);
+  }
   const sessionActive = state !== "ended" && state !== "removed";
+  const languageLabel = SESSION_LANGUAGES.find(
+    (option) => option.value === session.data.language,
+  )?.label;
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(text.toString());
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("The code couldn't be copied. Select it and copy instead.");
+    }
+  }
 
   return (
     <section className="session-view" aria-labelledby="session-heading">
@@ -332,22 +388,44 @@ export function SessionView({
             Back to post
           </a>
           <h2 id="session-heading">{session.data.title}</h2>
-          <p className="session-meta">
-            Live code session ·{" "}
-            {
-              SESSION_LANGUAGES.find(
-                (option) => option.value === session.data.language,
-              )?.label
-            }
-          </p>
+          <p className="session-meta">Live session</p>
         </div>
-        <p
-          className={`session-state session-state-${state}`}
-          role="status"
-          aria-live="polite"
-        >
-          {STATE_TEXT[state]}
-        </p>
+        <div className="session-header-actions">
+          <p
+            className={`session-state session-state-${state}`}
+            role="status"
+            aria-live="polite"
+          >
+            {STATE_TEXT[state]}
+          </p>
+          {manager && sessionActive && (
+            <button
+              type="button"
+              className="button danger"
+              disabled={pending}
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    "End this session for everyone? The code and whiteboard become read-only.",
+                  )
+                )
+                  return;
+                void act(async () => {
+                  const ended = await updateSession(
+                    sessionId,
+                    { status: "ended" },
+                    session.etag,
+                    csrfToken,
+                  );
+                  setSession(ended);
+                  await showFinalText("ended");
+                });
+              }}
+            >
+              End session
+            </button>
+          )}
+        </div>
       </header>
       {error && (
         <p className="form-message error" role="alert">
@@ -355,74 +433,144 @@ export function SessionView({
         </p>
       )}
       <div className="session-layout">
-        <div className="session-editor">
+        <div className="session-workspace">
           {state === "removed" ? (
             <p className="session-removed">
               Your access to this session was removed.
             </p>
           ) : (
-            <CodeEditor
-              key={document.guid}
-              text={text}
-              awareness={awareness}
-              language={session.data.language}
-              readOnly={!editable}
-            />
+            <>
+              <div className="session-tab-bar">
+                <div
+                  className="session-tabs"
+                  role="tablist"
+                  aria-label="Session workspace"
+                >
+                  {TABS.map((item) => (
+                    <button
+                      key={item.id}
+                      id={`session-tab-${item.id}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={tab === item.id}
+                      aria-controls={`session-panel-${item.id}`}
+                      tabIndex={tab === item.id ? 0 : -1}
+                      onClick={() => choose(item.id)}
+                      onKeyDown={moveTab}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="session-tab-actions" hidden={tab !== "code"}>
+                  {manager && sessionActive ? (
+                    <label className="session-language">
+                      <span className="visually-hidden">Language</span>
+                      <select
+                        value={session.data.language}
+                        disabled={pending}
+                        onChange={(event) => {
+                          const language = event.target
+                            .value as SessionLanguage;
+                          void act(async () => {
+                            setSession(
+                              await updateSession(
+                                sessionId,
+                                { language },
+                                session.etag,
+                                csrfToken,
+                              ),
+                            );
+                          });
+                        }}
+                      >
+                        {SESSION_LANGUAGES.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <span className="session-language-label">
+                      {languageLabel}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => void copyCode()}
+                  >
+                    {copied ? "Copied" : "Copy code"}
+                  </button>
+                  <span className="visually-hidden" aria-live="polite">
+                    {copied ? "Code copied to the clipboard" : ""}
+                  </span>
+                </div>
+                <div
+                  className="session-tab-actions"
+                  hidden={tab !== "whiteboard"}
+                  ref={setBoardActions}
+                />
+              </div>
+              <div
+                id="session-panel-code"
+                className="session-panel"
+                role="tabpanel"
+                aria-labelledby="session-tab-code"
+                hidden={tab !== "code"}
+              >
+                <CodeEditor
+                  key={document.guid}
+                  text={text}
+                  awareness={awareness}
+                  language={session.data.language}
+                  readOnly={!editable}
+                />
+              </div>
+              <div
+                id="session-panel-whiteboard"
+                className="session-panel"
+                role="tabpanel"
+                aria-labelledby="session-tab-whiteboard"
+                hidden={tab !== "whiteboard"}
+              >
+                {whiteboardOpened && (
+                  <Suspense
+                    fallback={
+                      <p className="session-loading">Loading whiteboard…</p>
+                    }
+                  >
+                    <Whiteboard
+                      key={document.guid}
+                      board={board}
+                      awareness={awareness}
+                      readOnly={!editable}
+                      visible={tab === "whiteboard"}
+                      title={session.data.title}
+                      actions={boardActions}
+                    />
+                  </Suspense>
+                )}
+              </div>
+            </>
           )}
         </div>
         <aside className="session-side" aria-label="Session details">
           <section aria-labelledby="participants-heading">
-            <h3 id="participants-heading">Participants</h3>
-            <ul className="session-participants">
-              {session.data.participants.map((participant) => (
-                <li key={participant.userId}>
-                  <span
-                    className={`presence-dot${onlineIds.has(participant.userId) ? " online" : ""}`}
-                    style={{
-                      background: online.find(
-                        (user) => user.userId === participant.userId,
-                      )?.color,
-                    }}
-                    aria-hidden="true"
-                  />
-                  <span>
-                    {participant.displayName}
-                    {participant.userId === viewerId ? " (you)" : ""}
-                    {participant.role === "creator" ? " · started this" : ""}
-                    <span className="visually-hidden">
-                      {onlineIds.has(participant.userId)
-                        ? ", online"
-                        : ", offline"}
-                    </span>
-                  </span>
-                  {manager &&
-                    sessionActive &&
-                    participant.role === "invitee" && (
-                      <button
-                        type="button"
-                        className="text-button"
-                        disabled={pending}
-                        aria-label={`Remove ${participant.displayName}`}
-                        onClick={() =>
-                          void act(async () => {
-                            await removeParticipant(
-                              sessionId,
-                              participant.userId,
-                              csrfToken,
-                            );
-                            await refresh();
-                          })
-                        }
-                      >
-                        Remove
-                      </button>
-                    )}
-                </li>
-              ))}
-            </ul>
-          </section>
-          {manager && sessionActive && (
-            <>
+            <div className="session-side-heading">
+              <h3 id="participants-heading">Participants</h3>
+              {manager && sessionActive && !inviting && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setInviting(true)}
+                >
+                  + Invite
+                </button>
+              )}
+            </div>
+            {manager && sessionActive && inviting && (
               <form
                 className="session-invite"
                 onSubmit={(event) => {
@@ -433,6 +581,7 @@ export function SessionView({
                       await inviteParticipant(sessionId, inviteeId, csrfToken),
                     );
                     setInviteeId("");
+                    setInviting(false);
                   });
                 }}
               >
@@ -444,7 +593,11 @@ export function SessionView({
                   disabled={!members}
                 >
                   <option value="">
-                    {members ? "Choose a member" : "Loading members…"}
+                    {members
+                      ? invitable.length
+                        ? "Choose a member"
+                        : "Everyone is already here"
+                      : "Loading members…"}
                   </option>
                   {invitable.map((member) => (
                     <option key={member.user.id} value={member.user.id}>
@@ -453,67 +606,82 @@ export function SessionView({
                     </option>
                   ))}
                 </select>
-                <button
-                  type="submit"
-                  className="button secondary"
-                  disabled={!inviteeId || pending}
-                >
-                  Invite
-                </button>
+                <div className="session-invite-actions">
+                  <button
+                    type="submit"
+                    className="button secondary"
+                    disabled={!inviteeId || pending}
+                  >
+                    Invite
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      setInviting(false);
+                      setInviteeId("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </form>
-              <label className="session-language">
-                Language
-                <select
-                  value={session.data.language}
-                  disabled={pending}
-                  onChange={(event) => {
-                    const language = event.target.value as SessionLanguage;
-                    void act(async () => {
-                      setSession(
-                        await updateSession(
-                          sessionId,
-                          { language },
-                          session.etag,
-                          csrfToken,
-                        ),
-                      );
-                    });
-                  }}
-                >
-                  {SESSION_LANGUAGES.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                className="button danger"
-                disabled={pending}
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      "End this session for everyone? The code becomes read-only.",
-                    )
-                  )
-                    return;
-                  void act(async () => {
-                    const ended = await updateSession(
-                      sessionId,
-                      { status: "ended" },
-                      session.etag,
-                      csrfToken,
-                    );
-                    setSession(ended);
-                    await showFinalText("ended");
-                  });
-                }}
-              >
-                End session
-              </button>
-            </>
-          )}
+            )}
+            <ul className="session-participants">
+              {session.data.participants.map((participant) => {
+                const isOnline = onlineIds.has(participant.userId);
+                const color = colors.get(participant.userId);
+                return (
+                  <li key={participant.userId}>
+                    <span
+                      className="session-avatar"
+                      style={color ? { background: color } : undefined}
+                      aria-hidden="true"
+                    >
+                      {participant.displayName.trim().charAt(0).toUpperCase()}
+                      <span
+                        className={`presence-dot${isOnline ? " online" : ""}`}
+                      />
+                    </span>
+                    <span>
+                      {participant.displayName}
+                      {participant.userId === viewerId ? " (you)" : ""}
+                      <span className="session-participant-note">
+                        {participant.role === "creator"
+                          ? "Started this"
+                          : "Invited"}
+                      </span>
+                      <span className="visually-hidden">
+                        {isOnline ? ", online" : ", offline"}
+                      </span>
+                    </span>
+                    {manager &&
+                      sessionActive &&
+                      participant.role === "invitee" && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          disabled={pending}
+                          aria-label={`Remove ${participant.displayName}`}
+                          onClick={() =>
+                            void act(async () => {
+                              await removeParticipant(
+                                sessionId,
+                                participant.userId,
+                                csrfToken,
+                              );
+                              await refresh();
+                            })
+                          }
+                        >
+                          Remove
+                        </button>
+                      )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         </aside>
       </div>
     </section>

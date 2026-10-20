@@ -1,7 +1,7 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { SessionsPanel } from "./SessionsPanel.js";
+import { ActiveSessionLink, SessionsPanel } from "./SessionsPanel.js";
 
 const base = {
   courseId: "c-1",
@@ -99,7 +99,7 @@ it("shows an empty state when there are no active sessions", async () => {
   api([]);
   panel();
   expect(
-    await screen.findByText("No active live code sessions on this post."),
+    await screen.findByText("No active live sessions on this post."),
   ).toBeTruthy();
 });
 
@@ -108,7 +108,7 @@ it("starts a session with the chosen language, warns about names, and opens it",
   const onOpen = panel();
   const user = userEvent.setup();
   await user.click(
-    await screen.findByRole("button", { name: "Start live code session" }),
+    await screen.findByRole("button", { name: "Start live session" }),
   );
   expect(
     screen.getByText(
@@ -148,7 +148,7 @@ it("keeps the dialog open and shows the error if starting fails", async () => {
   const onOpen = panel();
   const user = userEvent.setup();
   await user.click(
-    await screen.findByRole("button", { name: "Start live code session" }),
+    await screen.findByRole("button", { name: "Start live session" }),
   );
   await user.click(screen.getByRole("button", { name: "Start session" }));
   expect((await screen.findByRole("alert")).textContent).toBe(
@@ -163,6 +163,56 @@ it("does not offer starting a session in an archived course", async () => {
   panel("archived");
   await screen.findByText("Loop help");
   expect(
-    screen.queryByRole("button", { name: "Start live code session" }),
+    screen.queryByRole("button", { name: "Start live session" }),
+  ).toBeNull();
+});
+
+it("suggests the language named by the post's tags", async () => {
+  api([]);
+  render(
+    <SessionsPanel
+      courseId="c-1"
+      postId="p-1"
+      tags={["hw3", "Java"]}
+      courseStatus="active"
+      csrfToken="csrf"
+      onOpen={vi.fn()}
+    />,
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Start live session" }),
+  );
+  expect((screen.getByLabelText("Language") as HTMLSelectElement).value).toBe(
+    "java",
+  );
+});
+
+it("reports its sessions so the post header can link to an active one", async () => {
+  api([active]);
+  const onLoaded = vi.fn();
+  const onOpen = vi.fn();
+  render(
+    <SessionsPanel
+      courseId="c-1"
+      postId="p-1"
+      courseStatus="active"
+      csrfToken="csrf"
+      onOpen={onOpen}
+      onLoaded={onLoaded}
+    />,
+  );
+  await waitFor(() => expect(onLoaded).toHaveBeenCalled());
+  cleanup();
+  render(
+    <ActiveSessionLink sessions={onLoaded.mock.calls[0][0]} onOpen={onOpen} />,
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: /Live session active/ }),
+  );
+  expect(onOpen).toHaveBeenCalledWith(active.id);
+  cleanup();
+  render(<ActiveSessionLink sessions={[]} onOpen={onOpen} />);
+  expect(
+    screen.queryByRole("button", { name: /Live session active/ }),
   ).toBeNull();
 });

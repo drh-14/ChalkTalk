@@ -619,9 +619,10 @@ export class CollaborationSessionService {
     const access = await this.access(this.pool, sessionId, userId);
     const document = await this.pool.query<{
       text_projection: string;
+      whiteboard_projection: unknown[];
       persisted_at: Date;
     }>(
-      "SELECT text_projection,persisted_at FROM collaboration_documents WHERE collaboration_session_id=$1",
+      "SELECT text_projection,whiteboard_projection,persisted_at FROM collaboration_documents WHERE collaboration_session_id=$1",
       [sessionId],
     );
     return {
@@ -632,6 +633,7 @@ export class CollaborationSessionService {
           ? ("ended" as const)
           : ("active" as const),
       content: document.rows[0]?.text_projection ?? "",
+      whiteboard: document.rows[0]?.whiteboard_projection ?? [],
       persistedAt: (
         document.rows[0]?.persisted_at ?? access.row.created_at
       ).toISOString(),

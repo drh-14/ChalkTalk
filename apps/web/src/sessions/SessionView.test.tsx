@@ -12,6 +12,32 @@ import type * as Y from "yjs";
 import type { ConnectOptions } from "./connection.js";
 import { SessionView } from "./SessionView.js";
 
+const whiteboard = vi.hoisted(() => ({ loaded: 0, mounted: 0 }));
+vi.mock("./Whiteboard.js", async () => {
+  whiteboard.loaded += 1;
+  const { useEffect } = await import("react");
+  return {
+    default: function FakeWhiteboard(props: {
+      board: Y.Map<unknown>;
+      readOnly: boolean;
+      visible: boolean;
+    }) {
+      useEffect(() => {
+        whiteboard.mounted += 1;
+      }, []);
+      return (
+        <div
+          data-testid="whiteboard"
+          data-read-only={String(props.readOnly)}
+          data-visible={String(props.visible)}
+        >
+          {[...props.board.keys()].join(",")}
+        </div>
+      );
+    },
+  };
+});
+
 const session = {
   id: "s-1",
   courseId: "c-1",
@@ -65,6 +91,7 @@ function api(
     session?: object;
     sessionStatus?: number;
     snapshot?: string;
+    whiteboard?: object[];
   } = {},
 ) {
   const calls: Calls = [];
@@ -97,6 +124,7 @@ function api(
         return json({
           data: {
             content: overrides.snapshot ?? "final code",
+            whiteboard: overrides.whiteboard ?? [],
             sessionStatus: "ended",
           },
         });
@@ -162,7 +190,8 @@ function view(
   );
   return navigate;
 }
-const status = () => screen.getByRole("status").textContent;
+const status = () =>
+  document.querySelector(".session-state")?.textContent ?? null;
 const editor = () => document.querySelector(".cm-content") as HTMLElement;
 
 afterEach(() => {
@@ -253,6 +282,9 @@ it("invites from course members who are not yet participants", async () => {
   const calls = api();
   const { connect } = fakeConnect();
   view("alice", connect);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "+ Invite" }),
+  );
   const picker = (await screen.findByLabelText(
     "Invite a course member",
   )) as HTMLSelectElement;
@@ -344,4 +376,107 @@ it("shows the viewer as online while connected", async () => {
   expect(screen.getByText(/Bob \(you\)/).textContent).toContain(", offline");
   act(() => opened.options!.onSynced());
   expect(screen.getByText(/Bob \(you\)/).textContent).toContain(", online");
+});
+
+it("switches between code and whiteboard without reconnecting or remounting the editor", async () => {
+  api();
+  const { connect, opened } = fakeConnect();
+  view("bob", connect);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  act(() => opened.options!.onSynced());
+  const code = screen.getByRole("tab", { name: "Code" });
+  const board = screen.getByRole("tab", { name: "Whiteboard" });
+  expect(code.getAttribute("aria-selected")).toBe("true");
+  expect(whiteboard.loaded).toBe(0);
+  const editorNode = editor();
+
+  await userEvent.click(board);
+  const shown = await screen.findByTestId("whiteboard");
+  expect(whiteboard.loaded).toBe(1);
+  expect(board.getAttribute("aria-selected")).toBe("true");
+  expect(shown.dataset.visible).toBe("true");
+  expect(shown.dataset.readOnly).toBe("false");
+  expect(editorNode.closest("[role=tabpanel]")?.hasAttribute("hidden")).toBe(
+    true,
+  );
+
+  await userEvent.click(code);
+  expect(editor()).toBe(editorNode);
+  expect(shown.dataset.visible).toBe("false");
+  code.focus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(document.activeElement).toBe(board);
+  expect(whiteboard.mounted).toBe(1);
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(opened.destroyed).toBe(false);
+  expect(status()).toBe("Connected");
+});
+
+it("shows the final whiteboard read-only after the session ends", async () => {
+  api({
+    whiteboard: [
+      { id: "r1", type: "rectangle", index: "a0" },
+      { id: "t1", type: "text", index: "a1" },
+    ],
+  });
+  const { connect, opened } = fakeConnect();
+  view("bob", connect);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  act(() => opened.options!.onSynced());
+  await userEvent.click(screen.getByRole("tab", { name: "Whiteboard" }));
+  act(() => opened.options!.onClose("session-ended"));
+  await waitFor(() => expect(status()).toBe("Session ended (read-only)"));
+  await waitFor(() =>
+    expect(screen.getByTestId("whiteboard").textContent).toBe("r1,t1"),
+  );
+  expect(screen.getByTestId("whiteboard").dataset.readOnly).toBe("true");
+});
+
+it("marks the connected viewer online in the color the server assigns", async () => {
+  api();
+  const { connect, opened } = fakeConnect();
+  view("bob", connect);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  act(() => opened.options!.onSynced());
+  act(() =>
+    opened.options!.onStateless(
+      JSON.stringify({
+        type: "presence",
+        user: { userId: "bob", name: "Bob", color: "#1d4ed8" },
+      }),
+    ),
+  );
+  const bob = screen.getByText(/Bob \(you\)/).closest("li")!;
+  expect(bob.textContent).toContain(", online");
+  const avatar = bob.querySelector(".session-avatar") as HTMLElement;
+  expect(avatar.textContent?.startsWith("B")).toBe(true);
+  expect(avatar.style.background).toBe("rgb(29, 78, 216)");
+  expect(bob.querySelector(".presence-dot.online")).not.toBeNull();
+});
+
+it("keeps each tab's actions in the tab bar and copies the code", async () => {
+  api();
+  const writeText = vi.fn(async () => undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  const { connect, opened } = fakeConnect();
+  view("alice", connect);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  act(() => opened.options!.onSynced());
+  act(() => opened.options!.document.getText("content").insert(0, "x = 1"));
+  const copy = screen.getByRole("button", { name: "Copy code" });
+  expect(screen.getByLabelText("Language")).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "End session" }).closest("header"),
+  ).not.toBeNull();
+  await userEvent.click(copy);
+  expect(writeText).toHaveBeenCalledWith("x = 1");
+  expect(await screen.findByText("Code copied to the clipboard")).toBeTruthy();
+  await userEvent.click(screen.getByRole("tab", { name: "Whiteboard" }));
+  expect(copy.closest(".session-tab-actions")?.hasAttribute("hidden")).toBe(
+    true,
+  );
+  expect(screen.queryByText(/Live session ·/)).toBeNull();
 });
