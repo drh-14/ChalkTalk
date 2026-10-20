@@ -3535,6 +3535,20 @@ paths:
                       message: The query, filters, date range, sort, or pagination are invalid.
                       requestId: req_listCoursePosts
                       details: []
+        "409":
+          description: A semantic relevance cursor cannot continue after indexing or the query provider becomes unhealthy. Restart without a cursor, preserving search filters.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                search_restart_required:
+                  value:
+                    error:
+                      code: search_restart_required
+                      message: Search ranking changed. Restart without the cursor.
+                      requestId: req_listCoursePosts
+                      details: []
         "404":
           description: Not Found
           content:
@@ -3601,6 +3615,14 @@ paths:
           in: query
           required: false
           description: Trimmed non-empty search text; see the [course posts API reference](api/posts.md) for matching rules. Omit to list without search.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+        - name: semanticQuery
+          in: query
+          required: false
+          description: Separate natural-language semantic query. Requires q; does not change q operator meaning. Ignored when deployment embeddings or optional pgvector schema are unavailable. A query-provider error, pending post catch-up work, or a failed current-generation indexing job uses only the established full-text and fuzzy search path.
           schema:
             type: string
             minLength: 1

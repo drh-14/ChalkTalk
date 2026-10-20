@@ -228,7 +228,7 @@ Only a successful confirmation of a question SHALL queue this notification. A su
 
 ### Requirement: Ordinary text search fuses full-text and fuzzy post matches
 
-Course lists SHALL support ordinary `q` searches across post titles and bodies using the union of English full-text matches and PostgreSQL trigram word-similarity matches. Fuzzy matching SHALL require at least one non-stopword query term of three or more searchable characters; queries without an eligible term SHALL use full-text matching and ranking alone. Exact full-text matches SHALL precede fuzzy-only matches within each pinned group for `sort=relevance`; fuzzy score SHALL influence ordering within each group, with title matches favored over body matches. Quoted phrases, `OR`, and excluded-term queries SHALL retain the existing full-text-only matching and ranking behavior. Other sorts SHALL include the same complete ordinary-query match set and use their existing ordering. Course membership, deleted and confirmed-duplicate exclusions, viewer-aware author filters, other list filters, pinned-first ordering, and cursor pagination SHALL apply to the complete match set before pagination. Cursors SHALL be bound to course, viewer, sort, filters, and the relevance ranking version.
+Course lists SHALL support ordinary `q` searches across post titles and bodies using the union of English full-text matches and PostgreSQL trigram word-similarity matches. Fuzzy matching SHALL require at least one non-stopword query term of three or more searchable characters; queries without an eligible term SHALL use full-text matching and ranking alone. Exact full-text matches SHALL precede fuzzy-only matches within each pinned group for `sort=relevance`; fuzzy score SHALL influence ordering within each group, with title matches favored over body matches. Quoted phrases, `OR`, and excluded-term queries SHALL retain the existing full-text-only matching and ranking behavior unless a separate, bounded `semanticQuery` accompanies `q`; that parameter SHALL add semantic candidates without changing the operator meaning of `q` and SHALL require `q`. When deployment embeddings and pgvector are available and the current-generation index is healthy, semantic-only matches SHALL follow full-text and fuzzy-only matches within each pinned group, ordered by exact cosine similarity without an initial cutoff. If the key, vector schema, provider, or current-generation index is unavailable, search SHALL use only the established lexical/fuzzy path. Other sorts SHALL include the same complete ordinary-query match set and use their existing ordering. Course membership, deleted and confirmed-duplicate exclusions, viewer-aware author filters, other list filters, pinned-first ordering, and cursor pagination SHALL apply to the complete match set before pagination. Cursors SHALL be bound to course, viewer, sort, filters, the relevance ranking version, and the semantic generation when applicable. A valid semantic relevance cursor SHALL return `409 search_restart_required` if indexing or the query provider becomes unhealthy between pages; a fresh request without the cursor SHALL use the lexical/fuzzy path. Invalid or mismatched cursors SHALL return `400 invalid_request`.
 
 #### Scenario: A typo matches a title or body
 
@@ -243,7 +243,7 @@ Course lists SHALL support ordinary `q` searches across post titles and bodies u
 #### Scenario: Operator syntax retains full-text semantics
 
 - **WHEN** a query contains a quoted phrase, `OR`, or an excluded term
-- **THEN** only the existing English full-text matching and relevance rules apply
+- **THEN** only the existing English full-text matching and relevance rules apply unless a separate `semanticQuery` accompanies `q`
 
 #### Scenario: A query without eligible terms cannot fuzzy match
 
@@ -254,3 +254,57 @@ Course lists SHALL support ordinary `q` searches across post titles and bodies u
 
 - **WHEN** a fuzzy match is deleted, a confirmed duplicate, in another course, or excluded by a viewer-aware filter
 - **THEN** it is absent from the response and does not affect ranking or `hasMore`
+
+### Requirement: Optional semantic post search
+
+A deployment MAY enable semantic search of questions and notes with an OpenAI-compatible embedding provider and optional pgvector schema. With no key, unavailable schema, provider failure, or invalid embedding response, list search SHALL retain full-text and fuzzy behavior without returning an error. Provider requests SHALL contain only bounded search text or post title/body chunks, not identities or course metadata.
+
+Post creation, text edits, and unmerges SHALL commit even if semantic enqueue or indexing fails. A write with unavailable or failed enqueue SHALL atomically record per-post catch-up state in ordinary PostgreSQL for each active registered generation, including when no provider key is configured on the writing instance. A newly registered generation SHALL begin an initial backfill that includes earlier writes. A worker SHALL drain catch-up state in bounded work without repeatedly scanning the whole indexed corpus while idle, and SHALL clear it only after storing the current post revision. Deleted and confirmed-duplicate posts SHALL have their catch-up state removed in the same transaction as embedding cleanup. While current-generation catch-up state or a failed current-generation indexing job remains, semantic search SHALL use only the established full-text and fuzzy path. A query-provider failure SHALL do the same.
+
+An indexing worker SHALL claim and complete only jobs for its configured embedding generation. Catch-up state SHALL be independently keyed by post and generation so old-generation and no-key API writes cannot replace new-generation work. A no-key write SHALL atomically create pending work for each recently registered generation, without a shared marker clearable by another worker. Registration SHALL serialize with no-key writes, and a newly registered generation SHALL begin its own initial backfill. A worker SHALL clear only its own generation marker after successful revision-checked storage for that generation. Health checks SHALL ignore markers from other generations. Whitespace-only fixed-width chunks of otherwise valid post text SHALL not be sent to the provider.
+
+#### Scenario: Rolling embedding generation
+
+- **WHEN** an old-generation worker and a new-generation worker run concurrently with new-generation catch-up work
+- **THEN** the old worker cannot claim the new job or clear its catch-up state, and the new worker stores new-generation vectors before clearing it
+
+For ordinary `q`, semantic matches MAY join the candidate set. Explicit phrase, `OR`, and negative queries SHALL keep their existing lexical meaning and SHALL not implicitly expand semantically. `semanticQuery` MAY accompany a valid `q`; it SHALL be bounded and validated, and SHALL not alter `q` boolean semantics. A request with `semanticQuery` but without `q` SHALL return `400 invalid_request`.
+
+Within each pinned group, relevance SHALL rank full-text matches first, fuzzy-only matches second, and semantic-only matches third. Semantic similarity SHALL order only the semantic-only tier; no similarity cutoff applies initially. Chronological sorts SHALL preserve their documented ordering across all matching visible candidates. Authorization, course, filters, confirmed duplicates, pagination, and `hasMore` SHALL be applied to the complete visible union of candidates, not a truncated global vector result. Cursors SHALL bind the semantic ranking generation and reject incompatible use. Deleted and stale-revision embeddings SHALL not match.
+
+When semantic ranking becomes unhealthy between relevance pages, a semantic cursor SHALL return `409 search_restart_required` rather than a fabricated final page. A request without that cursor SHALL return only the established lexical/fuzzy results. Invalid or mismatched cursors SHALL retain their existing `400 invalid_request` response.
+
+#### Scenario: Lexical precedence over semantic similarity
+
+- **WHEN** a member searches a course with full-text, fuzzy-only, and semantic-only candidate posts
+- **THEN** every full-text result precedes every fuzzy-only result, and every fuzzy-only result precedes every semantic-only result within each pinned group
+
+#### Scenario: Semantic service unavailable
+
+- **WHEN** the key, vector schema, or provider is unavailable
+- **THEN** the same request returns lexical and fuzzy results and does not fail
+
+#### Scenario: Semantic query requires ordinary query
+
+- **WHEN** `semanticQuery` is supplied without `q`
+- **THEN** the API returns `400 invalid_request`
+
+#### Scenario: Private and duplicate posts cannot leak through semantic search
+
+- **WHEN** embeddings exist for posts outside the course, deleted posts, or confirmed duplicates
+- **THEN** they do not affect results, pagination, or `hasMore`
+
+#### Scenario: Stale index result is discarded
+
+- **WHEN** a post changes while the provider computes an embedding
+- **THEN** the old revision cannot be stored as an eligible embedding
+
+#### Scenario: Enqueue fails while a write is in flight
+
+- **WHEN** a post write obtains an update timestamp before a backfill scan passes it, and enqueue then fails before the write commits
+- **THEN** the post still commits with durable catch-up state and a later worker poll indexes its current revision
+
+#### Scenario: Indexing fails and recovers
+
+- **WHEN** the current generation's worker job fails or a post has pending catch-up state
+- **THEN** search returns only full-text and fuzzy results until successful revision-checked indexing clears the failure and catch-up state
