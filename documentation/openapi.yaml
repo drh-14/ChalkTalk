@@ -9786,6 +9786,24 @@ paths:
                       message: The request body is invalid.
                       requestId: req_createCollaborationSession
                       details: []
+        "429":
+          description: Too Many Requests
+          headers:
+            Retry-After:
+              "$ref": "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                rate_limited:
+                  summary: The caller created too many sessions in the last hour.
+                  value:
+                    error:
+                      code: rate_limited
+                      message: The caller created too many sessions in the last hour.
+                      requestId: req_createCollaborationSession
+                      details: []
         "500":
           description: Internal Server Error
           content:
@@ -10693,6 +10711,24 @@ paths:
                     error:
                       code: course_archived
                       message: The course is archived.
+                      requestId: req_createCollaborationConnectionTicket
+                      details: []
+        "429":
+          description: Too Many Requests
+          headers:
+            Retry-After:
+              "$ref": "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                rate_limited:
+                  summary: The caller requested too many connection tickets in the last 10 minutes.
+                  value:
+                    error:
+                      code: rate_limited
+                      message: The caller requested too many connection tickets in the last 10 minutes.
                       requestId: req_createCollaborationConnectionTicket
                       details: []
         "500":

@@ -144,6 +144,18 @@ integration("collaboration session schema", () => {
     });
   });
 
+  it("records when a new session was last active", async () => {
+    const before = Date.now();
+    const id = await insertSession({});
+    const saved = await pool.query<{ last_active_at: Date }>(
+      "SELECT last_active_at FROM collaboration_sessions WHERE id=$1",
+      [id],
+    );
+    expect(saved.rows[0]!.last_active_at.getTime()).toBeGreaterThanOrEqual(
+      before - 5_000,
+    );
+  });
+
   it("defaults the whiteboard projection to an empty array and keeps it an array", async () => {
     const id = await insertSession({});
     await pool.query(

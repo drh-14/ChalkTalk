@@ -732,4 +732,99 @@ integration("collaboration session HTTP contract", () => {
       ).toBe(401);
     });
   });
+
+  describe("rate limits", () => {
+    it("limits session creation and tickets per user with Retry-After", async () => {
+      const own = await seedCourse(pool, { rita: "student" });
+      const rita = own.users.rita!;
+      const authSession = uuidv7();
+      authSessions[rita] = authSession;
+      await pool.query(
+        "INSERT INTO sessions (id,user_id,credential_hash,csrf_token_hash,expires_at) VALUES ($1,$2,$3,$3,now()+interval '1 day')",
+        [authSession, rita, Buffer.from("rita-credential-hash-padding-32b")],
+      );
+      const limited = new CollaborationSessionService(pool, {
+        webSocketUrl: "wss://app.example.edu/collaboration",
+        rateLimits: { createPerHour: 2, ticketsPerTenMinutes: 2 },
+      });
+      const limitedApp = () =>
+        createApp({
+          environment,
+          authService: {
+            session: async () => ({
+              id: authSession,
+              user: {
+                id: rita,
+                email: "rita@example.edu",
+                displayName: "Rita",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                version: 1,
+              },
+              expiresAt: "2026-12-01T00:00:00.000Z",
+              csrfToken: "csrf",
+            }),
+          } as unknown as AuthService,
+          collaborationSessionService: limited,
+        });
+      const createAs = (key?: string) => {
+        const test = unsafe(
+          request(limitedApp()).post(
+            `/api/v1/courses/${own.courseId}/collaboration-sessions`,
+          ),
+        );
+        return (key ? test.set("Idempotency-Key", key) : test).send({
+          anchor: { postId: own.postId },
+        });
+      };
+      const count = async () =>
+        Number(
+          (
+            await pool.query(
+              "SELECT count(*) FROM collaboration_sessions WHERE created_by_user_id=$1",
+              [rita],
+            )
+          ).rows[0].count,
+        );
+
+      const first = await createAs("rita-1");
+      expect(first.status).toBe(201);
+      // A replay of the same request is not counted.
+      expect((await createAs("rita-1")).status).toBe(201);
+      expect((await createAs()).status).toBe(201);
+      const limitedCreate = await createAs();
+      expect(limitedCreate.status).toBe(429);
+      expect(limitedCreate.body.error.code).toBe("rate_limited");
+      expect(Number(limitedCreate.headers["retry-after"])).toBeGreaterThan(0);
+      expect(Number(limitedCreate.headers["retry-after"])).toBeLessThanOrEqual(
+        3600,
+      );
+      expect(await count()).toBe(2);
+
+      const ticket = () =>
+        unsafe(
+          request(limitedApp()).post(
+            `/api/v1/collaboration-sessions/${first.body.data.id}/connection-tickets`,
+          ),
+        ).send();
+      const tickets = async () =>
+        Number(
+          (
+            await pool.query(
+              "SELECT count(*) FROM collaboration_connection_tickets WHERE user_id=$1",
+              [rita],
+            )
+          ).rows[0].count,
+        );
+      expect((await ticket()).status).toBe(201);
+      expect((await ticket()).status).toBe(201);
+      const limitedTicket = await ticket();
+      expect(limitedTicket.status).toBe(429);
+      expect(limitedTicket.body.error.code).toBe("rate_limited");
+      expect(Number(limitedTicket.headers["retry-after"])).toBeLessThanOrEqual(
+        600,
+      );
+      expect(await tickets()).toBe(2);
+    });
+  });
 });

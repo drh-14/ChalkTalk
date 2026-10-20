@@ -1,6 +1,6 @@
 ## Collaboration Sessions
 
-Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
+Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
 
 <a id="createCollaborationSession"></a>
 
@@ -165,6 +165,10 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
 `cross_course_anchor`: The anchor is invalid or belongs to another course.
 
 `validation_failed`: The request body is invalid.
+
+##### `429 Too Many Requests`
+
+`rate_limited`: Too many sessions created in the last hour, per `RATE_LIMIT_COLLABORATION_CREATE_USER` (default 30). Idempotent replays are not counted. The response includes `Retry-After`.
 
 ##### `500 Internal Server Error`
 
@@ -1163,6 +1167,10 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-ticket
 `session_ended`: The collaboration session has ended.
 
 `course_archived`: The course is archived.
+
+##### `429 Too Many Requests`
+
+`rate_limited`: Too many connection tickets in the last 10 minutes, per `RATE_LIMIT_COLLABORATION_TICKET_USER` (default 300). The response includes `Retry-After`.
 
 ##### `500 Internal Server Error`
 

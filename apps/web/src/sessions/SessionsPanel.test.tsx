@@ -158,6 +158,29 @@ it("keeps the dialog open and shows the error if starting fails", async () => {
   expect(screen.getByRole("button", { name: "Start session" })).toBeTruthy();
 });
 
+it("explains a rate-limited start", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? json(
+            { error: { code: "rate_limited", message: "Too many requests" } },
+            429,
+          )
+        : json({ data: [], page: { nextCursor: null, hasMore: false } }),
+    ),
+  );
+  panel();
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Start live session" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Start session" }));
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "You have started a lot of sessions recently. Try again in a little while.",
+  );
+});
+
 it("does not offer starting a session in an archived course", async () => {
   api([active]);
   panel("archived");

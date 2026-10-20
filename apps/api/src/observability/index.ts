@@ -102,7 +102,8 @@ function statusClass(status: number): string {
     ? `${Math.floor(status / 100)}xx`
     : "other";
 }
-function authorized(header: string | undefined, token: string): boolean {
+/** Constant-time check of a `Bearer` metrics token. */
+export function authorized(header: string | undefined, token: string): boolean {
   if (!header?.startsWith("Bearer ")) return false;
   const incoming = Buffer.from(header.slice(7));
   const expected = Buffer.from(token);

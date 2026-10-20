@@ -401,7 +401,8 @@ Live sessions are private, temporary shared code and whiteboard documents anchor
 - `created_by_user_id`: `uuid_v7`; foreign key to `users.id`.
 - `ended_at`, `created_at`, `updated_at`: `timestamptz`; `ended_at` is non-null exactly when `lifecycle_state` is `ended`.
 - `version`: `bigint`; positive revision used for the session `ETag`.
-- Indexes: `(post_id, created_at DESC, id DESC)` and `(course_id, created_at DESC, id DESC)` for listing; partial `(course_id)` where the session is not ended, for lifecycle sweeps.
+- `last_active_at`: `timestamptz`; when the session last had a connected participant, kept current by the collaboration server while anyone is connected and when the last connection closes. Active sessions idle past `COLLABORATION_IDLE_END_MINUTES` end automatically.
+- Indexes: `(post_id, created_at DESC, id DESC)` and `(course_id, created_at DESC, id DESC)` for listing; partial `(course_id)` where the session is not ended, for lifecycle sweeps; partial `(last_active_at)` where the session is active, for idle ending.
 
 ### `collaboration_documents`
 
