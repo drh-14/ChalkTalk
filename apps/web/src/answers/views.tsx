@@ -18,6 +18,7 @@ import {
   createFollowup,
   deleteFollowup,
   editFollowup,
+  setFollowupResolved,
   getAnswer,
   getFollowup,
   listFollowups,
@@ -33,7 +34,10 @@ type Props = {
   role?: Role;
   courseStatus?: "active" | "archived" | "deleting";
   csrfToken: string;
-  /** Called after the viewer answers, edits an answer, or posts a followup or reply. */
+  /**
+   * Called after the viewer answers, edits an answer, posts, deletes, or
+   * resolves a followup, or replies.
+   */
   onActivity?: () => void;
 };
 const message = (error: unknown) =>
@@ -834,16 +838,59 @@ export function AnswerSections(props: Props) {
   );
 }
 
+/** Resolved or Unresolved, as a control for those who may change it. */
+function DiscussionStatus({
+  item,
+  disabled,
+  onChange,
+}: {
+  item: Followup;
+  disabled: boolean;
+  onChange: (resolved: boolean) => void;
+}) {
+  const resolved = item.resolved ?? false;
+  if (!item.canResolve)
+    return (
+      <span className={`discussion-status${resolved ? " resolved" : ""}`}>
+        {resolved ? "Resolved" : "Unresolved"}
+      </span>
+    );
+  return (
+    <div
+      className="discussion-status-control"
+      role="group"
+      aria-label="Discussion status"
+    >
+      {[false, true].map((value) => (
+        <button
+          key={String(value)}
+          type="button"
+          aria-pressed={resolved === value}
+          disabled={disabled}
+          onClick={() => {
+            if (resolved !== value) onChange(value);
+          }}
+        >
+          {value ? "Resolved" : "Unresolved"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function FollowupItem({
   item,
   props,
   onReplace,
   onDelete,
+  onThreadReply,
 }: {
   item: Followup;
   props: Props;
   onReplace: (next: Followup | ((current: Followup) => Followup)) => void;
   onDelete: (id: string, hasReplies: boolean) => void;
+  /** Tells the discussion's root that a reply landed somewhere beneath it. */
+  onThreadReply?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
@@ -872,6 +919,29 @@ function FollowupItem({
     ? "Deleted followup"
     : (item.author?.displayName ??
       (item.anonymous ? "Anonymous" : "Deleted user"));
+  // A new reply anywhere in a discussion reopens it on the server; mirror that.
+  const threadReply =
+    item.parentId === null
+      ? () => onReplace((current) => ({ ...current, resolved: false }))
+      : onThreadReply;
+  async function resolve(resolved: boolean) {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      const next = await setFollowupResolved(item, resolved, props.csrfToken);
+      onReplace((current) => ({
+        ...current,
+        resolved: next.resolved,
+        canResolve: next.canResolve,
+      }));
+      props.onActivity?.();
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
   async function act(action: "vote" | "delete") {
     if (pending) return;
     if (action === "delete" && !window.confirm("Delete this followup?")) return;
@@ -895,6 +965,7 @@ function FollowupItem({
       } else {
         await deleteFollowup(item, props.csrfToken);
         onDelete(item.id, item.replyCount > 0);
+        props.onActivity?.();
         changed = true;
       }
     } catch (caught) {
@@ -924,7 +995,16 @@ function FollowupItem({
   }
   return (
     <article className="followup-item" aria-label={`Followup by ${name}`}>
-      <p className="response-byline">{name}</p>
+      <div className="followup-head">
+        <p className="response-byline">{name}</p>
+        {item.parentId === null && !item.deleted && (
+          <DiscussionStatus
+            item={item}
+            disabled={pending || !canWrite(props)}
+            onChange={(resolved) => void resolve(resolved)}
+          />
+        )}
+      </div>
       {item.deleted ? (
         <p className="response-tombstone">This followup was deleted.</p>
       ) : editing ? (
@@ -1049,6 +1129,7 @@ function FollowupItem({
                 item.id,
               );
               props.onActivity?.();
+              threadReply?.();
               setChildren((page) => ({
                 data: [...(page?.data ?? []), created].sort(followupOrder),
                 meta: {
@@ -1086,6 +1167,7 @@ function FollowupItem({
                 key={child.id}
                 item={child}
                 props={props}
+                onThreadReply={threadReply}
                 onReplace={(next) =>
                   setChildren(
                     (page) =>

@@ -36,6 +36,10 @@ export type Followup = {
   upvoteCount: number;
   viewerUpvoted: boolean;
   replyCount: number;
+  /** Discussions (root followups) only; always false for replies. */
+  resolved?: boolean;
+  /** Whether the viewer may resolve or reopen this discussion. */
+  canResolve?: boolean;
 };
 export type FollowupPage = {
   data: Followup[];
@@ -269,6 +273,21 @@ export async function deleteFollowup(
     }),
   );
 }
+/** Resolves or reopens a followup discussion. */
+export async function setFollowupResolved(
+  item: Followup,
+  resolved: boolean,
+  csrfToken: string,
+): Promise<Followup> {
+  return receive<Followup>(
+    await fetch(`/api/v1/followups/${encodeURIComponent(item.id)}/resolution`, {
+      method: resolved ? "PUT" : "DELETE",
+      credentials: "include",
+      headers: voteHeaders(csrfToken),
+    }),
+  );
+}
+
 export async function voteFollowup(
   item: Followup,
   enabled: boolean,

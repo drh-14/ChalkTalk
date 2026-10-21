@@ -37,6 +37,8 @@ export type Post = {
   /** Readable only by the author and course staff. */
   private?: boolean;
   answered?: boolean;
+  /** Questions only: active followup discussions still unresolved. */
+  unresolvedFollowups?: number;
   /** Whether the viewer is notified of activity on the post. */
   following?: boolean;
   /** Whether the post changed since the viewer last opened it. */
@@ -75,6 +77,7 @@ export type PostListOptions = {
   type?: "question" | "note" | "poll";
   announcement?: true;
   private?: true;
+  unresolvedFollowups?: true;
   answered?: boolean;
   pinned?: boolean;
   authorId?: string;
@@ -116,6 +119,7 @@ export async function listPosts(
   if (options.pinned !== undefined) query.set("pinned", String(options.pinned));
   if (options.announcement) query.set("announcement", "true");
   if (options.private) query.set("private", "true");
+  if (options.unresolvedFollowups) query.set("unresolvedFollowups", "true");
   if (options.authorId) query.set("authorId", options.authorId);
   if (options.authorRole) query.set("authorRole", options.authorRole);
   const tags = options.tags ?? [];

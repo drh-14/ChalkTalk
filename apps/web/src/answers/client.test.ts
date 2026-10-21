@@ -5,7 +5,9 @@ import {
   deleteAnswer,
   endorseAnswer,
   listAnswers,
+  setFollowupResolved,
   type Answer,
+  type Followup,
 } from "./client.js";
 
 const answer: Answer = {
@@ -123,4 +125,29 @@ it("maps API errors to ApiError with their code", async () => {
   ).catch((caught: unknown) => caught);
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({ status: 409, code: "answer_kind_exists" });
+});
+
+it("resolves and reopens a followup discussion with CSRF", async () => {
+  const item = { id: "f-1", resolved: false } as Followup;
+  const fetchMock = vi.fn().mockImplementation(
+    async () =>
+      new Response(JSON.stringify({ data: { ...item, resolved: true } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(setFollowupResolved(item, true, "csrf")).resolves.toMatchObject({
+    resolved: true,
+  });
+  await setFollowupResolved(item, false, "csrf");
+  expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual(
+    [
+      ["/api/v1/followups/f-1/resolution", "PUT"],
+      ["/api/v1/followups/f-1/resolution", "DELETE"],
+    ],
+  );
+  expect(fetchMock.mock.calls[0]![1].headers).toMatchObject({
+    "X-CSRF-Token": "csrf",
+  });
 });

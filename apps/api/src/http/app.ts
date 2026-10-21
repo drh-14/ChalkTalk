@@ -497,6 +497,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "pinned",
     "announcement",
     "private",
+    "unresolvedFollowups",
     "authorRole",
     "duplicateStatus",
     "sort",
@@ -572,6 +573,13 @@ function postListQuery(query: Request["query"]): ListPosts {
   const rawPrivate = one("private");
   if (rawPrivate !== undefined && rawPrivate !== "true")
     throw new AuthError(400, "invalid_request", "Private is invalid");
+  const rawUnresolved = one("unresolvedFollowups");
+  if (rawUnresolved !== undefined && rawUnresolved !== "true")
+    throw new AuthError(
+      400,
+      "invalid_request",
+      "Unresolved followups filter is invalid",
+    );
   const authorRole = one("authorRole");
   if (
     authorRole !== undefined &&
@@ -611,6 +619,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     pinned: rawPinned === undefined ? undefined : rawPinned === "true",
     announcement: rawAnnouncement === "true" ? true : undefined,
     private: rawPrivate === "true" ? true : undefined,
+    unresolvedFollowups: rawUnresolved === "true" ? true : undefined,
     authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
@@ -2137,6 +2146,26 @@ export function createApp(
       },
     );
   }
+  for (const [method, resolved] of [
+    ["put", true],
+    ["delete", false],
+  ] as const)
+    app[method](
+      "/api/v1/followups/:followupId/resolution",
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          const value = await followups().setResolved(
+            param(request.params.followupId),
+            auth(response).session.user.id,
+            resolved,
+          );
+          response.set("ETag", followupEtag(value)).json({ data: value });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
   app.put(
     "/api/v1/answers/:answerId/endorsement",
     ...authenticatedUnsafe,

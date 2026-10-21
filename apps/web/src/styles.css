@@ -3541,3 +3541,58 @@ a:focus-visible {
   flex-basis: 100%;
   margin: 0;
 }
+
+/* Followup discussion status */
+.followup-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  justify-content: space-between;
+}
+.followup-head .response-byline {
+  margin: 0;
+}
+.discussion-status {
+  background: #fdf0cf;
+  border-radius: 999px;
+  color: #8a5a0b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.1rem 0.5rem;
+}
+.discussion-status.resolved {
+  background: #e3f0e3;
+  color: #2c6a3f;
+}
+.discussion-status-control {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  display: inline-flex;
+  overflow: hidden;
+}
+.discussion-status-control button {
+  background: var(--surface-raised);
+  border: 0;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 0.2rem 0.65rem;
+}
+.discussion-status-control button + button {
+  border-left: 1px solid var(--line-strong);
+}
+.discussion-status-control button[aria-pressed="true"] {
+  background: #fdf0cf;
+  color: #8a5a0b;
+}
+.discussion-status-control button:last-child[aria-pressed="true"] {
+  background: #e3f0e3;
+  color: #2c6a3f;
+}
+.discussion-status-control button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}

@@ -1385,7 +1385,7 @@ function DiscussionContent({
     if (onFiltersChange) onFiltersChange(next);
     else setLocalFilters(next);
   }
-  const filterOptions = feedFilters(userId);
+  const filterOptions = feedFilters(userId, staff);
   const activeFilter = filterOptions.find(
     (item) => item.key === activeFilters.filter,
   );
@@ -1447,7 +1447,8 @@ function DiscussionContent({
           : {}
         : feedOptions(
             query,
-            feedFilters(userId).find((item) => item.key === filter),
+            // `filter` already falls back to all posts for students.
+            feedFilters(userId, true).find((item) => item.key === filter),
             sort,
             tags,
             tagMatch,
@@ -1689,18 +1690,26 @@ function DiscussionContent({
         question
       </button>
     ) : null;
-  // Answering or posting a followup follows the post unless the viewer unfollowed it.
+  // Answering or posting a followup follows the post unless the viewer
+  // unfollowed it, and followup activity changes the unresolved count.
   async function refreshFollowing(id: string) {
     try {
       const next = await getPost(id);
       if ("redirectToPostId" in next || next.deleted) return;
+      const state = {
+        following: next.following,
+        unresolvedFollowups: next.unresolvedFollowups,
+      };
       setDetail((current) =>
         current?.id === id && !current.deleted
-          ? { ...current, following: next.following }
+          ? { ...current, ...state }
           : current,
       );
+      setItems((current) =>
+        current.map((item) => (item.id === id ? { ...item, ...state } : item)),
+      );
     } catch {
-      // The button keeps its last known state.
+      // The button and count keep their last known state.
     }
   }
   async function markAllRead() {
