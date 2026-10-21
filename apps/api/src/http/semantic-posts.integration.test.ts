@@ -9,6 +9,7 @@ import type { AuthService } from "../auth/service.js";
 import { PostService } from "../posts/service.js";
 import { readEmbeddingConfig } from "../semantic/provider.js";
 import { POST_REVISION_SQL, SemanticIndex } from "../semantic/index.js";
+import { JobWorker } from "../jobs/worker.js";
 import { createApp } from "./app.js";
 
 const url = process.env.TEST_VECTOR_DATABASE_URL;
@@ -21,6 +22,7 @@ let admin: Pool;
 let pool: Pool;
 let service: PostService;
 let index: SemanticIndex;
+let worker: JobWorker;
 let providerMock: ReturnType<typeof vi.fn>;
 const config = readEmbeddingConfig({
   EMBEDDING_API_KEY: "test",
@@ -58,6 +60,13 @@ const list = (query: string) =>
     .get(`/api/v1/courses/${courseId}/posts?${query}`)
     .set("Cookie", cookie);
 
+async function settleSemanticJobs() {
+  for (let attempt = 0; attempt < 30 && !(await index.healthy()); attempt++) {
+    if (!(await worker.runOnce())) break;
+  }
+  expect(await index.healthy()).toBe(true);
+}
+
 integration("semantic post search HTTP contract", () => {
   beforeAll(async () => {
     admin = new Pool({ connectionString: url });
@@ -94,6 +103,15 @@ integration("semantic post search HTTP contract", () => {
     );
     const provider = { embedMany: providerMock };
     index = new SemanticIndex(pool, config, provider);
+    worker = new JobWorker(
+      pool,
+      "semantic-http-worker",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      index,
+    );
     service = new PostService(pool, undefined, index);
     for (const title of [
       "Spectrometer overview",
@@ -105,10 +123,6 @@ integration("semantic post search HTTP contract", () => {
         title,
         bodyMarkdown: "Course text",
       });
-    const semantic = await pool.query<{ id: string }>(
-      "SELECT id FROM posts WHERE title='Optical instrument overview'",
-    );
-    await index.indexPost(semantic.rows[0]!.id);
   });
   afterAll(async () => {
     await pool?.end();
@@ -116,6 +130,50 @@ integration("semantic post search HTTP contract", () => {
       await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await admin.end();
     }
+  });
+
+  it("falls back during initial and model-change backfill, then becomes ready through the worker", async () => {
+    const initial = await list("q=spectrometer&sort=relevance");
+    expect(initial.status).toBe(200);
+    expect(
+      initial.body.data.map((post: { title: string }) => post.title),
+    ).toEqual(["Spectrometer overview", "Spectromter overview"]);
+    expect(providerMock).not.toHaveBeenCalled();
+
+    const nextConfig = readEmbeddingConfig({
+      EMBEDDING_API_KEY: "test",
+      EMBEDDING_MODEL: "next-http-generation",
+    })!;
+    const currentService = service;
+    service = new PostService(
+      pool,
+      undefined,
+      new SemanticIndex(pool, nextConfig, { embedMany: providerMock }),
+    );
+    try {
+      const changed = await list("q=spectrometer&sort=relevance");
+      expect(changed.status).toBe(200);
+      expect(
+        changed.body.data.map((post: { title: string }) => post.title),
+      ).toEqual(["Spectrometer overview", "Spectromter overview"]);
+      expect(providerMock).not.toHaveBeenCalled();
+    } finally {
+      service = currentService;
+    }
+
+    for (let attempt = 0; attempt < 30 && !(await index.healthy()); attempt++) {
+      await index.queueBackfillOne();
+      await worker.runOnce();
+    }
+    expect(await index.healthy()).toBe(true);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(DISTINCT post_id)::integer AS count FROM post_embeddings WHERE generation=$1",
+          [config.generation],
+        )
+      ).rows[0].count,
+    ).toBe(3);
   });
 
   it("keeps FTS and fuzzy matches ahead of a closer semantic-only match", async () => {
@@ -308,6 +366,7 @@ integration("semantic post search HTTP contract", () => {
       "UPDATE jobs SET last_error=NULL WHERE kind='index_post' AND payload->>'postId'=$1",
       [postId],
     );
+    await settleSemanticJobs();
   });
 
   it("rejects a semantic cursor when the provider fails, then permits lexical restart", async () => {
@@ -394,7 +453,7 @@ integration("semantic post search HTTP contract", () => {
       title: "Unrelated water",
       bodyMarkdown: "Before edit",
     });
-    await index.indexPost(created.value.id);
+    await settleSemanticJobs();
     const before = await list("q=spectrometer&sort=relevance");
     expect(before.body.data.map((post: { id: string }) => post.id)).toContain(
       created.value.id,
@@ -411,6 +470,7 @@ integration("semantic post search HTTP contract", () => {
       [created.value.id],
     );
     expect(jobs.rowCount).toBe(2);
+    await settleSemanticJobs();
   });
 
   it("applies pinned and tag filters before tiered pagination", async () => {
@@ -420,7 +480,7 @@ integration("semantic post search HTTP contract", () => {
       bodyMarkdown: "Course note",
       tags: ["semantic-tag"],
     });
-    await index.indexPost(tagged.value.id);
+    await settleSemanticJobs();
     await pool.query("UPDATE posts SET pinned=true WHERE id=$1", [
       tagged.value.id,
     ]);
@@ -461,8 +521,7 @@ integration("semantic post search HTTP contract", () => {
       title: "Private deleted text",
       bodyMarkdown: "Deleted body",
     });
-    await index.indexPost(source.value.id);
-    await index.indexPost(deleted.value.id);
+    await settleSemanticJobs();
     await pool.query(
       "CREATE FUNCTION fail_embedding_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'embedding cleanup failed'; END; $$",
     );
@@ -606,7 +665,7 @@ integration("semantic post search HTTP contract", () => {
     expect(
       stale.body.data.map((post: { id: string }) => post.id),
     ).not.toContain(ids[0]);
-    await index.indexPost(ids[0]!);
+    await settleSemanticJobs();
     const first = await read(student);
     const second = await read(student, first.body.page.nextCursor);
     expect(

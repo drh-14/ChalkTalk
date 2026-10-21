@@ -9,3 +9,7 @@ Add a default-false completion column and scan epoch to the generation registry.
 ## Scope
 
 Do not introduce a whole-post health scan, a new service, or cross-generation completion authority.
+
+## HTTP contract verification
+
+The semantic HTTP fixture must exercise the same readiness lifecycle as a deployment: assert lexical/fuzzy fallback before a generation's initial scan, run the generation-owned worker and bounded backfill until current work drains, and only then assert semantic-only ranking, pagination, and visibility. Tests that create later jobs must settle those jobs before asserting semantic ranking again.
