@@ -36,6 +36,8 @@ export type Post = {
   announcement?: boolean;
   /** Readable only by the author and course staff. */
   private?: boolean;
+  /** When a scheduled announcement publishes; staff alone see it until then. */
+  scheduledFor?: string | null;
   answered?: boolean;
   /** Questions only: active followup discussions still unresolved. */
   unresolvedFollowups?: number;
@@ -68,6 +70,8 @@ export type CreatePostInput = {
   options?: { label: string }[];
   announcement?: boolean;
   private?: boolean;
+  /** Announcements only: publish at this ISO time instead of now. */
+  scheduledFor?: string;
 };
 export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
@@ -276,6 +280,28 @@ export async function setPostPinned(
         "If-Match": `"v${post.version}"`,
       },
       body: JSON.stringify({ pinned }),
+    }),
+  );
+  return payload.data;
+}
+
+/** Reschedules a scheduled announcement, or publishes it now with null. */
+export async function setPostSchedule(
+  post: Post,
+  scheduledFor: string | null,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"v${post.version}"`,
+      },
+      body: JSON.stringify({ scheduledFor }),
     }),
   );
   return payload.data;

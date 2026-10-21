@@ -8,6 +8,8 @@
 
 **Private posts:** Any member may create a question or note with `private: true`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
 
+**Scheduled announcements:** An announcement may be created with `scheduledFor`, a time 1 minute to 365 days ahead. Until then only course TAs and instructors can read it; to everyone else it behaves like a post that does not exist, exactly as a private post does, and it sends no notification, email, or digest entry. At that time the job worker publishes it if it is still scheduled for that time, not deleted, and its course is active: `scheduledFor` becomes `null`, its creation and last-activity times become the publish time, and every member is notified and emailed as for an immediate announcement. Staff may edit it, `PATCH` a new `scheduledFor` to reschedule, `PATCH` `scheduledFor: null` to publish it now, or delete it; each cancels the earlier time.
+
 **Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member, which the job worker sends only while the announcement, the course, and the membership still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md). Post bodies may [mention](notifications.md) course members; creating or editing a body that mentions more than 20 people returns `422 too_many_mentions`.
@@ -99,6 +101,8 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to the course; cannot be combined with `anonymous`.
 
 `private` (boolean, optional; default false): Questions and notes only. Makes the post readable only by its author and course staff.
+
+`scheduledFor` (string, optional): Announcements only. ISO 8601 date-time 1 minute to 365 days ahead at which the job worker publishes the announcement; any other value returns `422 schedule_invalid`.
 
 ###### `CreatePollPostRequest` fields
 
@@ -205,6 +209,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
 `data.private` (boolean, required): Whether only the author and course staff can read the post.
+
+`data.scheduledFor` (string or null, required): When a scheduled announcement will publish, as an ISO 8601 date-time; `null` once published or when never scheduled. Only staff can read a scheduled post.
 
 `data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
@@ -316,6 +322,8 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 `private_announcement`: An announcement cannot be private.
 
 `private_poll`: A poll cannot be private.
+
+`schedule_invalid`: The schedule is not 1 minute to 365 days ahead, or the post is not an announcement.
 
 ##### `500 Internal Server Error`
 
@@ -432,6 +440,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data[].announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
 `data[].private` (boolean, required): Whether only the author and course staff can read the post.
+
+`data[].scheduledFor` (string or null, required): When a scheduled announcement will publish, as an ISO 8601 date-time; `null` once published or when never scheduled. Only staff can read a scheduled post.
 
 `data[].following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
@@ -623,6 +633,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.private` (boolean, required): Whether only the author and course staff can read the post.
 
+`data.scheduledFor` (string or null, required): When a scheduled announcement will publish, as an ISO 8601 date-time; `null` once published or when never scheduled. Only staff can read a scheduled post.
+
 `data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
 `data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
@@ -789,6 +801,8 @@ None.
 
 `pinned` (boolean, optional): Staff-controlled pinned state.
 
+`scheduledFor` (string or null, optional): For a scheduled announcement, a new time (1 minute to 365 days ahead) reschedules it and `null` publishes it now. On a post that is not scheduled it returns `422 not_scheduled`.
+
 `private` (boolean, optional): `false` makes a private post public; the author or staff only, and it cannot be undone. `true` on a public post returns `422 post_already_public`, and is ignored on a private post.
 
 `duplicateOfPostId` (string or null, optional): Original post ID, or null to clear the relationship.
@@ -858,6 +872,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
 `data.private` (boolean, required): Whether only the author and course staff can read the post.
+
+`data.scheduledFor` (string or null, required): When a scheduled announcement will publish, as an ISO 8601 date-time; `null` once published or when never scheduled. Only staff can read a scheduled post.
 
 `data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
@@ -979,6 +995,10 @@ curl --request PATCH '/api/v1/posts/post_123' \
 `post_already_public`: A public post cannot be made private.
 
 `duplicate_target_private`: A post cannot be marked as a duplicate of a private post.
+
+`schedule_invalid`: The new schedule is not 1 minute to 365 days ahead.
+
+`not_scheduled`: The post is not a scheduled announcement.
 
 ##### `428 Precondition Required`
 

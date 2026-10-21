@@ -38,6 +38,7 @@ type PostRow = {
   duplicate_status: string;
   private: boolean;
   author_user_id: string | null;
+  scheduled_for: Date | null;
 };
 export type Contributor = { id: string; displayName: string };
 export type Answer = {
@@ -107,7 +108,7 @@ export class AnswerService {
   private async post(db: Db, postId: string, userId: string, lock = false) {
     if (!UUID_PATTERN.test(postId)) throw notFound();
     const result = await db.query<PostRow>(
-      `SELECT id,course_id,type,deleted_at,duplicate_status,private,author_user_id FROM posts WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
+      `SELECT id,course_id,type,deleted_at,duplicate_status,private,author_user_id,scheduled_for FROM posts WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
       [postId],
     );
     const post = result.rows[0];

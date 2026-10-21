@@ -438,6 +438,7 @@ function postCreateBody(value: unknown): CreatePost {
       "options",
       "announcement",
       "private",
+      "scheduledFor",
     ],
     ["type", "title", "bodyMarkdown"],
   );
@@ -461,6 +462,8 @@ function postCreateBody(value: unknown): CreatePost {
     throw validationError("Announcements cannot be anonymous");
   if (body.private !== undefined && typeof body.private !== "boolean")
     throw validationError("Private is invalid");
+  if (body.scheduledFor !== undefined && typeof body.scheduledFor !== "string")
+    throw validationError("Scheduled time is invalid");
   return {
     type: body.type,
     title,
@@ -470,6 +473,9 @@ function postCreateBody(value: unknown): CreatePost {
     ...(body.type === "poll" ? { options: pollOptions(body.options) } : {}),
     ...(body.announcement ? { announcement: true } : {}),
     ...(body.private ? { private: true } : {}),
+    ...(body.scheduledFor !== undefined
+      ? { scheduledFor: body.scheduledFor as string }
+      : {}),
   };
 }
 function answerCreateBody(value: unknown): CreateAnswer {
@@ -709,6 +715,7 @@ function postUpdateBody(value: unknown): UpdatePost {
     "duplicateOfPostId",
     "duplicateStatus",
     "private",
+    "scheduledFor",
   ]);
   if (Object.keys(body).length === 0)
     throw validationError("An update field is required");
@@ -721,6 +728,12 @@ function postUpdateBody(value: unknown): UpdatePost {
     throw validationError("Pinned is invalid");
   if (body.private !== undefined && typeof body.private !== "boolean")
     throw validationError("Private is invalid");
+  if (
+    body.scheduledFor !== undefined &&
+    body.scheduledFor !== null &&
+    typeof body.scheduledFor !== "string"
+  )
+    throw validationError("Scheduled time is invalid");
   if (
     body.duplicateOfPostId !== undefined &&
     body.duplicateOfPostId !== null &&
