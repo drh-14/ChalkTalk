@@ -3596,3 +3596,37 @@ a:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: -3px;
 }
+
+/* Mentions */
+.mention {
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  color: var(--accent-ink);
+  font-weight: 700;
+  padding: 0 0.2rem;
+}
+.cm-tooltip.cm-tooltip-autocomplete {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(29, 43, 38, 0.16);
+  overflow: hidden;
+}
+/* Outranks CodeMirror's generated theme class, which sets a monospace font. */
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul {
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  color: var(--ink);
+  padding: 0.3rem 0.7rem;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.cm-tooltip-autocomplete .cm-completionDetail {
+  color: var(--ink-muted);
+  font-style: normal;
+  margin-left: 0.6rem;
+}

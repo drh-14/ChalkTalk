@@ -10,7 +10,7 @@
 
 **Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member, which the job worker sends only while the announcement, the course, and the membership still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
 
-Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
+Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md). Post bodies may [mention](notifications.md) course members; creating or editing a body that mentions more than 20 people returns `422 too_many_mentions`.
 
 ## Retained deleted posts
 

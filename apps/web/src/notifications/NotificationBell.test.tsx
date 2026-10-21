@@ -176,6 +176,21 @@ describe("notification bell", () => {
     );
   });
 
+  it("words a mention", async () => {
+    api(
+      [1],
+      [{ ...answered, kind: "mentioned", actor: { displayName: "Anonymous" } }],
+    );
+    const user = userEvent.setup();
+    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    await user.click(
+      await screen.findByRole("button", { name: "Notifications, 1 unread" }),
+    );
+    expect((await screen.findAllByRole("listitem"))[0]!.textContent).toContain(
+      "Anonymous mentioned you on Why does my loop never stop?",
+    );
+  });
+
   it("explains an empty inbox", async () => {
     api([0], []);
     const user = userEvent.setup();

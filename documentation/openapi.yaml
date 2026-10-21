@@ -3385,6 +3385,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                too_many_mentions:
+                  summary: The body mentions more than 20 people.
+                  value:
+                    error:
+                      code: too_many_mentions
+                      message: The body mentions more than 20 people.
+                      requestId: req_createPost
+                      details: []
                 private_announcement:
                   summary: An announcement cannot be private.
                   value:
@@ -4064,6 +4072,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                too_many_mentions:
+                  summary: The body mentions more than 20 people.
+                  value:
+                    error:
+                      code: too_many_mentions
+                      message: The body mentions more than 20 people.
+                      requestId: req_updatePost
+                      details: []
                 post_already_public:
                   summary: A public post cannot be made private.
                   value:
@@ -10413,6 +10429,83 @@ paths:
                       message: The course does not exist or is not visible to the caller.
                       requestId: req_markCourseRead
                       details: []
+  "/courses/{courseId}/mention-suggestions":
+    get:
+      tags:
+        - Notifications
+      summary: Suggest members to mention
+      description: Up to 8 current members whose display names contain q, ignoring case, prefix matches first, excluding the caller and deleted accounts. With postId, only members who can read that post. Only q and postId are accepted.
+      operationId: listMentionSuggestions
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 50
+        - name: postId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Suggested members.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    type: array
+                    maxItems: 8
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - userId
+                        - displayName
+                        - role
+                      properties:
+                        userId:
+                          type: string
+                        displayName:
+                          type: string
+                        role:
+                          type: string
+                          enum:
+                            - student
+                            - ta
+                            - instructor
+              example:
+                data:
+                  - userId: user_456
+                    displayName: Grace Hopper
+                    role: ta
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
   "/users/me/notifications":
     get:
       tags:
@@ -15278,6 +15371,7 @@ components:
             - reply_created
             - announcement
             - post_published
+            - mentioned
           description: What happened on the post.
         courseId:
           type: string
