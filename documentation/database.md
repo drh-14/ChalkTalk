@@ -20,6 +20,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `display_name`: `varchar(100)`.
 - `password_hash`: `text`.
 - `deleted_at`: `timestamptz`, nullable.
+- `notification_emails`: `boolean`, default false; whether the user is emailed about activity on posts they follow.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
 
@@ -99,7 +100,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `attempts`, `max_attempts`: `integer`.
 - `available_at`, `locked_until`, `finished_at`, `created_at`, `updated_at`: `timestamptz`; lock and completion times are nullable.
 - `locked_by`, `last_error`: `text`, nullable.
-- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
+- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `send_notification_email` jobs, queued for recipients who opted in to activity emails and never for announcements, use the notification ID as deduplication key and a payload containing it. `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
 
 ## Courses and membership
 
@@ -145,6 +146,33 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `version`: `bigint`.
 - `search_vector`: generated `tsvector`, nullable.
 - Active post titles and bodies have separate GIN trigram indexes (`posts_title_trgm_idx`, `posts_body_trgm_idx`) for ordinary fuzzy search. Migration `007_post_fuzzy_search.sql` installs `pg_trgm` in `public` and qualifies its functions, operators, and operator classes because API tests use isolated schemas in their search paths. The extension must be available and installable in each deployment database; the migration fails if it is not.
+
+### `post_follows`
+
+- `post_id`, `course_id`, `user_id`: `uuid_v7`; primary key `(post_id, user_id)`. `(course_id, post_id)` references the post and `(course_id, user_id)` the course membership, both cascading, so leaving a course drops its follows.
+- `following`: `boolean`. `false` records an explicit unfollow, which automatic follows never overwrite.
+- `created_at`, `updated_at`: `timestamptz`.
+
+### `notifications`
+
+- `id`: `uuid_v7`; primary key.
+- `user_id`: `uuid_v7`; the recipient.
+- `course_id`, `post_id`: `uuid_v7`; `(course_id, post_id)` references the post, cascading.
+- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, or `announcement`.
+- `actor_user_id`: `uuid_v7`, nullable; who acted. `actor_anonymous`: `boolean`; the actor posted anonymously, so students see "Anonymous".
+- `created_at`: `timestamptz`. `read_at`: `timestamptz`, nullable.
+- Indexes: `(user_id, created_at DESC, id DESC)` for listing, partial `(user_id)` where unread for counts, and `(post_id, user_id)` for marking the notifications of an opened post read.
+- Rows are written by the same transaction as the activity; see the [notifications reference](api/notifications.md).
+
+### `post_reads`
+
+- `post_id`, `user_id`: `uuid_v7`; primary key; cascades with the post.
+- `read_at`: `timestamptz`; when the user last opened the post or acted on it.
+
+### `course_read_marks`
+
+- `course_id`, `user_id`: `uuid_v7`; primary key; references the course membership, cascading.
+- `read_before`: `timestamptz`; set by Mark all read. A post is unread when its `last_activity_at` is later than both this and the user's `post_reads.read_at`.
 
 ### `tags`
 

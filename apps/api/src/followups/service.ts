@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { recordActivity } from "../notifications/activity.js";
 import {
   hideAttachmentsForParent,
   listAttachments,
@@ -269,6 +270,14 @@ export class FollowupService {
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [postId],
       );
+      await recordActivity(db, {
+        courseId: question.course_id,
+        postId,
+        actorId: userId,
+        kind: parentId ? "reply_created" : "followup_created",
+        anonymous: input.anonymous ?? false,
+        follow: true,
+      });
       const value = await this.project(
         db,
         await this.row(db, id),

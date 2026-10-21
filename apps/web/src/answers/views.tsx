@@ -33,6 +33,8 @@ type Props = {
   role?: Role;
   courseStatus?: "active" | "archived" | "deleting";
   csrfToken: string;
+  /** Called after the viewer answers, edits an answer, or posts a followup or reply. */
+  onActivity?: () => void;
 };
 const message = (error: unknown) =>
   error instanceof Error
@@ -613,6 +615,7 @@ function AnswerCard({
           onSaved={(saved, started) => {
             replaceProjection(saved, started, true);
             setEditing(false);
+            props.onActivity?.();
           }}
           onDiscard={(latest, started) => {
             replaceProjection(latest, started);
@@ -810,6 +813,7 @@ export function AnswerSections(props: Props) {
                       ...(items ?? []).filter((item) => item.kind !== kind),
                       created,
                     ]);
+                    props.onActivity?.();
                     return created.id;
                   } catch (caught) {
                     if (
@@ -1044,6 +1048,7 @@ function FollowupItem({
                 key,
                 item.id,
               );
+              props.onActivity?.();
               setChildren((page) => ({
                 data: [...(page?.data ?? []), created].sort(followupOrder),
                 meta: {
@@ -1330,6 +1335,7 @@ export function FollowupSections(props: Props) {
               props.csrfToken,
               key,
             );
+            props.onActivity?.();
             if (page)
               setPage(
                 (current) =>

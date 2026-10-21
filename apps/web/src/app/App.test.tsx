@@ -11,10 +11,14 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
 
-// These tests own their mocked requests; the live session lists have their own tests.
+// These tests own their mocked requests; the live session lists and the
+// notification bell have their own tests.
 vi.mock("../sessions/LiveSessionLists.js", () => ({
   YourLiveSessions: () => null,
   CourseLiveSessions: () => null,
+}));
+vi.mock("../notifications/NotificationBell.js", () => ({
+  NotificationBell: () => null,
 }));
 
 const session = {

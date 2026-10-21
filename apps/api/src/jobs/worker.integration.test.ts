@@ -21,6 +21,7 @@ import { PostService, postEtag } from "../posts/service.js";
 import { AnswerService, answerEtag } from "../answers/service.js";
 import type { EmailSender } from "../auth/service.js";
 import { CollaborationSessionService } from "../collaboration/service.js";
+import { FollowupService } from "../followups/service.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
@@ -1080,6 +1081,119 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         [left.courseId, left.studentId],
       );
       const gone = await seedAnnouncement();
+      await pool.query("UPDATE users SET deleted_at=now() WHERE id=$1", [
+        gone.studentId,
+      ]);
+      while (await worker.runOnce());
+      expect(delivered).toEqual([]);
+    });
+  });
+
+  describe("notification email", () => {
+    async function fresh() {
+      while (await worker.runOnce());
+      delivered.length = 0;
+    }
+    // A TA answers an opted-in student's question.
+    async function seedAnswered() {
+      sequence += 1;
+      const studentId = uuidv7();
+      const taId = uuidv7();
+      const courseId = uuidv7();
+      await pool.query(
+        "INSERT INTO users (id,organization_id,email,display_name,password_hash,notification_emails) VALUES ($1,$3,$4,'Sam Student','x',true),($2,$3,$5,'Tara   TA','x',false)",
+        [
+          studentId,
+          taId,
+          organizationId,
+          `sam-n-${sequence}@jobs.example.edu`,
+          `tara-n-${sequence}@jobs.example.edu`,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,'ABCDEFGH')",
+        [courseId, organizationId, taId, `Biology ${sequence}`],
+      );
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'ta')",
+        [courseId, studentId, taId],
+      );
+      const post = await new PostService(pool).create(courseId, studentId, {
+        type: "question",
+        title: "Mitosis  phases",
+        bodyMarkdown: "Which comes first?",
+      });
+      const postId = post.value.id;
+      await new AnswerService(pool).create(postId, taId, {
+        bodyMarkdown: "Prophase.",
+      });
+      return { courseId, studentId, taId, postId };
+    }
+
+    it("emails the follower who opted in, naming the actor and linking the post", async () => {
+      await fresh();
+      const { courseId, postId } = await seedAnswered();
+      while (await worker.runOnce());
+      expect(delivered).toEqual([
+        {
+          to: `sam-n-${sequence}@jobs.example.edu`,
+          subject: `[Biology ${sequence}] New answer on "Mitosis phases"`,
+          text: `Tara TA answered "Mitosis phases" in Biology ${sequence}.
+
+https://app.example.edu/courses/${courseId}/posts/${postId}
+
+To stop these emails, turn off "Email me about activity on posts I follow" in your account settings.`,
+        },
+      ]);
+    });
+
+    it("hides an anonymous actor and words each kind", async () => {
+      await fresh();
+      const { postId, taId, studentId } = await seedAnswered();
+      while (await worker.runOnce());
+      delivered.length = 0;
+      // The TA follows too, so the student's anonymous followup reaches them.
+      await pool.query(
+        "UPDATE users SET notification_emails=true WHERE id=$1",
+        [taId],
+      );
+      await new FollowupService(pool).create(postId, studentId, {
+        bodyMarkdown: "Why?",
+        anonymous: true,
+      });
+      while (await worker.runOnce());
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]!.subject).toBe(
+        `[Biology ${sequence}] New followup on "Mitosis phases"`,
+      );
+      expect(delivered[0]!.text).toMatch(
+        /^Someone posted a followup on "Mitosis phases" in Biology/,
+      );
+    });
+
+    it("sends nothing once the notification, post, or recipient no longer qualifies", async () => {
+      await fresh();
+      const read = await seedAnswered();
+      await pool.query(
+        "UPDATE notifications SET read_at=now() WHERE user_id=$1",
+        [read.studentId],
+      );
+      const optedOut = await seedAnswered();
+      await pool.query(
+        "UPDATE users SET notification_emails=false WHERE id=$1",
+        [optedOut.studentId],
+      );
+      const left = await seedAnswered();
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [left.courseId, left.studentId],
+      );
+      const deleted = await seedAnswered();
+      await pool.query(
+        "UPDATE posts SET deleted_at=now(),author_user_id=NULL,title=NULL,body_markdown=NULL WHERE id=$1",
+        [deleted.postId],
+      );
+      const gone = await seedAnswered();
       await pool.query("UPDATE users SET deleted_at=now() WHERE id=$1", [
         gone.studentId,
       ]);

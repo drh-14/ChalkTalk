@@ -54,6 +54,8 @@ tags:
     description: Channels operations.
   - name: Collaboration Sessions
     description: Collaboration Sessions operations.
+  - name: Notifications
+    description: Notifications operations.
 paths:
   "/courses/{courseId}/files":
     get:
@@ -3785,6 +3787,8 @@ paths:
           headers:
             ETag:
               "$ref": "#/components/headers/ETag"
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
           content:
             application/json:
               schema:
@@ -9972,6 +9976,377 @@ paths:
                       message: The server could not complete the request.
                       requestId: req_listCourseCollaborationSessions
                       details: []
+  "/posts/{postId}/follow":
+    put:
+      tags:
+        - Posts
+      summary: Follow post
+      description: Follows a post the caller can read, so its activity notifies them.
+      operationId: followPost
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: The caller's follow state.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/FollowResponse"
+              example:
+                data:
+                  following: true
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_followPost
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_followPost
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The post does not exist or is not visible to the caller.
+                  value:
+                    error:
+                      code: not_found
+                      message: The post does not exist or is not visible to the caller.
+                      requestId: req_followPost
+                      details: []
+    delete:
+      tags:
+        - Posts
+      summary: Unfollow post
+      description: Stops notifications for the post. The unfollow persists, so later activity by the caller does not follow it again automatically.
+      operationId: unfollowPost
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: The caller's follow state.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/FollowResponse"
+              example:
+                data:
+                  following: false
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_unfollowPost
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_unfollowPost
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The post does not exist or is not visible to the caller.
+                  value:
+                    error:
+                      code: not_found
+                      message: The post does not exist or is not visible to the caller.
+                      requestId: req_unfollowPost
+                      details: []
+  "/courses/{courseId}/read-marks":
+    post:
+      tags:
+        - Posts
+      summary: Mark course read
+      description: Marks every post in the course read for the caller as of now.
+      operationId: markCourseRead
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "204":
+          description: Every post in the course is read for the caller.
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_markCourseRead
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_markCourseRead
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The course does not exist or is not visible to the caller.
+                  value:
+                    error:
+                      code: not_found
+                      message: The course does not exist or is not visible to the caller.
+                      requestId: req_markCourseRead
+                      details: []
+  "/users/me/notifications":
+    get:
+      tags:
+        - Notifications
+      summary: List notifications
+      description: Lists the caller's notifications newest first across courses. Notifications are omitted once the caller has left the course or the post is deleted or a confirmed duplicate. Only limit, cursor, and unread are accepted.
+      operationId: listNotifications
+      security:
+        - session_cookie: []
+      parameters:
+        - name: unread
+          in: query
+          required: false
+          description: Lists only unread notifications.
+          schema:
+            type: string
+            enum:
+              - "true"
+        - "$ref": "#/components/parameters/Cursor"
+        - "$ref": "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The caller's notifications.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/NotificationListResponse"
+              example:
+                data:
+                  - id: 0192f7a4-58ae-7009-9f43-d1ba75831d5f
+                    kind: answer_created
+                    courseId: course_123
+                    courseName: CS 101
+                    postId: post_123
+                    postTitle: Why does my loop never stop?
+                    actor:
+                      displayName: Grace Hopper
+                    createdAt: "2026-09-20T14:30:00Z"
+                    readAt: null
+                page:
+                  nextCursor: null
+                  hasMore: false
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                invalid_request:
+                  summary: The query parameters or cursor are invalid.
+                  value:
+                    error:
+                      code: invalid_request
+                      message: The query parameters or cursor are invalid.
+                      requestId: req_listNotifications
+                      details: []
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_listNotifications
+                      details: []
+  "/users/me/notifications/unread-count":
+    get:
+      tags:
+        - Notifications
+      summary: Count unread notifications
+      description: Counts the caller's unread notifications under the same visibility rules as the list.
+      operationId: countUnreadNotifications
+      security:
+        - session_cookie: []
+      responses:
+        "200":
+          description: The unread count.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/UnreadCountResponse"
+              example:
+                data:
+                  count: 2
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_countUnreadNotifications
+                      details: []
+  "/users/me/notifications/read":
+    post:
+      tags:
+        - Notifications
+      summary: Mark notifications read
+      description: Marks the given notifications of the caller, or all of them when the body is empty, as read. Ids of other users' notifications are ignored.
+      operationId: markNotificationsRead
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/MarkNotificationsReadRequest"
+            example:
+              ids:
+                - 0192f7a4-58ae-7009-9f43-d1ba75831d5f
+      responses:
+        "204":
+          description: The notifications are read.
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_markNotificationsRead
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                csrf_validation_failed:
+                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
+                  value:
+                    error:
+                      code: csrf_validation_failed
+                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
+                      requestId: req_markNotificationsRead
+                      details: []
+        "422":
+          description: Unprocessable Content
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                validation_failed:
+                  summary: The notification ids are invalid.
+                  value:
+                    error:
+                      code: validation_failed
+                      message: The notification ids are invalid.
+                      requestId: req_markNotificationsRead
+                      details: []
   "/users/me/collaboration-sessions":
     get:
       tags:
@@ -11400,6 +11775,9 @@ components:
           description: Visible account name.
           minLength: 1
           maxLength: 100
+        notificationEmails:
+          type: boolean
+          description: Whether the user is emailed about activity on posts they follow; false by default.
         createdAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
@@ -11423,6 +11801,7 @@ components:
         - id
         - email
         - displayName
+        - notificationEmails
         - createdAt
         - updatedAt
         - version
@@ -11804,6 +12183,12 @@ components:
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+        following:
+          type: boolean
+          description: Whether the viewer follows the post and is notified of its activity.
+        unread:
+          type: boolean
+          description: Whether the post has activity since the viewer last opened it or marked the course read.
         duplicateOfPostId:
           type:
             - string
@@ -11861,6 +12246,8 @@ components:
         - attachments
         - pinned
         - announcement
+        - following
+        - unread
         - duplicateOfPostId
         - duplicateStatus
         - lastActivityAt
@@ -11926,6 +12313,12 @@ components:
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+        following:
+          type: boolean
+          description: Whether the viewer follows the post and is notified of its activity.
+        unread:
+          type: boolean
+          description: Whether the post has activity since the viewer last opened it or marked the course read.
         duplicateOfPostId:
           type:
             - string
@@ -11980,6 +12373,8 @@ components:
         - attachments
         - pinned
         - announcement
+        - following
+        - unread
         - duplicateOfPostId
         - duplicateStatus
         - lastActivityAt
@@ -12044,6 +12439,12 @@ components:
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+        following:
+          type: boolean
+          description: Whether the viewer follows the post and is notified of its activity.
+        unread:
+          type: boolean
+          description: Whether the post has activity since the viewer last opened it or marked the course read.
         duplicateOfPostId:
           type:
             - string
@@ -12109,6 +12510,8 @@ components:
         - attachments
         - pinned
         - announcement
+        - following
+        - unread
         - duplicateOfPostId
         - duplicateStatus
         - lastActivityAt
@@ -14264,6 +14667,9 @@ components:
           description: Single-use opaque token proving control of a replacement email address in the account's current school domain.
           minLength: 1
           maxLength: 4096
+        notificationEmails:
+          type: boolean
+          description: Turns emails about activity on followed posts on or off.
       additionalProperties: false
       minProperties: 1
     ChangePasswordRequest:
@@ -14556,6 +14962,122 @@ components:
           uniqueItems: true
       additionalProperties: false
       minProperties: 1
+    FollowResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            following:
+              type: boolean
+              description: Whether the caller now follows the post.
+          additionalProperties: false
+          required:
+            - following
+      additionalProperties: false
+      required:
+        - data
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Opaque stable identifier.
+        kind:
+          type: string
+          enum:
+            - answer_created
+            - answer_edited
+            - answer_endorsed
+            - followup_created
+            - reply_created
+            - announcement
+          description: What happened on the post.
+        courseId:
+          type: string
+          description: Course of the post.
+        courseName:
+          type: string
+          description: Current course name.
+        postId:
+          type: string
+          description: Post the activity happened on.
+        postTitle:
+          type: string
+          description: Current post title.
+        actor:
+          description: Who acted. Students see Anonymous for an anonymous actor; null for a deleted account.
+          oneOf:
+            - type: object
+              properties:
+                displayName:
+                  type: string
+              additionalProperties: false
+              required:
+                - displayName
+            - type: "null"
+        createdAt:
+          type: string
+          format: date-time
+          description: UTC timestamp in ISO 8601 date-time format.
+        readAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When the caller read it, or null while unread.
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - courseId
+        - courseName
+        - postId
+        - postTitle
+        - actor
+        - createdAt
+        - readAt
+    NotificationListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Notification"
+        page:
+          "$ref": "#/components/schemas/Page"
+      additionalProperties: false
+      required:
+        - data
+        - page
+    UnreadCountResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            count:
+              type: integer
+              minimum: 0
+              description: Unread notifications the caller can still see.
+          additionalProperties: false
+          required:
+            - count
+      additionalProperties: false
+      required:
+        - data
+    MarkNotificationsReadRequest:
+      type: object
+      description: Omit the body, or send an empty object, to mark every notification read.
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
+      additionalProperties: false
     VoteRequest:
       type: object
       properties:

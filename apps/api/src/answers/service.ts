@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { recordActivity } from "../notifications/activity.js";
 import {
   hideAttachmentsForParent,
   listAttachments,
@@ -270,6 +271,14 @@ export class AnswerService {
           "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
           [postId],
         );
+        await recordActivity(db, {
+          courseId: post.course_id,
+          postId,
+          actorId: userId,
+          kind: "answer_created",
+          anonymous: body.anonymous ?? false,
+          follow: true,
+        });
         const value = await this.project(
           db,
           (await this.row(db, id))!,
@@ -354,6 +363,13 @@ export class AnswerService {
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
       );
+      await recordActivity(db, {
+        courseId: row.course_id,
+        postId: row.post_id,
+        actorId: userId,
+        kind: "answer_endorsed",
+        follow: false,
+      });
       return this.project(
         db,
         (await this.row(db, answerId))!,
@@ -430,6 +446,14 @@ export class AnswerService {
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
       );
+      await recordActivity(db, {
+        courseId: row.course_id,
+        postId: row.post_id,
+        actorId: userId,
+        kind: "answer_edited",
+        anonymous: row.anonymous,
+        follow: true,
+      });
       return this.project(
         db,
         (await this.row(db, answerId))!,
