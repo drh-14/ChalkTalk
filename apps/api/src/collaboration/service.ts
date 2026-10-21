@@ -184,7 +184,7 @@ export class CollaborationSessionService {
     if (!staff) {
       // A private anchor hides its sessions from members who cannot read it.
       const post = await db.query<{ removed: boolean }>(
-        "SELECT (deleted_at IS NOT NULL OR duplicate_status='confirmed' OR (private AND author_user_id IS DISTINCT FROM $2)) AS removed FROM posts WHERE id=$1",
+        "SELECT (deleted_at IS NOT NULL OR duplicate_status='confirmed' OR (private AND author_user_id IS DISTINCT FROM $2) OR scheduled_for IS NOT NULL) AS removed FROM posts WHERE id=$1",
         [row.post_id, userId],
       );
       if (post.rows[0]?.removed) throw notFound();
@@ -319,7 +319,7 @@ export class CollaborationSessionService {
       if (member.status !== "active") throw archived();
       const post = UUID_PATTERN.test(body.postId)
         ? await db.query<{ title: string }>(
-            "SELECT title FROM posts WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL AND duplicate_status<>'confirmed' AND (NOT private OR author_user_id=$3 OR $4) FOR SHARE",
+            "SELECT title FROM posts WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL AND duplicate_status<>'confirmed' AND ($4 OR (scheduled_for IS NULL AND (NOT private OR author_user_id=$3))) FOR SHARE",
             [body.postId, courseId, userId, STAFF.has(member.role)],
           )
         : undefined;
@@ -403,7 +403,7 @@ export class CollaborationSessionService {
     const clauses = [
       "s.course_id=$1",
       "($3 OR s.created_by_user_id=$2 OR EXISTS (SELECT 1 FROM collaboration_participants cp WHERE cp.collaboration_session_id=s.id AND cp.user_id=$2))",
-      "($3 OR (p.deleted_at IS NULL AND p.duplicate_status<>'confirmed' AND (NOT p.private OR p.author_user_id=$2)))",
+      "($3 OR (p.deleted_at IS NULL AND p.duplicate_status<>'confirmed' AND p.scheduled_for IS NULL AND (NOT p.private OR p.author_user_id=$2)))",
     ];
     if (query.status === "ended") clauses.push("s.lifecycle_state='ended'");
     if (query.status === "active") clauses.push("s.lifecycle_state<>'ended'");
@@ -651,7 +651,8 @@ export class CollaborationSessionService {
       const anchor = await db.query<{
         private: boolean;
         author_user_id: string | null;
-      }>("SELECT private,author_user_id FROM posts WHERE id=$1", [
+        scheduled_for: Date | null;
+      }>("SELECT private,author_user_id,scheduled_for FROM posts WHERE id=$1", [
         access.row.post_id,
       ]);
       if (

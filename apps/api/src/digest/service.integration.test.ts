@@ -973,6 +973,29 @@ integration("daily course email digest", () => {
     expect(sender.messages[0]?.text).not.toContain("Private grade question");
   });
 
+  it("leaves a scheduled announcement out of every digest", async () => {
+    const scheduled = await addNote(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T01:00:00Z",
+      "Not yet announced",
+    );
+    await pool.query(
+      "UPDATE posts SET announcement=true,scheduled_for='2026-12-01T09:00:00Z' WHERE id=$1",
+      [scheduled],
+    );
+    const note = await addNote(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T02:00:00Z",
+      "Visible note",
+    );
+    expect(await digest.schedule(new Date("2026-10-15T00:00:00Z"))).toBe(1);
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(sender.messages[0]?.text).toContain(`/posts/${note}`);
+    expect(sender.messages[0]?.text).not.toContain("Not yet announced");
+  });
+
   it("rechecks course archive and membership before send", async () => {
     await addQuestion(ids.physics, ids.bob, "2026-10-14T01:00:00Z", "Physics");
     await addQuestion(

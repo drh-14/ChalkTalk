@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { publishScheduled } from "../posts/announce.js";
 import type { Pool, PoolClient } from "pg";
 import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import type { EmailSender } from "../auth/service.js";
@@ -13,7 +14,8 @@ type Job = {
     | "send_question_duplicate_email"
     | "send_collaboration_invitation_email"
     | "send_announcement_email"
-    | "send_notification_email";
+    | "send_notification_email"
+    | "publish_scheduled_announcement";
   payload: {
     courseId?: string;
     objectKey?: string;
@@ -27,6 +29,7 @@ type Job = {
     postId?: string;
     userId?: string;
     notificationId?: string;
+    scheduledFor?: string;
   };
   deduplicationKey: string | null;
   attempts: number;
@@ -73,7 +76,7 @@ export class JobWorker {
         attempts: number;
         max_attempts: number;
       }>(
-        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email','send_collaboration_invitation_email','send_announcement_email','send_notification_email') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
+        "SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs WHERE kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email','send_collaboration_invitation_email','send_announcement_email','send_notification_email','publish_scheduled_announcement') AND ((status='queued' AND available_at <= now()) OR (status='running' AND (locked_until IS NULL OR locked_until < now()))) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1",
       );
       const job = claimed.rows[0];
       if (!job) return undefined;
@@ -218,7 +221,7 @@ export class JobWorker {
        JOIN users author ON author.id=p.author_user_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
        JOIN users recipient ON recipient.id=$2 AND recipient.deleted_at IS NULL
-       WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL`,
+       WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL AND p.scheduled_for IS NULL`,
       [postId, userId],
     );
     const row = found.rows[0];
@@ -265,7 +268,7 @@ export class JobWorker {
        JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id
        JOIN courses c ON c.id=n.course_id
        JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
-         AND (NOT p.private OR p.author_user_id=n.user_id OR m.role IN ('ta','instructor'))
+         AND (m.role IN ('ta','instructor') OR (p.scheduled_for IS NULL AND (NOT p.private OR p.author_user_id=n.user_id)))
        LEFT JOIN users actor ON actor.id=n.actor_user_id
        WHERE n.id=$1 AND n.read_at IS NULL`,
       [notificationId],
@@ -298,6 +301,42 @@ export class JobWorker {
       to: row.email,
       subject: `[${course}] ${subject} "${title}"`,
       text: `${actor} ${verb} "${title}" in ${course}.\n\n${url}\n\nTo stop these emails, turn off "Email me about activity on posts I follow" in your account settings.`,
+    });
+  }
+
+  /** Publishes an announcement only if it is still scheduled for this time. */
+  private async publishScheduledAnnouncement(job: Job): Promise<void> {
+    const { postId, scheduledFor } = job.payload;
+    if (
+      !postId ||
+      !scheduledFor ||
+      job.deduplicationKey !== `${postId}:${scheduledFor}`
+    )
+      throw new Error("Scheduled announcement job payload is invalid");
+    await this.transaction(async (client) => {
+      const found = await client.query<{
+        course_id: string;
+        author_user_id: string | null;
+        scheduled_for: Date | null;
+        course_status: string;
+      }>(
+        `SELECT p.course_id,p.author_user_id,p.scheduled_for,c.status AS course_status
+         FROM posts p JOIN courses c ON c.id=p.course_id
+         WHERE p.id=$1 AND p.deleted_at IS NULL FOR UPDATE OF p`,
+        [postId],
+      );
+      const post = found.rows[0];
+      if (
+        !post?.author_user_id ||
+        post.scheduled_for?.toISOString() !== scheduledFor ||
+        post.course_status !== "active"
+      )
+        return;
+      await publishScheduled(client, {
+        postId,
+        courseId: post.course_id,
+        authorId: post.author_user_id,
+      });
     });
   }
 
@@ -412,6 +451,8 @@ export class JobWorker {
             Key: job.payload.objectKey,
           }),
         );
+      } else if (job.kind === "publish_scheduled_announcement") {
+        await this.publishScheduledAnnouncement(job);
       } else if (job.kind === "send_notification_email") {
         await this.sendNotificationEmail(job);
       } else if (job.kind === "send_announcement_email") {

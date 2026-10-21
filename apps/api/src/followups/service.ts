@@ -102,10 +102,11 @@ export class FollowupService {
       duplicate_status: string;
       private: boolean;
       author_user_id: string | null;
+      scheduled_for: Date | null;
       status: string;
       role: Role;
     }>(
-      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.author_user_id,c.status,m.role
+      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.author_user_id,p.scheduled_for,c.status,m.role
        FROM posts p JOIN courses c ON c.id=p.course_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
        WHERE p.id=$1${lock ? " FOR NO KEY UPDATE OF p FOR SHARE OF c,m" : ""}`,
