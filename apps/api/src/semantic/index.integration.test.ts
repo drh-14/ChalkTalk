@@ -729,6 +729,59 @@ integration("semantic post indexing", () => {
     );
   });
 
+  it("completes bounded backfill across equal microsecond timestamps", async () => {
+    const ids = Array.from({ length: 101 }, () => uuidv7());
+    await pool.query(
+      `INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at,updated_at)
+       SELECT input.id,$1,$2,'note','Indexed note','Already embedded',$4::timestamptz,$4::timestamptz
+       FROM unnest($3::uuid[]) AS input(id)`,
+      [courseId, userId, ids, "2000-01-01T00:00:00.123456Z"],
+    );
+    await pool.query(
+      `INSERT INTO post_embeddings(post_id,generation,source_revision,chunk_ordinal,embedding)
+       SELECT p.id,$2,${POST_REVISION_SQL},0,'[1,0]'::public.vector
+       FROM posts p WHERE p.id=ANY($1::uuid[])`,
+      [ids, config.generation],
+    );
+    const index = new SemanticIndex(pool, config, {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    });
+    expect(await index.healthy()).toBe(false);
+    expect(await index.queueBackfillOne()).toBe(false);
+    expect(await index.healthy()).toBe(false);
+    expect(await index.queueBackfillOne()).toBe(false);
+    expect(await index.healthy()).toBe(true);
+
+    const nextConfig = readEmbeddingConfig({
+      EMBEDDING_API_KEY: "test-key",
+      EMBEDDING_MODEL: "microsecond-next-generation",
+    })!;
+    const ordered = [...ids].sort();
+    await pool.query(
+      `INSERT INTO post_embeddings(post_id,generation,source_revision,chunk_ordinal,embedding)
+       SELECT p.id,$2,${POST_REVISION_SQL},0,'[1,0]'::public.vector
+       FROM posts p WHERE p.id=ANY($1::uuid[])`,
+      [ordered.slice(0, 100), nextConfig.generation],
+    );
+    const nextIndex = new SemanticIndex(pool, nextConfig, {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    });
+    expect(await nextIndex.queueBackfillOne()).toBe(false);
+    expect(await nextIndex.queueBackfillOne()).toBe(true);
+    const nextWorker = new JobWorker(
+      pool,
+      "microsecond-next-worker",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      nextIndex,
+    );
+    expect(await nextWorker.runOnce()).toBe(true);
+    expect(await nextIndex.queueBackfillOne()).toBe(false);
+    expect(await nextIndex.healthy()).toBe(true);
+  });
+
   it("stays idle after a complete sweep and processes newly updated posts", async () => {
     const idleSchema = `${schema}_idle`;
     await admin.query(`CREATE SCHEMA "${idleSchema}"`);

@@ -336,6 +336,10 @@ Semantic search SHALL use only established full-text and fuzzy results until dur
 - **WHEN** the current generation finishes its bounded scan and all current-revision jobs and catch-up state drain
 - **THEN** semantic ranking becomes available and stays available across a worker restart
 
+#### Scenario: Equal microsecond timestamps cross a batch boundary
+- **WHEN** more than one bounded batch of posts shares a PostgreSQL microsecond-resolution update timestamp
+- **THEN** the scan advances by timestamp and ID without revisiting a batch, and readiness becomes available after current work drains
+
 #### Scenario: Concurrent write or failed indexing
 - **WHEN** a post changes during initial scanning or indexing fails
 - **THEN** pending work prevents semantic ranking until revision-safe recovery, without allowing another generation's worker to declare this one ready

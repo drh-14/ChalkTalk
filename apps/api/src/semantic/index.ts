@@ -25,7 +25,7 @@ function chunks(title: string, body: string): string[] {
 }
 
 export class SemanticIndex {
-  private backfillCursor?: { updatedAt: Date; id: string };
+  private backfillCursor?: { updatedAt: string; id: string };
   private backfillEpoch?: string;
 
   constructor(
@@ -172,7 +172,7 @@ export class SemanticIndex {
     const after = this.backfillCursor;
     const scanned = await this.pool.query<{
       id: string;
-      updated_at: Date;
+      updated_at: string;
       needs_enqueue: boolean;
     }>(
       `WITH batch AS MATERIALIZED (
@@ -185,7 +185,7 @@ export class SemanticIndex {
          SELECT p.id,p.updated_at,${POST_REVISION_SQL} AS source_revision
          FROM batch p
        )
-       SELECT p.id,p.updated_at,
+       SELECT p.id,p.updated_at::text AS updated_at,
          NOT EXISTS (
            SELECT 1 FROM post_embeddings e WHERE e.post_id=p.id
              AND e.generation=$1 AND e.source_revision=p.source_revision
