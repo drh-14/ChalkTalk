@@ -258,8 +258,10 @@ The save-only migration checks nonempty historical Yjs documents in bounded page
 - `anonymous`: `boolean`.
 - `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
+- `resolved_at`: `timestamptz`, nullable; when staff or the question's author resolved the discussion. Only root followups can be resolved (`followups_resolution_root_check`), and a new reply anywhere in the discussion clears it.
+- `resolved_by_user_id`: `uuid_v7`, nullable; foreign key to `users.id`, set exactly when `resolved_at` is (`followups_resolution_pair_check`).
 
-Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`. Deleted roots or replies with children retain a bodyless tombstone; deleted leaves are excluded from ordinary reads.
+Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`. Deleted roots or replies with children retain a bodyless tombstone; deleted leaves are excluded from ordinary reads. A partial index on `(post_id)` covers active, unresolved root followups for question counts and the unresolved filter.
 
 The non-deleted answer body check retains historical empty strings from former live edits, but REST creation and saves require nonblank content. Followup and reply bodies remain nonblank REST content. Deleted rows still require `body_markdown IS NULL`.
 

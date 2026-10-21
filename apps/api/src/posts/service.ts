@@ -76,6 +76,8 @@ export type ListPosts = {
   announcement?: boolean;
   /** Only private posts the viewer can read. */
   private?: true;
+  /** Only questions with an unresolved followup discussion. */
+  unresolvedFollowups?: true;
   tags?: string[];
   tagMatch?: "all";
   authorId?: string;
@@ -100,6 +102,9 @@ const validation = (message: string) =>
 const STAFF = new Set<Role>(["ta", "instructor"]);
 const ANSWERED =
   "EXISTS (SELECT 1 FROM answers a WHERE a.post_id=p.id AND a.deleted_at IS NULL)";
+/** Active, unresolved followup discussions on the post aliased `p`. */
+const UNRESOLVED =
+  "FROM followups uf WHERE uf.post_id=p.id AND uf.parent_followup_id IS NULL AND uf.deleted_at IS NULL AND uf.resolved_at IS NULL";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -202,12 +207,24 @@ export class PostService {
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
       lastActivityAt: row.last_activity_at.toISOString(),
-      ...(row.type === "question" ? { answered: row.answered } : {}),
+      ...(row.type === "question"
+        ? {
+            answered: row.answered,
+            unresolvedFollowups: await this.unresolvedFollowups(db, row.id),
+          }
+        : {}),
       ...(row.type === "poll"
         ? await this.pollState(db, row.id, viewerId)
         : {}),
       ...(await this.viewerState(db, row, viewerId)),
     };
+  }
+  private async unresolvedFollowups(db: Db, postId: string) {
+    const result = await db.query<{ count: number }>(
+      `SELECT count(*)::int AS count ${UNRESOLVED.replace("uf.post_id=p.id", "uf.post_id=$1")}`,
+      [postId],
+    );
+    return result.rows[0]!.count;
   }
   /** Options with counts and the viewer's choice, plus the total. */
   private async pollState(db: Db, postId: string, viewerId: string) {
@@ -500,6 +517,8 @@ export class PostService {
       readablePost("p", add(userId), add(member.role)),
     ];
     if (options.private) clauses.push("p.private");
+    if (options.unresolvedFollowups)
+      clauses.push(`p.type='question' AND EXISTS (SELECT 1 ${UNRESOLVED})`);
     const possibleFuzzyTerms = (
       options.q?.match(/[\p{L}\p{N}]+/gu) ?? []
     ).filter((term) => [...term].length >= 3);

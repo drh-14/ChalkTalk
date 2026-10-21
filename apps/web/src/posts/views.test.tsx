@@ -5732,3 +5732,55 @@ it("hides Make public from a student who is not the author", async () => {
   ).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Make public" })).toBeNull();
 });
+
+it("shows the unresolved count on question cards and gives staff an Unresolved filter", async () => {
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async (url) =>
+    url.endsWith("/members/user-staff")
+      ? json({ data: { role: "ta" } })
+      : page([{ ...post("q-1", "Needs replies"), unresolvedFollowups: 2 }]),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  mockDesktopViewport();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const card = (await screen.findByText("Needs replies")).closest("a")!;
+  expect(within(card).getByText("2 unresolved")).toBeTruthy();
+  await waitFor(() => expect(choiceLabels("Show")).toContain("Unresolved"));
+  await user.click(filterChoice("Show", "unresolved"));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("unresolvedFollowups=true"),
+      ),
+    ).toBe(true),
+  );
+});
+
+it("offers students no Unresolved filter and shows no badge without unresolved discussions", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      page([{ ...post("q-1", "All settled"), unresolvedFollowups: 0 }]),
+    ),
+  );
+  mockDesktopViewport();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const card = (await screen.findByText("All settled")).closest("a")!;
+  expect(card.textContent).not.toContain("unresolved");
+  expect(choiceLabels("Show")).not.toContain("Unresolved");
+});

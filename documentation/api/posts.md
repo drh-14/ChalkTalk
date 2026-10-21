@@ -224,6 +224,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
 
+`data.unresolvedFollowups` (integer, required when `type` is `question`): Number of active followup discussions that are unresolved; see [Resolving discussions](answers.md).
+
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 
 `data.options[].id` (string, required): Opaque stable poll-option identifier.
@@ -365,6 +367,8 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `answered` (boolean, optional): Filter question posts by answer presence.
 
+`unresolvedFollowups` (literal true, optional): List only questions with at least one unresolved followup discussion. Any other value returns `400 invalid_request`.
+
 `pinned` (boolean, optional): Filter by pinned state. Combine with `type` to list pinned posts of one type.
 
 `announcement` (literal true, optional): List announcements only. Any other value returns `400 invalid_request`.
@@ -446,6 +450,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data[].version` (integer, required): Revision number used to construct the resource ETag.
 
 `data[].answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+
+`data[].unresolvedFollowups` (integer, required when `type` is `question`): Number of active followup discussions that are unresolved; see [Resolving discussions](answers.md).
 
 ###### `data[].options` (list of objects, required when `type` is `poll`): Poll choices.
 
@@ -634,6 +640,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.version` (integer, required): Revision number used to construct the resource ETag.
 
 `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+
+`data.unresolvedFollowups` (integer, required when `type` is `question`): Number of active followup discussions that are unresolved; see [Resolving discussions](answers.md).
 
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 
@@ -868,6 +876,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.version` (integer, required): Revision number used to construct the resource ETag.
 
 `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+
+`data.unresolvedFollowups` (integer, required when `type` is `question`): Number of active followup discussions that are unresolved; see [Resolving discussions](answers.md).
 
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 
