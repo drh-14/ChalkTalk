@@ -1171,6 +1171,64 @@ To stop these emails, turn off "Email me about activity on posts I follow" in yo
       );
     });
 
+    it("emails the author when staff make their private post public", async () => {
+      await fresh();
+      const { courseId, postId, taId } = await seedAnswered();
+      while (await worker.runOnce());
+      delivered.length = 0;
+      await pool.query("UPDATE posts SET private=true WHERE id=$1", [postId]);
+      const posts = new PostService(pool);
+      const current = await posts.get(postId, taId);
+      await posts.update(
+        postId,
+        taId,
+        postEtag(current as { version: number }),
+        {
+          private: false,
+        },
+      );
+      while (await worker.runOnce());
+      expect(delivered).toEqual([
+        {
+          to: `sam-n-${sequence}@jobs.example.edu`,
+          subject: `[Biology ${sequence}] Your post is now public: "Mitosis phases"`,
+          text: `Tara TA made your post public: "Mitosis phases" in Biology ${sequence}.
+
+https://app.example.edu/courses/${courseId}/posts/${postId}
+
+To stop these emails, turn off "Email me about activity on posts I follow" in your account settings.`,
+        },
+      ]);
+    });
+
+    it("sends nothing to a recipient who can no longer read a private post", async () => {
+      await fresh();
+      const { courseId, postId, taId } = await seedAnswered();
+      while (await worker.runOnce());
+      delivered.length = 0;
+      await pool.query("UPDATE posts SET private=true WHERE id=$1", [postId]);
+      await pool.query(
+        "UPDATE users SET notification_emails=true WHERE id=$1",
+        [taId],
+      );
+      // The TA was notified, then demoted before the email went out.
+      const notification = await pool.query<{ id: string }>(
+        "INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id) VALUES (gen_random_uuid(),$1,$2,$3,'followup_created',$1) RETURNING id",
+        [taId, courseId, postId],
+      );
+      const id = notification.rows[0]!.id;
+      await pool.query(
+        "INSERT INTO jobs (id,kind,payload,deduplication_key) VALUES (gen_random_uuid(),'send_notification_email',$1,$2)",
+        [{ notificationId: id }, id],
+      );
+      await pool.query(
+        "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+        [courseId, taId],
+      );
+      while (await worker.runOnce());
+      expect(delivered).toEqual([]);
+    });
+
     it("sends nothing once the notification, post, or recipient no longer qualifies", async () => {
       await fresh();
       const read = await seedAnswered();

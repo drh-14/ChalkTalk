@@ -437,6 +437,7 @@ function postCreateBody(value: unknown): CreatePost {
       "tags",
       "options",
       "announcement",
+      "private",
     ],
     ["type", "title", "bodyMarkdown"],
   );
@@ -458,6 +459,8 @@ function postCreateBody(value: unknown): CreatePost {
     throw validationError("Only notes can be announcements");
   if (body.announcement && body.anonymous)
     throw validationError("Announcements cannot be anonymous");
+  if (body.private !== undefined && typeof body.private !== "boolean")
+    throw validationError("Private is invalid");
   return {
     type: body.type,
     title,
@@ -466,6 +469,7 @@ function postCreateBody(value: unknown): CreatePost {
     tags: postTags(body.tags),
     ...(body.type === "poll" ? { options: pollOptions(body.options) } : {}),
     ...(body.announcement ? { announcement: true } : {}),
+    ...(body.private ? { private: true } : {}),
   };
 }
 function answerCreateBody(value: unknown): CreateAnswer {
@@ -492,6 +496,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "answered",
     "pinned",
     "announcement",
+    "private",
     "authorRole",
     "duplicateStatus",
     "sort",
@@ -564,6 +569,9 @@ function postListQuery(query: Request["query"]): ListPosts {
   const rawAnnouncement = one("announcement");
   if (rawAnnouncement !== undefined && rawAnnouncement !== "true")
     throw new AuthError(400, "invalid_request", "Announcement is invalid");
+  const rawPrivate = one("private");
+  if (rawPrivate !== undefined && rawPrivate !== "true")
+    throw new AuthError(400, "invalid_request", "Private is invalid");
   const authorRole = one("authorRole");
   if (
     authorRole !== undefined &&
@@ -602,6 +610,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     answered: rawAnswered === undefined ? undefined : rawAnswered === "true",
     pinned: rawPinned === undefined ? undefined : rawPinned === "true",
     announcement: rawAnnouncement === "true" ? true : undefined,
+    private: rawPrivate === "true" ? true : undefined,
     authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
@@ -690,6 +699,7 @@ function postUpdateBody(value: unknown): UpdatePost {
     "pinned",
     "duplicateOfPostId",
     "duplicateStatus",
+    "private",
   ]);
   if (Object.keys(body).length === 0)
     throw validationError("An update field is required");
@@ -700,6 +710,8 @@ function postUpdateBody(value: unknown): UpdatePost {
     throw validationError("Anonymous is invalid");
   if (body.pinned !== undefined && typeof body.pinned !== "boolean")
     throw validationError("Pinned is invalid");
+  if (body.private !== undefined && typeof body.private !== "boolean")
+    throw validationError("Private is invalid");
   if (
     body.duplicateOfPostId !== undefined &&
     body.duplicateOfPostId !== null &&

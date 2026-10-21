@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { canReadPost, readablePost } from "../posts/visibility.js";
 import { consumeRateLimit } from "../database/rate-limit.js";
 
 export const COLLABORATION_LANGUAGES = [
@@ -181,9 +182,10 @@ export class CollaborationSessionService {
     if (!member) throw notFound();
     const staff = STAFF.has(member.role);
     if (!staff) {
+      // A private anchor hides its sessions from members who cannot read it.
       const post = await db.query<{ removed: boolean }>(
-        "SELECT (deleted_at IS NOT NULL OR duplicate_status='confirmed') AS removed FROM posts WHERE id=$1",
-        [row.post_id],
+        "SELECT (deleted_at IS NOT NULL OR duplicate_status='confirmed' OR (private AND author_user_id IS DISTINCT FROM $2)) AS removed FROM posts WHERE id=$1",
+        [row.post_id, userId],
       );
       if (post.rows[0]?.removed) throw notFound();
       if (row.created_by_user_id !== userId) {
@@ -317,8 +319,8 @@ export class CollaborationSessionService {
       if (member.status !== "active") throw archived();
       const post = UUID_PATTERN.test(body.postId)
         ? await db.query<{ title: string }>(
-            "SELECT title FROM posts WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL AND duplicate_status<>'confirmed' FOR SHARE",
-            [body.postId, courseId],
+            "SELECT title FROM posts WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL AND duplicate_status<>'confirmed' AND (NOT private OR author_user_id=$3 OR $4) FOR SHARE",
+            [body.postId, courseId, userId, STAFF.has(member.role)],
           )
         : undefined;
       if (!post?.rows[0])
@@ -401,7 +403,7 @@ export class CollaborationSessionService {
     const clauses = [
       "s.course_id=$1",
       "($3 OR s.created_by_user_id=$2 OR EXISTS (SELECT 1 FROM collaboration_participants cp WHERE cp.collaboration_session_id=s.id AND cp.user_id=$2))",
-      "($3 OR (p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'))",
+      "($3 OR (p.deleted_at IS NULL AND p.duplicate_status<>'confirmed' AND (NOT p.private OR p.author_user_id=$2)))",
     ];
     if (query.status === "ended") clauses.push("s.lifecycle_state='ended'");
     if (query.status === "active") clauses.push("s.lifecycle_state<>'ended'");
@@ -471,7 +473,11 @@ export class CollaborationSessionService {
       values.push(value);
       return `$${values.length}`;
     };
-    const clauses = ["p.deleted_at IS NULL", "p.duplicate_status<>'confirmed'"];
+    const clauses = [
+      "p.deleted_at IS NULL",
+      "p.duplicate_status<>'confirmed'",
+      readablePost("p", "$1", "m.role"),
+    ];
     if (query.status === "ended") clauses.push("s.lifecycle_state='ended'");
     if (query.status === "active") clauses.push("s.lifecycle_state<>'ended'");
     if (query.cursor) {
@@ -641,6 +647,21 @@ export class CollaborationSessionService {
           422,
           "not_course_member",
           "The user is not a current member of the course",
+        );
+      const anchor = await db.query<{
+        private: boolean;
+        author_user_id: string | null;
+      }>("SELECT private,author_user_id FROM posts WHERE id=$1", [
+        access.row.post_id,
+      ]);
+      if (
+        anchor.rows[0] &&
+        !canReadPost(anchor.rows[0], targetUserId, target.role)
+      )
+        throw new AuthError(
+          422,
+          "invitee_cannot_read_post",
+          "Only the author and course staff can read this private post",
         );
       const inserted = await db.query<{ created_at: Date }>(
         "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id,permission) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING created_at",

@@ -34,6 +34,8 @@ export type Post = {
   pinned?: boolean;
   /** Staff notes pinned and emailed to the course. */
   announcement?: boolean;
+  /** Readable only by the author and course staff. */
+  private?: boolean;
   answered?: boolean;
   /** Whether the viewer is notified of activity on the post. */
   following?: boolean;
@@ -63,6 +65,7 @@ export type CreatePostInput = {
   tags: string[];
   options?: { label: string }[];
   announcement?: boolean;
+  private?: boolean;
 };
 export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
@@ -71,6 +74,7 @@ export type PostListOptions = {
   cursor?: string;
   type?: "question" | "note" | "poll";
   announcement?: true;
+  private?: true;
   answered?: boolean;
   pinned?: boolean;
   authorId?: string;
@@ -111,6 +115,7 @@ export async function listPosts(
     query.set("answered", String(options.answered));
   if (options.pinned !== undefined) query.set("pinned", String(options.pinned));
   if (options.announcement) query.set("announcement", "true");
+  if (options.private) query.set("private", "true");
   if (options.authorId) query.set("authorId", options.authorId);
   if (options.authorRole) query.set("authorRole", options.authorRole);
   const tags = options.tags ?? [];
@@ -267,6 +272,27 @@ export async function setPostPinned(
         "If-Match": `"v${post.version}"`,
       },
       body: JSON.stringify({ pinned }),
+    }),
+  );
+  return payload.data;
+}
+
+/** Makes a private post readable by the whole course; this cannot be undone. */
+export async function makePostPublic(
+  post: Post,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"v${post.version}"`,
+      },
+      body: JSON.stringify({ private: false }),
     }),
   );
   return payload.data;

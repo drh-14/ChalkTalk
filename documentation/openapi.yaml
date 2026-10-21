@@ -3385,6 +3385,22 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                private_announcement:
+                  summary: An announcement cannot be private.
+                  value:
+                    error:
+                      code: private_announcement
+                      message: An announcement cannot be private.
+                      requestId: req_createPost
+                      details: []
+                private_poll:
+                  summary: A poll cannot be private.
+                  value:
+                    error:
+                      code: private_poll
+                      message: A poll cannot be private.
+                      requestId: req_createPost
+                      details: []
                 validation_failed:
                   summary: The post fields are invalid.
                   value:
@@ -3679,6 +3695,14 @@ paths:
           in: query
           required: false
           description: Only true is accepted; lists announcements only.
+          schema:
+            type: boolean
+            enum:
+              - true
+        - name: private
+          in: query
+          required: false
+          description: Only true is accepted; lists the private posts the caller can read.
           schema:
             type: boolean
             enum:
@@ -4032,6 +4056,22 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                post_already_public:
+                  summary: A public post cannot be made private.
+                  value:
+                    error:
+                      code: post_already_public
+                      message: A public post cannot be made private.
+                      requestId: req_updatePost
+                      details: []
+                duplicate_target_private:
+                  summary: A post cannot be marked as a duplicate of a private post.
+                  value:
+                    error:
+                      code: duplicate_target_private
+                      message: A post cannot be marked as a duplicate of a private post.
+                      requestId: req_updatePost
+                      details: []
                 validation_failed:
                   summary: No valid editable field was supplied.
                   value:
@@ -10857,6 +10897,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                invitee_cannot_read_post:
+                  summary: The session is on a private post, and the user is neither its author nor course staff.
+                  value:
+                    error:
+                      code: invitee_cannot_read_post
+                      message: The session is on a private post, and the user is neither its author nor course staff.
+                      requestId: req_inviteCollaborationParticipant
+                      details: []
                 not_course_member:
                   summary: The user is not a current member of the course.
                   value:
@@ -12183,6 +12231,9 @@ components:
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+        private:
+          type: boolean
+          description: Whether only the author and course staff can read the post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -12246,6 +12297,7 @@ components:
         - attachments
         - pinned
         - announcement
+        - private
         - following
         - unread
         - duplicateOfPostId
@@ -12313,6 +12365,9 @@ components:
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+        private:
+          type: boolean
+          description: Whether only the author and course staff can read the post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -12373,6 +12428,7 @@ components:
         - attachments
         - pinned
         - announcement
+        - private
         - following
         - unread
         - duplicateOfPostId
@@ -12439,6 +12495,9 @@ components:
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+        private:
+          type: boolean
+          description: Whether only the author and course staff can read the post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -12510,6 +12569,7 @@ components:
         - attachments
         - pinned
         - announcement
+        - private
         - following
         - unread
         - duplicateOfPostId
@@ -14813,6 +14873,10 @@ components:
           description: Post tags.
           maxItems: 10
           uniqueItems: true
+        private:
+          type: boolean
+          description: Readable only by the author and course TAs and instructors. Cannot be combined with announcement.
+          default: false
       additionalProperties: false
       required:
         - type
@@ -14851,6 +14915,10 @@ components:
         announcement:
           type: boolean
           description: TAs and instructors only. Posts the note as an announcement, pinned and emailed to every other course member; cannot be combined with anonymous.
+          default: false
+        private:
+          type: boolean
+          description: Readable only by the author and course TAs and instructors. Cannot be combined with announcement.
           default: false
       additionalProperties: false
       required:
@@ -14936,11 +15004,14 @@ components:
         pinned:
           type: boolean
           description: Staff-controlled pinned state.
+        private:
+          type: boolean
+          description: false makes a private post public (author or staff; cannot be undone). true on a public post returns post_already_public.
         duplicateOfPostId:
           type:
             - string
             - "null"
-          description: Original post ID, or null to clear the relationship.
+          description: Original post ID, or null to clear the relationship. The target cannot be private.
         duplicateStatus:
           type: string
           description: Duplicate-review state.
@@ -14992,6 +15063,7 @@ components:
             - followup_created
             - reply_created
             - announcement
+            - post_published
           description: What happened on the post.
         courseId:
           type: string

@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { AuthError } from "../auth/errors.js";
 import type { NotificationKind } from "./activity.js";
+import { readablePost } from "../posts/visibility.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -34,13 +35,14 @@ type Row = {
   read_at: Date | null;
 };
 
-// Visible while the caller is a member and the post is active and not merged.
+// Visible while the caller is a member who can still read the post, and the
+// post is active and not merged.
 const VISIBLE = `FROM notifications n
   JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id
   JOIN courses c ON c.id=n.course_id
   JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
   LEFT JOIN users a ON a.id=n.actor_user_id
-  WHERE n.user_id=$1`;
+  WHERE n.user_id=$1 AND ${readablePost("p", "n.user_id", "m.role")}`;
 
 export class NotificationService {
   constructor(private readonly pool: Pool) {}

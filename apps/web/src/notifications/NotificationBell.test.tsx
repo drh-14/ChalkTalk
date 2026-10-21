@@ -155,6 +155,27 @@ describe("notification bell", () => {
     expect(screen.queryByRole("region", { name: "Notifications" })).toBeNull();
   });
 
+  it("words a post being made public", async () => {
+    api(
+      [1],
+      [
+        {
+          ...answered,
+          kind: "post_published",
+          actor: { displayName: "Tara TA" },
+        },
+      ],
+    );
+    const user = userEvent.setup();
+    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    await user.click(
+      await screen.findByRole("button", { name: "Notifications, 1 unread" }),
+    );
+    expect((await screen.findAllByRole("listitem"))[0]!.textContent).toContain(
+      "Tara TA made your post public: Why does my loop never stop?",
+    );
+  });
+
   it("explains an empty inbox", async () => {
     api([0], []);
     const user = userEvent.setup();

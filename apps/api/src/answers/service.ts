@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { canReadPost } from "../posts/visibility.js";
 import { recordActivity } from "../notifications/activity.js";
 import {
   hideAttachmentsForParent,
@@ -34,6 +35,8 @@ type PostRow = {
   type: "question" | "note";
   deleted_at: Date | null;
   duplicate_status: string;
+  private: boolean;
+  author_user_id: string | null;
 };
 export type Contributor = { id: string; displayName: string };
 export type Answer = {
@@ -103,13 +106,17 @@ export class AnswerService {
   private async post(db: Db, postId: string, userId: string, lock = false) {
     if (!UUID_PATTERN.test(postId)) throw notFound();
     const result = await db.query<PostRow>(
-      `SELECT id,course_id,type,deleted_at,duplicate_status FROM posts WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
+      `SELECT id,course_id,type,deleted_at,duplicate_status,private,author_user_id FROM posts WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
       [postId],
     );
     const post = result.rows[0];
     if (!post) throw notFound();
     const member = await this.membership(db, post.course_id, userId, lock);
-    if (post.deleted_at || post.duplicate_status === "confirmed")
+    if (
+      post.deleted_at ||
+      post.duplicate_status === "confirmed" ||
+      !canReadPost(post, userId, member.role)
+    )
       throw notFound();
     return { post, member };
   }

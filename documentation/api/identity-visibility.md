@@ -16,6 +16,10 @@ Deleted authors return `userId: null`, `displayName: "Deleted user"`, and `delet
 
 Anonymous messages remain supported. Shared-answer drafts are local until explicitly saved; the API projects anonymous contributor identity according to the viewer's role. No answer presence or cursor data is published.
 
+## Private posts
+
+A private post is readable only by its author and the course's current TAs and instructors; see [Posts](posts.md). For anyone else it is indistinguishable from a post that does not exist, and so are its answers, followups, replies, attachments, upvotes, and live sessions. Lists, search, related questions, notifications, and digests remove private posts the viewer cannot read before ranking, pagination, `hasMore`, and counts. Visibility follows the viewer's current role, so a TA who becomes a student stops seeing other students' private posts at once. Making a post public keeps its anonymity setting, so the author projection rules above still apply.
+
 ## Answer contributors
 
 `Answer.contributors` is required but may be `null`. A nonanonymous answer returns its contributor list. An anonymous answer returns the full contributor list to instructors and TAs and returns `null` to every student, including its contributors. Contributors whose accounts are deleted are omitted from every list, so a deleted account's ID is never exposed; the list can therefore be empty.

@@ -139,6 +139,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `body_markdown`: `text`, nullable.
 - `anonymous`, `pinned`: `boolean`.
 - `announcement`: `boolean`, default false; only a non-anonymous note can be an announcement (`posts_announcement_check`). Announcements are created pinned by staff and emailed to the course; see [Create post](api/posts.md#createPost).
+- `private`: `boolean`, default false; readable only by the author and course staff. Announcements and polls are never private (`posts_private_check`), and a private post can become public but never the reverse. A partial index on `(course_id, last_activity_at DESC)` for active private posts serves the private filter.
 - `duplicate_of_post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
 - `duplicate_status`: `text`; `none`, `suggested`, or `confirmed`.
 - Confirming a duplicate retains the original title and body in this row. Application reads exclude confirmed rows from ordinary lists and search, redirect direct links to the active canonical row, and expose only restricted title/target metadata to staff review. Unmerge restores the retained content. The application blocks deleting or merging a canonical row while confirmed rows refer to it; this lifecycle rule is not enforced by the foreign key alone.
@@ -158,7 +159,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `id`: `uuid_v7`; primary key.
 - `user_id`: `uuid_v7`; the recipient.
 - `course_id`, `post_id`: `uuid_v7`; `(course_id, post_id)` references the post, cascading.
-- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, or `announcement`.
+- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, `announcement`, or `post_published` (staff made the recipient's private post public).
 - `actor_user_id`: `uuid_v7`, nullable; who acted. `actor_anonymous`: `boolean`; the actor posted anonymously, so students see "Anonymous".
 - `created_at`: `timestamptz`. `read_at`: `timestamptz`, nullable.
 - Indexes: `(user_id, created_at DESC, id DESC)` for listing, partial `(user_id)` where unread for counts, and `(post_id, user_id)` for marking the notifications of an opened post read.

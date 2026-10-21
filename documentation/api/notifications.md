@@ -9,9 +9,11 @@ These events create one notification for each other follower who is a current co
 - `followup_created`: a followup is posted;
 - `reply_created`: a reply is posted to a followup.
 
+When a TA or instructor makes someone's private post public, its author receives a `post_published` notification.
+
 An announcement creates an `announcement` notification for every other current course member. The actor is never notified of their own activity.
 
-Notifications are listed only while the caller is still a member of the course and the post is neither deleted nor a confirmed duplicate. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
+Notifications are listed only while the caller is still a member of the course who can read the post, and the post is neither deleted nor a confirmed duplicate. Followers who can no longer read a private post, for example a TA who became a student, are not notified. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
 
 **Email:** Users who turn on `notificationEmails` with [Update profile](auth.md) are emailed about each notification other than announcements, which already email every member. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. An anonymous actor appears as "Someone".
 
@@ -61,7 +63,7 @@ None.
 
 `data[].id` (string, required): Opaque stable identifier.
 
-`data[].kind` (enum: answer_created, answer_edited, answer_endorsed, followup_created, reply_created, announcement, required): What happened.
+`data[].kind` (enum: answer_created, answer_edited, answer_endorsed, followup_created, reply_created, announcement, post_published, required): What happened.
 
 `data[].courseId` (string, required): Course of the post.
 
