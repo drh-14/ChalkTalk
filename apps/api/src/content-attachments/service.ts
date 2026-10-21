@@ -10,6 +10,7 @@ import {
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { readablePost } from "../posts/visibility.js";
 import type { NewUpload } from "../course-files/service.js";
 import { validateUpload } from "../course-files/validate.js";
 
@@ -139,6 +140,7 @@ export class ContentAttachmentService {
     const postDeleted = kind === "post" ? "t.deleted_at" : "p.deleted_at";
     const duplicate =
       kind === "post" ? "t.duplicate_status" : "p.duplicate_status";
+    const readable = readablePost(kind === "post" ? "t" : "p", "$2", "m.role");
     const lockClause = lock
       ? ` FOR UPDATE OF t FOR SHARE OF c,m${kind === "post" ? "" : " FOR NO KEY UPDATE OF p"}`
       : "";
@@ -152,11 +154,12 @@ export class ContentAttachmentService {
       duplicate_status: string;
       status: string;
       role: "student" | "ta" | "instructor";
+      readable: boolean;
     }>(
       `SELECT t.course_id,${kind === "post" ? "t.id" : "t.post_id"} AS post_id,
        ${kind === "answer" ? "NULL::uuid" : "t.author_user_id"} AS author_user_id,
        ${kind === "answer" ? "t.edit_role_floor" : "NULL::text"} AS edit_role_floor,
-       t.deleted_at,${postDeleted} AS post_deleted_at,${duplicate} AS duplicate_status,c.status,m.role
+       t.deleted_at,${postDeleted} AS post_deleted_at,${duplicate} AS duplicate_status,c.status,m.role,${readable} AS readable
        FROM ${parentTable} t${postJoin}
        JOIN courses c ON c.id=t.course_id
        JOIN course_memberships m ON m.course_id=t.course_id AND m.user_id=$2
@@ -169,7 +172,8 @@ export class ContentAttachmentService {
       !row ||
       row.deleted_at ||
       row.post_deleted_at ||
-      row.duplicate_status === "confirmed"
+      row.duplicate_status === "confirmed" ||
+      !row.readable
     )
       throw notFound();
     if (row.status !== "active") {

@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import { recordActivity } from "../notifications/activity.js";
+import { canReadPost, readablePost } from "./visibility.js";
 import { endCollaborationSessions } from "../collaboration/lifecycle.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
 import {
@@ -22,6 +23,7 @@ type Row = {
   anonymous: boolean;
   pinned: boolean;
   announcement: boolean;
+  private: boolean;
   duplicate_of_post_id: string | null;
   duplicate_status: "none" | "suggested" | "confirmed";
   last_activity_at: Date;
@@ -44,6 +46,8 @@ export type CreatePost = {
   options?: string[];
   /** Notes only, staff only: pinned and emailed to the course. */
   announcement?: boolean;
+  /** Questions and notes only: readable by the author and course staff. */
+  private?: boolean;
 };
 export type UpdatePost = Partial<
   Omit<CreatePost, "type" | "options" | "announcement">
@@ -70,6 +74,8 @@ export type ListPosts = {
   q?: string;
   type?: "question" | "note" | "poll";
   announcement?: boolean;
+  /** Only private posts the viewer can read. */
+  private?: true;
   tags?: string[];
   tagMatch?: "all";
   authorId?: string;
@@ -85,6 +91,10 @@ export type ListPosts = {
 };
 export const postEtag = (post: { version: number }) => `"v${post.version}"`;
 const notFound = () => new AuthError(404, "not_found", "Post is not found");
+/** Private posts the viewer cannot read look exactly like missing ones. */
+const readable = (row: Row, viewerId: string, role: Role) => {
+  if (!canReadPost(row, viewerId, role)) throw notFound();
+};
 const validation = (message: string) =>
   new AuthError(422, "validation_failed", message);
 const STAFF = new Set<Role>(["ta", "instructor"]);
@@ -188,6 +198,7 @@ export class PostService {
           : await listAttachments(db, "post", row.id),
       pinned: row.pinned,
       announcement: row.announcement,
+      private: row.private,
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
       lastActivityAt: row.last_activity_at.toISOString(),
@@ -308,14 +319,22 @@ export class PostService {
           "permission_denied",
           "Only staff may post announcements",
         );
+      if (body.private && body.announcement)
+        throw new AuthError(
+          422,
+          "private_announcement",
+          "Announcements are for the whole course and cannot be private",
+        );
+      if (body.private && body.type === "poll")
+        throw new AuthError(422, "private_poll", "Polls cannot be private");
       const id = uuidv7();
       await db.query(
         "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
       );
       const created = await db.query<{ created_on: string }>(
         `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
-         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,created_at,updated_at,last_activity_at)
-         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,stamp.at,stamp.at,stamp.at FROM stamp
+         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,created_at,updated_at,last_activity_at)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,stamp.at,stamp.at,stamp.at FROM stamp
          RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on`,
         [
           id,
@@ -326,6 +345,7 @@ export class PostService {
           body.bodyMarkdown,
           body.anonymous ?? false,
           body.announcement ?? false,
+          body.private ?? false,
         ],
       );
       for (const [position, label] of (body.options ?? []).entries())
@@ -371,6 +391,7 @@ export class PostService {
     const row = await this.row(this.pool, id);
     if (!row) throw notFound();
     const member = await this.membership(this.pool, row.course_id, userId);
+    readable(row, userId, member.role);
     if (row.duplicate_status === "confirmed") return this.mergedReference(row);
     const value = await this.project(this.pool, row, userId, member.role);
     if (!row.deleted_at) {
@@ -473,7 +494,12 @@ export class PostService {
       values.push(value);
       return `$${values.length}`;
     };
-    const clauses = ["p.course_id=$1", "p.deleted_at IS NULL"];
+    const clauses = [
+      "p.course_id=$1",
+      "p.deleted_at IS NULL",
+      readablePost("p", add(userId), add(member.role)),
+    ];
+    if (options.private) clauses.push("p.private");
     const possibleFuzzyTerms = (
       options.q?.match(/[\p{L}\p{N}]+/gu) ?? []
     ).filter((term) => [...term].length >= 3);
@@ -652,6 +678,7 @@ export class PostService {
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
       if (row.deleted_at) throw notFound();
+      readable(row, userId, member.role);
       this.writable(member.status);
       this.checkRevision(row, etag);
       const staff = STAFF.has(member.role);
@@ -660,7 +687,15 @@ export class PostService {
         body.title !== undefined ||
         body.bodyMarkdown !== undefined ||
         body.anonymous !== undefined ||
-        body.tags !== undefined;
+        body.tags !== undefined ||
+        body.private !== undefined;
+      if (body.private === true && !row.private)
+        throw new AuthError(
+          422,
+          "post_already_public",
+          "A public post cannot be made private",
+        );
+      const publishing = body.private === false && row.private;
       const duplicate =
         body.duplicateOfPostId !== undefined ||
         body.duplicateStatus !== undefined;
@@ -731,9 +766,16 @@ export class PostService {
           target.id === row.id
         )
           throw validation("Duplicate target is invalid");
+        // The source's readers could not follow a redirect to a private post.
+        if (target.private)
+          throw new AuthError(
+            422,
+            "duplicate_target_private",
+            "A post cannot be merged into a private post",
+          );
       }
       await db.query(
-        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
+        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,private=$8,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [
           id,
           body.title ?? row.title,
@@ -742,8 +784,18 @@ export class PostService {
           body.pinned ?? row.pinned,
           targetId,
           status,
+          publishing ? false : row.private,
         ],
       );
+      if (publishing && staff && !author && row.author_user_id)
+        await recordActivity(db, {
+          courseId: row.course_id,
+          postId: id,
+          actorId: userId,
+          kind: "post_published",
+          recipients: "author",
+          follow: false,
+        });
       if (status === "confirmed" && row.duplicate_status !== "confirmed")
         await endCollaborationSessions(db, { postId: id });
       if (body.tags !== undefined)
@@ -778,7 +830,8 @@ export class PostService {
     if (!UUID_PATTERN.test(postId)) throw notFound();
     const row = await this.row(this.pool, postId);
     if (!row) throw notFound();
-    await this.membership(this.pool, row.course_id, userId);
+    const member = await this.membership(this.pool, row.course_id, userId);
+    readable(row, userId, member.role);
     if (row.deleted_at || row.duplicate_status === "confirmed")
       throw notFound();
     await this.pool.query(
@@ -807,6 +860,7 @@ export class PostService {
       const row = await this.row(db, postId, true);
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
       if (row.deleted_at || row.duplicate_status === "confirmed")
         throw notFound();
       if (row.type !== "poll")
@@ -839,7 +893,8 @@ export class PostService {
     if (!UUID_PATTERN.test(postId)) throw notFound();
     const row = await this.row(this.pool, postId);
     if (!row) throw notFound();
-    await this.membership(this.pool, row.course_id, userId);
+    const member = await this.membership(this.pool, row.course_id, userId);
+    readable(row, userId, member.role);
     if (row.deleted_at || row.duplicate_status === "confirmed")
       throw notFound();
     if (row.type !== "poll")
@@ -865,6 +920,7 @@ export class PostService {
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
       if (row.deleted_at) throw notFound();
+      readable(row, userId, member.role);
       this.writable(member.status);
       this.checkRevision(row, etag);
       if (row.duplicate_status === "confirmed")

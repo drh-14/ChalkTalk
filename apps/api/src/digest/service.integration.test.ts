@@ -947,6 +947,32 @@ integration("daily course email digest", () => {
     expect(aliceEmail?.text).not.toContain("Duplicate");
   });
 
+  it("leaves private posts and their answers and followups out of every digest", async () => {
+    const hidden = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T01:00:00Z",
+      "Private grade question",
+    );
+    await pool.query("UPDATE posts SET private=true WHERE id=$1", [hidden]);
+    await addAnswer(hidden, ids.physics, ids.bob, "2026-10-14T02:00:00Z");
+    await addFollowup(hidden, ids.physics, ids.bob, "2026-10-14T03:00:00Z");
+    const note = await addNote(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T04:00:00Z",
+      "Public note",
+    );
+    expect(await digest.schedule(new Date("2026-10-15T00:00:00Z"))).toBe(1);
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(sender.messages).toHaveLength(1);
+    expect(sender.messages[0]?.text).toContain(
+      "1 post · 0 answers · 0 followups",
+    );
+    expect(sender.messages[0]?.text).toContain(`/posts/${note}`);
+    expect(sender.messages[0]?.text).not.toContain("Private grade question");
+  });
+
   it("rechecks course archive and membership before send", async () => {
     await addQuestion(ids.physics, ids.bob, "2026-10-14T01:00:00Z", "Physics");
     await addQuestion(

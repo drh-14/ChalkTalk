@@ -101,7 +101,8 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
        JOIN posts p ON p.id=s.post_id
        WHERE s.id=$1 AND s.lifecycle_state='active'
          AND (m.role IN ('ta','instructor') OR (
-           p.deleted_at IS NULL AND p.duplicate_status<>'confirmed' AND (
+           p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
+           AND (NOT p.private OR p.author_user_id=$2) AND (
              s.created_by_user_id=$2 OR EXISTS (
                SELECT 1 FROM collaboration_participants cp
                WHERE cp.collaboration_session_id=s.id AND cp.user_id=$2))))`,

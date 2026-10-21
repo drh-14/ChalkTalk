@@ -41,6 +41,8 @@ const FILTER_VALUES = new Set([
   "mine",
   "instructors",
   "tas",
+  "announcements",
+  "private",
   ...Object.keys(POST_TYPES),
 ]);
 const SORTS: readonly FeedSort[] = [

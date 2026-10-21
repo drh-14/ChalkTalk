@@ -119,7 +119,7 @@ export class JobWorker {
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=u.id
        JOIN courses c ON c.id=p.course_id AND c.status='active'
        JOIN posts canonical ON canonical.id=$2 AND canonical.course_id=p.course_id
-         AND canonical.deleted_at IS NULL AND canonical.duplicate_status <> 'confirmed'
+         AND canonical.deleted_at IS NULL AND canonical.duplicate_status <> 'confirmed' AND NOT canonical.private
        WHERE p.id=$1 AND p.type='question' AND p.deleted_at IS NULL
          AND p.duplicate_status='confirmed' AND p.duplicate_of_post_id=$2`,
       [sourcePostId, canonicalPostId],
@@ -265,6 +265,7 @@ export class JobWorker {
        JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id
        JOIN courses c ON c.id=n.course_id
        JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
+         AND (NOT p.private OR p.author_user_id=n.user_id OR m.role IN ('ta','instructor'))
        LEFT JOIN users actor ON actor.id=n.actor_user_id
        WHERE n.id=$1 AND n.read_at IS NULL`,
       [notificationId],
@@ -278,6 +279,7 @@ export class JobWorker {
       answer_endorsed: ["Answer endorsed on", "endorsed the answer on"],
       followup_created: ["New followup on", "posted a followup on"],
       reply_created: ["New reply on", "replied on"],
+      post_published: ["Your post is now public:", "made your post public:"],
     };
     const [subject, verb] = wording[row.kind] ?? ["Activity on", "posted on"];
     // The email cannot tell whether the reader may see an anonymous name.

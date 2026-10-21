@@ -4,6 +4,7 @@ import {
   getPost,
   listPosts,
   retractVote,
+  makePostPublic,
   votePoll,
 } from "./client.js";
 
@@ -188,4 +189,33 @@ it("votes and retracts with CSRF", async () => {
   await expect(retractVote("post-1", "csrf")).rejects.toThrow(
     "The post is not a poll",
   );
+});
+
+it("filters private posts and makes one public with its revision", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json({ data: [], page: { nextCursor: null, hasMore: false } }),
+    )
+    .mockResolvedValueOnce(json({ data: { ...post, private: false } }));
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { private: true });
+  expect(fetchMock.mock.calls[0]![0]).toBe(
+    "/api/v1/courses/course-1/posts?private=true",
+  );
+  await expect(
+    makePostPublic(
+      { ...post, private: true, version: 4 } as Parameters<
+        typeof makePostPublic
+      >[0],
+      "csrf",
+    ),
+  ).resolves.toMatchObject({ private: false });
+  const [url, init] = fetchMock.mock.calls[1]!;
+  expect(url).toBe("/api/v1/posts/post-1");
+  expect(init).toMatchObject({
+    method: "PATCH",
+    body: JSON.stringify({ private: false }),
+    headers: { "If-Match": '"v4"', "X-CSRF-Token": "csrf" },
+  });
 });

@@ -626,6 +626,34 @@ integration("collaboration server", () => {
       ]);
     });
 
+    it("closes and refuses a classmate once the anchor post is private", async () => {
+      const sessionId = await newSession("alice", ["bob", "tim"]);
+      const bob = join("bob", sessionId);
+      const tim = join("tim", sessionId);
+      await until(() => bob.provider.isSynced && tim.provider.isSynced);
+      // The API never makes a public post private; this checks the server's own rule.
+      await pool.query("UPDATE posts SET private=true WHERE id=$1", [
+        fixture.postId,
+      ]);
+      try {
+        await collaborationAccessChanged(pool, [
+          fixture.users.bob!,
+          fixture.users.tim!,
+        ]);
+        await until(() => bob.state.closeReason === CLOSE_REASONS.removed);
+        expect(tim.state.closeReason).toBeUndefined();
+        const again = join("bob", sessionId);
+        await until(
+          () => again.state.authFailed || again.state.closeReason !== undefined,
+        );
+        expect(again.provider.isSynced).toBe(false);
+      } finally {
+        await pool.query("UPDATE posts SET private=false WHERE id=$1", [
+          fixture.postId,
+        ]);
+      }
+    });
+
     it("sweeps after the listener reconnects to catch a missed change", async () => {
       const sessionId = await newSession();
       const bob = join("bob", sessionId);

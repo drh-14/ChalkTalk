@@ -2,7 +2,7 @@ import type { Post, PostListOptions } from "./client.js";
 
 export type PostStatus = {
   label: string;
-  tone: "positive" | "attention" | "neutral";
+  tone: "positive" | "attention" | "neutral" | "private";
   /** Shown as an icon, with the label kept for screen readers and hover. */
   icon?: "pin";
 };
@@ -67,6 +67,7 @@ export const postTypeOf = (type: string): PostTypeConfig =>
 /** A post's own type statuses followed by statuses every type shares. */
 export function postStatuses(post: Post): PostStatus[] {
   return [
+    ...(post.private ? [{ label: "Private", tone: "private" as const }] : []),
     ...(post.announcement
       ? [{ label: "Announcement", tone: "attention" as const }]
       : []),
@@ -113,6 +114,12 @@ export const feedFilters = (userId?: string): FeedFilter[] => [
     key: "announcements",
     label: "Announcements",
     options: { announcement: true },
+    nested: false,
+  },
+  {
+    key: "private",
+    label: "Private",
+    options: { private: true },
     nested: false,
   },
   ...Object.entries(POST_TYPES).map(([key, type]) => ({

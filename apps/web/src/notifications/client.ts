@@ -7,7 +7,8 @@ export type NotificationKind =
   | "answer_endorsed"
   | "followup_created"
   | "reply_created"
-  | "announcement";
+  | "announcement"
+  | "post_published";
 export type Notification = {
   id: string;
   kind: NotificationKind;
@@ -88,6 +89,7 @@ const VERBS: Record<NotificationKind, string> = {
   followup_created: "posted a followup on",
   reply_created: "replied on",
   announcement: "announced",
+  post_published: "made your post public:",
 };
 
 /** "Grace Hopper answered" style lead-in for a notification. */

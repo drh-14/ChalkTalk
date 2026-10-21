@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import { readablePost } from "../posts/visibility.js";
 
 type Db = Pool | PoolClient;
 
@@ -8,7 +9,8 @@ export type NotificationKind =
   | "answer_endorsed"
   | "followup_created"
   | "reply_created"
-  | "announcement";
+  | "announcement"
+  | "post_published";
 
 /**
  * Records a member's activity on a post inside the caller's transaction:
@@ -25,6 +27,8 @@ export async function recordActivity(
     actorId: string;
     kind?: NotificationKind;
     anonymous?: boolean;
+    /** Followers by default; the post's author alone for post_published. */
+    recipients?: "followers" | "author";
     follow: boolean;
   },
 ): Promise<void> {
@@ -41,12 +45,18 @@ export async function recordActivity(
     [postId, actorId],
   );
   if (!activity.kind) return;
+  // Recipients must still be able to read the post, which may be private.
   const recipients =
     activity.kind === "announcement"
       ? `SELECT m.user_id FROM course_memberships m WHERE m.course_id=$1`
-      : `SELECT f.user_id FROM post_follows f
-         JOIN course_memberships m ON m.course_id=f.course_id AND m.user_id=f.user_id
-         WHERE f.post_id=$2 AND f.following`;
+      : activity.recipients === "author"
+        ? `SELECT m.user_id FROM posts p
+           JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=p.author_user_id
+           WHERE p.id=$2`
+        : `SELECT f.user_id FROM post_follows f
+           JOIN course_memberships m ON m.course_id=f.course_id AND m.user_id=f.user_id
+           JOIN posts p ON p.id=f.post_id
+           WHERE f.post_id=$2 AND f.following AND ${readablePost("p", "f.user_id", "m.role")}`;
   const insert = `INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous)
        SELECT gen_random_uuid(),r.user_id,$1,$2,$4,$3,$5
        FROM recipients r JOIN users u ON u.id=r.user_id AND u.deleted_at IS NULL

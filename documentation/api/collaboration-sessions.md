@@ -1,6 +1,6 @@
 ## Collaboration Sessions
 
-Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
+Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. A session on a [private post](posts.md) is also hidden from, and cannot be joined by, any member who cannot read that post. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
 
 <a id="createCollaborationSession"></a>
 
@@ -165,7 +165,7 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
 
 ##### `422 Unprocessable Content`
 
-`cross_course_anchor`: The anchor is invalid or belongs to another course.
+`cross_course_anchor`: The anchor is invalid, belongs to another course, or is a private post the caller cannot read.
 
 `validation_failed`: The request body is invalid.
 
@@ -994,6 +994,8 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
 ##### `422 Unprocessable Content`
 
 `not_course_member`: The user is not a current member of the course.
+
+`invitee_cannot_read_post`: The session is on a private post, and the user is neither its author nor course staff.
 
 `validation_failed`: The request body is invalid.
 

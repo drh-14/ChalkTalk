@@ -28,6 +28,7 @@ import {
   getPost,
   listMergedPosts,
   listPosts,
+  makePostPublic,
   markCourseRead,
   setFollowing,
   setPostPinned,
@@ -110,6 +111,67 @@ function PostByline({ post }: { post: Post }) {
         </>
       )}
     </>
+  );
+}
+
+/** Notice on a private post, with Make public for its author and staff. */
+function PrivateNotice({
+  post,
+  own,
+  canPublish,
+  csrfToken,
+  onPublished,
+}: {
+  post: Post;
+  /** Whether the viewer wrote the post. */
+  own: boolean;
+  canPublish: boolean;
+  csrfToken: string;
+  onPublished: (post: Post) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  async function publish() {
+    if (
+      pending ||
+      !window.confirm(
+        "Everyone in the course will be able to see this post. This cannot be undone.",
+      )
+    )
+      return;
+    setPending(true);
+    setError("");
+    try {
+      onPublished(await makePostPublic(post, csrfToken));
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <div className="private-notice" role="note">
+      <span>
+        {own
+          ? "Only you and course staff can see this."
+          : "Only the author and course staff can see this."}
+      </span>
+      {canPublish && (
+        <button
+          type="button"
+          className="button secondary compact"
+          disabled={pending}
+          onClick={() => void publish()}
+        >
+          {pending ? "Making public…" : "Make public"}
+        </button>
+      )}
+      {error && (
+        <p className="form-message error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -397,6 +459,7 @@ function Composer({
   const [type, setType] = useState<"question" | "note" | "poll">("question");
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [announcement, setAnnouncement] = useState(false);
+  const [audience, setAudience] = useState<"course" | "staff">("course");
   const [title, setTitle] = useState(initialTitle);
   const bodyField = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -428,6 +491,7 @@ function Composer({
         body ||
         tags ||
         anonymous ||
+        audience !== "course" ||
         type !== "question" ||
         attachmentQueue.files.length > 0 ||
         published,
@@ -436,6 +500,7 @@ function Composer({
     );
   }, [
     anonymous,
+    audience,
     body,
     initialTitle,
     onStateChange,
@@ -496,7 +561,8 @@ function Composer({
       if (complete) onCreated(published);
       return;
     }
-    const announcing = type === "note" && announcement;
+    const privately = type !== "poll" && audience === "staff";
+    const announcing = type === "note" && announcement && !privately;
     const labels = pollOptions.map((label) => label.trim());
     const input: CreatePostInput = {
       type,
@@ -511,6 +577,7 @@ function Composer({
         ? { options: labels.filter(Boolean).map((label) => ({ label })) }
         : {}),
       ...(announcing ? { announcement: true } : {}),
+      ...(privately ? { private: true } : {}),
     };
     if (type === "poll") {
       const filled = labels.filter(Boolean);
@@ -662,11 +729,26 @@ function Composer({
                 onChange={(event) => setTags(event.target.value)}
               />
             </label>
+            {type !== "poll" && (
+              <label>
+                Post to
+                <select
+                  value={audience}
+                  onChange={(event) =>
+                    setAudience(event.target.value as "course" | "staff")
+                  }
+                >
+                  <option value="course">Entire class</option>
+                  <option value="staff">Instructors and TAs</option>
+                </select>
+              </label>
+            )}
             {staff && type === "note" && (
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={announcement}
+                  checked={announcement && audience !== "staff"}
+                  disabled={audience === "staff"}
                   onChange={(event) => setAnnouncement(event.target.checked)}
                 />
                 Post as announcement (pinned and emailed to the class)
@@ -675,8 +757,13 @@ function Composer({
             <label className="checkbox-label">
               <input
                 type="checkbox"
-                checked={anonymous && !(type === "note" && announcement)}
-                disabled={type === "note" && announcement}
+                checked={
+                  anonymous &&
+                  !(type === "note" && announcement && audience !== "staff")
+                }
+                disabled={
+                  type === "note" && announcement && audience !== "staff"
+                }
                 onChange={(event) => setAnonymous(event.target.checked)}
               />
               Post anonymously
@@ -2272,6 +2359,25 @@ function DiscussionContent({
                           {postTypeOf(detail.type).label}
                         </p>
                         <h2>{detail.title}</h2>
+                        {detail.private && (
+                          <PrivateNotice
+                            post={detail}
+                            own={detail.author.userId === userId}
+                            canPublish={
+                              course?.status === "active" &&
+                              (staff || detail.author.userId === userId)
+                            }
+                            csrfToken={csrfToken}
+                            onPublished={(next) => {
+                              setDetail(next);
+                              setItems((current) =>
+                                current.map((item) =>
+                                  item.id === next.id ? next : item,
+                                ),
+                              );
+                            }}
+                          />
+                        )}
                         <div className="post-author-row">
                           <p className="post-author">
                             <PostByline post={detail} />
