@@ -58,6 +58,122 @@ integration("semantic post indexing", () => {
     }
   });
 
+  it("waits for each generation's bounded initial scan and current jobs before becoming healthy", async () => {
+    const postId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'question','Legacy question','Needs an embedding')",
+      [postId, courseId, userId],
+    );
+    const provider = {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    };
+    const first = new SemanticIndex(pool, config, provider);
+    expect(await first.healthy()).toBe(false);
+    expect(await first.queueBackfillOne()).toBe(true);
+    expect(await first.healthy()).toBe(false);
+    const firstWorker = new JobWorker(
+      pool,
+      "first-generation",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      first,
+    );
+    expect(await firstWorker.runOnce()).toBe(true);
+    expect(await first.healthy()).toBe(false);
+    expect(await first.queueBackfillOne()).toBe(false);
+    expect(await first.healthy()).toBe(true);
+    expect(await new SemanticIndex(pool, config, provider).healthy()).toBe(
+      true,
+    );
+
+    const nextConfig = readEmbeddingConfig({
+      EMBEDDING_API_KEY: "test-key",
+      EMBEDDING_MODEL: "next-generation",
+    })!;
+    const next = new SemanticIndex(pool, nextConfig, provider);
+    expect(await next.healthy()).toBe(false);
+    expect(await next.queueBackfillOne()).toBe(true);
+    expect(await firstWorker.runOnce()).toBe(false);
+    expect(await next.healthy()).toBe(false);
+    const nextWorker = new JobWorker(
+      pool,
+      "next-generation",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      next,
+    );
+    expect(await nextWorker.runOnce()).toBe(true);
+    expect(await next.healthy()).toBe(false);
+    expect(await next.queueBackfillOne()).toBe(false);
+    expect(await next.healthy()).toBe(true);
+  });
+
+  it("keeps a completed scan unhealthy during a current-revision write and failed job", async () => {
+    const index = new SemanticIndex(pool, config, {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    });
+    expect(await index.healthy()).toBe(false);
+    expect(await index.queueBackfillOne()).toBe(false);
+    expect(await index.healthy()).toBe(true);
+
+    const postId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'note','New note','Updated while ready')",
+      [postId, courseId, userId],
+    );
+    expect(await index.enqueue(pool, postId)).toBe(true);
+    expect(await index.healthy()).toBe(false);
+    await pool.query(
+      "UPDATE jobs SET status='dead',last_error='provider failed' WHERE kind='index_post' AND payload->>'postId'=$1",
+      [postId],
+    );
+    expect(await index.healthy()).toBe(false);
+    expect(await index.indexPost(postId)).toBe(true);
+    await pool.query(
+      "UPDATE jobs SET status='succeeded',last_error=NULL WHERE kind='index_post' AND payload->>'postId'=$1",
+      [postId],
+    );
+    expect(await index.healthy()).toBe(true);
+  });
+
+  it("restarts an old worker cursor after a generation lease expires", async () => {
+    const provider = {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    };
+    const workerIndex = new SemanticIndex(pool, config, provider);
+    expect(await workerIndex.queueBackfillOne()).toBe(false);
+    expect(await workerIndex.healthy()).toBe(true);
+    await pool.query(
+      "UPDATE semantic_embedding_generations SET last_seen_at=now()-interval '2 days' WHERE generation=$1",
+      [config.generation],
+    );
+    const postId = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,updated_at) VALUES($1,$2,$3,'note','While absent','Needs backfill','1980-01-01')",
+      [postId, courseId, userId],
+    );
+    const apiIndex = new SemanticIndex(pool, config, provider);
+    expect(await apiIndex.healthy()).toBe(false);
+    expect(await workerIndex.queueBackfillOne()).toBe(true);
+    expect(await workerIndex.healthy()).toBe(false);
+    const worker = new JobWorker(
+      pool,
+      "resumed-worker",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      workerIndex,
+    );
+    expect(await worker.runOnce()).toBe(true);
+    expect(await workerIndex.queueBackfillOne()).toBe(false);
+    expect(await apiIndex.healthy()).toBe(true);
+  });
+
   it("does not write or wait on registration for repeated health checks", async () => {
     const heartbeatConfig = readEmbeddingConfig({
       EMBEDDING_API_KEY: "test-key",
@@ -304,6 +420,7 @@ integration("semantic post indexing", () => {
         )
       ).rowCount,
     ).toBe(0);
+    expect(await nextIndex.queueBackfillOne()).toBe(false);
     expect(await nextIndex.healthy()).toBe(true);
     expect(
       (
@@ -465,6 +582,7 @@ integration("semantic post indexing", () => {
         )
       ).rows[0]!.source_revision,
     ).not.toBe(oldRevision);
+    expect(await nextIndex.queueBackfillOne()).toBe(false);
     expect(await nextIndex.healthy()).toBe(true);
   });
 
@@ -795,6 +913,7 @@ integration("semantic post indexing", () => {
       [postId],
     );
     expect(await worker.runOnce()).toBe(true);
+    expect(await index.queueBackfillOne()).toBe(false);
     expect(await index.healthy()).toBe(true);
   });
 
@@ -840,8 +959,8 @@ integration("semantic post indexing", () => {
         poll.value.id,
       ],
     );
-    expect(await index.healthy()).toBe(true);
     expect(await index.queueBackfillOne()).toBe(false);
+    expect(await index.healthy()).toBe(true);
     await pool.query(
       "UPDATE jobs SET status='queued',last_error=NULL WHERE kind='index_post'",
     );

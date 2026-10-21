@@ -26,6 +26,7 @@ function chunks(title: string, body: string): string[] {
 
 export class SemanticIndex {
   private backfillCursor?: { updatedAt: Date; id: string };
+  private backfillEpoch?: string;
 
   constructor(
     private readonly pool: Pool,
@@ -34,11 +35,16 @@ export class SemanticIndex {
   ) {}
 
   private async registerGeneration(db: Db): Promise<void> {
-    const active = await db.query<{ fresh: boolean }>(
-      "SELECT last_seen_at >= now()-interval '1 minute' AS fresh FROM semantic_embedding_generations WHERE generation=$1",
+    const active = await db.query<{ fresh: boolean; backfill_epoch: string }>(
+      "SELECT last_seen_at >= now()-interval '1 minute' AS fresh,backfill_epoch FROM semantic_embedding_generations WHERE generation=$1",
       [this.config.generation],
     );
-    if (active.rows[0]?.fresh) return;
+    if (active.rows[0]?.fresh) {
+      if (this.backfillEpoch !== active.rows[0].backfill_epoch)
+        this.backfillCursor = undefined;
+      this.backfillEpoch = active.rows[0].backfill_epoch;
+      return;
+    }
     const ownTransaction = db === this.pool;
     const client = ownTransaction ? await this.pool.connect() : db;
     try {
@@ -46,18 +52,24 @@ export class SemanticIndex {
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtext('semantic_embedding_generations'))",
       );
-      const previous = await client.query<{ stale: boolean; fresh: boolean }>(
-        "SELECT last_seen_at < now()-interval '1 day' AS stale, last_seen_at >= now()-interval '1 minute' AS fresh FROM semantic_embedding_generations WHERE generation=$1",
+      const previous = await client.query<{
+        fresh: boolean;
+        backfill_epoch: string;
+      }>(
+        "SELECT last_seen_at >= now()-interval '1 minute' AS fresh,backfill_epoch FROM semantic_embedding_generations WHERE generation=$1",
         [this.config.generation],
       );
-      if (!previous.rowCount || previous.rows[0]?.stale)
-        this.backfillCursor = undefined;
+      let epoch = previous.rows[0]?.backfill_epoch;
       if (!previous.rows[0]?.fresh)
-        await client.query(
-          "INSERT INTO semantic_embedding_generations(generation) VALUES($1) ON CONFLICT (generation) DO UPDATE SET last_seen_at=now()",
-          [this.config.generation],
-        );
+        epoch = (
+          await client.query<{ backfill_epoch: string }>(
+            "INSERT INTO semantic_embedding_generations(generation) VALUES($1) ON CONFLICT (generation) DO UPDATE SET last_seen_at=now(),initial_backfill_complete=CASE WHEN semantic_embedding_generations.last_seen_at < now()-interval '1 day' THEN false ELSE semantic_embedding_generations.initial_backfill_complete END,backfill_epoch=semantic_embedding_generations.backfill_epoch+CASE WHEN semantic_embedding_generations.last_seen_at < now()-interval '1 day' THEN 1 ELSE 0 END RETURNING backfill_epoch",
+            [this.config.generation],
+          )
+        ).rows[0]!.backfill_epoch;
       if (ownTransaction) await client.query("COMMIT");
+      if (this.backfillEpoch !== epoch) this.backfillCursor = undefined;
+      this.backfillEpoch = epoch;
     } catch (error) {
       if (ownTransaction) await client.query("ROLLBACK");
       throw error;
@@ -76,13 +88,16 @@ export class SemanticIndex {
   async healthy(): Promise<boolean> {
     await this.registerGeneration(this.pool);
     const result = await this.pool.query<{ unhealthy: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM semantic_post_catchup d JOIN posts p ON p.id=d.post_id
+      `SELECT NOT EXISTS (
+           SELECT 1 FROM semantic_embedding_generations g
+           WHERE g.generation=$1 AND g.initial_backfill_complete
+         ) OR EXISTS (SELECT 1 FROM semantic_post_catchup d JOIN posts p ON p.id=d.post_id
                       WHERE d.generation=$1
                         AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note') LIMIT 1)
          OR EXISTS (
            SELECT 1 FROM jobs j JOIN posts p ON p.id=(j.payload->>'postId')::uuid
            WHERE j.kind='index_post' AND j.status <> 'succeeded'
-             AND j.last_error IS NOT NULL AND j.payload->>'generation'=$1
+             AND j.payload->>'generation'=$1
              AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note')
              AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
            LIMIT 1
@@ -186,6 +201,17 @@ export class SemanticIndex {
         : [this.config.generation],
     );
     const last = scanned.rows.at(-1);
+    for (const row of scanned.rows)
+      if (row.needs_enqueue && (await this.enqueue(this.pool, row.id))) {
+        this.backfillCursor = { updatedAt: row.updated_at, id: row.id };
+        return true;
+      }
+    if (last) this.backfillCursor = { updatedAt: last.updated_at, id: last.id };
+    if (scanned.rows.length < 100)
+      await this.pool.query(
+        "UPDATE semantic_embedding_generations SET initial_backfill_complete=true WHERE generation=$1 AND backfill_epoch=$2 AND NOT initial_backfill_complete",
+        [this.config.generation, this.backfillEpoch],
+      );
     if (!last) {
       const retry = await this.pool.query<{ id: string }>(
         `SELECT p.id FROM jobs j JOIN posts p ON p.id=(j.payload->>'postId')::uuid
@@ -203,12 +229,6 @@ export class SemanticIndex {
       );
       return retry.rows[0] ? this.enqueue(this.pool, retry.rows[0].id) : false;
     }
-    for (const row of scanned.rows)
-      if (row.needs_enqueue && (await this.enqueue(this.pool, row.id))) {
-        this.backfillCursor = { updatedAt: row.updated_at, id: row.id };
-        return true;
-      }
-    this.backfillCursor = { updatedAt: last.updated_at, id: last.id };
     return false;
   }
 
