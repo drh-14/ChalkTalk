@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Keep validated original files available to current course members without committing to the future course-resources product model or exposing file bytes outside the course.
+Keep validated original files available to authorized course members without exposing file bytes outside the course.
 
 ## Requirements
 
@@ -60,7 +60,7 @@ A valid `Idempotency-Key` SHALL bind uploader, course, filename, media type and 
 
 ### Requirement: Uploader-controlled logical deletion
 
-`DELETE /api/v1/courses/{courseId}/files/{fileId}` SHALL return `204` only when the original uploader is still a current instructor in an active course. It SHALL atomically hide the file and queue durable, retryable S3 deletion before replying, without waiting for S3. A hidden file SHALL return `404` on later reads, downloads and repeated deletion. Archival SHALL make the course download-only.
+`DELETE /api/v1/courses/{courseId}/files/{fileId}` SHALL return `204` only when the original uploader is still a current instructor in an active course and the file has no active catalog reference. It SHALL atomically hide the file and queue durable, retryable S3 deletion before replying, without waiting for S3. A hidden file SHALL return `404` on later reads, downloads and repeated deletion. Archival SHALL make the course download-only.
 
 #### Scenario: Uploader deletes a file
 
@@ -93,7 +93,7 @@ The API SHALL use an S3-compatible configured bucket. A local endpoint MAY use p
 
 ### Requirement: Member file listing
 
-`GET /api/v1/courses/{courseId}/files` SHALL return live course_files metadata only to authenticated current members of an active or archived course. Missing, deleting and inaccessible courses SHALL return 404. Deleted files and other courses' files SHALL be excluded. Responses SHALL use `data` and `page` with `hasMore` and nullable `nextCursor`, default limit 25 and limit 1–100. Files SHALL sort by exact creation timestamp descending, then ID descending. Opaque cursors SHALL preserve PostgreSQL microseconds and bind the course; malformed cursors, unknown query fields and invalid or repeated query values SHALL return 400. Only existing public file metadata SHALL be exposed.
+`GET /api/v1/courses/{courseId}/files` SHALL return live, currently visible course_files metadata only to authenticated current members of an active or archived course. Catalog visibility follows organized-course-resources. Missing, deleting and inaccessible courses SHALL return 404. Deleted files and other courses' files SHALL be excluded. Responses SHALL use `data` and `page` with `hasMore` and nullable `nextCursor`, default limit 25 and limit 1–100. Files SHALL sort by exact creation timestamp descending, then ID descending. Opaque cursors SHALL preserve PostgreSQL microseconds and bind the course, effective access and catalog version; malformed or stale cursors, unknown query fields and invalid or repeated query values SHALL return 400. Only existing public file metadata SHALL be exposed.
 
 #### Scenario: Member pages files
 
@@ -107,7 +107,7 @@ The API SHALL use an S3-compatible configured bucket. A local endpoint MAY use p
 
 ### Requirement: Course Resources file interface
 
-The Resources route SHALL display actual course files alongside named external links as specified in course-resource-links. Existing immutable file upload, authenticated original-byte download and permissions SHALL remain unchanged. File names SHALL be the download links without additional Download text or buttons. Only current active-course instructors SHALL see upload controls. Failed upload SHALL preserve the list and same-file retry SHALL reuse the idempotency key; selecting another file SHALL reset it. Loading, empty, error/retry and pagination feedback SHALL remain accessible and responsive. No file delete UI or custom viewer SHALL be added.
+The Resources route SHALL display catalog file titles alongside named external links under instructor-created sections as specified in organized-course-resources. The standalone file upload and authenticated original-byte download contracts remain available, subject to catalog visibility. File titles SHALL be the download links without additional Download text or buttons. Only current active-course instructors SHALL see upload controls. Failed upload SHALL preserve the list and unchanged-request retry SHALL reuse the idempotency key; selecting another file or changing request metadata SHALL reset it. Loading, empty, error/retry and pagination feedback SHALL remain accessible and responsive. No custom viewer SHALL be added.
 
 #### Scenario: Instructor uploads
 - **WHEN** an active-course instructor uploads a supported file
@@ -116,3 +116,24 @@ The Resources route SHALL display actual course files alongside named external l
 #### Scenario: Readonly members
 - **WHEN** a TA, student or archived-course instructor opens Resources
 - **THEN** files can be downloaded and named external links opened but creation controls are absent
+
+### Requirement: Organized catalog integration
+
+Catalog files SHALL enforce current effective resource visibility at listing and download, prevent standalone deletion while actively referenced and support atomic validated-file association with metadata-bound idempotency. Standalone ownership remains uploader plus current instructor.
+Legacy file-list cursors SHALL bind the actual course, effective current class/staff access and catalog visibility version; a role or catalog change SHALL make an earlier cursor invalid before pagination.
+An identical replay of a previously successful upload MAY return the original success response after archival without creating or replacing a file. This exception SHALL still require the current authenticated same-course instructor, matching request hash and an unexpired key; a fresh archived upload SHALL return 409.
+
+#### Scenario: A catalog item is restricted
+
+- **WHEN** an unauthorized member requests the item through an existing endpoint
+- **THEN** the endpoint does not disclose the item
+
+#### Scenario: An archived instructor retries an existing upload
+
+- **WHEN** the current same-course instructor repeats a successful upload with its original unexpired key and identical request after archival
+- **THEN** the original success response is returned without a new file write; a changed request or fresh key returns 409
+
+#### Scenario: Catalog visibility changes during a legacy file listing
+
+- **WHEN** a member requests another file page using a cursor issued before an instructor changed catalog visibility
+- **THEN** the API rejects the stale cursor instead of skipping a newly visible file

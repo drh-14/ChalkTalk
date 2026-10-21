@@ -423,6 +423,12 @@ export class JobWorker {
           );
           if (referenced.rowCount)
             throw new Error("File is still referenced by course information");
+          const refs = await this.pool.query(
+            "SELECT 1 FROM course_resources r JOIN course_resource_revisions v ON v.id=r.active_revision_id JOIN course_files f ON f.id=v.file_id WHERE r.deleted_at IS NULL AND f.object_key=$1",
+            [job.payload.objectKey],
+          );
+          if (refs.rowCount)
+            throw new Error("File is still referenced by a current resource");
         }
         await this.objectStore.client.send(
           new DeleteObjectCommand({

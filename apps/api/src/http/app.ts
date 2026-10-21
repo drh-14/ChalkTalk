@@ -52,7 +52,10 @@ import {
 } from "../collaboration/service.js";
 import { NotificationService } from "../notifications/service.js";
 
-import { CourseResourceService } from "../course-resources/service.js";
+import {
+  resourceEtag,
+  CourseResourceService,
+} from "../course-resources/service.js";
 
 export interface AppDependencies {
   environment: Environment;
@@ -1678,6 +1681,252 @@ export function createApp(
       }
     },
   );
+  const catalog = () => {
+    if (!courseResourceService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Resources are unavailable",
+      );
+    return courseResourceService;
+  };
+  app.patch(
+    "/api/v1/courses/:courseId/resource-sections/:sectionId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["title", "visibility"], []);
+        const value = await catalog().updateSection(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.sectionId),
+          body,
+          request.header("if-match"),
+        );
+        response.set("ETag", resourceEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/resource-sections/:sectionId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await catalog().deleteSection(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.sectionId),
+          request.header("if-match"),
+        );
+        response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/courses/:courseId/resource-sections/order",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["ids"], ["ids"]);
+        const value = await catalog().reorder(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          body.ids,
+          request.header("if-match"),
+        );
+        response.set("ETag", resourceEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/courses/:courseId/resources/order",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["ids", "sectionId"],
+          ["ids", "sectionId"],
+        );
+        const value = await catalog().reorder(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          body.ids,
+          request.header("if-match"),
+          body.sectionId,
+        );
+        response.set("ETag", resourceEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/resources/:resourceId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["title", "visibility", "sectionId", "url"],
+          [],
+        );
+        const value = await catalog().update(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.resourceId),
+          body,
+          request.header("if-match"),
+        );
+        response.set("ETag", resourceEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/resources/:resourceId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await catalog().delete(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.resourceId),
+          request.header("if-match"),
+        );
+        response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const replace of [false, true])
+    app[replace ? "put" : "post"](
+      replace
+        ? "/api/v1/courses/:courseId/resources/:resourceId/file"
+        : "/api/v1/courses/:courseId/resources/files",
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+        try {
+          const courseId = param(request.params.courseId),
+            userId = auth(response).session.user.id;
+          await catalog().authorizeUpload(
+            courseId,
+            userId,
+            request.header("idempotency-key"),
+          );
+          upload = await readMultipart(request, [
+            "title",
+            "sectionId",
+            "visibility",
+          ]);
+          const value = await catalog().upload(
+            courseId,
+            userId,
+            upload,
+            upload.fields,
+            courseFiles(),
+            request.header("idempotency-key"),
+            replace ? param(request.params.resourceId) : undefined,
+            request.header("if-match"),
+          );
+          response
+            .status(replace ? 200 : 201)
+            .set({
+              ETag: resourceEtag(value),
+              Location: `/api/v1/courses/${courseId}/resources/${value.id}`,
+            })
+            .json({ data: value });
+        } catch (error) {
+          next(error);
+        } finally {
+          await upload?.cleanup();
+        }
+      },
+    );
+  app.get(
+    "/api/v1/courses/:courseId/resource-sections",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await catalog().sections(
+          param(request.params.courseId),
+          current.session.user.id,
+        );
+        response
+          .set({
+            "Cache-Control": "private, no-store",
+            ETag: resourceEtag(value),
+          })
+          .json(value);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/resource-sections",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["title", "visibility"],
+          ["title"],
+        );
+        const value = await catalog().createSection(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          { title: body.title, visibility: body.visibility },
+        );
+        response
+          .status(201)
+          .set({
+            ETag: resourceEtag(value),
+            Location: `/api/v1/courses/${value.courseId}/resource-sections/${value.id}`,
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/resources/:resourceId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await catalog().read(
+          param(request.params.courseId),
+          param(request.params.resourceId),
+          current.session.user.id,
+        );
+        response
+          .set({
+            "Cache-Control": "private, no-store",
+            ETag: resourceEtag(value),
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.get(
     "/api/v1/courses/:courseId/resources",
     optionalReadOrigin,
@@ -1686,8 +1935,12 @@ export function createApp(
         const current = await requireSession(request);
         if (
           Object.keys(request.query).some(
-            (key) => key !== "limit" && key !== "cursor",
+            (key) => !["limit", "cursor", "sort", "sectionId"].includes(key),
           ) ||
+          (request.query.sort !== undefined &&
+            typeof request.query.sort !== "string") ||
+          (request.query.sectionId !== undefined &&
+            typeof request.query.sectionId !== "string") ||
           (request.query.limit !== undefined &&
             (typeof request.query.limit !== "string" ||
               !/^[1-9]\d*$/.test(request.query.limit)))
@@ -1700,16 +1953,24 @@ export function createApp(
             "service_unavailable",
             "Resource service is unavailable",
           );
+        const value = await courseResourceService.list(
+          param(request.params.courseId),
+          current.session.user.id,
+          query.limit,
+          query.cursor,
+          typeof request.query.sort === "string"
+            ? request.query.sort
+            : undefined,
+          typeof request.query.sectionId === "string"
+            ? request.query.sectionId
+            : undefined,
+        );
         response
-          .set("Cache-Control", "private, no-store")
-          .json(
-            await courseResourceService.list(
-              param(request.params.courseId),
-              current.session.user.id,
-              query.limit,
-              query.cursor,
-            ),
-          );
+          .set({
+            "Cache-Control": "private, no-store",
+            ETag: resourceEtag(value),
+          })
+          .json(value);
       } catch (error) {
         next(error);
       }
@@ -1723,7 +1984,7 @@ export function createApp(
         requireJsonRequest(request);
         const body = strictBody(
           request.body,
-          ["kind", "title", "url"],
+          ["kind", "title", "url", "sectionId", "visibility"],
           ["kind", "title", "url"],
         );
         if (body.kind !== "link")
@@ -1737,12 +1998,20 @@ export function createApp(
         const value = await courseResourceService.create(
           param(request.params.courseId),
           auth(response).session.user.id,
-          { title: body.title, url: body.url },
+          {
+            title: body.title,
+            url: body.url,
+            sectionId: body.sectionId,
+            visibility: body.visibility,
+          },
           request.header("idempotency-key"),
         );
         response
           .status(201)
-          .set("Location", `/api/v1/courses/${value.courseId}/resources`)
+          .set({
+            Location: `/api/v1/courses/${value.courseId}/resources`,
+            ETag: resourceEtag(value),
+          })
           .json({ data: value });
       } catch (error) {
         next(error);

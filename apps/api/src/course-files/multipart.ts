@@ -8,7 +8,11 @@ import { AuthError } from "../auth/errors.js";
 import { MAX_UPLOAD_BYTES } from "./validate.js";
 import type { NewUpload } from "./service.js";
 
-export async function readMultipart(request: Request): Promise<NewUpload> {
+export async function readMultipart(
+  request: Request,
+  allowedFields: readonly string[] = [],
+): Promise<NewUpload & { fields: Record<string, string> }> {
+  const fields: Record<string, string> = {};
   if (!request.headers["content-type"]?.startsWith("multipart/form-data"))
     throw new AuthError(
       415,
@@ -25,15 +29,27 @@ export async function readMultipart(request: Request): Promise<NewUpload> {
   try {
     parser = Busboy({
       headers: request.headers,
-      limits: { fileSize: MAX_UPLOAD_BYTES + 1, files: 2, fields: 1, parts: 2 },
+      limits: {
+        fileSize: MAX_UPLOAD_BYTES + 1,
+        files: 2,
+        fields: allowedFields.length + 1,
+        fieldSize: 2048,
+        parts: allowedFields.length + 2,
+      },
     });
     const activeParser = parser;
-    parser.on("field", () => {
-      failed = new AuthError(
-        422,
-        "validation_failed",
-        "Only one file part is permitted",
-      );
+    parser.on("field", (name, value, info) => {
+      if (
+        !allowedFields.includes(name) ||
+        Object.hasOwn(fields, name) ||
+        info.valueTruncated
+      )
+        failed = new AuthError(
+          422,
+          "validation_failed",
+          "Upload metadata is invalid",
+        );
+      else fields[name] = value;
     });
     parser.on("file", (name, stream, info) => {
       if (name !== "file" || file) {
@@ -88,6 +104,7 @@ export async function readMultipart(request: Request): Promise<NewUpload> {
       throw new AuthError(413, "payload_too_large", "Upload exceeds 100 MiB");
     handedOff = true;
     return {
+      fields,
       fileName: file.fileName,
       declaredType: file.declaredType,
       filePath,

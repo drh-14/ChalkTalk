@@ -124,3 +124,95 @@
   cursor: wait;
   opacity: 0.7;
 }
+.resource-management {
+  display: grid;
+  gap: 1.25rem;
+  margin: 1.5rem 0;
+}
+.resource-management > form {
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: white;
+  padding: 1rem;
+  margin: 0;
+}
+.organized-resources label {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.65rem 0;
+}
+.organized-resources label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+}
+.organized-resources input[type="checkbox"] {
+  width: auto;
+  flex: none;
+}
+.organized-resources input:not([type="checkbox"]),
+.organized-resources select {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.resource-sort {
+  max-width: 16rem;
+}
+.resource-section {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+  margin-top: 1.5rem;
+}
+.resource-section > .resource-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.resource-section h3 {
+  margin: 0.5rem 0;
+}
+.resource-section-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.resource-order-controls,
+.resource-edit-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+.resource-order-controls button {
+  font-size: 0.85rem;
+}
+.resource-edit-form {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+}
+.resource-visibility {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+.organized-resources [role="alert"] {
+  color: #b42318;
+}
+@media (min-width: 900px) {
+  .resource-management {
+    grid-template-columns: 1fr 1fr;
+  }
+  .resource-management > form:first-child {
+    grid-column: 1/-1;
+  }
+}
+
+.organized-resources button,
+.resource-section h3,
+.course-file-meta span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}

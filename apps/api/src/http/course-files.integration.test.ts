@@ -294,7 +294,7 @@ integration("course file upload and byte download", () => {
       { ...fileB, createdAt: "2090-01-01T00:00:00.123Z" },
     ]);
     const second = await list(
-      ids.ta,
+      ids.student,
       `?limit=1&cursor=${encodeURIComponent(first.body.page.nextCursor)}`,
     );
     expect(second.status).toBe(200);
@@ -347,6 +347,93 @@ integration("course file upload and byte download", () => {
       "UPDATE course_files SET created_at=now() WHERE id=ANY($1)",
       [[fileA.id, fileB.id]],
     );
+  });
+
+  it("rejects file cursors after access changes and lists fresh staff-visible files", async () => {
+    const publicFile = (
+      await upload(
+        ids.instructor,
+        "cursor-public.txt",
+        "text/plain",
+        Buffer.from("public"),
+      )
+    ).body.data;
+    const staffFile = (
+      await upload(
+        ids.instructor,
+        "cursor-staff.txt",
+        "text/plain",
+        Buffer.from("staff"),
+      )
+    ).body.data;
+    const nextPublicFile = (
+      await upload(
+        ids.instructor,
+        "cursor-next.txt",
+        "text/plain",
+        Buffer.from("next"),
+      )
+    ).body.data;
+    await pool.query(
+      "UPDATE course_files SET created_at='2095-01-01' WHERE id=$1",
+      [publicFile.id],
+    );
+    await pool.query(
+      "UPDATE course_files SET created_at='2094-01-01' WHERE id=$1",
+      [staffFile.id],
+    );
+    await pool.query(
+      "UPDATE course_files SET created_at='2093-01-01' WHERE id=$1",
+      [nextPublicFile.id],
+    );
+    await pool.query(
+      "WITH r AS (INSERT INTO course_resources(id,course_id,title,visibility,position,active_revision_id) VALUES($1,$2,'Staff cursor file','staff',0,$1) RETURNING id) INSERT INTO course_resource_revisions(id,resource_id,course_id,kind,file_id) SELECT id,id,$2,'upload',id FROM r",
+      [staffFile.id, ids.course],
+    );
+    const list = (query = "") =>
+      request(app(ids.student))
+        .get(`/api/v1/courses/${ids.course}/files${query}`)
+        .set("Cookie", "__Host-chalktalk_session=opaque");
+    const studentPage = await list("?limit=1");
+    expect(studentPage.status).toBe(200);
+    expect(studentPage.body.data[0].id).toBe(publicFile.id);
+    expect(studentPage.body.page.nextCursor).toEqual(expect.any(String));
+    await pool.query(
+      "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+      [ids.course, ids.student],
+    );
+    try {
+      const stale = await list(
+        `?limit=1&cursor=${encodeURIComponent(studentPage.body.page.nextCursor)}`,
+      );
+      expect(stale.status).toBe(400);
+      expect(stale.body.error.code).toBe("invalid_request");
+      const fresh = await list("?limit=10");
+      expect(fresh.status).toBe(200);
+      expect(fresh.body.data.map((f: { id: string }) => f.id)).toContain(
+        staffFile.id,
+      );
+      const staffPage = await list("?limit=1");
+      expect(staffPage.body.page.nextCursor).toEqual(expect.any(String));
+      await pool.query(
+        "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.student],
+      );
+      const demoted = await list(
+        `?limit=1&cursor=${encodeURIComponent(staffPage.body.page.nextCursor)}`,
+      );
+      expect(demoted.status).toBe(400);
+      expect(demoted.body.error.code).toBe("invalid_request");
+    } finally {
+      await pool.query(
+        "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.student],
+      );
+      await pool.query(
+        "UPDATE course_files SET created_at=now() WHERE id=ANY($1)",
+        [[publicFile.id, staffFile.id, nextPublicFile.id]],
+      );
+    }
   });
 
   it("rejects invalid list queries and cross-course cursors with an error envelope", async () => {
@@ -550,8 +637,27 @@ integration("course file upload and byte download", () => {
       expect(replay.body).toEqual(first.body);
       expect(replay.headers.location).toBe(first.headers.location);
       expect(
+        (await upload(ids.instructor, "image.png", "image/png", jpeg, key))
+          .status,
+      ).toBe(409);
+      expect(
         (await upload(ids.instructor, "image.png", "image/png", png)).status,
       ).toBe(409);
+      await pool.query(
+        "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.instructor],
+      );
+      try {
+        expect(
+          (await upload(ids.instructor, "image.png", "image/png", png, key))
+            .status,
+        ).toBe(403);
+      } finally {
+        await pool.query(
+          "UPDATE course_memberships SET role='instructor' WHERE course_id=$1 AND user_id=$2",
+          [ids.course, ids.instructor],
+        );
+      }
       await pool.query("UPDATE courses SET status='deleting' WHERE id=$1", [
         ids.course,
       ]);
