@@ -1823,6 +1823,33 @@ export function createApp(
         }
       },
     );
+  app.get(
+    "/api/v1/courses/:courseId/mention-suggestions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { q = "", postId, ...rest } = request.query;
+        if (
+          Object.keys(rest).length ||
+          typeof q !== "string" ||
+          q.length > 50 ||
+          (postId !== undefined && typeof postId !== "string")
+        )
+          throw new AuthError(400, "invalid_request", "Query is invalid");
+        response.json({
+          data: await posts().mentionSuggestions(
+            param(request.params.courseId),
+            current.session.user.id,
+            q,
+            postId as string | undefined,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.post(
     "/api/v1/courses/:courseId/read-marks",
     ...authenticatedUnsafe,

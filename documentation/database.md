@@ -159,7 +159,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `id`: `uuid_v7`; primary key.
 - `user_id`: `uuid_v7`; the recipient.
 - `course_id`, `post_id`: `uuid_v7`; `(course_id, post_id)` references the post, cascading.
-- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, `announcement`, or `post_published` (staff made the recipient's private post public).
+- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, `announcement`, `post_published` (staff made the recipient's private post public), or `mentioned` (the recipient was mentioned in the content).
 - `actor_user_id`: `uuid_v7`, nullable; who acted. `actor_anonymous`: `boolean`; the actor posted anonymously, so students see "Anonymous".
 - `created_at`: `timestamptz`. `read_at`: `timestamptz`, nullable.
 - Indexes: `(user_id, created_at DESC, id DESC)` for listing, partial `(user_id)` where unread for counts, and `(post_id, user_id)` for marking the notifications of an opened post read.

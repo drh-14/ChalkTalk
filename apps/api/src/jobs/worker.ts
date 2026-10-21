@@ -280,6 +280,7 @@ export class JobWorker {
       followup_created: ["New followup on", "posted a followup on"],
       reply_created: ["New reply on", "replied on"],
       post_published: ["Your post is now public:", "made your post public:"],
+      mentioned: ["You were mentioned on", "mentioned you on"],
     };
     const [subject, verb] = wording[row.kind] ?? ["Activity on", "posted on"];
     // The email cannot tell whether the reader may see an anonymous name.

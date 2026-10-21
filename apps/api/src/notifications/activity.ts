@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { readablePost } from "../posts/visibility.js";
+import type { Mentions } from "./mentions.js";
 
 type Db = Pool | PoolClient;
 
@@ -10,7 +11,8 @@ export type NotificationKind =
   | "followup_created"
   | "reply_created"
   | "announcement"
-  | "post_published";
+  | "post_published"
+  | "mentioned";
 
 /**
  * Records a member's activity on a post inside the caller's transaction:
@@ -18,6 +20,7 @@ export type NotificationKind =
  * for them, and notifies the other followers, or every member for an
  * announcement, queueing an email for those who opted in. Announcements
  * already email every member, so they queue no notification email.
+ * Members mentioned in the write get a mention notification instead.
  */
 export async function recordActivity(
   db: Db,
@@ -29,6 +32,8 @@ export async function recordActivity(
     anonymous?: boolean;
     /** Followers by default; the post's author alone for post_published. */
     recipients?: "followers" | "author";
+    /** People the write newly mentions; on edits, only the added ones. */
+    mentions?: Mentions;
     follow: boolean;
   },
 ): Promise<void> {
@@ -44,6 +49,7 @@ export async function recordActivity(
      ON CONFLICT (post_id,user_id) DO UPDATE SET read_at=excluded.read_at`,
     [postId, actorId],
   );
+  const mentioned = await recordMentions(db, activity);
   if (!activity.kind) return;
   // Recipients must still be able to read the post, which may be private.
   const recipients =
@@ -60,7 +66,7 @@ export async function recordActivity(
   const insert = `INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous)
        SELECT gen_random_uuid(),r.user_id,$1,$2,$4,$3,$5
        FROM recipients r JOIN users u ON u.id=r.user_id AND u.deleted_at IS NULL
-       WHERE r.user_id<>$3`;
+       WHERE r.user_id<>$3 AND NOT (r.user_id = ANY($6::uuid[]))`;
   await db.query(
     activity.kind === "announcement"
       ? `WITH recipients AS (${recipients}) ${insert}`
@@ -69,6 +75,59 @@ export async function recordActivity(
      INSERT INTO jobs (id,kind,payload,deduplication_key)
      SELECT gen_random_uuid(),'send_notification_email',jsonb_build_object('notificationId',c.id),c.id::text
      FROM created c JOIN users u ON u.id=c.user_id AND u.notification_emails`,
-    [courseId, postId, actorId, activity.kind, activity.anonymous ?? false],
+    [
+      courseId,
+      postId,
+      actorId,
+      activity.kind,
+      activity.anonymous ?? false,
+      mentioned,
+    ],
   );
+}
+
+/**
+ * Notifies mentioned members who can read the post, and every current TA and
+ * instructor for @staff, returning who was notified.
+ */
+async function recordMentions(
+  db: Db,
+  activity: {
+    courseId: string;
+    postId: string;
+    actorId: string;
+    anonymous?: boolean;
+    mentions?: Mentions;
+  },
+): Promise<string[]> {
+  const mentions = activity.mentions;
+  if (!mentions || (!mentions.userIds.length && !mentions.staff)) return [];
+  const result = await db.query<{ user_id: string }>(
+    `WITH recipients AS (
+       SELECT DISTINCT m.user_id FROM course_memberships m
+       JOIN posts p ON p.id=$2
+       JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
+       WHERE m.course_id=$1 AND m.user_id<>$3
+         AND (m.user_id = ANY($5::uuid[]) OR ($6 AND m.role IN ('ta','instructor')))
+         AND ${readablePost("p", "m.user_id", "m.role")}
+     ), created AS (
+       INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous)
+       SELECT gen_random_uuid(),r.user_id,$1,$2,'mentioned',$3,$4 FROM recipients r
+       RETURNING id,user_id
+     ), emails AS (
+       INSERT INTO jobs (id,kind,payload,deduplication_key)
+       SELECT gen_random_uuid(),'send_notification_email',jsonb_build_object('notificationId',c.id),c.id::text
+       FROM created c JOIN users u ON u.id=c.user_id AND u.notification_emails
+     )
+     SELECT user_id FROM created`,
+    [
+      activity.courseId,
+      activity.postId,
+      activity.actorId,
+      activity.anonymous ?? false,
+      mentions.userIds,
+      mentions.staff,
+    ],
+  );
+  return result.rows.map((row) => row.user_id);
 }

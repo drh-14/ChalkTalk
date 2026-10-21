@@ -1,4 +1,5 @@
-import { useRef, useState, type Ref } from "react";
+import { useContext, useRef, useState, type Ref } from "react";
+import { MentionContext } from "./mentions.js";
 import { PostBody } from "./PostBody.js";
 import { PostEditor, type PostEditorHandle } from "./PostEditor.js";
 import type { FormatAction } from "./formatting.js";
@@ -20,6 +21,7 @@ export function MarkdownEditorField({
 }) {
   const [preview, setPreview] = useState(false);
   const editor = useRef<PostEditorHandle>(null);
+  const mentions = useContext(MentionContext);
   const options: [FormatAction, string][] = [
     ["bold", "Bold"],
     ["italic", "Italic"],
@@ -71,6 +73,7 @@ export function MarkdownEditorField({
       </div>
       <div hidden={preview} ref={containerRef}>
         <PostEditor
+          mentions={mentions}
           ref={editor}
           label={label}
           value={value}

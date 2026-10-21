@@ -4,6 +4,7 @@ import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import { canReadPost } from "../posts/visibility.js";
 import { recordActivity } from "../notifications/activity.js";
+import { newMentions, parseMentions } from "../notifications/mentions.js";
 import {
   hideAttachmentsForParent,
   listAttachments,
@@ -357,6 +358,7 @@ export class FollowupService {
         actorId: userId,
         kind: parentId ? "reply_created" : "followup_created",
         anonymous: input.anonymous ?? false,
+        mentions: parseMentions(input.bodyMarkdown),
         follow: true,
       });
       const value = await this.project(
@@ -507,6 +509,7 @@ export class FollowupService {
           "Author or staff role is required",
         );
       this.revision(row, etag);
+      const mentions = newMentions(row.body_markdown, bodyMarkdown);
       await db.query(
         "UPDATE followups SET body_markdown=$2,updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [id, bodyMarkdown],
@@ -515,6 +518,16 @@ export class FollowupService {
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
       );
+      // Edits notify only people they newly mention.
+      if (mentions.userIds.length || mentions.staff)
+        await recordActivity(db, {
+          courseId: question.course_id,
+          postId: row.post_id,
+          actorId: userId,
+          anonymous: row.anonymous,
+          mentions,
+          follow: false,
+        });
       return this.project(
         db,
         await this.row(db, id),
