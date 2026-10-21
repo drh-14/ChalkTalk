@@ -13,7 +13,19 @@ import { collaborationAccessChanged } from "../collaboration/lifecycle.js";
 
 export interface EmailSender {
   send(
-    message: { to: string; subject: string; text: string },
+    message: {
+      to: string;
+      subject: string;
+      text: string;
+      html?: string;
+      attachments?: Array<{
+        filename: string;
+        content: Buffer;
+        contentType: "image/png";
+        cid: string;
+        contentDisposition: "inline";
+      }>;
+    },
     options?: { signal?: AbortSignal },
   ): Promise<void>;
 }
