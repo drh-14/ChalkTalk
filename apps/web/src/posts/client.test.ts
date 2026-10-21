@@ -1,5 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createPost, getPost, listPosts } from "./client.js";
+import {
+  createPost,
+  getPost,
+  listPosts,
+  retractVote,
+  votePoll,
+} from "./client.js";
 
 const post = {
   id: "post-1",
@@ -135,4 +141,51 @@ it("sends pinned, author role, and oldest sort for the course feed", async () =>
     "/api/v1/courses/course-1/posts?sort=oldest&type=note&pinned=true",
     "/api/v1/courses/course-1/posts?authorRole=ta",
   ]);
+});
+
+it("filters announcements and polls", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockImplementation(async () =>
+      json({ data: [], page: { nextCursor: null, hasMore: false } }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { announcement: true });
+  await listPosts("course-1", { type: "poll" });
+  expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+    "/api/v1/courses/course-1/posts?announcement=true",
+    "/api/v1/courses/course-1/posts?type=poll",
+  ]);
+});
+
+it("votes and retracts with CSRF", async () => {
+  const state = {
+    postId: "post-1",
+    options: [{ id: "o-1", label: "Mon", voteCount: 1, selected: true }],
+    totalVotes: 1,
+  };
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(json({ data: state }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(
+      json(
+        { error: { code: "not_a_poll", message: "The post is not a poll" } },
+        422,
+      ),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(votePoll("post-1", "o-1", "csrf")).resolves.toEqual(state);
+  const [url, init] = fetchMock.mock.calls[0]!;
+  expect(url).toBe("/api/v1/posts/post-1/vote");
+  expect(init).toMatchObject({
+    method: "PUT",
+    body: JSON.stringify({ optionId: "o-1" }),
+    headers: { "X-CSRF-Token": "csrf" },
+  });
+  await expect(retractVote("post-1", "csrf")).resolves.toBeUndefined();
+  expect(fetchMock.mock.calls[1]![1]).toMatchObject({ method: "DELETE" });
+  await expect(retractVote("post-1", "csrf")).rejects.toThrow(
+    "The post is not a poll",
+  );
 });

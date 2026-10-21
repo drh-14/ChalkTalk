@@ -908,7 +908,7 @@ integration("text posts HTTP contract", () => {
     const filtered = await request(app())
       .get(`${path}?type=poll`)
       .set("Cookie", cookie);
-    expect(filtered.status).toBe(400);
+    expect(filtered.status).toBe(200);
     const unauthenticated = await request(app()).get(path);
     expect(unauthenticated.status).toBe(401);
     const noCsrf = await request(app())
@@ -1945,6 +1945,325 @@ integration("text posts HTTP contract", () => {
           [listCourse, ids.staff],
         );
       }
+    });
+  });
+
+  describe("polls and announcements", () => {
+    const path = `/api/v1/courses/${ids.course}/posts`;
+    const poll = (userId: string, body: Record<string, unknown> = {}) =>
+      unsafe(request(app(userId)).post(path)).send({
+        type: "poll",
+        title: "Review session time?",
+        bodyMarkdown: "Pick one.",
+        options: [
+          { label: "Monday" },
+          { label: " Tuesday " },
+          { label: "Friday" },
+        ],
+        ...body,
+      });
+    const vote = (userId: string, postId: string, optionId: unknown) =>
+      unsafe(request(app(userId)).put(`/api/v1/posts/${postId}/vote`)).send({
+        optionId,
+      });
+    const read = (userId: string, postId: string) =>
+      request(app(userId)).get(`/api/v1/posts/${postId}`).set("Cookie", cookie);
+
+    it("enforces poll and announcement rules in the schema", async () => {
+      const insert = (type: string, extra = "", values: unknown[] = []) =>
+        pool.query(
+          `INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown${extra ? "," + extra : ""}) VALUES (gen_random_uuid(),$1,$2,$3,'T','B'${values.map((_, i) => ",$" + (i + 4)).join("")}) RETURNING id`,
+          [ids.course, ids.staff, type, ...values],
+        );
+      await expect(insert("survey")).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        insert("question", "announcement", [true]),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        insert("note", "announcement,anonymous", [true, true]),
+      ).rejects.toMatchObject({ code: "23514" });
+      const first = (await insert("poll")).rows[0]!.id as string;
+      const second = (await insert("poll")).rows[0]!.id as string;
+      const option = (
+        await pool.query<{ id: string }>(
+          "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES (gen_random_uuid(),$1,$2,0,'A') RETURNING id",
+          [ids.course, second],
+        )
+      ).rows[0]!.id;
+      await expect(
+        pool.query(
+          "INSERT INTO poll_votes (course_id,post_id,user_id,option_id) VALUES ($1,$2,$3,$4)",
+          [ids.course, first, ids.student, option],
+        ),
+      ).rejects.toMatchObject({ code: "23503" });
+      await pool.query(
+        "INSERT INTO poll_votes (course_id,post_id,user_id,option_id) VALUES ($1,$2,$3,$4)",
+        [ids.course, second, ids.student, option],
+      );
+      await pool.query("DELETE FROM posts WHERE id=$1", [second]);
+      const left = await pool.query(
+        "SELECT (SELECT count(*) FROM poll_options WHERE post_id=$1)::int+(SELECT count(*) FROM poll_votes WHERE post_id=$1)::int AS count",
+        [second],
+      );
+      expect(left.rows[0].count).toBe(0);
+    });
+
+    it("lets staff create polls and rejects students and invalid options", async () => {
+      const created = await poll(ids.staff);
+      expect(created.status).toBe(201);
+      expect(created.body.data).toMatchObject({
+        type: "poll",
+        announcement: false,
+        totalVotes: 0,
+        options: [
+          { label: "Monday", voteCount: 0, selected: false },
+          { label: "Tuesday", voteCount: 0, selected: false },
+          { label: "Friday", voteCount: 0, selected: false },
+        ],
+      });
+      expect(created.body.data).not.toHaveProperty("answered");
+
+      const student = await poll(ids.student);
+      expect(student.status).toBe(403);
+      expect(student.body.error.code).toBe("permission_denied");
+      for (const options of [
+        [{ label: "Only" }],
+        Array.from({ length: 11 }, (_, i) => ({ label: `O${i}` })),
+        [{ label: "Same" }, { label: "same" }],
+        [{ label: "  " }, { label: "B" }],
+        [{ label: "x".repeat(201) }, { label: "B" }],
+        [{ label: "A", extra: 1 }, { label: "B" }],
+        undefined,
+      ]) {
+        const response = await poll(ids.staff, { options });
+        expect(response.status).toBe(422);
+      }
+      const noteWithOptions = await unsafe(
+        request(app(ids.staff)).post(path),
+      ).send({
+        type: "note",
+        title: "N",
+        bodyMarkdown: "B",
+        options: [{ label: "A" }, { label: "B" }],
+      });
+      expect(noteWithOptions.status).toBe(422);
+      const count = await pool.query(
+        "SELECT count(*)::int AS count FROM posts WHERE author_user_id=$1 AND type='poll'",
+        [ids.student],
+      );
+      expect(count.rows[0].count).toBe(0);
+    });
+
+    it("lists polls with their state and keeps options fixed", async () => {
+      const created = (await poll(ids.instructor, { title: "Fixed options" }))
+        .body.data;
+      const listed = await request(app(ids.student))
+        .get(`${path}?type=poll`)
+        .set("Cookie", cookie);
+      expect(listed.status).toBe(200);
+      expect(
+        listed.body.data.every(
+          (item: { type: string }) => item.type === "poll",
+        ),
+      ).toBe(true);
+      expect(
+        listed.body.data.find((item: { id: string }) => item.id === created.id),
+      ).toMatchObject({ totalVotes: 0, options: expect.any(Array) });
+      const patched = await unsafe(
+        request(app(ids.instructor)).patch(`/api/v1/posts/${created.id}`),
+      )
+        .set("If-Match", '"v1"')
+        .send({ options: [{ label: "X" }, { label: "Y" }] });
+      expect(patched.status).toBe(422);
+    });
+
+    it("records one vote per member, changes it, retracts it, and reports counts", async () => {
+      const created = (await poll(ids.staff, { title: "Votes" })).body.data;
+      const [monday, tuesday] = created.options as { id: string }[];
+      const first = await vote(ids.student, created.id, monday!.id);
+      expect(first.status).toBe(200);
+      expect(first.body.data).toMatchObject({
+        postId: created.id,
+        totalVotes: 1,
+        options: [
+          { id: monday!.id, voteCount: 1, selected: true },
+          { voteCount: 0, selected: false },
+          { voteCount: 0, selected: false },
+        ],
+      });
+      await vote(ids.author, created.id, monday!.id);
+      const changed = await vote(ids.student, created.id, tuesday!.id);
+      expect(changed.body.data.totalVotes).toBe(2);
+      expect(changed.body.data.options[0]).toMatchObject({
+        voteCount: 1,
+        selected: false,
+      });
+      expect(changed.body.data.options[1]).toMatchObject({
+        voteCount: 1,
+        selected: true,
+      });
+      // Another member sees counts and only their own choice.
+      const seen = await read(ids.author, created.id);
+      expect(seen.body.data.options[0]).toMatchObject({
+        voteCount: 1,
+        selected: true,
+      });
+      expect(seen.body.data.options[1]).toMatchObject({
+        voteCount: 1,
+        selected: false,
+      });
+      expect(seen.body.data.version).toBe(1);
+
+      const retracted = await unsafe(
+        request(app(ids.student)).delete(`/api/v1/posts/${created.id}/vote`),
+      );
+      expect(retracted.status).toBe(204);
+      const again = await unsafe(
+        request(app(ids.student)).delete(`/api/v1/posts/${created.id}/vote`),
+      );
+      expect(again.status).toBe(204);
+      expect((await read(ids.staff, created.id)).body.data.totalVotes).toBe(1);
+    });
+
+    it("rejects invalid votes", async () => {
+      const created = (await poll(ids.staff, { title: "Errors" })).body.data;
+      const other = (await poll(ids.staff, { title: "Other" })).body.data;
+      const note = await unsafe(request(app(ids.student)).post(path)).send({
+        type: "note",
+        title: "A note",
+        bodyMarkdown: "Body",
+      });
+      const wrongOption = await vote(
+        ids.student,
+        created.id,
+        other.options[0].id,
+      );
+      expect(wrongOption.status).toBe(422);
+      expect(wrongOption.body.error.code).toBe("poll_option_invalid");
+      const notPoll = await vote(
+        ids.student,
+        note.body.data.id,
+        created.options[0].id,
+      );
+      expect(notPoll.status).toBe(422);
+      expect(notPoll.body.error.code).toBe("not_a_poll");
+      expect(
+        (await vote(ids.outsider, created.id, created.options[0].id)).status,
+      ).toBe(404);
+      expect(
+        (
+          await vote(
+            ids.student,
+            "01a0e5cc-58ae-7009-9f43-000000000000",
+            created.options[0].id,
+          )
+        ).status,
+      ).toBe(404);
+      const noCsrf = await request(app(ids.student))
+        .put(`/api/v1/posts/${created.id}/vote`)
+        .set("Cookie", cookie)
+        .set("Origin", environment.frontendBaseUrl)
+        .send({ optionId: created.options[0].id });
+      expect(noCsrf.status).toBe(403);
+
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        ids.course,
+      ]);
+      try {
+        const closed = await vote(
+          ids.student,
+          created.id,
+          created.options[0].id,
+        );
+        expect(closed.status).toBe(409);
+        expect(closed.body.error.code).toBe("poll_closed");
+      } finally {
+        await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+          ids.course,
+        ]);
+      }
+      expect((await read(ids.staff, created.id)).body.data.totalVotes).toBe(0);
+    });
+
+    it("lets staff post pinned announcements and queues one email per other member", async () => {
+      const announce = (userId: string, body: Record<string, unknown> = {}) =>
+        unsafe(request(app(userId)).post(path)).send({
+          type: "note",
+          title: "Office hours moved",
+          bodyMarkdown: "Thursday instead.",
+          announcement: true,
+          ...body,
+        });
+      const created = await announce(ids.instructor);
+      expect(created.status).toBe(201);
+      expect(created.body.data).toMatchObject({
+        type: "note",
+        announcement: true,
+        pinned: true,
+        anonymous: false,
+      });
+      const jobs = await pool.query<{
+        payload: { postId: string; userId: string };
+        deduplication_key: string;
+      }>(
+        "SELECT payload,deduplication_key FROM jobs WHERE kind='send_announcement_email' AND payload->>'postId'=$1",
+        [created.body.data.id],
+      );
+      const recipients = jobs.rows.map((row) => row.payload.userId).sort();
+      expect(recipients).toEqual([ids.author, ids.staff, ids.student].sort());
+      expect(jobs.rows[0]!.deduplication_key).toBe(
+        `${created.body.data.id}:${jobs.rows[0]!.payload.userId}`,
+      );
+
+      expect((await announce(ids.staff, { title: "TA note" })).status).toBe(
+        201,
+      );
+      const student = await announce(ids.student);
+      expect(student.status).toBe(403);
+      expect((await announce(ids.instructor, { anonymous: true })).status).toBe(
+        422,
+      );
+      expect(
+        (await announce(ids.instructor, { type: "question" })).status,
+      ).toBe(422);
+
+      const listed = await request(app(ids.student))
+        .get(`${path}?announcement=true`)
+        .set("Cookie", cookie);
+      expect(listed.status).toBe(200);
+      expect(listed.body.data.length).toBeGreaterThan(0);
+      expect(
+        listed.body.data.every(
+          (item: { announcement: boolean }) => item.announcement,
+        ),
+      ).toBe(true);
+      expect(
+        (
+          await request(app())
+            .get(`${path}?announcement=maybe`)
+            .set("Cookie", cookie)
+        ).status,
+      ).toBe(400);
+
+      const anonymous = await unsafe(
+        request(app(ids.instructor)).patch(
+          `/api/v1/posts/${created.body.data.id}`,
+        ),
+      )
+        .set("If-Match", '"v1"')
+        .send({ anonymous: true });
+      expect(anonymous.status).toBe(422);
+      const unpinned = await unsafe(
+        request(app(ids.instructor)).patch(
+          `/api/v1/posts/${created.body.data.id}`,
+        ),
+      )
+        .set("If-Match", '"v1"')
+        .send({ pinned: false });
+      expect(unpinned.body.data).toMatchObject({
+        pinned: false,
+        announcement: true,
+      });
     });
   });
 });

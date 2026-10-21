@@ -3233,8 +3233,10 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
     "My posts",
     "Instructor posts",
     "TA posts",
+    "Announcements",
     "Questions",
     "Notes",
+    "Polls",
   ]);
   expect(chosenFilter("Show")).toBe("all");
   await screen.findByText("Feed");
@@ -3599,7 +3601,7 @@ it("lays out each card with a type badge, status, preview, and byline from the p
           pinned: true,
         },
         { ...post("n1", "Office hours"), type: "note" },
-        { ...post("x1", "Future kind"), type: "poll" },
+        { ...post("x1", "Future kind"), type: "survey" },
       ]);
     }),
   );
@@ -5284,3 +5286,154 @@ it.each(["question", "note"])(
     expect(screen.queryByLabelText("Add files")).toBeNull();
   },
 );
+
+it("lets staff compose a poll with its options", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    if (init?.method === "POST")
+      return json(
+        { data: { ...post("poll-1", "Review time"), type: "poll" } },
+        201,
+      );
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const type = screen.getByRole("combobox", { name: "Post type" });
+  await waitFor(() =>
+    expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
+  );
+  await user.selectOptions(type, "poll");
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Review time",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Pick one",
+  );
+  await user.type(screen.getByRole("textbox", { name: "Option 1" }), "Monday");
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "A poll needs at least 2 options.",
+  );
+  await user.type(screen.getByRole("textbox", { name: "Option 2" }), "Tuesday");
+  await user.click(screen.getByRole("button", { name: "+ Add option" }));
+  await user.type(screen.getByRole("textbox", { name: "Option 3" }), "Friday");
+  await user.click(screen.getByRole("button", { name: "Remove option 3" }));
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  expect(JSON.parse(create[1]?.body as string)).toMatchObject({
+    type: "poll",
+    options: [{ label: "Monday" }, { label: "Tuesday" }],
+  });
+}, 30_000);
+
+it("lets staff post a note as a non-anonymous announcement", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    if (init?.method === "POST")
+      return json({ data: { ...post("a-1", "Moved"), type: "note" } }, 201);
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post type" }),
+    "note",
+  );
+  const anonymous = screen.getByRole("checkbox", { name: "Post anonymously" });
+  await user.click(anonymous);
+  const announce = await screen.findByRole("checkbox", {
+    name: "Post as announcement (pinned and emailed to the class)",
+  });
+  await user.click(announce);
+  expect((anonymous as HTMLInputElement).disabled).toBe(true);
+  expect((anonymous as HTMLInputElement).checked).toBe(false);
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "Moved");
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Thursday",
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  expect(JSON.parse(create[1]?.body as string)).toMatchObject({
+    type: "note",
+    announcement: true,
+    anonymous: false,
+  });
+}, 30_000);
+
+it("offers students neither polls nor announcements, and badges announcements", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      page([
+        {
+          ...post("a-1", "Office hours moved"),
+          type: "note",
+          announcement: true,
+          pinned: true,
+        },
+      ]),
+    ),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const card = (await screen.findByText("Office hours moved")).closest(
+    "li, article, a",
+  )!;
+  expect(card.textContent).toContain("Announcement");
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  const type = screen.getByRole("combobox", { name: "Post type" });
+  expect(within(type).queryByRole("option", { name: "Poll" })).toBeNull();
+  await user.selectOptions(type, "note");
+  expect(
+    screen.queryByRole("checkbox", {
+      name: "Post as announcement (pinned and emailed to the class)",
+    }),
+  ).toBeNull();
+});

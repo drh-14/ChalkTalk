@@ -22,6 +22,7 @@ type JobKind =
   | "delete_content_attachment"
   | "send_question_duplicate_email"
   | "send_collaboration_invitation_email"
+  | "send_announcement_email"
   | "digest_schedule"
   | "digest_delivery";
 const fallbackLogger = pino({ base: null });

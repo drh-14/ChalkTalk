@@ -1,6 +1,10 @@
 ## Posts
 
-**Implementation status:** JSON question and note creation, listing/search, retrieval, update, deletion, and daily deduplicated post views are implemented. Active questions and notes can have files uploaded separately after saving; see the [OpenAPI attachment contract](../openapi.yaml) for current parent-scoped upload, download, and removal routes. Questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. Poll creation, poll voting, the multipart post create/update shapes and attachment-processing/download-refresh fields below remain future targets and are not live. Poll creation and multipart post create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
+**Implementation status:** JSON question, note, and poll creation, listing/search, retrieval, update, deletion, poll voting, announcements, and daily deduplicated post views are implemented. Active questions and notes can have files uploaded separately after saving; see the [OpenAPI attachment contract](../openapi.yaml) for current parent-scoped upload, download, and removal routes. Questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. The multipart post create/update shapes and attachment-processing/download-refresh fields below remain future targets and are not live; multipart create/update returns `422 validation_failed`. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
+
+**Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 options of 1–200 characters, trimmed and distinct ignoring case, fixed after creation. Every member sees each option's `voteCount` and whether they `selected` it; who voted for what is never exposed. Each member has one vote, which `PUT /posts/{postId}/vote` sets or changes and `DELETE` retracts. Votes do not change the post's `version` or activity time. Polls take no answers or followups.
+
+**Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member, which the job worker sends only while the announcement, the course, and the membership still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
 
@@ -87,6 +91,8 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `anonymous` (boolean, optional): Hide the author from course members.
 
 `tags` (list of string, optional): Post tags.
+
+`announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to the course; cannot be combined with `anonymous`.
 
 ###### `CreatePollPostRequest` fields
 
@@ -189,6 +195,8 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
+
+`data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -343,6 +351,8 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `pinned` (boolean, optional): Filter by pinned state. Combine with `type` to list pinned posts of one type.
 
+`announcement` (literal true, optional): List announcements only. Any other value returns `400 invalid_request`.
+
 `authorRole` (enum: instructor, ta, optional; values instructor, ta): Filter by the author's current role in the course. A post matches only while its author holds that role; posts by deleted accounts never match. For a student, anonymous posts other than the student's own are removed before ranking, pagination, `hasMore`, and counts, so the filter cannot reveal an anonymous author's role. Instructors and TAs match anonymous posts by that role.
 
 `duplicateStatus` (enum: none, suggested, confirmed, optional; values none, suggested, confirmed): Filter by duplicate-review state. `confirmed` is staff-only and returns review entries containing only `id`, `courseId`, `type`, `title`, `duplicateStatus`, `duplicateOfPostId`, `canonicalTitle`, and `version`; no source body, author, or tags. Suggested duplicates remain visible in ordinary results.
@@ -396,6 +406,8 @@ None specific to this operation.
 See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data[].pinned` (boolean, required): Whether staff pinned the post.
+
+`data[].announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
 `data[].duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -574,6 +586,8 @@ None.
 See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
+
+`data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -798,6 +812,8 @@ None.
 See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
+
+`data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 

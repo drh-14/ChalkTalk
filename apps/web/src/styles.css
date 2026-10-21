@@ -1016,6 +1016,104 @@ h2[tabindex="-1"]:focus {
   background: #e3eef3;
   color: #24566b;
 }
+.post-type-badge.poll {
+  background: #ece6f6;
+  color: #4b3685;
+}
+.poll-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+}
+.poll-heading {
+  font-size: 0.95rem;
+  margin: 0;
+}
+.poll-closed {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+.poll-choices {
+  border: 0;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+}
+.poll-choice {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  gap: var(--space-2);
+  padding: 0.5rem 0.75rem;
+}
+.poll-choice:has(input:checked) {
+  border-color: var(--accent);
+}
+.poll-results {
+  display: grid;
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.poll-result-label {
+  display: flex;
+  font-size: 0.9rem;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+.poll-results li.selected .poll-result-label {
+  font-weight: 600;
+}
+.poll-your-vote {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.poll-bar {
+  background: var(--surface-sunken);
+  border-radius: 999px;
+  height: 0.5rem;
+  margin-top: var(--space-1);
+  overflow: hidden;
+}
+.poll-bar span {
+  background: var(--accent);
+  border-radius: 999px;
+  display: block;
+  height: 100%;
+}
+.poll-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+.poll-options-editor {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+}
+.poll-options-editor legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0 var(--space-1);
+}
+.poll-option-row {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+}
+.poll-option-row input {
+  flex: 1;
+}
 .post-type-badge.other {
   background: #ecebe4;
   color: #4d5a53;

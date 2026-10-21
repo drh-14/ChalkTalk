@@ -15,11 +15,12 @@ type Row = {
   id: string;
   course_id: string;
   author_user_id: string | null;
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   title: string | null;
   body_markdown: string | null;
   anonymous: boolean;
   pinned: boolean;
+  announcement: boolean;
   duplicate_of_post_id: string | null;
   duplicate_status: "none" | "suggested" | "confirmed";
   last_activity_at: Date;
@@ -33,13 +34,19 @@ type Row = {
   canonical_title?: string | null;
 };
 export type CreatePost = {
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   title: string;
   bodyMarkdown: string;
   anonymous?: boolean;
   tags?: string[];
+  /** Poll choices, in order; required for polls only. */
+  options?: string[];
+  /** Notes only, staff only: pinned and emailed to the course. */
+  announcement?: boolean;
 };
-export type UpdatePost = Partial<Omit<CreatePost, "type">> & {
+export type UpdatePost = Partial<
+  Omit<CreatePost, "type" | "options" | "announcement">
+> & {
   pinned?: boolean;
   duplicateOfPostId?: string | null;
   duplicateStatus?: "none" | "suggested" | "confirmed";
@@ -47,7 +54,7 @@ export type UpdatePost = Partial<Omit<CreatePost, "type">> & {
 export type Post = Record<string, unknown> & {
   id: string;
   courseId: string;
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   deleted: boolean;
   version: number;
 };
@@ -60,7 +67,8 @@ export type MergedReference = {
 };
 export type ListPosts = {
   q?: string;
-  type?: "question" | "note";
+  type?: "question" | "note" | "poll";
+  announcement?: boolean;
   tags?: string[];
   tagMatch?: "all";
   authorId?: string;
@@ -178,10 +186,38 @@ export class PostService {
           ? []
           : await listAttachments(db, "post", row.id),
       pinned: row.pinned,
+      announcement: row.announcement,
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
       lastActivityAt: row.last_activity_at.toISOString(),
       ...(row.type === "question" ? { answered: row.answered } : {}),
+      ...(row.type === "poll"
+        ? await this.pollState(db, row.id, viewerId)
+        : {}),
+    };
+  }
+  /** Options with counts and the viewer's choice, plus the total. */
+  private async pollState(db: Db, postId: string, viewerId: string) {
+    const options = await db.query<{
+      id: string;
+      label: string;
+      vote_count: string;
+      selected: boolean;
+    }>(
+      `SELECT o.id,o.label,count(v.user_id) AS vote_count,coalesce(bool_or(v.user_id=$2),false) AS selected
+       FROM poll_options o LEFT JOIN poll_votes v ON v.option_id=o.id
+       WHERE o.post_id=$1 GROUP BY o.id,o.label,o.position ORDER BY o.position`,
+      [postId, viewerId],
+    );
+    const list = options.rows.map((option) => ({
+      id: option.id,
+      label: option.label,
+      voteCount: Number(option.vote_count),
+      selected: option.selected,
+    }));
+    return {
+      options: list,
+      totalVotes: list.reduce((total, option) => total + option.voteCount, 0),
     };
   }
   private async replaceTags(
@@ -245,14 +281,27 @@ export class PostService {
         );
       }
       this.writable(member.status);
+      const staff = STAFF.has(member.role);
+      if (body.type === "poll" && !staff)
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff may create polls",
+        );
+      if (body.announcement && !staff)
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff may post announcements",
+        );
       const id = uuidv7();
       await db.query(
         "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
       );
       const created = await db.query<{ created_on: string }>(
         `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
-         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,created_at,updated_at,last_activity_at)
-         SELECT $1,$2,$3,$4,$5,$6,$7,stamp.at,stamp.at,stamp.at FROM stamp
+         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,created_at,updated_at,last_activity_at)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,stamp.at,stamp.at,stamp.at FROM stamp
          RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on`,
         [
           id,
@@ -262,8 +311,25 @@ export class PostService {
           body.title,
           body.bodyMarkdown,
           body.anonymous ?? false,
+          body.announcement ?? false,
         ],
       );
+      for (const [position, label] of (body.options ?? []).entries())
+        await db.query(
+          "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES ($1,$2,$3,$4,$5)",
+          [uuidv7(), courseId, id, position, label],
+        );
+      if (body.announcement)
+        // One job per recipient, so a failing address retries on its own.
+        await db.query(
+          `INSERT INTO jobs (id,kind,payload,deduplication_key)
+           SELECT gen_random_uuid(),'send_announcement_email',
+             jsonb_build_object('postId',$1::uuid,'userId',m.user_id),$1::text||':'||m.user_id
+           FROM course_memberships m JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
+           WHERE m.course_id=$2 AND m.user_id<>$3
+           ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING`,
+          [id, courseId, userId],
+        );
       if (body.type === "question")
         await db.query(
           "INSERT INTO question_creation_daily_counts(course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1) ON CONFLICT (course_id,user_id,created_on) DO UPDATE SET question_count=question_creation_daily_counts.question_count+1",
@@ -401,6 +467,8 @@ export class PostService {
     if (searchQuery && !fuzzySearch)
       clauses.push(`p.search_vector @@ ${searchQuery}`);
     if (options.type) clauses.push(`p.type=${add(options.type)}`);
+    if (options.announcement !== undefined)
+      clauses.push(`p.announcement=${add(options.announcement)}`);
     if (options.tags?.length) {
       const tags = add(options.tags);
       // Tag names are unique per course and the list is deduplicated, so a full count means every tag.
@@ -572,6 +640,8 @@ export class PostService {
         );
       if (body.pinned !== undefined && !staff)
         throw new AuthError(403, "permission_denied", "Pinning is staff-only");
+      if (row.announcement && body.anonymous)
+        throw validation("Announcements cannot be anonymous");
       if (
         duplicate &&
         !staff &&
@@ -671,6 +741,56 @@ export class PostService {
         : this.project(db, updated, userId, member.role);
     });
   }
+  /** Records or replaces the caller's single vote on an active poll. */
+  async vote(postId: string, userId: string, optionId: string) {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, postId, true);
+      if (!row) throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      if (row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      if (row.type !== "poll")
+        throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      if (member.status !== "active")
+        throw new AuthError(409, "poll_closed", "The poll or course is closed");
+      const option = UUID_PATTERN.test(optionId)
+        ? await db.query(
+            "SELECT 1 FROM poll_options WHERE id=$1 AND post_id=$2",
+            [optionId, postId],
+          )
+        : undefined;
+      if (!option?.rowCount)
+        throw new AuthError(
+          422,
+          "poll_option_invalid",
+          "The option does not belong to this poll",
+        );
+      await db.query(
+        `INSERT INTO poll_votes (course_id,post_id,user_id,option_id) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (post_id,user_id) DO UPDATE SET option_id=excluded.option_id,updated_at=now()`,
+        [row.course_id, postId, userId, optionId],
+      );
+      return { postId, ...(await this.pollState(db, postId, userId)) };
+    });
+  }
+
+  /** Removes the caller's vote; succeeds when there was none. */
+  async unvote(postId: string, userId: string) {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    const row = await this.row(this.pool, postId);
+    if (!row) throw notFound();
+    await this.membership(this.pool, row.course_id, userId);
+    if (row.deleted_at || row.duplicate_status === "confirmed")
+      throw notFound();
+    if (row.type !== "poll")
+      throw new AuthError(422, "not_a_poll", "The post is not a poll");
+    await this.pool.query(
+      "DELETE FROM poll_votes WHERE post_id=$1 AND user_id=$2",
+      [postId, userId],
+    );
+  }
+
   async delete(
     id: string,
     userId: string,

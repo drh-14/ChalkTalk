@@ -3673,6 +3673,14 @@ paths:
           description: Filter by pinned state. Combine with type to list pinned posts of one type.
           schema:
             type: boolean
+        - name: announcement
+          in: query
+          required: false
+          description: Only true is accepted; lists announcements only.
+          schema:
+            type: boolean
+            enum:
+              - true
         - name: authorRole
           in: query
           required: false
@@ -11793,6 +11801,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        announcement:
+          type: boolean
+          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
         duplicateOfPostId:
           type:
             - string
@@ -11849,6 +11860,7 @@ components:
         - tags
         - attachments
         - pinned
+        - announcement
         - duplicateOfPostId
         - duplicateStatus
         - lastActivityAt
@@ -11911,6 +11923,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        announcement:
+          type: boolean
+          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
         duplicateOfPostId:
           type:
             - string
@@ -11964,6 +11979,7 @@ components:
         - tags
         - attachments
         - pinned
+        - announcement
         - duplicateOfPostId
         - duplicateStatus
         - lastActivityAt
@@ -12025,6 +12041,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        announcement:
+          type: boolean
+          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
         duplicateOfPostId:
           type:
             - string
@@ -12089,6 +12108,7 @@ components:
         - tags
         - attachments
         - pinned
+        - announcement
         - duplicateOfPostId
         - duplicateStatus
         - lastActivityAt
@@ -14422,6 +14442,10 @@ components:
           description: Post tags.
           maxItems: 10
           uniqueItems: true
+        announcement:
+          type: boolean
+          description: TAs and instructors only. Posts the note as an announcement, pinned and emailed to every other course member; cannot be combined with anonymous.
+          default: false
       additionalProperties: false
       required:
         - type
@@ -14461,7 +14485,7 @@ components:
           type: array
           items:
             "$ref": "#/components/schemas/PollOptionInput"
-          description: Poll choices.
+          description: Poll choices in display order. Labels are trimmed and must be distinct ignoring case. Options cannot change after creation. Only TAs and instructors may create polls.
           minItems: 2
           maxItems: 10
       additionalProperties: false
