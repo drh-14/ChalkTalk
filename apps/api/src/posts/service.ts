@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { recordActivity } from "../notifications/activity.js";
 import { endCollaborationSessions } from "../collaboration/lifecycle.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
 import {
@@ -194,6 +195,7 @@ export class PostService {
       ...(row.type === "poll"
         ? await this.pollState(db, row.id, viewerId)
         : {}),
+      ...(await this.viewerState(db, row, viewerId)),
     };
   }
   /** Options with counts and the viewer's choice, plus the total. */
@@ -219,6 +221,18 @@ export class PostService {
       options: list,
       totalVotes: list.reduce((total, option) => total + option.voteCount, 0),
     };
+  }
+  /** Whether the viewer follows the post and has unread activity on it. */
+  private async viewerState(db: Db, row: Row, viewerId: string) {
+    const state = await db.query<{ following: boolean; unread: boolean }>(
+      `SELECT coalesce((SELECT following FROM post_follows WHERE post_id=$1 AND user_id=$2),false) AS following,
+              $3::timestamptz > greatest(
+                coalesce((SELECT read_at FROM post_reads WHERE post_id=$1 AND user_id=$2),'-infinity'),
+                coalesce((SELECT read_before FROM course_read_marks WHERE course_id=$4 AND user_id=$2),'-infinity')
+              ) AS unread`,
+      [row.id, viewerId, row.last_activity_at, row.course_id],
+    );
+    return state.rows[0]!;
   }
   private async replaceTags(
     db: Db,
@@ -336,6 +350,13 @@ export class PostService {
           [courseId, userId, created.rows[0]!.created_on],
         );
       await this.replaceTags(db, id, courseId, body.tags ?? []);
+      await recordActivity(db, {
+        courseId,
+        postId: id,
+        actorId: userId,
+        ...(body.announcement ? { kind: "announcement" as const } : {}),
+        follow: true,
+      });
       const row = await this.row(db, id);
       const value = await this.project(db, row!, userId, member.role);
       if (key !== undefined)
@@ -358,6 +379,17 @@ export class PostService {
           "INSERT INTO post_view_events (id,course_id,post_id,user_id,viewed_on) VALUES ($1,$2,$3,$4,(now() AT TIME ZONE 'UTC')::date) ON CONFLICT (course_id,post_id,user_id,viewed_on) DO NOTHING",
           [uuidv7(), row.course_id, row.id, userId],
         );
+        // Opening a post reads it and its notifications.
+        await this.pool.query(
+          `WITH read AS (
+             INSERT INTO post_reads (post_id,user_id,read_at) VALUES ($1,$2,clock_timestamp())
+             ON CONFLICT (post_id,user_id) DO UPDATE SET read_at=excluded.read_at
+           )
+           UPDATE notifications SET read_at=clock_timestamp() WHERE post_id=$1 AND user_id=$2 AND read_at IS NULL`,
+          [row.id, userId],
+        );
+        // The post was projected before this read was recorded.
+        value.unread = false;
       } catch {
         logApiEvent(this.observability, "post_view_write_failed");
       }
@@ -741,6 +773,33 @@ export class PostService {
         : this.project(db, updated, userId, member.role);
     });
   }
+  /** Follows or unfollows a readable post; an unfollow stops automatic follows. */
+  async setFollowing(postId: string, userId: string, following: boolean) {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    const row = await this.row(this.pool, postId);
+    if (!row) throw notFound();
+    await this.membership(this.pool, row.course_id, userId);
+    if (row.deleted_at || row.duplicate_status === "confirmed")
+      throw notFound();
+    await this.pool.query(
+      `INSERT INTO post_follows (post_id,course_id,user_id,following) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (post_id,user_id) DO UPDATE SET following=excluded.following,updated_at=now()`,
+      [postId, row.course_id, userId, following],
+    );
+    return { following };
+  }
+
+  /** Marks every post in the course read for the caller as of now. */
+  async markCourseRead(courseId: string, userId: string) {
+    if (!UUID_PATTERN.test(courseId)) throw notFound();
+    await this.membership(this.pool, courseId, userId);
+    await this.pool.query(
+      `INSERT INTO course_read_marks (course_id,user_id,read_before) VALUES ($1,$2,clock_timestamp())
+       ON CONFLICT (course_id,user_id) DO UPDATE SET read_before=excluded.read_before`,
+      [courseId, userId],
+    );
+  }
+
   /** Records or replaces the caller's single vote on an active poll. */
   async vote(postId: string, userId: string, optionId: string) {
     if (!UUID_PATTERN.test(postId)) throw notFound();

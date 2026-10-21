@@ -35,6 +35,10 @@ export type Post = {
   /** Staff notes pinned and emailed to the course. */
   announcement?: boolean;
   answered?: boolean;
+  /** Whether the viewer is notified of activity on the post. */
+  following?: boolean;
+  /** Whether the post changed since the viewer last opened it. */
+  unread?: boolean;
   /** Present on polls. */
   options?: PollOption[];
   totalVotes?: number;
@@ -266,6 +270,38 @@ export async function setPostPinned(
     }),
   );
   return payload.data;
+}
+
+/** Follows or unfollows a post for the viewer. */
+export async function setFollowing(
+  postId: string,
+  following: boolean,
+  csrfToken: string,
+): Promise<boolean> {
+  const payload = await receive<{ data: { following: boolean } }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/follow`, {
+      method: following ? "PUT" : "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    }),
+  );
+  return payload.data.following;
+}
+
+/** Marks every post in the course read for the viewer. */
+export async function markCourseRead(
+  courseId: string,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/read-marks`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    },
+  );
+  if (!response.ok) await receive<never>(response);
 }
 
 /** Casts or changes the viewer's single vote on a poll. */

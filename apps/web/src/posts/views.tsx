@@ -28,6 +28,8 @@ import {
   getPost,
   listMergedPosts,
   listPosts,
+  markCourseRead,
+  setFollowing,
   setPostPinned,
   unmergePost,
   updatePost,
@@ -106,6 +108,56 @@ function PostByline({ post }: { post: Post }) {
             {time.label}
           </time>
         </>
+      )}
+    </>
+  );
+}
+
+/** Follow or unfollow a post to choose whether its activity notifies the viewer. */
+function FollowButton({
+  post,
+  csrfToken,
+  onChange,
+}: {
+  post: Post;
+  csrfToken: string;
+  onChange: (following: boolean) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const following = post.following ?? false;
+  async function toggle() {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      onChange(await setFollowing(post.id, !following, csrfToken));
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <button
+        type="button"
+        className={`button secondary compact follow-button${following ? " following" : ""}`}
+        aria-pressed={following}
+        disabled={pending}
+        onClick={() => void toggle()}
+        title={
+          following
+            ? "You are notified of new answers, followups, and replies"
+            : "Get notified of new answers, followups, and replies"
+        }
+      >
+        {following ? "Following" : "Follow"}
+      </button>
+      {error && (
+        <p className="form-message error" role="alert">
+          {error}
+        </p>
       )}
     </>
   );
@@ -1119,6 +1171,7 @@ function DiscussionContent({
   const [localSortQuery, setLocalSortQuery] = useState<string>();
   const [pinPending, setPinPending] = useState(false);
   const [pinError, setPinError] = useState("");
+  const [readError, setReadError] = useState("");
   const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
@@ -1509,6 +1562,11 @@ function DiscussionContent({
   }
   function openPost(id: string) {
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
+    setItems((current) =>
+      current.map((item) =>
+        item.id === id && item.unread ? { ...item, unread: false } : item,
+      ),
+    );
     navigate(postPath(courseId, id, search));
   }
   function clearQuery() {
@@ -1544,6 +1602,33 @@ function DiscussionContent({
         question
       </button>
     ) : null;
+  // Answering or posting a followup follows the post unless the viewer unfollowed it.
+  async function refreshFollowing(id: string) {
+    try {
+      const next = await getPost(id);
+      if ("redirectToPostId" in next || next.deleted) return;
+      setDetail((current) =>
+        current?.id === id && !current.deleted
+          ? { ...current, following: next.following }
+          : current,
+      );
+    } catch {
+      // The button keeps its last known state.
+    }
+  }
+  async function markAllRead() {
+    setReadError("");
+    try {
+      await markCourseRead(courseId, csrfToken);
+      setItems((current) =>
+        current.map((item) =>
+          item.unread ? { ...item, unread: false } : item,
+        ),
+      );
+    } catch (caught) {
+      setReadError(message(caught));
+    }
+  }
   async function togglePin(post: Post) {
     if (pinPending) return;
     setPinPending(true);
@@ -1904,59 +1989,95 @@ function DiscussionContent({
                 <p>No duplicate posts found.</p>
               )
             ) : items.length ? (
-              <ul className="post-list">
-                {items.map((post) => (
-                  <li
-                    key={post.id}
-                    className={post.id === postId ? "selected" : undefined}
-                  >
-                    <a
-                      className={`post-card${post.id === postId ? " selected" : ""}`}
-                      href={postPath(courseId, post.id, search)}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        openPost(post.id);
-                      }}
-                      aria-current={post.id === postId ? "page" : undefined}
+              <>
+                {items.some((item) => item.unread && item.id !== postId) && (
+                  <div className="feed-read-bar">
+                    <span>
+                      {
+                        items.filter(
+                          (item) => item.unread && item.id !== postId,
+                        ).length
+                      }{" "}
+                      unread
+                    </span>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => void markAllRead()}
                     >
-                      <span className="post-card-head">
-                        <span className="post-card-title">
-                          <PostTypeBadge type={post.type} />
-                          <strong>{post.title}</strong>
+                      Mark all read
+                    </button>
+                  </div>
+                )}
+                {readError && (
+                  <p className="form-message error" role="alert">
+                    {readError}
+                  </p>
+                )}
+                <ul className="post-list">
+                  {items.map((post) => (
+                    <li
+                      key={post.id}
+                      className={post.id === postId ? "selected" : undefined}
+                    >
+                      <a
+                        className={`post-card${post.id === postId ? " selected" : ""}${post.unread && post.id !== postId ? " unread" : ""}`}
+                        href={postPath(courseId, post.id, search)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          openPost(post.id);
+                        }}
+                        aria-current={post.id === postId ? "page" : undefined}
+                      >
+                        <span className="post-card-head">
+                          <span className="post-card-title">
+                            {post.unread && post.id !== postId && (
+                              <span className="unread-dot">
+                                <span className="visually-hidden">
+                                  Unread:{" "}
+                                </span>
+                              </span>
+                            )}
+                            <PostTypeBadge type={post.type} />
+                            <strong>{post.title}</strong>
+                          </span>
+                          {postStatuses(post).length > 0 && (
+                            <span className="post-statuses">
+                              {postStatuses(post).map((status) => (
+                                <PostStatusBadge
+                                  key={status.label}
+                                  status={status}
+                                />
+                              ))}
+                            </span>
+                          )}
                         </span>
-                        {postStatuses(post).length > 0 && (
-                          <span className="post-statuses">
-                            {postStatuses(post).map((status) => (
-                              <PostStatusBadge
-                                key={status.label}
-                                status={status}
-                              />
-                            ))}
-                          </span>
-                        )}
-                      </span>
-                      <div className="post-card-preview post-markdown">
-                        <PostBody bodyMarkdown={post.bodyMarkdown} inertLinks />
-                      </div>
-                      <span className="post-card-foot">
-                        <small>
-                          <PostByline post={post} />
-                        </small>
-                        {postTypeOf(post.type).extras?.(post) && (
-                          <span className="post-card-extras">
-                            {postTypeOf(post.type).extras?.(post)}
-                          </span>
-                        )}
-                      </span>
-                    </a>
-                    <TagList
-                      tags={post.tags}
-                      active={tags}
-                      onSelect={selectTag}
-                    />
-                  </li>
-                ))}
-              </ul>
+                        <div className="post-card-preview post-markdown">
+                          <PostBody
+                            bodyMarkdown={post.bodyMarkdown}
+                            inertLinks
+                          />
+                        </div>
+                        <span className="post-card-foot">
+                          <small>
+                            <PostByline post={post} />
+                          </small>
+                          {postTypeOf(post.type).extras?.(post) && (
+                            <span className="post-card-extras">
+                              {postTypeOf(post.type).extras?.(post)}
+                            </span>
+                          )}
+                        </span>
+                      </a>
+                      <TagList
+                        tags={post.tags}
+                        active={tags}
+                        onSelect={selectTag}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </>
             ) : query || hasFilters(activeFilters) ? (
               <div className="feed-empty">
                 <p>No posts found.</p>
@@ -2151,10 +2272,30 @@ function DiscussionContent({
                           {postTypeOf(detail.type).label}
                         </p>
                         <h2>{detail.title}</h2>
-                        <p className="post-author">
-                          <PostByline post={detail} />
-                          <ActivityTime post={detail} />
-                        </p>
+                        <div className="post-author-row">
+                          <p className="post-author">
+                            <PostByline post={detail} />
+                            <ActivityTime post={detail} />
+                          </p>
+                          <FollowButton
+                            post={detail}
+                            csrfToken={csrfToken}
+                            onChange={(following) => {
+                              setDetail((current) =>
+                                current?.id === detail.id && !current.deleted
+                                  ? { ...current, following }
+                                  : current,
+                              );
+                              setItems((current) =>
+                                current.map((item) =>
+                                  item.id === detail.id
+                                    ? { ...item, following }
+                                    : item,
+                                ),
+                              );
+                            }}
+                          />
+                        </div>
                         <TagList
                           tags={detail.tags}
                           active={tags}
@@ -2286,6 +2427,7 @@ function DiscussionContent({
                         role={role}
                         courseStatus={course?.status}
                         csrfToken={csrfToken}
+                        onActivity={() => void refreshFollowing(detail.id)}
                       />
                     )}
                     {postView === "posts" && (

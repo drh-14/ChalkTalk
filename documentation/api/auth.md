@@ -163,6 +163,8 @@ None.
 
 `data.displayName` (string, required): Visible account name.
 
+`data.notificationEmails` (boolean, required): Whether the user is emailed about activity on posts they follow; `false` by default. See [Notifications](notifications.md).
+
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -188,6 +190,7 @@ curl --request POST '/api/v1/users' \
     "id": "user_123",
     "email": "ada@example.edu",
     "displayName": "Ada Lovelace",
+    "notificationEmails": false,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
     "version": 1
@@ -311,6 +314,7 @@ curl --request POST '/api/v1/sessions' \
       "id": "user_123",
       "email": "ada@example.edu",
       "displayName": "Ada Lovelace",
+      "notificationEmails": false,
       "createdAt": "2026-09-20T14:30:00Z",
       "updatedAt": "2026-09-20T14:30:00Z",
       "version": 3
@@ -421,6 +425,7 @@ curl --request GET '/api/v1/sessions/current' \
       "id": "user_123",
       "email": "ada@example.edu",
       "displayName": "Ada Lovelace",
+      "notificationEmails": false,
       "createdAt": "2026-09-20T14:30:00Z",
       "updatedAt": "2026-09-20T14:30:00Z",
       "version": 3
@@ -586,6 +591,8 @@ None.
 
 `data.displayName` (string, required): Visible account name.
 
+`data.notificationEmails` (boolean, required): Whether the user is emailed about activity on posts they follow; `false` by default. See [Notifications](notifications.md).
+
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -608,6 +615,7 @@ curl --request GET '/api/v1/users/me' \
     "id": "user_123",
     "email": "ada@example.edu",
     "displayName": "Ada Lovelace",
+    "notificationEmails": false,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
     "version": 3
@@ -673,6 +681,8 @@ None.
 
 `emailVerificationToken` (string, optional): Single-use token proving control of a replacement email address in the account's current school domain.
 
+`notificationEmails` (boolean, optional): Turns emails about activity on followed posts on or off. Any other type returns `422 validation_failed`.
+
 #### Multipart parts
 
 None.
@@ -694,6 +704,8 @@ None.
 `data.email` (string, required): Account email address.
 
 `data.displayName` (string, required): Visible account name.
+
+`data.notificationEmails` (boolean, required): Whether the user is emailed about activity on posts they follow; `false` by default. See [Notifications](notifications.md).
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
@@ -722,6 +734,7 @@ curl --request PATCH '/api/v1/users/me' \
     "id": "user_123",
     "email": "ada.byron@example.edu",
     "displayName": "Ada Byron",
+    "notificationEmails": false,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:40:00Z",
     "version": 4

@@ -46,6 +46,7 @@ import {
   type CreateCollaborationSession,
   type UpdateCollaborationSession,
 } from "../collaboration/service.js";
+import { NotificationService } from "../notifications/service.js";
 
 import { CourseResourceService } from "../course-resources/service.js";
 
@@ -62,6 +63,7 @@ export interface AppDependencies {
   observability?: Observability;
   contentAttachmentService?: ContentAttachmentService;
   collaborationSessionService?: CollaborationSessionService;
+  notificationService?: NotificationService;
 }
 type AuthContext = {
   credential: string;
@@ -242,12 +244,22 @@ function sessionCreationBody(input: unknown): JsonObject {
 }
 
 function profileUpdateBody(input: unknown): JsonObject {
-  const body = strictBody(input, ["displayName", "emailVerificationToken"]);
+  const body = strictBody(input, [
+    "displayName",
+    "emailVerificationToken",
+    "notificationEmails",
+  ]);
   if (
     body.displayName === undefined &&
-    body.emailVerificationToken === undefined
+    body.emailVerificationToken === undefined &&
+    body.notificationEmails === undefined
   )
     throw validationError("A profile field is required");
+  if (
+    body.notificationEmails !== undefined &&
+    typeof body.notificationEmails !== "boolean"
+  )
+    throw validationError("Notification emails must be true or false");
   if (body.displayName !== undefined)
     stringWithin(body.displayName, "Display name", 1, 100);
   if (body.emailVerificationToken !== undefined)
@@ -719,6 +731,7 @@ export function createApp(
     observability,
     contentAttachmentService,
     collaborationSessionService,
+    notificationService,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -1725,7 +1738,10 @@ export function createApp(
             .send();
           return;
         }
-        response.set("ETag", postEtag(value)).json({ data: value });
+        // Following and unread are per viewer and change without a new version.
+        response
+          .set({ ETag: postEtag(value), "Cache-Control": "private, no-store" })
+          .json({ data: value });
       } catch (error) {
         next(error);
       }
@@ -1759,6 +1775,41 @@ export function createApp(
           param(request.params.postId),
           auth(response).session.user.id,
           request.header("if-match"),
+        );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const [method, following] of [
+    ["put", true],
+    ["delete", false],
+  ] as const)
+    app[method](
+      "/api/v1/posts/:postId/follow",
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          const value = await posts().setFollowing(
+            param(request.params.postId),
+            auth(response).session.user.id,
+            following,
+          );
+          response.json({ data: value });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  app.post(
+    "/api/v1/courses/:courseId/read-marks",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await posts().markCourseRead(
+          param(request.params.courseId),
+          auth(response).session.user.id,
         );
         response.status(204).send();
       } catch (error) {
@@ -2100,6 +2151,85 @@ export function createApp(
           auth(response).session.user.id,
           request.header("if-match"),
         );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  const notifications = (): NotificationService => {
+    if (!notificationService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Notification service is unavailable",
+      );
+    return notificationService;
+  };
+  app.get(
+    "/api/v1/users/me/notifications/unread-count",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response.json({
+          data: await notifications().unreadCount(current.session.user.id),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/users/me/notifications",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { limit, cursor } = listQuery(request.query);
+        const rawUnread = request.query.unread;
+        if (rawUnread !== undefined && rawUnread !== "true")
+          throw new AuthError(400, "invalid_request", "Filter is invalid");
+        if (
+          Object.keys(request.query).some(
+            (key) => !["limit", "cursor", "unread"].includes(key),
+          )
+        )
+          throw new AuthError(400, "invalid_request", "Filter is invalid");
+        response.json(
+          await notifications().list(current.session.user.id, {
+            limit,
+            cursor,
+            unread: rawUnread === "true",
+          }),
+        );
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/users/me/notifications/read",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const empty =
+          request.body === undefined ||
+          (typeof request.body === "object" &&
+            request.body !== null &&
+            Object.keys(request.body).length === 0);
+        let ids: string[] | undefined;
+        if (!empty) {
+          requireJsonRequest(request);
+          const body = strictBody(request.body, ["ids"], ["ids"]);
+          if (
+            !Array.isArray(body.ids) ||
+            body.ids.some((id) => typeof id !== "string")
+          )
+            throw validationError("Notification ids are invalid");
+          ids = body.ids as string[];
+        }
+        await notifications().markRead(auth(response).session.user.id, ids);
         response.status(204).send();
       } catch (error) {
         next(error);

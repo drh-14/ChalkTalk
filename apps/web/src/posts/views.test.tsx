@@ -5437,3 +5437,91 @@ it("offers students neither polls nor announcements, and badges announcements", 
     }),
   ).toBeNull();
 });
+
+it("follows and unfollows a post from its detail", async () => {
+  let following = false;
+  const calls: { url: string; init?: RequestInit }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === "/api/v1/posts/p1/follow") {
+        following = init?.method === "PUT";
+        return json({ data: { following } });
+      }
+      if (url === "/api/v1/posts/p1")
+        return json({ data: { ...post("p1", "Follow me"), following } });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([{ ...post("p1", "Follow me"), following }]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const follow = await screen.findByRole("button", { name: "Follow" });
+  expect(follow.getAttribute("aria-pressed")).toBe("false");
+  await user.click(follow);
+  const followed = await screen.findByRole("button", { name: "Following" });
+  expect(followed.getAttribute("aria-pressed")).toBe("true");
+  const put = calls.find((call) => call.init?.method === "PUT")!;
+  expect(put.url).toBe("/api/v1/posts/p1/follow");
+  expect(put.init?.headers).toMatchObject({ "X-CSRF-Token": "csrf" });
+  await user.click(followed);
+  await screen.findByRole("button", { name: "Follow" });
+  expect(calls.some((call) => call.init?.method === "DELETE")).toBe(true);
+});
+
+it("marks unread posts in the feed, clears one on opening, and marks all read", async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/read-marks"))
+        return new Response(null, { status: 204 });
+      return page([
+        { ...post("p1", "Fresh answer"), unread: true },
+        { ...post("p2", "Also new"), unread: true },
+        { ...post("p3", "Seen already"), unread: false },
+      ]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const link = (title: string) =>
+    screen.getByRole("link", { name: new RegExp(title) });
+  await screen.findByText("Fresh answer");
+  expect(link("Fresh answer").textContent).toContain("Unread:");
+  expect(link("Seen already").textContent).not.toContain("Unread:");
+  expect(screen.getByText("2 unread")).toBeTruthy();
+
+  await user.click(link("Fresh answer"));
+  expect(link("Fresh answer").textContent).not.toContain("Unread:");
+  expect(link("Also new").textContent).toContain("Unread:");
+
+  await user.click(screen.getByRole("button", { name: "Mark all read" }));
+  await waitFor(() =>
+    expect(link("Also new").textContent).not.toContain("Unread:"),
+  );
+  expect(screen.queryByRole("button", { name: "Mark all read" })).toBeNull();
+  const mark = calls.find((call) => call.url.endsWith("/read-marks"))!;
+  expect(mark.url).toBe(`/api/v1/courses/${course.id}/read-marks`);
+  expect(mark.init).toMatchObject({
+    method: "POST",
+    headers: expect.objectContaining({ "X-CSRF-Token": "csrf" }),
+  });
+});

@@ -4,6 +4,8 @@ export type User = {
   id: string;
   email: string;
   displayName: string;
+  /** Email about activity on followed posts; absent from older responses. */
+  notificationEmails?: boolean;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -149,6 +151,23 @@ export function updateDisplayName(
     jsonRequest(
       "PATCH",
       { displayName },
+      {
+        "If-Match": etag,
+        "X-CSRF-Token": csrfToken,
+      },
+    ),
+  );
+}
+
+export function updateNotificationEmails(
+  notificationEmails: boolean,
+  etag: string,
+  csrfToken: string,
+): Promise<VersionedProfile> {
+  return profileRequest(
+    jsonRequest(
+      "PATCH",
+      { notificationEmails },
       {
         "If-Match": etag,
         "X-CSRF-Token": csrfToken,

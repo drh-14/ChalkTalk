@@ -4,6 +4,8 @@
 
 **Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 options of 1–200 characters, trimmed and distinct ignoring case, fixed after creation. Every member sees each option's `voteCount` and whether they `selected` it; who voted for what is never exposed. Each member has one vote, which `PUT /posts/{postId}/vote` sets or changes and `DELETE` retracts. Votes do not change the post's `version` or activity time. Polls take no answers or followups.
 
+**Following and unread:** Every active post projection includes `following` and `unread` for the viewer. Members follow a post automatically when they create it, answer it, edit an answer on it, or post a followup or reply on it, unless they unfollowed it; see [Notifications](notifications.md). A post is `unread` when its last activity is later than both the viewer's last opening of it and their course read mark, or neither exists. Retrieving a post records it, and the caller's notifications for it, as read, so its own response reports `unread: false`.
+
 **Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member, which the job worker sends only while the announcement, the course, and the membership still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
@@ -197,6 +199,10 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.pinned` (boolean, required): Whether staff pinned the post.
 
 `data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
+
+`data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
+
+`data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -409,6 +415,10 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data[].announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
+`data[].following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
+
+`data[].unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
+
 `data[].duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
 `data[].duplicateStatus` (enum: none, suggested, confirmed, required): Duplicate-review state.
@@ -555,6 +565,8 @@ None.
 
 `ETag` (string): Opaque revision token for a later `If-Match` request.
 
+`Cache-Control` (string): `private, no-store`, because `following` and `unread` are per viewer and change without a new revision.
+
 `Location` (string, on `303`): Same-course canonical post URL.
 
 `Cache-Control` (string, on `303`): `private, no-store`.
@@ -588,6 +600,10 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.pinned` (boolean, required): Whether staff pinned the post.
 
 `data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
+
+`data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
+
+`data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -814,6 +830,10 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.pinned` (boolean, required): Whether staff pinned the post.
 
 `data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
+
+`data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
+
+`data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -1261,6 +1281,263 @@ curl --request DELETE '/api/v1/posts/post_123/vote' \
 ##### `422 Unprocessable Content`
 
 `not_a_poll`: The post is not a poll.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+##### `503 Service Unavailable`
+
+`service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="followPost"></a>
+
+### **`PUT /api/v1/posts/{postId}/follow`**
+
+Follows a post the caller can read, so its activity notifies them.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Course member who can read the post.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+`Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+
+`X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
+
+#### Path parameters
+
+`postId` (string, required, 1–255 characters): Identifies the post resource.
+
+#### Query parameters
+
+None.
+
+#### Request body
+
+None.
+
+**Success:** `200 OK`.
+
+**Response media:** `application/json`.
+
+#### Response body
+
+##### `data` (object, required): The caller's follow state.
+
+`data.following` (boolean, required): Whether the caller now follows the post.
+
+#### Example request
+
+```bash
+curl --request PUT '/api/v1/posts/post_123/follow' \
+    --header 'Accept: application/json' \
+    --header 'Origin: https://app.example.edu' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'X-CSRF-Token: opaque_csrf_token'
+```
+
+#### Example success response
+
+```json
+{
+  "data": {
+    "following": true
+  }
+}
+```
+
+#### Errors
+
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `404 Not Found`
+
+`not_found`: The post does not exist, is deleted or a confirmed duplicate, or is not visible to the caller.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+##### `503 Service Unavailable`
+
+`service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="unfollowPost"></a>
+
+### **`DELETE /api/v1/posts/{postId}/follow`**
+
+Stops notifications for the post. The unfollow persists: later activity by the caller does not follow the post again automatically.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Course member who can read the post.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+`Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+
+`X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
+
+#### Path parameters
+
+`postId` (string, required, 1–255 characters): Identifies the post resource.
+
+#### Query parameters
+
+None.
+
+#### Request body
+
+None.
+
+**Success:** `200 OK`.
+
+**Response media:** `application/json`.
+
+#### Response body
+
+##### `data` (object, required): The caller's follow state.
+
+`data.following` (boolean, required): Whether the caller now follows the post.
+
+#### Example request
+
+```bash
+curl --request DELETE '/api/v1/posts/post_123/follow' \
+    --header 'Accept: application/json' \
+    --header 'Origin: https://app.example.edu' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'X-CSRF-Token: opaque_csrf_token'
+```
+
+#### Example success response
+
+```json
+{
+  "data": {
+    "following": false
+  }
+}
+```
+
+#### Errors
+
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `404 Not Found`
+
+`not_found`: The post does not exist, is deleted or a confirmed duplicate, or is not visible to the caller.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+##### `503 Service Unavailable`
+
+`service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="markCourseRead"></a>
+
+### **`POST /api/v1/courses/{courseId}/read-marks`**
+
+Marks every post in the course read for the caller as of now. Later activity makes a post unread again.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Course member.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+`Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+
+`X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
+
+#### Path parameters
+
+`courseId` (string, required, 1–255 characters): Identifies the course resource.
+
+#### Query parameters
+
+None.
+
+#### Request body
+
+None.
+
+**Success:** `204 No Content`.
+
+**Response media:** None.
+
+#### Response body
+
+None.
+
+#### Example request
+
+```bash
+curl --request POST '/api/v1/courses/course_123/read-marks' \
+    --header 'Origin: https://app.example.edu' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'X-CSRF-Token: opaque_csrf_token'
+```
+
+#### Example success response
+
+```http
+204 No Content
+```
+
+#### Errors
+
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `404 Not Found`
+
+`not_found`: The course does not exist or the caller is not a member.
 
 ##### `500 Internal Server Error`
 

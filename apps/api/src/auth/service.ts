@@ -33,6 +33,8 @@ export interface UserProfile {
   id: string;
   email: string;
   displayName: string;
+  /** Email about activity on followed posts; off by default. */
+  notificationEmails: boolean;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -50,6 +52,7 @@ interface UserRow {
   email: string;
   display_name: string;
   password_hash: string;
+  notification_emails: boolean;
   created_at: Date;
   updated_at: Date;
   version: number;
@@ -92,6 +95,7 @@ function mapUser(row: UserRow): UserProfile {
     id: row.id,
     email: row.email,
     displayName: row.display_name,
+    notificationEmails: row.notification_emails,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     version: row.version,
@@ -424,7 +428,7 @@ export class AuthService {
       const userResult = await client.query<UserRow>(
         `INSERT INTO users (id, organization_id, email, display_name, password_hash)
            VALUES ($1, $2, $3, $4, $5)
-           RETURNING id, email, display_name, password_hash, created_at, updated_at, version`,
+           RETURNING id, email, display_name, password_hash, notification_emails, created_at, updated_at, version`,
         [
           uuidv7(),
           organization.rows[0]!.id,
@@ -531,7 +535,7 @@ export class AuthService {
         "Email or password is invalid",
       );
     const userResult = await this.pool.query<UserRow>(
-      `SELECT id, email, display_name, password_hash, created_at, updated_at, version
+      `SELECT id, email, display_name, password_hash, notification_emails, created_at, updated_at, version
        FROM users WHERE email = $1 AND deleted_at IS NULL`,
       [email],
     );
@@ -568,7 +572,7 @@ export class AuthService {
   ): Promise<AuthenticatedSession> {
     const result = await this.pool.query<SessionRow>(
       `SELECT s.id AS session_id, s.expires_at, s.csrf_token_hash,
-              u.id, u.email, u.display_name, u.password_hash, u.created_at, u.updated_at, u.version
+              u.id, u.email, u.display_name, u.password_hash, u.notification_emails, u.created_at, u.updated_at, u.version
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.credential_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.deleted_at IS NULL`,
       [this.hash(credential)],
@@ -622,7 +626,11 @@ export class AuthService {
   async updateProfile(
     sessionCredential: string,
     ifMatch: string | undefined,
-    input: { displayName?: unknown; emailVerificationToken?: unknown },
+    input: {
+      displayName?: unknown;
+      emailVerificationToken?: unknown;
+      notificationEmails?: unknown;
+    },
   ): Promise<UserProfile> {
     const session = await this.session(sessionCredential);
     if (!ifMatch)
@@ -636,8 +644,19 @@ export class AuthService {
           ? input.displayName.trim()
           : null;
     if (
+      input.notificationEmails !== undefined &&
+      typeof input.notificationEmails !== "boolean"
+    )
+      throw new AuthError(
+        422,
+        "validation_failed",
+        "Notification emails must be true or false",
+      );
+    if (
       displayName === null ||
-      (displayName === undefined && input.emailVerificationToken === undefined)
+      (displayName === undefined &&
+        input.emailVerificationToken === undefined &&
+        input.notificationEmails === undefined)
     )
       throw new AuthError(
         422,
@@ -695,10 +714,16 @@ export class AuthService {
       }
       try {
         const updated = await client.query<UserRow>(
-          `UPDATE users SET email = $1, display_name = COALESCE($2, display_name), version = version + 1, updated_at = now()
+          `UPDATE users SET email = $1, display_name = COALESCE($2, display_name), notification_emails = COALESCE($5, notification_emails), version = version + 1, updated_at = now()
            WHERE id = $3 AND version = $4
-           RETURNING id, email, display_name, password_hash, created_at, updated_at, version`,
-          [email, displayName, session.user.id, session.user.version],
+           RETURNING id, email, display_name, password_hash, notification_emails, created_at, updated_at, version`,
+          [
+            email,
+            displayName,
+            session.user.id,
+            session.user.version,
+            input.notificationEmails ?? null,
+          ],
         );
         if (!updated.rows[0])
           throw new AuthError(412, "version_conflict", "Profile has changed");
