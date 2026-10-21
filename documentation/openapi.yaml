@@ -3636,6 +3636,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                schedule_invalid:
+                  summary: The schedule is not 1 minute to 365 days ahead, or the post is not an announcement.
+                  value:
+                    error:
+                      code: schedule_invalid
+                      message: The schedule is not 1 minute to 365 days ahead, or the post is not an announcement.
+                      requestId: req_createPost
+                      details: []
                 too_many_mentions:
                   summary: The body mentions more than 20 people.
                   value:
@@ -4374,6 +4382,22 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                schedule_invalid:
+                  summary: The new schedule is not 1 minute to 365 days ahead.
+                  value:
+                    error:
+                      code: schedule_invalid
+                      message: The new schedule is not 1 minute to 365 days ahead.
+                      requestId: req_updatePost
+                      details: []
+                not_scheduled:
+                  summary: The post is not a scheduled announcement.
+                  value:
+                    error:
+                      code: not_scheduled
+                      message: The post is not a scheduled announcement.
+                      requestId: req_updatePost
+                      details: []
                 too_many_mentions:
                   summary: The body mentions more than 20 people.
                   value:
@@ -13795,6 +13819,12 @@ components:
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
+        scheduledFor:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When a scheduled announcement will publish; null once published or when never scheduled. Only staff can read a scheduled post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -13865,6 +13895,7 @@ components:
         - discussionLocked
         - announcement
         - private
+        - scheduledFor
         - following
         - unread
         - duplicateOfPostId
@@ -13944,6 +13975,12 @@ components:
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
+        scheduledFor:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When a scheduled announcement will publish; null once published or when never scheduled. Only staff can read a scheduled post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -14007,6 +14044,7 @@ components:
         - discussionLocked
         - announcement
         - private
+        - scheduledFor
         - following
         - unread
         - duplicateOfPostId
@@ -14084,6 +14122,12 @@ components:
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
+        scheduledFor:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When a scheduled announcement will publish; null once published or when never scheduled. Only staff can read a scheduled post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -14178,6 +14222,7 @@ components:
         - discussionLocked
         - announcement
         - private
+        - scheduledFor
         - following
         - unread
         - duplicateOfPostId
@@ -16601,6 +16646,10 @@ components:
           type: integer
           minimum: 0
           description: Current owner/course draft version to check before atomic publication.
+        scheduledFor:
+          type: string
+          format: date-time
+          description: Announcements only. When the job worker publishes it, 1 minute to 365 days ahead; staff alone can read it until then.
       additionalProperties: false
       required:
         - type
@@ -16775,6 +16824,12 @@ components:
         private:
           type: boolean
           description: false makes a private post public (author or staff; cannot be undone). true on a public post returns post_already_public.
+        scheduledFor:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: For a scheduled announcement, a new time reschedules it and null publishes it now; otherwise not_scheduled.
         duplicateOfPostId:
           type:
             - string

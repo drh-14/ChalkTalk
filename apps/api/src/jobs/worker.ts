@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { publishScheduled } from "../posts/announce.js";
 import type { Pool, PoolClient } from "pg";
 import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import type { EmailSender } from "../auth/service.js";
@@ -16,7 +17,8 @@ type Job = {
     | "index_post"
     | "send_collaboration_invitation_email"
     | "send_announcement_email"
-    | "send_notification_email";
+    | "send_notification_email"
+    | "publish_scheduled_announcement";
   payload: {
     courseId?: string;
     objectKey?: string;
@@ -33,6 +35,7 @@ type Job = {
     responseKind?: "answer" | "followup";
     responseId?: string;
     generation?: string;
+    scheduledFor?: string;
   };
   deduplicationKey: string | null;
   attempts: number;
@@ -81,7 +84,7 @@ export class JobWorker {
         max_attempts: number;
       }>(
         `SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs
-         WHERE (kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email','send_collaboration_invitation_email','send_announcement_email','send_notification_email')
+         WHERE (kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email','send_collaboration_invitation_email','send_announcement_email','publish_scheduled_announcement','send_notification_email')
            OR (kind='index_post' AND payload->>'generation'=$1))
            AND ((status='queued' AND available_at <= now())
              OR (status='running' AND (locked_until IS NULL OR locked_until < now())))
@@ -238,7 +241,7 @@ export class JobWorker {
        JOIN users author ON author.id=p.author_user_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2 AND m.announcement_emails
        JOIN users recipient ON recipient.id=$2 AND recipient.deleted_at IS NULL
-       WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL`,
+       WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL AND p.scheduled_for IS NULL`,
         [postId, userId],
       );
       const row = found.rows[0];
@@ -362,6 +365,42 @@ export class JobWorker {
         "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1",
         [job.id],
       );
+    });
+  }
+
+  /** Publishes an announcement only if it is still scheduled for this time. */
+  private async publishScheduledAnnouncement(job: Job): Promise<void> {
+    const { postId, scheduledFor } = job.payload;
+    if (
+      !postId ||
+      !scheduledFor ||
+      job.deduplicationKey !== `${postId}:${scheduledFor}`
+    )
+      throw new Error("Scheduled announcement job payload is invalid");
+    await this.transaction(async (client) => {
+      const found = await client.query<{
+        course_id: string;
+        author_user_id: string | null;
+        scheduled_for: Date | null;
+        course_status: string;
+      }>(
+        `SELECT p.course_id,p.author_user_id,p.scheduled_for,c.status AS course_status
+         FROM posts p JOIN courses c ON c.id=p.course_id
+         WHERE p.id=$1 AND p.deleted_at IS NULL FOR UPDATE OF p`,
+        [postId],
+      );
+      const post = found.rows[0];
+      if (
+        !post?.author_user_id ||
+        post.scheduled_for?.toISOString() !== scheduledFor ||
+        post.course_status !== "active"
+      )
+        return;
+      await publishScheduled(client, {
+        postId,
+        courseId: post.course_id,
+        authorId: post.author_user_id,
+      });
     });
   }
 
@@ -501,6 +540,8 @@ export class JobWorker {
         )
           throw new Error("Semantic indexing job payload is invalid");
         await this.semantic.indexPost(job.payload.postId);
+      } else if (job.kind === "publish_scheduled_announcement") {
+        await this.publishScheduledAnnouncement(job);
       } else if (job.kind === "send_notification_email") {
         await this.sendNotificationEmail(job);
       } else if (job.kind === "send_announcement_email") {
