@@ -160,6 +160,7 @@ The ordinary migrations and PostgreSQL startup do not require pgvector. An opera
 - `source_revision`: SHA-256 digest of the post title and body. A changed title or body makes old vectors ineligible immediately, before the worker refreshes them.
 - `embedding`: pgvector value for one bounded title/body chunk. `generation` identifies the configured endpoint/model so vectors from different generations are never compared.
 - The worker backfills active questions and notes (never polls) and stores a post's chunks only if its content revision remains unchanged after provider calls. Search joins current course and post visibility before ranking or pagination; deleted posts and confirmed duplicates do not yield semantic candidates.
+
 ### `post_follows`
 
 - `post_id`, `course_id`, `user_id`: `uuid_v7`; primary key `(post_id, user_id)`. `(course_id, post_id)` references the post and `(course_id, user_id)` the course membership, both cascading, so leaving a course drops its follows.

@@ -310,17 +310,21 @@ When semantic ranking becomes unhealthy between relevance pages, a semantic curs
 - **THEN** search returns only full-text and fuzzy results until successful revision-checked indexing clears the failure and catch-up state
 
 ### Requirement: Semantic post types and current visibility stay compatible
+
 Semantic indexing, generation catch-up and semantic-only candidate expansion SHALL apply only to questions and notes, not polls. Poll search SHALL retain the existing lexical/fuzzy behavior without query embeddings when filtered to polls. Unsupported stale vectors/jobs/catch-up SHALL not expand results or make semantic health unhealthy. Private questions and notes SHALL follow current main's author-and-current-staff read rules, with the current visibility predicate applied before ranking, pagination and hasMore. Nonmembers SHALL not access results. Publishing a private post SHALL change readability through current authoritative state, while text edits retain existing revision checks. Existing notification/activity jobs, attachments, resources, live code sessions, fallback and separate-worker behavior SHALL be preserved.
 
 #### Scenario: A private semantic match and authorized roles
+
 - **WHEN** an author, another student, course TA, instructor or nonmember searches private semantic matches
 - **THEN** only authorized current members receive them, and hidden matches do not alter other members' page boundaries or hasMore
 
 #### Scenario: Poll eligibility and fallback
+
 - **WHEN** polls exist or stale poll semantic artifacts are present
 - **THEN** indexing and semantic-only expansion exclude them, poll lexical results remain available, and unrelated semantic health remains usable
 
 #### Scenario: Private post becomes public
+
 - **WHEN** an authorized current author or staff member publishes a private question or note
 - **THEN** other members can find its current content without bypassing revision or visibility checks
 
@@ -329,17 +333,21 @@ Semantic indexing, generation catch-up and semantic-only candidate expansion SHA
 Semantic search SHALL use only established full-text and fuzzy results until durable completion state for the current embedding generation confirms its bounded initial scan finished and all current-revision indexing work has completed. Pending current-generation catch-up state, current-revision queued, running or failed jobs, and query-provider failure SHALL also require that fallback. Completion of a different embedding generation SHALL not make the current generation healthy.
 
 #### Scenario: Newly enabled or changed generation
+
 - **WHEN** a generation is first registered or a stale generation restarts before its bounded initial scan completes
 - **THEN** search uses only full-text and fuzzy results, including while discovered jobs are queued or running
 
 #### Scenario: Initial scan drains
+
 - **WHEN** the current generation finishes its bounded scan and all current-revision jobs and catch-up state drain
 - **THEN** semantic ranking becomes available and stays available across a worker restart
 
 #### Scenario: Equal microsecond timestamps cross a batch boundary
+
 - **WHEN** more than one bounded batch of posts shares a PostgreSQL microsecond-resolution update timestamp
 - **THEN** the scan advances by timestamp and ID without revisiting a batch, and readiness becomes available after current work drains
 
 #### Scenario: Concurrent write or failed indexing
+
 - **WHEN** a post changes during initial scanning or indexing fails
 - **THEN** pending work prevents semantic ranking until revision-safe recovery, without allowing another generation's worker to declare this one ready

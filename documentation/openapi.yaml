@@ -3640,7 +3640,7 @@ paths:
         - name: semanticQuery
           in: query
           required: false
-          description: Separate natural-language semantic query. Requires q; does not change q operator meaning. Semantic expansion applies only to readable questions and notes, never polls. A poll-only query does not call the embedding provider. Ignored when deployment embeddings or optional pgvector schema are unavailable. A query-provider error, pending post catch-up work, or a failed current-generation indexing job uses only the established full-text and fuzzy search path.
+          description: Separate natural-language semantic query requiring q; see the [course posts API reference](api/posts.md) for matching, eligibility, and readiness rules.
           schema:
             type: string
             minLength: 1
