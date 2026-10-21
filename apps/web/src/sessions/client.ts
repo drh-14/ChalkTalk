@@ -13,10 +13,34 @@ export const SESSION_LANGUAGES = [
 ] as const;
 export type SessionLanguage = (typeof SESSION_LANGUAGES)[number]["value"];
 
+const TAG_LANGUAGES: Record<string, SessionLanguage> = {
+  python: "python",
+  py: "python",
+  java: "java",
+  c: "c",
+  cpp: "cpp",
+  "c++": "cpp",
+  javascript: "javascript",
+  js: "javascript",
+  typescript: "typescript",
+  ts: "typescript",
+  sql: "sql",
+};
+
+/** The first post tag that names a session language, else plain text. */
+export function languageFromTags(tags: readonly string[]): SessionLanguage {
+  for (const tag of tags) {
+    const language = TAG_LANGUAGES[tag.trim().toLowerCase()];
+    if (language) return language;
+  }
+  return "plaintext";
+}
+
 export type SessionParticipant = {
   userId: string;
   displayName: string;
   role: "creator" | "invitee";
+  permission: "edit" | "view";
 };
 export type CodeSession = {
   id: string;
@@ -38,12 +62,16 @@ export type ConnectionTicket = {
   webSocketUrl: string;
   documentId: string;
   expiresAt: string;
+  /** `read` tickets open read-only connections for viewers. */
+  permission: "read" | "write";
 };
 export type SessionSnapshot = {
   collaborationSessionId: string;
   documentId: string;
   sessionStatus: "active" | "ended";
   content: string;
+  /** Excalidraw elements, non-deleted, in drawing order. */
+  whiteboard: ({ id: string; type: string } & Record<string, unknown>)[];
   persistedAt: string;
   capturedAt: string;
 };
@@ -134,6 +162,21 @@ export async function listSessions(
   );
 }
 
+export type MySession = CodeSession & { courseName: string };
+
+/** The viewer's own sessions, created or invited, across their courses. */
+export async function listMySessions(
+  options: { status?: "active" | "ended"; signal?: AbortSignal } = {},
+): Promise<Page<MySession>> {
+  const query = options.status ? `?status=${options.status}` : "";
+  return receive<Page<MySession>>(
+    await read(
+      `/api/v1/users/me/collaboration-sessions${query}`,
+      options.signal,
+    ),
+  );
+}
+
 export async function createSession(
   courseId: string,
   input: { postId: string; language: SessionLanguage; title?: string },
@@ -178,10 +221,12 @@ export async function inviteParticipant(
   sessionId: string,
   userId: string,
   csrfToken: string,
+  permission: "edit" | "view" = "edit",
 ): Promise<Versioned<CodeSession>> {
   return versioned(
     await write("POST", `${sessionPath(sessionId)}/participants`, csrfToken, {
       userId,
+      permission,
     }),
   );
 }

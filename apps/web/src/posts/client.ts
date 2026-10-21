@@ -2,10 +2,18 @@ import { ApiError } from "../auth/client.js";
 import type { Page } from "../courses/client.js";
 import type { Attachment } from "../attachments/client.js";
 
+export type PollOption = {
+  id: string;
+  label: string;
+  voteCount: number;
+  /** Whether the viewer chose this option. */
+  selected: boolean;
+};
+export type PollState = { options: PollOption[]; totalVotes: number };
 export type Post = {
   id: string;
   courseId: string;
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   deleted: false;
   title: string;
   bodyMarkdown: string;
@@ -24,7 +32,18 @@ export type Post = {
   duplicateStatus?: "none" | "suggested" | "confirmed";
   duplicateOfPostId?: string | null;
   pinned?: boolean;
+  /** Staff notes pinned and emailed to the course. */
+  announcement?: boolean;
+  /** Readable only by the author and course staff. */
+  private?: boolean;
   answered?: boolean;
+  /** Whether the viewer is notified of activity on the post. */
+  following?: boolean;
+  /** Whether the post changed since the viewer last opened it. */
+  unread?: boolean;
+  /** Present on polls. */
+  options?: PollOption[];
+  totalVotes?: number;
 };
 export type PostDetail = Post | { id: string; courseId: string; deleted: true };
 export type MergedPost = {
@@ -39,11 +58,14 @@ export type MergedPost = {
 };
 export type PostRedirect = { redirectToPostId: string };
 export type CreatePostInput = {
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   title: string;
   bodyMarkdown: string;
   anonymous: boolean;
   tags: string[];
+  options?: { label: string }[];
+  announcement?: boolean;
+  private?: boolean;
 };
 export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
@@ -51,7 +73,9 @@ export type PostListOptions = {
   semanticQuery?: string;
   sort?: PostSort;
   cursor?: string;
-  type?: "question" | "note";
+  type?: "question" | "note" | "poll";
+  announcement?: true;
+  private?: true;
   answered?: boolean;
   pinned?: boolean;
   authorId?: string;
@@ -92,6 +116,8 @@ export async function listPosts(
   if (options.answered !== undefined)
     query.set("answered", String(options.answered));
   if (options.pinned !== undefined) query.set("pinned", String(options.pinned));
+  if (options.announcement) query.set("announcement", "true");
+  if (options.private) query.set("private", "true");
   if (options.authorId) query.set("authorId", options.authorId);
   if (options.authorRole) query.set("authorRole", options.authorRole);
   const tags = options.tags ?? [];
@@ -251,6 +277,95 @@ export async function setPostPinned(
     }),
   );
   return payload.data;
+}
+
+/** Makes a private post readable by the whole course; this cannot be undone. */
+export async function makePostPublic(
+  post: Post,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"v${post.version}"`,
+      },
+      body: JSON.stringify({ private: false }),
+    }),
+  );
+  return payload.data;
+}
+
+/** Follows or unfollows a post for the viewer. */
+export async function setFollowing(
+  postId: string,
+  following: boolean,
+  csrfToken: string,
+): Promise<boolean> {
+  const payload = await receive<{ data: { following: boolean } }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/follow`, {
+      method: following ? "PUT" : "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    }),
+  );
+  return payload.data.following;
+}
+
+/** Marks every post in the course read for the viewer. */
+export async function markCourseRead(
+  courseId: string,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/read-marks`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    },
+  );
+  if (!response.ok) await receive<never>(response);
+}
+
+/** Casts or changes the viewer's single vote on a poll. */
+export async function votePoll(
+  postId: string,
+  optionId: string,
+  csrfToken: string,
+): Promise<PollState & { postId: string }> {
+  const payload = await receive<{ data: PollState & { postId: string } }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/vote`, {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+      },
+      body: JSON.stringify({ optionId }),
+    }),
+  );
+  return payload.data;
+}
+
+export async function retractVote(
+  postId: string,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/posts/${encodeURIComponent(postId)}/vote`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    },
+  );
+  if (!response.ok) await receive<never>(response);
 }
 
 export async function createPost(

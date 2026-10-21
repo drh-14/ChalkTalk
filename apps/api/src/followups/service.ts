@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { canReadPost } from "../posts/visibility.js";
+import { recordActivity } from "../notifications/activity.js";
 import {
   hideAttachmentsForParent,
   listAttachments,
@@ -92,17 +94,24 @@ export class FollowupService {
       type: string;
       deleted_at: Date | null;
       duplicate_status: string;
+      private: boolean;
+      author_user_id: string | null;
       status: string;
       role: Role;
     }>(
-      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,c.status,m.role
+      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.author_user_id,c.status,m.role
        FROM posts p JOIN courses c ON c.id=p.course_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
        WHERE p.id=$1${lock ? " FOR NO KEY UPDATE OF p FOR SHARE OF c,m" : ""}`,
       [postId, userId],
     );
     const row = result.rows[0];
-    if (!row || row.deleted_at || row.duplicate_status === "confirmed")
+    if (
+      !row ||
+      row.deleted_at ||
+      row.duplicate_status === "confirmed" ||
+      !canReadPost(row, userId, row.role)
+    )
       throw notFound();
     if (row.type !== "question")
       throw new AuthError(
@@ -269,6 +278,14 @@ export class FollowupService {
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [postId],
       );
+      await recordActivity(db, {
+        courseId: question.course_id,
+        postId,
+        actorId: userId,
+        kind: parentId ? "reply_created" : "followup_created",
+        anonymous: input.anonymous ?? false,
+        follow: true,
+      });
       const value = await this.project(
         db,
         await this.row(db, id),

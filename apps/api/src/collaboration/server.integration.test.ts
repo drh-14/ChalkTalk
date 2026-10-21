@@ -16,6 +16,7 @@ import { createTestSchema, seedCourse } from "./test-fixtures.js";
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
 const ORIGIN = "https://app.example.edu";
+const METRICS_TOKEN = "metrics-token-for-collaboration-tests";
 
 function socketClass(origin: string) {
   return class extends WebSocket {
@@ -54,6 +55,7 @@ integration("collaboration server", () => {
       maxDebounce: 800,
       sweepIntervalMs: 60_000,
       listenerRetryMs: 100,
+      metricsToken: METRICS_TOKEN,
     });
     return collaboration.start();
   }
@@ -336,6 +338,255 @@ integration("collaboration server", () => {
     });
   });
 
+  describe("viewers", () => {
+    it("lets a viewer follow along without applying their edits", async () => {
+      const sessionId = await newSession("alice", ["bob"]);
+      await service.invite(
+        sessionId,
+        fixture.users.alice!,
+        fixture.users.carol!,
+        "view",
+      );
+      const alice = join("alice", sessionId);
+      const carol = join("carol", sessionId);
+      await until(() => alice.provider.isSynced && carol.provider.isSynced);
+      alice.text.insert(0, "print('demo')");
+      await until(() => carol.text.toString() === "print('demo')");
+
+      carol.text.insert(0, "# viewer was here\n");
+      carol.document.getMap("whiteboard").set("x", { id: "x", type: "iframe" });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const server = collaboration.hocuspocus.documents.get(
+        documentName(sessionId),
+      );
+      expect(server?.getText("content").toString()).toBe("print('demo')");
+      expect(server?.getMap("whiteboard").size).toBe(0);
+      expect(alice.text.toString()).toBe("print('demo')");
+      expect(carol.state.closeReason).toBeUndefined();
+
+      alice.text.insert(alice.text.length, "\nprint('more')");
+      await until(() => carol.text.toString().includes("print('more')"));
+    });
+  });
+
+  describe("metrics", () => {
+    it("serves token-guarded metrics without identifiers", async () => {
+      const url = `${collaboration.server.webSocketURL.replace(/^ws/, "http")}/metrics`;
+      expect((await fetch(url)).status).toBe(401);
+      expect(
+        (await fetch(url, { headers: { Authorization: "Bearer wrong" } }))
+          .status,
+      ).toBe(401);
+
+      const sessionId = await newSession();
+      const watcher = join("bob", sessionId);
+      const rejected = join("alice", sessionId);
+      await until(
+        () => watcher.provider.isSynced && rejected.provider.isSynced,
+      );
+      rejected.document.getMap("other").set("x", 1);
+      await until(() => rejected.state.closeReason === CLOSE_REASONS.invalid);
+
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${METRICS_TOKEN}` },
+      });
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      for (const series of [
+        "chalktalk_collaboration_connections",
+        "chalktalk_collaboration_documents",
+        "chalktalk_collaboration_store_duration_seconds",
+        "chalktalk_collaboration_rejected_updates_total",
+        "chalktalk_collaboration_closes_total",
+        "chalktalk_collaboration_sessions_ended_total",
+      ])
+        expect(text).toContain(`# TYPE ${series}`);
+      expect(text).toMatch(/^chalktalk_collaboration_connections [1-9]/m);
+      expect(text).toMatch(
+        /^chalktalk_collaboration_rejected_updates_total [1-9]/m,
+      );
+      expect(text).toContain(
+        `chalktalk_collaboration_closes_total{reason="invalid-update"}`,
+      );
+      expect(text).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+      );
+    });
+  });
+
+  describe("idle sessions", () => {
+    const lifecycle = async (sessionId: string) =>
+      (
+        await pool.query<{ lifecycle_state: string; last_active_at: Date }>(
+          "SELECT lifecycle_state,last_active_at FROM collaboration_sessions WHERE id=$1",
+          [sessionId],
+        )
+      ).rows[0]!;
+    const idleFor = (sessionId: string, minutes: number) =>
+      pool.query(
+        "UPDATE collaboration_sessions SET last_active_at=now()-make_interval(mins => $2) WHERE id=$1",
+        [sessionId, minutes],
+      );
+
+    it("ends a session nobody has joined for the idle period", async () => {
+      const sessionId = await newSession();
+      await idleFor(sessionId, 119);
+      expect(await collaboration.endIdle()).not.toContain(sessionId);
+      await idleFor(sessionId, 121);
+      expect(await collaboration.endIdle()).toContain(sessionId);
+      expect((await lifecycle(sessionId)).lifecycle_state).toBe("ended");
+      const active = await service.list(
+        fixture.courseId,
+        fixture.users.alice!,
+        {
+          status: "active",
+          limit: 100,
+        },
+      );
+      expect(active.data.map((session) => session.id)).not.toContain(sessionId);
+    });
+
+    it("never ends a session someone is connected to, however quiet", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      await idleFor(sessionId, 600);
+      expect(await collaboration.endIdle()).not.toContain(sessionId);
+      const row = await lifecycle(sessionId);
+      expect(row.lifecycle_state).toBe("active");
+      expect(Date.now() - row.last_active_at.getTime()).toBeLessThan(60_000);
+    });
+
+    it("counts the idle period from the last disconnect, across a restart", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      await idleFor(sessionId, 600);
+      alice.provider.destroy();
+      await until(
+        async () =>
+          Date.now() - (await lifecycle(sessionId)).last_active_at.getTime() <
+          60_000,
+      );
+      await collaboration.stop();
+      await startServer();
+      expect(await collaboration.endIdle()).not.toContain(sessionId);
+      await idleFor(sessionId, 121);
+      expect(await collaboration.endIdle()).toContain(sessionId);
+    });
+  });
+
+  describe("whiteboard", () => {
+    const shape = (id: string, overrides: Record<string, unknown> = {}) => ({
+      id,
+      type: "rectangle",
+      x: 0,
+      y: 0,
+      width: 20,
+      height: 10,
+      version: 1,
+      versionNonce: 7,
+      index: "a0",
+      isDeleted: false,
+      ...overrides,
+    });
+    const board = (client: { document: Y.Doc }) =>
+      client.document.getMap("whiteboard");
+
+    it("merges drawings, rejects unsafe elements without broadcast, and persists a projection", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      const bob = join("bob", sessionId);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
+      board(alice).set("r1", shape("r1", { index: "a1" }));
+      board(bob).set("a1", shape("a1", { type: "arrow", index: "a0" }));
+      board(bob).set("x1", shape("x1", { isDeleted: true }));
+      await until(() => board(alice).size === 3 && board(bob).size === 3);
+
+      for (const unsafe of [
+        shape("bad", { type: "iframe" }),
+        shape("bad", { link: "javascript:alert(1)" }),
+      ]) {
+        const attacker = join("alice", sessionId);
+        await until(() => attacker.provider.isSynced);
+        board(attacker).set("bad", unsafe);
+        await until(() => attacker.state.closeReason === CLOSE_REASONS.invalid);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(board(bob).has("bad")).toBe(false);
+      expect(
+        collaboration.hocuspocus.documents
+          .get(documentName(sessionId))
+          ?.getMap("whiteboard")
+          .has("bad"),
+      ).toBe(false);
+
+      const projection = async () =>
+        (
+          await pool.query(
+            "SELECT whiteboard_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+            [sessionId],
+          )
+        ).rows[0]?.whiteboard_projection as { id: string }[] | undefined;
+      await until(async () => (await projection())?.length === 2);
+      expect((await projection())!.map(({ id }) => id)).toEqual(["a1", "r1"]);
+
+      alice.provider.destroy();
+      bob.provider.destroy();
+      await collaboration.stop();
+      await startServer();
+      const again = join("tim", sessionId);
+      await until(() => again.provider.isSynced);
+      await until(() => board(again).size === 3);
+      expect(board(again).get("r1")).toMatchObject({ type: "rectangle" });
+      const snapshot = await service.snapshot(sessionId, fixture.users.bob!);
+      expect(snapshot.whiteboard.map((e) => (e as { id: string }).id)).toEqual([
+        "a1",
+        "r1",
+      ]);
+    });
+
+    it("tells each client its own server-stamped identity once connected", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.state.stateless.length > 0);
+      expect(JSON.parse(alice.state.stateless[0]!)).toEqual({
+        type: "presence",
+        user: {
+          userId: fixture.users.alice,
+          name: "alice",
+          color: expect.stringMatching(/^#[0-9a-f]{6}$/),
+        },
+      });
+    });
+
+    it("stamps whiteboard pointers with the server identity", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      const bob = join("bob", sessionId);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
+      bob.provider.setAwarenessField("user", { name: "Impostor" });
+      bob.provider.setAwarenessField("whiteboardPointer", {
+        x: 5,
+        y: 6,
+        tool: "pointer",
+        button: "up",
+      });
+      const bobState = () =>
+        [...alice.provider.awareness!.getStates().values()].find(
+          (state) => state.whiteboardPointer,
+        );
+      await until(() => bobState()?.user?.name === "bob");
+      expect(bobState()?.user.userId).toBe(fixture.users.bob);
+      expect(bobState()?.whiteboardPointer).toEqual({
+        x: 5,
+        y: 6,
+        tool: "pointer",
+        button: "up",
+      });
+    });
+  });
+
   describe("revocation and ending", () => {
     it("closes a removed invitee within 5 seconds", async () => {
       const sessionId = await newSession();
@@ -373,6 +624,34 @@ integration("collaboration server", () => {
       await pool.query("UPDATE sessions SET revoked_at=NULL WHERE id=$1", [
         authSessions[fixture.users.bob!],
       ]);
+    });
+
+    it("closes and refuses a classmate once the anchor post is private", async () => {
+      const sessionId = await newSession("alice", ["bob", "tim"]);
+      const bob = join("bob", sessionId);
+      const tim = join("tim", sessionId);
+      await until(() => bob.provider.isSynced && tim.provider.isSynced);
+      // The API never makes a public post private; this checks the server's own rule.
+      await pool.query("UPDATE posts SET private=true WHERE id=$1", [
+        fixture.postId,
+      ]);
+      try {
+        await collaborationAccessChanged(pool, [
+          fixture.users.bob!,
+          fixture.users.tim!,
+        ]);
+        await until(() => bob.state.closeReason === CLOSE_REASONS.removed);
+        expect(tim.state.closeReason).toBeUndefined();
+        const again = join("bob", sessionId);
+        await until(
+          () => again.state.authFailed || again.state.closeReason !== undefined,
+        );
+        expect(again.provider.isSynced).toBe(false);
+      } finally {
+        await pool.query("UPDATE posts SET private=false WHERE id=$1", [
+          fixture.postId,
+        ]);
+      }
     });
 
     it("sweeps after the listener reconnects to catch a missed change", async () => {

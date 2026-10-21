@@ -20,6 +20,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `display_name`: `varchar(100)`.
 - `password_hash`: `text`.
 - `deleted_at`: `timestamptz`, nullable.
+- `notification_emails`: `boolean`, default false; whether the user is emailed about activity on posts they follow.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
 
@@ -99,7 +100,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `attempts`, `max_attempts`: `integer`.
 - `available_at`, `locked_until`, `finished_at`, `created_at`, `updated_at`: `timestamptz`; lock and completion times are nullable.
 - `locked_by`, `last_error`: `text`, nullable.
-- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost).
+- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `send_notification_email` jobs, queued for recipients who opted in to activity emails and never for announcements, use the notification ID as deduplication key and a payload containing it. `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
 
 ## Courses and membership
 
@@ -137,6 +138,8 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `title`: `varchar(200)`, nullable.
 - `body_markdown`: `text`, nullable.
 - `anonymous`, `pinned`: `boolean`.
+- `announcement`: `boolean`, default false; only a non-anonymous note can be an announcement (`posts_announcement_check`). Announcements are created pinned by staff and emailed to the course; see [Create post](api/posts.md#createPost).
+- `private`: `boolean`, default false; readable only by the author and course staff. Announcements and polls are never private (`posts_private_check`), and a private post can become public but never the reverse. A partial index on `(course_id, last_activity_at DESC)` for active private posts serves the private filter.
 - `duplicate_of_post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
 - `duplicate_status`: `text`; `none`, `suggested`, or `confirmed`.
 - Confirming a duplicate retains the original title and body in this row. Application reads exclude confirmed rows from ordinary lists and search, redirect direct links to the active canonical row, and expose only restricted title/target metadata to staff review. Unmerge restores the retained content. The application blocks deleting or merging a canonical row while confirmed rows refer to it; this lifecycle rule is not enforced by the foreign key alone.
@@ -156,7 +159,33 @@ The ordinary migrations and PostgreSQL startup do not require pgvector. An opera
 - `(post_id, generation, chunk_ordinal)`: primary key; `post_id` references `posts(id)` with cascading deletion.
 - `source_revision`: SHA-256 digest of the post title and body. A changed title or body makes old vectors ineligible immediately, before the worker refreshes them.
 - `embedding`: pgvector value for one bounded title/body chunk. `generation` identifies the configured endpoint/model so vectors from different generations are never compared.
-- The worker backfills active posts and stores a post's chunks only if its content revision remains unchanged after provider calls. Search joins current course and post visibility before ranking or pagination; deleted posts and confirmed duplicates do not yield semantic candidates.
+- The worker backfills active questions and notes (never polls) and stores a post's chunks only if its content revision remains unchanged after provider calls. Search joins current course and post visibility before ranking or pagination; deleted posts and confirmed duplicates do not yield semantic candidates.
+### `post_follows`
+
+- `post_id`, `course_id`, `user_id`: `uuid_v7`; primary key `(post_id, user_id)`. `(course_id, post_id)` references the post and `(course_id, user_id)` the course membership, both cascading, so leaving a course drops its follows.
+- `following`: `boolean`. `false` records an explicit unfollow, which automatic follows never overwrite.
+- `created_at`, `updated_at`: `timestamptz`.
+
+### `notifications`
+
+- `id`: `uuid_v7`; primary key.
+- `user_id`: `uuid_v7`; the recipient.
+- `course_id`, `post_id`: `uuid_v7`; `(course_id, post_id)` references the post, cascading.
+- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, `announcement`, or `post_published` (staff made the recipient's private post public).
+- `actor_user_id`: `uuid_v7`, nullable; who acted. `actor_anonymous`: `boolean`; the actor posted anonymously, so students see "Anonymous".
+- `created_at`: `timestamptz`. `read_at`: `timestamptz`, nullable.
+- Indexes: `(user_id, created_at DESC, id DESC)` for listing, partial `(user_id)` where unread for counts, and `(post_id, user_id)` for marking the notifications of an opened post read.
+- Rows are written by the same transaction as the activity; see the [notifications reference](api/notifications.md).
+
+### `post_reads`
+
+- `post_id`, `user_id`: `uuid_v7`; primary key; cascades with the post.
+- `read_at`: `timestamptz`; when the user last opened the post or acted on it.
+
+### `course_read_marks`
+
+- `course_id`, `user_id`: `uuid_v7`; primary key; references the course membership, cascading.
+- `read_before`: `timestamptz`; set by Mark all read. A post is unread when its `last_activity_at` is later than both this and the user's `post_reads.read_at`.
 
 ### `tags`
 
@@ -182,8 +211,9 @@ The application must verify that a post and tag belong to the same course before
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`.
 - `(course_id, id)`: unique key.
 - `(course_id, post_id, id)`: unique key for poll-vote validation.
-- `position`: `smallint`; unique with `post_id`.
-- `label`: `varchar(200)`.
+- `position`: `smallint`, 0–9; unique with `post_id`, giving the options their order.
+- `label`: `varchar(200)`, nonempty.
+- Options are fixed at creation and deleted with their post.
 
 ### `poll_votes`
 
@@ -191,7 +221,8 @@ The application must verify that a post and tag belong to the same course before
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`; part of the primary key.
 - `user_id`: `uuid_v7`; foreign key to `users.id`; part of the primary key.
 - `option_id`: `uuid_v7`; with `course_id` and `post_id`, foreign key to `poll_options(course_id, post_id, id)`.
-- `created_at`, `updated_at`: `timestamptz`.
+- `created_at`, `updated_at`: `timestamptz`; `updated_at` changes when a member changes their vote.
+- One vote per member per poll; votes are deleted with their poll. Counts are public within the course, while individual votes are never exposed.
 
 ### `answers`
 
@@ -400,7 +431,7 @@ The `resources` and `resource_regions` catalog structures below are deferred and
 
 ## Collaboration
 
-Live code sessions are private, temporary shared code documents anchored to a post. Subchannel anchors are future work and have no column until channels exist.
+Live sessions are private, temporary shared code and whiteboard documents anchored to a post. Subchannel anchors are future work and have no column until channels exist.
 
 ### `collaboration_sessions`
 
@@ -414,13 +445,15 @@ Live code sessions are private, temporary shared code documents anchored to a po
 - `created_by_user_id`: `uuid_v7`; foreign key to `users.id`.
 - `ended_at`, `created_at`, `updated_at`: `timestamptz`; `ended_at` is non-null exactly when `lifecycle_state` is `ended`.
 - `version`: `bigint`; positive revision used for the session `ETag`.
-- Indexes: `(post_id, created_at DESC, id DESC)` and `(course_id, created_at DESC, id DESC)` for listing; partial `(course_id)` where the session is not ended, for lifecycle sweeps.
+- `last_active_at`: `timestamptz`; when the session last had a connected participant, kept current by the collaboration server while anyone is connected and when the last connection closes. Active sessions idle past `COLLABORATION_IDLE_END_MINUTES` end automatically.
+- Indexes: `(post_id, created_at DESC, id DESC)` and `(course_id, created_at DESC, id DESC)` for listing; partial `(course_id)` where the session is not ended, for lifecycle sweeps; partial `(last_active_at)` where the session is active, for idle ending.
 
 ### `collaboration_documents`
 
 - `collaboration_session_id`: `uuid_v7`; primary key and foreign key to `collaboration_sessions.id`, deleted with the session.
 - `yjs_state`: `bytea`; the complete encoded Yjs document state.
 - `text_projection`: `text`; `Y.Text('content').toString()`, at most 200,000 characters.
+- `whiteboard_projection`: `jsonb`; a JSON array, default `[]`. The non-deleted elements of `Y.Map('whiteboard')` in drawing order (fractional `index`, then `id`), written in the same statement as `yjs_state`.
 - `persisted_at`: `timestamptz`.
 - `persistence_revision`: `bigint`; non-negative, incremented on each store.
 
@@ -430,6 +463,7 @@ Live code sessions are private, temporary shared code documents anchored to a po
 - `(course_id, collaboration_session_id)`: foreign key to `collaboration_sessions(course_id, id)`, deleted with the session.
 - `(course_id, user_id)`: foreign key to `course_memberships(course_id, user_id)`, deleted with the membership, so leaving or being removed from a course removes session access.
 - `invited_by_user_id`: `uuid_v7`; foreign key to `users.id`. The creator's row names the creator.
+- `permission`: `text`; `edit` (default) or `view`. Viewers get `read` connection tickets unless they are course staff; the creator's row is always `edit`.
 - `created_at`: `timestamptz`.
 - Index: `(course_id, user_id)`.
 

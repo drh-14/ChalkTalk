@@ -1,12 +1,22 @@
 import { Server, type Document } from "@hocuspocus/server";
 import pg, { type Pool } from "pg";
+import {
+  Counter,
+  Gauge,
+  Histogram,
+  Registry,
+  collectDefaultMetrics,
+} from "@prometheus-io/client";
+import { authorized } from "../observability/index.js";
 import * as Y from "yjs";
 import {
   COLLABORATION_EVENTS_CHANNEL,
+  CollaborationSessionService,
   documentName,
   hashTicket,
   type CollaborationEvent,
 } from "./service.js";
+import { acceptsUpdate, whiteboardProjection } from "./whiteboard.js";
 
 export const MAX_DOCUMENT_CHARACTERS = 200_000;
 export const MAX_MESSAGE_BYTES = 256 * 1024;
@@ -34,6 +44,8 @@ export type ConnectionContext = {
   sessionId: string;
   displayName: string;
   color: string;
+  /** `read` connections are read-only: their updates are dropped. */
+  permission: "read" | "write";
 };
 
 export type CollaborationServerOptions = {
@@ -46,6 +58,10 @@ export type CollaborationServerOptions = {
   maxDebounce?: number;
   sweepIntervalMs?: number;
   listenerRetryMs?: number;
+  /** Minutes with nobody connected before an active session ends. */
+  idleEndMinutes?: number;
+  /** Serves /metrics behind this bearer token when set. */
+  metricsToken?: string;
 };
 
 export const colorFor = (userId: string) => {
@@ -66,6 +82,7 @@ class Rejection extends Error {}
  */
 export function createCollaborationServer(options: CollaborationServerOptions) {
   const { pool } = options;
+  const metrics = createMetrics(() => server.hocuspocus.documents);
   const persisting = new Map<string, Promise<void>>();
   let listener: pg.Client | undefined;
   let sweepTimer: NodeJS.Timeout | undefined;
@@ -84,7 +101,8 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
        JOIN posts p ON p.id=s.post_id
        WHERE s.id=$1 AND s.lifecycle_state='active'
          AND (m.role IN ('ta','instructor') OR (
-           p.deleted_at IS NULL AND p.duplicate_status<>'confirmed' AND (
+           p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
+           AND (NOT p.private OR p.author_user_id=$2) AND (
              s.created_by_user_id=$2 OR EXISTS (
                SELECT 1 FROM collaboration_participants cp
                WHERE cp.collaboration_session_id=s.id AND cp.user_id=$2))))`,
@@ -99,20 +117,25 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     const next = previous
       .catch(() => undefined)
       .then(async () => {
+        const stopTimer = metrics.storeDuration.startTimer();
         const state = Buffer.from(Y.encodeStateAsUpdate(document));
         const text = document.getText("content").toString();
+        const whiteboard = JSON.stringify(whiteboardProjection(document));
         try {
           await pool.query(
-            `INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,persisted_at,persistence_revision)
-             VALUES ($1,$2,$3,clock_timestamp(),1)
+            `INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,whiteboard_projection,persisted_at,persistence_revision)
+             VALUES ($1,$2,$3,$4,clock_timestamp(),1)
              ON CONFLICT (collaboration_session_id) DO UPDATE SET yjs_state=excluded.yjs_state,
-               text_projection=excluded.text_projection,persisted_at=excluded.persisted_at,
+               text_projection=excluded.text_projection,
+               whiteboard_projection=excluded.whiteboard_projection,persisted_at=excluded.persisted_at,
                persistence_revision=collaboration_documents.persistence_revision+1`,
-            [sessionId, state, text],
+            [sessionId, state, text, whiteboard],
           );
         } catch (error) {
           // A session removed with its post or course has nothing left to store.
           if ((error as { code?: string }).code !== "23503") throw error;
+        } finally {
+          stopTimer();
         }
       });
     persisting.set(sessionId, next);
@@ -127,9 +150,17 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     );
   }
 
+  function close(
+    connection: { close(event: { code: number; reason: string }): void },
+    reason: string,
+  ) {
+    metrics.closes.inc({ reason });
+    connection.close({ code: 1000, reason });
+  }
+
   function closeAll(document: Document, reason: string) {
     for (const connection of document.getConnections())
-      connection.close({ code: 1000, reason });
+      close(connection, reason);
   }
 
   async function finishSession(sessionId: string, markEnded: boolean) {
@@ -156,13 +187,12 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
           "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1",
           [context.sessionId],
         );
-        connection.close({
-          code: 1000,
-          reason:
-            state.rows[0]?.lifecycle_state === "active"
-              ? CLOSE_REASONS.removed
-              : CLOSE_REASONS.ended,
-        });
+        close(
+          connection,
+          state.rows[0]?.lifecycle_state === "active"
+            ? CLOSE_REASONS.removed
+            : CLOSE_REASONS.ended,
+        );
       }
   }
 
@@ -185,8 +215,53 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     );
   }
 
+  /** Records that these sessions have someone connected right now. */
+  async function touch(sessionIds: string[]) {
+    if (!sessionIds.length) return;
+    await pool.query(
+      "UPDATE collaboration_sessions SET last_active_at=now() WHERE id = ANY($1::uuid[]) AND lifecycle_state='active'",
+      [sessionIds],
+    );
+  }
+
+  function connectedSessions() {
+    const ids: string[] = [];
+    for (const [name, document] of server.hocuspocus.documents) {
+      const id = sessionIdOf(name);
+      if (id && document.getConnectionsCount() > 0) ids.push(id);
+    }
+    return ids;
+  }
+
+  /**
+   * Ends sessions nobody has been connected to for the idle period, through
+   * the same event as lifecycle-driven ends. Sessions with a connection on
+   * this server are never ended, however quiet they are.
+   */
+  async function endIdle() {
+    const connected = connectedSessions();
+    await touch(connected);
+    const ended = await pool.query<{ id: string }>(
+      `UPDATE collaboration_sessions
+       SET lifecycle_state='ended',ended_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp()
+       WHERE lifecycle_state='active'
+         AND last_active_at < now() - make_interval(mins => $1)
+         AND NOT (id = ANY($2::uuid[]))
+       RETURNING id`,
+      [options.idleEndMinutes ?? 120, connected],
+    );
+    metrics.sessionsEnded.inc({ reason: "idle" }, ended.rowCount ?? 0);
+    for (const row of ended.rows)
+      await CollaborationSessionService.notify(pool, {
+        type: "session_ended",
+        sessionId: row.id,
+      });
+    return ended.rows.map((row) => row.id);
+  }
+
   async function sweep() {
     await recheck(() => true);
+    await endIdle();
   }
 
   async function startListener() {
@@ -234,6 +309,22 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     maxDebounce: options.maxDebounce ?? 5000,
     websocketOptions: { maxPayload: MAX_MESSAGE_BYTES },
 
+    async onRequest({ request, response }) {
+      if (!options.metricsToken || request.url?.split("?")[0] !== "/metrics")
+        return;
+      if (!authorized(request.headers.authorization, options.metricsToken)) {
+        response.writeHead(401, { "Content-Type": "text/plain" });
+        response.end("Unauthorized");
+      } else {
+        response.writeHead(200, {
+          "Content-Type": metrics.registry.contentType,
+        });
+        response.end(await metrics.registry.metrics());
+      }
+      // An empty rejection tells Hocuspocus the request was answered.
+      return Promise.reject();
+    },
+
     async onConnect({ requestHeaders, documentName: name }) {
       const origin = requestHeaders.get("origin");
       if (!origin || !options.frontendOrigins.has(origin))
@@ -241,7 +332,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       if (!sessionIdOf(name)) throw new Rejection("Unknown document");
     },
 
-    async onAuthenticate({ token, documentName: name }) {
+    async onAuthenticate({ token, documentName: name, connectionConfig }) {
       const sessionId = sessionIdOf(name);
       if (!sessionId || typeof token !== "string" || !token)
         throw new Rejection("Not authorized");
@@ -252,8 +343,9 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
           user_id: string;
           auth_session_id: string;
           collaboration_session_id: string;
+          permission: "read" | "write";
         }>(
-          "UPDATE collaboration_connection_tickets SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() RETURNING user_id,auth_session_id,collaboration_session_id",
+          "UPDATE collaboration_connection_tickets SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() RETURNING user_id,auth_session_id,collaboration_session_id,permission",
           [hashTicket(token)],
         );
         const ticket = consumed.rows[0];
@@ -269,9 +361,16 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
           sessionId,
           displayName: user.rows[0]?.display_name ?? "Participant",
           color: colorFor(ticket.user_id),
+          permission: ticket.permission,
         };
+        // Hocuspocus neither applies nor broadcasts a read-only connection's updates.
+        connectionConfig.readOnly = ticket.permission === "read";
         if (!(await stillAuthorized(context)))
           throw new Rejection("Not authorized");
+        await client.query(
+          "UPDATE collaboration_sessions SET last_active_at=now() WHERE id=$1",
+          [sessionId],
+        );
         await client.query("COMMIT");
         return context;
       } catch (error) {
@@ -293,6 +392,12 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       return document;
     },
 
+    async onDisconnect({ documentName: name, clientsCount }) {
+      // The idle period starts when the last participant leaves.
+      const sessionId = sessionIdOf(name);
+      if (sessionId && clientsCount === 0) await touch([sessionId]);
+    },
+
     async onStoreDocument({ document, documentName: name }) {
       await persist(sessionIdOf(name)!, document);
     },
@@ -300,17 +405,32 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     async beforeSync({ type, payload, document, connection }) {
       // SyncStep2 (1) and Update (2) carry document changes.
       if (type !== 1 && type !== 2) return;
-      const probe = new Y.Doc();
-      Y.applyUpdate(probe, Y.encodeStateAsUpdate(document));
-      Y.applyUpdate(probe, payload);
-      const invalid =
-        [...probe.share.keys()].some((key) => key !== "content") ||
-        probe.getText("content").length > MAX_DOCUMENT_CHARACTERS;
-      probe.destroy();
-      if (invalid) {
-        connection.close({ code: 1000, reason: CLOSE_REASONS.invalid });
+      // A viewer's updates are dropped unapplied, so they are not validated.
+      if (
+        (connection.context as ConnectionContext | undefined)?.permission ===
+        "read"
+      )
+        return;
+      if (!acceptsUpdate(document, payload, MAX_DOCUMENT_CHARACTERS)) {
+        metrics.rejectedUpdates.inc();
+        close(connection, CLOSE_REASONS.invalid);
         throw new Rejection("Invalid update");
       }
+    },
+
+    async connected({ connection, context }) {
+      // Awareness relays the server-stamped identity only to other clients,
+      // so each client learns its own name and color here.
+      connection.sendStateless(
+        JSON.stringify({
+          type: "presence",
+          user: {
+            userId: context.userId,
+            name: context.displayName,
+            color: context.color,
+          },
+        }),
+      );
     },
 
     async beforeHandleAwareness({ states, context }) {
@@ -331,6 +451,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     },
     connectionsOf,
     sweep,
+    endIdle,
     persist,
     async start() {
       stopped = false;
@@ -357,5 +478,56 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       await server.destroy();
       await Promise.allSettled([...persisting.values()]);
     },
+  };
+}
+
+/** Prometheus series for live sessions; none carry user, session, or course ids. */
+function createMetrics(documents: () => Map<string, Document>) {
+  const registry = new Registry();
+  collectDefaultMetrics({ register: registry });
+  new Gauge({
+    name: "chalktalk_collaboration_connections",
+    help: "Clients connected to live sessions",
+    registers: [registry],
+    collect() {
+      let count = 0;
+      for (const document of documents().values())
+        count += document.getConnectionsCount();
+      this.set(count);
+    },
+  });
+  new Gauge({
+    name: "chalktalk_collaboration_documents",
+    help: "Live session documents loaded in memory",
+    registers: [registry],
+    collect() {
+      this.set(documents().size);
+    },
+  });
+  return {
+    registry,
+    storeDuration: new Histogram({
+      name: "chalktalk_collaboration_store_duration_seconds",
+      help: "Time to persist a live session document",
+      buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+      registers: [registry],
+    }),
+    rejectedUpdates: new Counter({
+      name: "chalktalk_collaboration_rejected_updates_total",
+      help: "Document updates rejected by validation",
+      registers: [registry],
+    }),
+    closes: new Counter({
+      name: "chalktalk_collaboration_closes_total",
+      help: "Connections closed by the server, by close reason",
+      labelNames: ["reason"] as const,
+      registers: [registry],
+    }),
+    sessionsEnded: new Counter({
+      name: "chalktalk_collaboration_sessions_ended_total",
+      help: "Live sessions ended by the collaboration server, by reason",
+      labelNames: ["reason"] as const,
+      registers: [registry],
+    }),
   };
 }

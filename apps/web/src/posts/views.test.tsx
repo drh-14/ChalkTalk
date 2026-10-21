@@ -13,6 +13,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { getMathAnalysis } from "./mathDiagnostics.js";
 import { Discussion } from "./views.js";
 
+// These tests own their mocked requests; the live session lists have their own tests.
+vi.mock("../sessions/LiveSessionLists.js", () => ({
+  YourLiveSessions: () => null,
+  CourseLiveSessions: () => null,
+}));
+
 Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
 Range.prototype.getBoundingClientRect = () => new DOMRect();
 
@@ -3280,8 +3286,11 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
     "My posts",
     "Instructor posts",
     "TA posts",
+    "Announcements",
+    "Private",
     "Questions",
     "Notes",
+    "Polls",
   ]);
   expect(chosenFilter("Show")).toBe("all");
   await screen.findByText("Feed");
@@ -3646,7 +3655,7 @@ it("lays out each card with a type badge, status, preview, and byline from the p
           pinned: true,
         },
         { ...post("n1", "Office hours"), type: "note" },
-        { ...post("x1", "Future kind"), type: "poll" },
+        { ...post("x1", "Future kind"), type: "survey" },
       ]);
     }),
   );
@@ -5331,3 +5340,448 @@ it.each(["question", "note"])(
     expect(screen.queryByLabelText("Add files")).toBeNull();
   },
 );
+
+it("lets staff compose a poll with its options", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    if (init?.method === "POST")
+      return json(
+        { data: { ...post("poll-1", "Review time"), type: "poll" } },
+        201,
+      );
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const type = screen.getByRole("combobox", { name: "Post type" });
+  await waitFor(() =>
+    expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
+  );
+  await user.selectOptions(type, "poll");
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Review time",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Pick one",
+  );
+  await user.type(screen.getByRole("textbox", { name: "Option 1" }), "Monday");
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "A poll needs at least 2 options.",
+  );
+  await user.type(screen.getByRole("textbox", { name: "Option 2" }), "Tuesday");
+  await user.click(screen.getByRole("button", { name: "+ Add option" }));
+  await user.type(screen.getByRole("textbox", { name: "Option 3" }), "Friday");
+  await user.click(screen.getByRole("button", { name: "Remove option 3" }));
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  expect(JSON.parse(create[1]?.body as string)).toMatchObject({
+    type: "poll",
+    options: [{ label: "Monday" }, { label: "Tuesday" }],
+  });
+}, 30_000);
+
+it("lets staff post a note as a non-anonymous announcement", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    if (init?.method === "POST")
+      return json({ data: { ...post("a-1", "Moved"), type: "note" } }, 201);
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post type" }),
+    "note",
+  );
+  const anonymous = screen.getByRole("checkbox", { name: "Post anonymously" });
+  await user.click(anonymous);
+  const announce = await screen.findByRole("checkbox", {
+    name: "Post as announcement (pinned and emailed to the class)",
+  });
+  await user.click(announce);
+  expect((anonymous as HTMLInputElement).disabled).toBe(true);
+  expect((anonymous as HTMLInputElement).checked).toBe(false);
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "Moved");
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Thursday",
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  expect(JSON.parse(create[1]?.body as string)).toMatchObject({
+    type: "note",
+    announcement: true,
+    anonymous: false,
+  });
+}, 30_000);
+
+it("offers students neither polls nor announcements, and badges announcements", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      page([
+        {
+          ...post("a-1", "Office hours moved"),
+          type: "note",
+          announcement: true,
+          pinned: true,
+        },
+      ]),
+    ),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const card = (await screen.findByText("Office hours moved")).closest(
+    "li, article, a",
+  )!;
+  expect(card.textContent).toContain("Announcement");
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  const type = screen.getByRole("combobox", { name: "Post type" });
+  expect(within(type).queryByRole("option", { name: "Poll" })).toBeNull();
+  await user.selectOptions(type, "note");
+  expect(
+    screen.queryByRole("checkbox", {
+      name: "Post as announcement (pinned and emailed to the class)",
+    }),
+  ).toBeNull();
+});
+
+it("follows and unfollows a post from its detail", async () => {
+  let following = false;
+  const calls: { url: string; init?: RequestInit }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === "/api/v1/posts/p1/follow") {
+        following = init?.method === "PUT";
+        return json({ data: { following } });
+      }
+      if (url === "/api/v1/posts/p1")
+        return json({ data: { ...post("p1", "Follow me"), following } });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([{ ...post("p1", "Follow me"), following }]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const follow = await screen.findByRole("button", { name: "Follow" });
+  expect(follow.getAttribute("aria-pressed")).toBe("false");
+  await user.click(follow);
+  const followed = await screen.findByRole("button", { name: "Following" });
+  expect(followed.getAttribute("aria-pressed")).toBe("true");
+  const put = calls.find((call) => call.init?.method === "PUT")!;
+  expect(put.url).toBe("/api/v1/posts/p1/follow");
+  expect(put.init?.headers).toMatchObject({ "X-CSRF-Token": "csrf" });
+  await user.click(followed);
+  await screen.findByRole("button", { name: "Follow" });
+  expect(calls.some((call) => call.init?.method === "DELETE")).toBe(true);
+});
+
+it("marks unread posts in the feed, clears one on opening, and marks all read", async () => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/read-marks"))
+        return new Response(null, { status: 204 });
+      return page([
+        { ...post("p1", "Fresh answer"), unread: true },
+        { ...post("p2", "Also new"), unread: true },
+        { ...post("p3", "Seen already"), unread: false },
+      ]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const link = (title: string) =>
+    screen.getByRole("link", { name: new RegExp(title) });
+  await screen.findByText("Fresh answer");
+  expect(link("Fresh answer").textContent).toContain("Unread:");
+  expect(link("Seen already").textContent).not.toContain("Unread:");
+  expect(screen.getByText("2 unread")).toBeTruthy();
+
+  await user.click(link("Fresh answer"));
+  expect(link("Fresh answer").textContent).not.toContain("Unread:");
+  expect(link("Also new").textContent).toContain("Unread:");
+
+  await user.click(screen.getByRole("button", { name: "Mark all read" }));
+  await waitFor(() =>
+    expect(link("Also new").textContent).not.toContain("Unread:"),
+  );
+  expect(screen.queryByRole("button", { name: "Mark all read" })).toBeNull();
+  const mark = calls.find((call) => call.url.endsWith("/read-marks"))!;
+  expect(mark.url).toBe(`/api/v1/courses/${course.id}/read-marks`);
+  expect(mark.init).toMatchObject({
+    method: "POST",
+    headers: expect.objectContaining({ "X-CSRF-Token": "csrf" }),
+  });
+});
+
+it("posts privately to staff and turns off the announcement option meanwhile", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    if (init?.method === "POST")
+      return json(
+        { data: { ...post("x-1", "Grade"), type: "note", private: true } },
+        201,
+      );
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post type" }),
+    "note",
+  );
+  const announce = await screen.findByRole("checkbox", {
+    name: "Post as announcement (pinned and emailed to the class)",
+  });
+  await user.click(announce);
+  const audience = screen.getByRole("combobox", { name: "Post to" });
+  expect((audience as HTMLSelectElement).value).toBe("course");
+  await user.selectOptions(audience, "staff");
+  expect((announce as HTMLInputElement).disabled).toBe(true);
+  expect((announce as HTMLInputElement).checked).toBe(false);
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "Grade");
+  await user.type(screen.getByRole("textbox", { name: "Post body" }), "Lab 3");
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  const body = JSON.parse(create[1]?.body as string);
+  expect(body).toMatchObject({ type: "note", private: true });
+  expect(body).not.toHaveProperty("announcement");
+}, 30_000);
+
+it("offers no audience choice for polls", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/members/user-staff")
+        ? json({ data: { role: "ta" } })
+        : page([]),
+    ),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  expect(screen.getByRole("combobox", { name: "Post to" })).toBeTruthy();
+  await user.selectOptions(
+    await screen.findByRole("combobox", { name: "Post type" }),
+    "poll",
+  );
+  expect(screen.queryByRole("combobox", { name: "Post to" })).toBeNull();
+});
+
+it("badges private posts and lists them with the Private filter", async () => {
+  const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
+    page([{ ...post("x-1", "Regrade please"), private: true }]),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  mockDesktopViewport();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const card = (await screen.findByText("Regrade please")).closest("a")!;
+  expect(within(card).getByText("Private")).toBeTruthy();
+  await user.click(filterChoice("Show", "private"));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("private=true"),
+      ),
+    ).toBe(true),
+  );
+});
+
+it("shows the private notice and lets the author make the post public after confirming", async () => {
+  let isPrivate = true;
+  let version = 2;
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const current = () => ({
+    ...post("x-1", "Regrade please"),
+    author: {
+      userId: "user-1",
+      displayName: "Ada",
+      anonymous: false,
+      deleted: false,
+    },
+    anonymous: false,
+    private: isPrivate,
+    version,
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/members/user-1"))
+        return json({ data: { role: "student" } });
+      if (url === "/api/v1/posts/x-1" && init?.method === "PATCH") {
+        isPrivate = false;
+        version += 1;
+        return json({ data: current() });
+      }
+      if (url === "/api/v1/posts/x-1") return json({ data: current() });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([current()]);
+    }),
+  );
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-1"
+      postId="x-1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText("Only you and course staff can see this."),
+  ).toBeTruthy();
+  const publish = screen.getByRole("button", { name: "Make public" });
+  await user.click(publish);
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(calls.some((call) => call.init?.method === "PATCH")).toBe(false);
+  confirm.mockReturnValue(true);
+  await user.click(publish);
+  await waitFor(() =>
+    expect(
+      screen.queryByText("Only you and course staff can see this."),
+    ).toBeNull(),
+  );
+  const patch = calls.find((call) => call.init?.method === "PATCH")!;
+  expect(patch.init?.headers).toMatchObject({
+    "If-Match": '"v2"',
+    "X-CSRF-Token": "csrf",
+  });
+  expect(patch.init?.body).toBe(JSON.stringify({ private: false }));
+  const row = screen.getByRole("link", { name: /Regrade please/ });
+  expect(within(row).queryByText("Private")).toBeNull();
+});
+
+it("hides Make public from a student who is not the author", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/members/user-2"))
+        return json({ data: { role: "student" } });
+      // Staff and the author are the only readers, so this is defensive only.
+      if (url === "/api/v1/posts/x-1")
+        return json({
+          data: { ...post("x-1", "Regrade please"), private: true },
+        });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-2"
+      postId="x-1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByText("Only the author and course staff can see this."),
+  ).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Make public" })).toBeNull();
+});

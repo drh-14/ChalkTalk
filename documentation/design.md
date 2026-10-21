@@ -90,16 +90,16 @@ The system tracks engagement signals per post, including view count, followup ac
 
 ### **Role Permissions**
 
-| Action               | Student  | TA     | Instructor |
-| :------------------- | :------- | :----- | :--------- |
-| Create question/note | Yes      | Yes    | Yes        |
-| Create poll          | No       | Yes    | Yes        |
-| Create announcement  | No       | Yes/no | Yes        |
-| Endorse answers      | No       | Yes    | Yes        |
-| Archive/delete post  | Own only | Yes    | Yes        |
-| Create channel       | No       | Yes    | Yes        |
-| Manage members       | No       | Maybe  | Yes        |
-| Archive/delete class | No       | No     | Yes        |
+| Action               | Student  | TA    | Instructor |
+| :------------------- | :------- | :---- | :--------- |
+| Create question/note | Yes      | Yes   | Yes        |
+| Create poll          | No       | Yes   | Yes        |
+| Create announcement  | No       | Yes   | Yes        |
+| Endorse answers      | No       | Yes   | Yes        |
+| Archive/delete post  | Own only | Yes   | Yes        |
+| Create channel       | No       | Yes   | Yes        |
+| Manage members       | No       | Maybe | Yes        |
+| Archive/delete class | No       | No    | Yes        |
 
 # Nonfunctional Requirements
 
@@ -275,7 +275,7 @@ A single posts table holds questions, notes, and polls. Questions have one share
 
 ## ![][image4]
 
-Channels contain subchannels, which contain messages. Resources are course materials such as the syllabus or lecture notes. An instructor can divide an uploaded resource into regions, and the text in each region is extracted with OCR so it can be searched. Shared answers and question-level followups use explicit version-checked REST saves. Collaboration sessions are private live code sessions anchored to a post; their participants are the creator and invited course members, and their Yjs document and plain-text projection are persisted by the collaboration server. Subchannel-anchored sessions remain future work. The jobs table is the queue for the background worker. It doesn't reference other tables directly because each job's details are stored in its payload.
+Channels contain subchannels, which contain messages. Resources are course materials such as the syllabus or lecture notes. An instructor can divide an uploaded resource into regions, and the text in each region is extracted with OCR so it can be searched. Shared answers and question-level followups use explicit version-checked REST saves. Collaboration sessions are private live sessions anchored to a post; their participants are the creator and invited course members, and their Yjs document and plain-text projection are persisted by the collaboration server. Subchannel-anchored sessions remain future work. The jobs table is the queue for the background worker. It doesn't reference other tables directly because each job's details are stored in its payload.
 
 ### **Tenant isolation**
 

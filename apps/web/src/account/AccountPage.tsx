@@ -11,6 +11,7 @@ import {
   deleteAccount,
   getProfile,
   updateDisplayName,
+  updateNotificationEmails,
   type Session,
   type User,
   type VersionedProfile,
@@ -41,6 +42,11 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
   const [passwordPending, setPasswordPending] = useState(false);
   const [passwordNotice, setPasswordNotice] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
+  const [emailsPending, setEmailsPending] = useState(false);
+  // Shown at once while saving; undefined follows the saved profile.
+  const [emailsChoice, setEmailsChoice] = useState<boolean>();
+  const [emailsNotice, setEmailsNotice] = useState<string>();
+  const [emailsError, setEmailsError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deletePending, setDeletePending] = useState(false);
@@ -105,6 +111,33 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
       else setNameError(message(error));
     } finally {
       setNamePending(false);
+    }
+  }
+
+  async function saveEmails(notificationEmails: boolean) {
+    if (!profile || emailsPending) return;
+    setEmailsPending(true);
+    setEmailsChoice(notificationEmails);
+    setEmailsError(undefined);
+    setEmailsNotice(undefined);
+    try {
+      const updated = await updateNotificationEmails(
+        notificationEmails,
+        profile.etag,
+        session.csrfToken,
+      );
+      setProfile(updated);
+      onUserChange(updated.data);
+      setEmailsNotice(
+        notificationEmails ? "Activity emails on" : "Activity emails off",
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "version_conflict")
+        await refreshAfterConflict(setEmailsError);
+      else setEmailsError(message(error));
+    } finally {
+      setEmailsChoice(undefined);
+      setEmailsPending(false);
     }
   }
 
@@ -254,6 +287,37 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
                 {namePending ? "Saving…" : "Save name"}
               </button>
             </form>
+          </section>
+          <section
+            className="account-section"
+            aria-labelledby="account-notifications-heading"
+          >
+            <h2 id="account-notifications-heading">Notifications</h2>
+            <p>
+              The bell always shows activity on posts you follow. You can also
+              get it by email.
+            </p>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={
+                  emailsChoice ?? profile.data.notificationEmails ?? false
+                }
+                disabled={emailsPending}
+                onChange={(event) => void saveEmails(event.target.checked)}
+              />
+              Email me about activity on posts I follow
+            </label>
+            {emailsError && (
+              <p className="form-message error" role="alert">
+                {emailsError}
+              </p>
+            )}
+            {emailsNotice && (
+              <p className="form-message success" role="status">
+                {emailsNotice}
+              </p>
+            )}
           </section>
           <section
             className="account-section"

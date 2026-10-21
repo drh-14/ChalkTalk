@@ -33,6 +33,9 @@ import { CourseResources } from "../course-files/views.js";
 import { CourseStatistics } from "../statistics/views.js";
 import { Discussion } from "../posts/views.js";
 import { SessionView } from "../sessions/SessionView.js";
+import { YourLiveSessions } from "../sessions/LiveSessionLists.js";
+import { sessionRoute } from "../sessions/client.js";
+import { NotificationBell } from "../notifications/NotificationBell.js";
 import {
   initializeRoute,
   navigate,
@@ -543,15 +546,20 @@ function ResetPassword({
 const firstNameOf = (session: Session) =>
   session.user.displayName.split(" ")[0] || session.user.displayName;
 
+const postPath = (courseId: string, postId: string) =>
+  `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(postId)}`;
+
 function AccountControls({
   session,
   onSignOut,
   onAccountClick,
+  onNavigate,
   canLeave = () => true,
 }: {
   session: Session;
   onSignOut: () => Promise<void>;
   onAccountClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onNavigate: (path: string) => void;
   canLeave?: () => boolean;
 }) {
   const [pending, setPending] = useState(false);
@@ -569,6 +577,12 @@ function AccountControls({
   }
   return (
     <div className="account-controls">
+      <NotificationBell
+        csrfToken={session.csrfToken}
+        onOpenPost={(courseId, postId) => {
+          if (canLeave()) onNavigate(postPath(courseId, postId));
+        }}
+      />
       <span className="avatar" aria-hidden="true">
         {firstNameOf(session)[0]}
       </span>
@@ -594,12 +608,14 @@ function AppBar({
   onAccountClick,
   canLeave,
   onHomeClick,
+  onNavigate,
   tabs,
   children,
 }: {
   variant: "home" | "course";
   session: Session;
   onSignOut: () => Promise<void>;
+  onNavigate: (path: string) => void;
   onAccountClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   canLeave?: () => boolean;
   onHomeClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
@@ -645,6 +661,7 @@ function AppBar({
           session={session}
           onSignOut={onSignOut}
           onAccountClick={onAccountClick}
+          onNavigate={onNavigate}
           canLeave={canLeave}
         />
       </div>
@@ -675,6 +692,7 @@ function Home({
         variant="home"
         session={session}
         onSignOut={onSignOut}
+        onNavigate={onNavigate}
         onAccountClick={(event) => {
           event.preventDefault();
           onNavigate("/account");
@@ -686,6 +704,12 @@ function Home({
           <h1>Welcome back, {firstName}</h1>
           <p>Pick up where your courses left off.</p>
         </section>
+        <YourLiveSessions
+          viewerId={session.user.id}
+          onOpen={(courseId, sessionId) =>
+            onNavigate(sessionRoute(courseId, sessionId))
+          }
+        />
         <CourseHome csrfToken={session.csrfToken} onOpenCourse={onOpenCourse} />
       </main>
     </>
@@ -986,6 +1010,7 @@ function CourseFrame({
         session={session}
         onSignOut={onSignOut}
         onAccountClick={(event) => follow(event, "/account")}
+        onNavigate={onNavigate}
         canLeave={() => beforeLeave.current()}
         onHomeClick={(event) => follow(event, "/home")}
         tabs={
@@ -1213,6 +1238,7 @@ export function App() {
           variant="home"
           session={session}
           onSignOut={signOut}
+          onNavigate={move}
           onHomeClick={(event) => {
             event.preventDefault();
             move("/home");

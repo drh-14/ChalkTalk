@@ -24,7 +24,7 @@ const activity = `
          p.created_at,'post'::text AS kind,p.title
     FROM posts p
    WHERE p.type IN ('question','note') AND p.deleted_at IS NULL
-     AND p.duplicate_status <> 'confirmed'
+     AND p.duplicate_status <> 'confirmed' AND NOT p.private
      AND p.created_at >= (($2::date + 1)::timestamp AT TIME ZONE 'UTC')
      AND p.created_at < ($1::date::timestamp AT TIME ZONE 'UTC')
   UNION ALL
@@ -32,7 +32,7 @@ const activity = `
          a.created_at,'answer'::text,p.title
     FROM answers a JOIN posts p ON p.id=a.post_id AND p.course_id=a.course_id
    WHERE a.deleted_at IS NULL AND p.type='question'
-     AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+     AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND NOT p.private
      AND a.created_at >= (($2::date + 1)::timestamp AT TIME ZONE 'UTC')
      AND a.created_at < ($1::date::timestamp AT TIME ZONE 'UTC')
   UNION ALL
@@ -40,7 +40,7 @@ const activity = `
          f.created_at,'followup'::text,p.title
     FROM followups f JOIN posts p ON p.id=f.post_id AND p.course_id=f.course_id
    WHERE f.deleted_at IS NULL AND p.type='question'
-     AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+     AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND NOT p.private
      AND f.created_at >= (($2::date + 1)::timestamp AT TIME ZONE 'UTC')
      AND f.created_at < ($1::date::timestamp AT TIME ZONE 'UTC')
 `;
@@ -192,21 +192,21 @@ export class DigestService {
         `WITH visible_posts AS (
           SELECT 'post'::text AS kind,p.id AS post_id,p.title,p.created_at
             FROM posts p WHERE p.type IN ('question','note') AND p.deleted_at IS NULL
-              AND p.duplicate_status <> 'confirmed' AND p.course_id=$1 AND p.author_user_id <> $2
+              AND p.duplicate_status <> 'confirmed' AND NOT p.private AND p.course_id=$1 AND p.author_user_id <> $2
               AND p.created_at >= ($3::date::timestamp AT TIME ZONE 'UTC')
               AND p.created_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC') FOR SHARE OF p
          ), shared_answers AS (
           SELECT 'answer'::text,a.post_id,p.title,a.created_at
             FROM answers a JOIN posts p ON p.id=a.post_id AND p.course_id=a.course_id
            WHERE a.deleted_at IS NULL AND p.type='question' AND p.deleted_at IS NULL
-             AND p.duplicate_status <> 'confirmed' AND a.course_id=$1 AND a.created_by_user_id <> $2
+             AND p.duplicate_status <> 'confirmed' AND NOT p.private AND a.course_id=$1 AND a.created_by_user_id <> $2
              AND a.created_at >= ($3::date::timestamp AT TIME ZONE 'UTC')
              AND a.created_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC') FOR SHARE OF a,p
          ), replies AS (
           SELECT 'followup'::text,f.post_id,p.title,f.created_at
             FROM followups f JOIN posts p ON p.id=f.post_id AND p.course_id=f.course_id
            WHERE f.deleted_at IS NULL AND p.type='question' AND p.deleted_at IS NULL
-             AND p.duplicate_status <> 'confirmed' AND f.course_id=$1 AND f.author_user_id <> $2
+             AND p.duplicate_status <> 'confirmed' AND NOT p.private AND f.course_id=$1 AND f.author_user_id <> $2
              AND f.created_at >= ($3::date::timestamp AT TIME ZONE 'UTC')
              AND f.created_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC') FOR SHARE OF f,p
          ), activity AS (

@@ -71,6 +71,35 @@ describe("account page", () => {
     );
   });
 
+  it("turns activity emails on with the current revision", async () => {
+    const changed = { ...profile, notificationEmails: true, version: 2 };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        json({ data: { ...profile, notificationEmails: false } }),
+      )
+      .mockResolvedValueOnce(json({ data: changed }, 200, '"v2"'));
+    const { user, onUserChange } = setup(fetchMock);
+
+    const box = await screen.findByRole("checkbox", {
+      name: "Email me about activity on posts I follow",
+    });
+    expect((box as HTMLInputElement).checked).toBe(false);
+    await user.click(box);
+
+    expect(await screen.findByText("Activity emails on")).toBeTruthy();
+    expect((box as HTMLInputElement).checked).toBe(true);
+    expect(onUserChange).toHaveBeenLastCalledWith(changed);
+    const [, init] = fetchMock.mock.calls[1]!;
+    expect(init).toMatchObject({
+      method: "PATCH",
+      headers: expect.objectContaining({ "If-Match": '"v1"' }),
+    });
+    expect(JSON.parse(init.body as string)).toEqual({
+      notificationEmails: true,
+    });
+  });
+
   it("requires matching new passwords and clears the fields on success", async () => {
     const refreshed = { ...profile, displayName: "Ada Byron", version: 2 };
     const fetchMock = vi

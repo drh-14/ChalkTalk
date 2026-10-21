@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { recordActivity } from "../notifications/activity.js";
+import { canReadPost, readablePost } from "./visibility.js";
 import { endCollaborationSessions } from "../collaboration/lifecycle.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
 import { POST_REVISION_SQL, type SemanticIndex } from "../semantic/index.js";
@@ -16,11 +18,13 @@ type Row = {
   id: string;
   course_id: string;
   author_user_id: string | null;
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   title: string | null;
   body_markdown: string | null;
   anonymous: boolean;
   pinned: boolean;
+  announcement: boolean;
+  private: boolean;
   duplicate_of_post_id: string | null;
   duplicate_status: "none" | "suggested" | "confirmed";
   last_activity_at: Date;
@@ -34,13 +38,21 @@ type Row = {
   canonical_title?: string | null;
 };
 export type CreatePost = {
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   title: string;
   bodyMarkdown: string;
   anonymous?: boolean;
   tags?: string[];
+  /** Poll choices, in order; required for polls only. */
+  options?: string[];
+  /** Notes only, staff only: pinned and emailed to the course. */
+  announcement?: boolean;
+  /** Questions and notes only: readable by the author and course staff. */
+  private?: boolean;
 };
-export type UpdatePost = Partial<Omit<CreatePost, "type">> & {
+export type UpdatePost = Partial<
+  Omit<CreatePost, "type" | "options" | "announcement">
+> & {
   pinned?: boolean;
   duplicateOfPostId?: string | null;
   duplicateStatus?: "none" | "suggested" | "confirmed";
@@ -48,7 +60,7 @@ export type UpdatePost = Partial<Omit<CreatePost, "type">> & {
 export type Post = Record<string, unknown> & {
   id: string;
   courseId: string;
-  type: "question" | "note";
+  type: "question" | "note" | "poll";
   deleted: boolean;
   version: number;
 };
@@ -62,7 +74,10 @@ export type MergedReference = {
 export type ListPosts = {
   q?: string;
   semanticQuery?: string;
-  type?: "question" | "note";
+  type?: "question" | "note" | "poll";
+  announcement?: boolean;
+  /** Only private posts the viewer can read. */
+  private?: true;
   tags?: string[];
   tagMatch?: "all";
   authorId?: string;
@@ -78,6 +93,10 @@ export type ListPosts = {
 };
 export const postEtag = (post: { version: number }) => `"v${post.version}"`;
 const notFound = () => new AuthError(404, "not_found", "Post is not found");
+/** Private posts the viewer cannot read look exactly like missing ones. */
+const readable = (row: Row, viewerId: string, role: Role) => {
+  if (!canReadPost(row, viewerId, role)) throw notFound();
+};
 const validation = (message: string) =>
   new AuthError(422, "validation_failed", message);
 const STAFF = new Set<Role>(["ta", "instructor"]);
@@ -111,6 +130,11 @@ export class PostService {
     postId: string,
     work: () => Promise<unknown>,
   ): Promise<void> {
+    const eligible = await db.query(
+      "SELECT 1 FROM posts WHERE id=$1 AND type IN ('question','note')",
+      [postId],
+    );
+    if (!eligible.rowCount) return;
     if (!this.semantic) {
       await this.markSemanticCatchup(db, postId);
       return;
@@ -242,11 +266,53 @@ export class PostService {
           ? []
           : await listAttachments(db, "post", row.id),
       pinned: row.pinned,
+      announcement: row.announcement,
+      private: row.private,
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
       lastActivityAt: row.last_activity_at.toISOString(),
       ...(row.type === "question" ? { answered: row.answered } : {}),
+      ...(row.type === "poll"
+        ? await this.pollState(db, row.id, viewerId)
+        : {}),
+      ...(await this.viewerState(db, row, viewerId)),
     };
+  }
+  /** Options with counts and the viewer's choice, plus the total. */
+  private async pollState(db: Db, postId: string, viewerId: string) {
+    const options = await db.query<{
+      id: string;
+      label: string;
+      vote_count: string;
+      selected: boolean;
+    }>(
+      `SELECT o.id,o.label,count(v.user_id) AS vote_count,coalesce(bool_or(v.user_id=$2),false) AS selected
+       FROM poll_options o LEFT JOIN poll_votes v ON v.option_id=o.id
+       WHERE o.post_id=$1 GROUP BY o.id,o.label,o.position ORDER BY o.position`,
+      [postId, viewerId],
+    );
+    const list = options.rows.map((option) => ({
+      id: option.id,
+      label: option.label,
+      voteCount: Number(option.vote_count),
+      selected: option.selected,
+    }));
+    return {
+      options: list,
+      totalVotes: list.reduce((total, option) => total + option.voteCount, 0),
+    };
+  }
+  /** Whether the viewer follows the post and has unread activity on it. */
+  private async viewerState(db: Db, row: Row, viewerId: string) {
+    const state = await db.query<{ following: boolean; unread: boolean }>(
+      `SELECT coalesce((SELECT following FROM post_follows WHERE post_id=$1 AND user_id=$2),false) AS following,
+              $3::timestamptz > greatest(
+                coalesce((SELECT read_at FROM post_reads WHERE post_id=$1 AND user_id=$2),'-infinity'),
+                coalesce((SELECT read_before FROM course_read_marks WHERE course_id=$4 AND user_id=$2),'-infinity')
+              ) AS unread`,
+      [row.id, viewerId, row.last_activity_at, row.course_id],
+    );
+    return state.rows[0]!;
   }
   private async replaceTags(
     db: Db,
@@ -309,14 +375,35 @@ export class PostService {
         );
       }
       this.writable(member.status);
+      const staff = STAFF.has(member.role);
+      if (body.type === "poll" && !staff)
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff may create polls",
+        );
+      if (body.announcement && !staff)
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff may post announcements",
+        );
+      if (body.private && body.announcement)
+        throw new AuthError(
+          422,
+          "private_announcement",
+          "Announcements are for the whole course and cannot be private",
+        );
+      if (body.private && body.type === "poll")
+        throw new AuthError(422, "private_poll", "Polls cannot be private");
       const id = uuidv7();
       await db.query(
         "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
       );
       const created = await db.query<{ created_on: string }>(
         `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
-         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,created_at,updated_at,last_activity_at)
-         SELECT $1,$2,$3,$4,$5,$6,$7,stamp.at,stamp.at,stamp.at FROM stamp
+         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,created_at,updated_at,last_activity_at)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,stamp.at,stamp.at,stamp.at FROM stamp
          RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on`,
         [
           id,
@@ -326,8 +413,26 @@ export class PostService {
           body.title,
           body.bodyMarkdown,
           body.anonymous ?? false,
+          body.announcement ?? false,
+          body.private ?? false,
         ],
       );
+      for (const [position, label] of (body.options ?? []).entries())
+        await db.query(
+          "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES ($1,$2,$3,$4,$5)",
+          [uuidv7(), courseId, id, position, label],
+        );
+      if (body.announcement)
+        // One job per recipient, so a failing address retries on its own.
+        await db.query(
+          `INSERT INTO jobs (id,kind,payload,deduplication_key)
+           SELECT gen_random_uuid(),'send_announcement_email',
+             jsonb_build_object('postId',$1::uuid,'userId',m.user_id),$1::text||':'||m.user_id
+           FROM course_memberships m JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
+           WHERE m.course_id=$2 AND m.user_id<>$3
+           ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING`,
+          [id, courseId, userId],
+        );
       if (body.type === "question")
         await db.query(
           "INSERT INTO question_creation_daily_counts(course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1) ON CONFLICT (course_id,user_id,created_on) DO UPDATE SET question_count=question_creation_daily_counts.question_count+1",
@@ -337,6 +442,13 @@ export class PostService {
       await this.optionalSemanticWrite(db, id, () =>
         this.semantic!.enqueue(db, id),
       );
+      await recordActivity(db, {
+        courseId,
+        postId: id,
+        actorId: userId,
+        ...(body.announcement ? { kind: "announcement" as const } : {}),
+        follow: true,
+      });
       const row = await this.row(db, id);
       const value = await this.project(db, row!, userId, member.role);
       if (key !== undefined)
@@ -351,6 +463,7 @@ export class PostService {
     const row = await this.row(this.pool, id);
     if (!row) throw notFound();
     const member = await this.membership(this.pool, row.course_id, userId);
+    readable(row, userId, member.role);
     if (row.duplicate_status === "confirmed") return this.mergedReference(row);
     const value = await this.project(this.pool, row, userId, member.role);
     if (!row.deleted_at) {
@@ -359,6 +472,17 @@ export class PostService {
           "INSERT INTO post_view_events (id,course_id,post_id,user_id,viewed_on) VALUES ($1,$2,$3,$4,(now() AT TIME ZONE 'UTC')::date) ON CONFLICT (course_id,post_id,user_id,viewed_on) DO NOTHING",
           [uuidv7(), row.course_id, row.id, userId],
         );
+        // Opening a post reads it and its notifications.
+        await this.pool.query(
+          `WITH read AS (
+             INSERT INTO post_reads (post_id,user_id,read_at) VALUES ($1,$2,clock_timestamp())
+             ON CONFLICT (post_id,user_id) DO UPDATE SET read_at=excluded.read_at
+           )
+           UPDATE notifications SET read_at=clock_timestamp() WHERE post_id=$1 AND user_id=$2 AND read_at IS NULL`,
+          [row.id, userId],
+        );
+        // The post was projected before this read was recorded.
+        value.unread = false;
       } catch {
         logApiEvent(this.observability, "post_view_write_failed");
       }
@@ -401,7 +525,7 @@ export class PostService {
       options.duplicateStatus !== "confirmed" &&
       !/["\u201c\u201d]|\bOR\b|(^|\s)-\S/i.test(options.q ?? "");
     const semanticInput =
-      options.duplicateStatus === "confirmed"
+      options.duplicateStatus === "confirmed" || options.type === "poll"
         ? undefined
         : (options.semanticQuery ?? (ordinarySearch ? options.q : undefined));
     const semanticCapable = Boolean(
@@ -481,7 +605,12 @@ export class PostService {
       values.push(value);
       return `$${values.length}`;
     };
-    const clauses = ["p.course_id=$1", "p.deleted_at IS NULL"];
+    const clauses = [
+      "p.course_id=$1",
+      "p.deleted_at IS NULL",
+      readablePost("p", add(userId), add(member.role)),
+    ];
+    if (options.private) clauses.push("p.private");
     const possibleFuzzyTerms = (
       options.q?.match(/[\p{L}\p{N}]+/gu) ?? []
     ).filter((term) => [...term].length >= 3);
@@ -504,6 +633,8 @@ export class PostService {
     if (searchQuery && !fuzzySearch && !semanticReady)
       clauses.push(`p.search_vector @@ ${searchQuery}`);
     if (options.type) clauses.push(`p.type=${add(options.type)}`);
+    if (options.announcement !== undefined)
+      clauses.push(`p.announcement=${add(options.announcement)}`);
     if (options.tags?.length) {
       const tags = add(options.tags);
       // Tag names are unique per course and the list is deduplicated, so a full count means every tag.
@@ -577,7 +708,7 @@ export class PostService {
             ? `SELECT e.post_id,MAX(CASE WHEN public.vector_dims(e.embedding)=${dimensions}::integer
                  THEN 1-(e.embedding OPERATOR(public.<=>) ${vector}::public.vector) END) AS similarity
                FROM post_embeddings e JOIN posts sp ON sp.id=e.post_id
-               WHERE sp.course_id=$1 AND sp.deleted_at IS NULL AND sp.duplicate_status <> 'confirmed'
+               WHERE sp.course_id=$1 AND sp.deleted_at IS NULL AND sp.duplicate_status <> 'confirmed' AND sp.type IN ('question','note')
                  AND e.generation=${generation} AND e.source_revision=${POST_REVISION_SQL.replaceAll("p.", "sp.")}
                GROUP BY e.post_id
                HAVING MAX(CASE WHEN public.vector_dims(e.embedding)=${dimensions}::integer
@@ -726,6 +857,7 @@ export class PostService {
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
       if (row.deleted_at) throw notFound();
+      readable(row, userId, member.role);
       this.writable(member.status);
       this.checkRevision(row, etag);
       const staff = STAFF.has(member.role);
@@ -734,7 +866,15 @@ export class PostService {
         body.title !== undefined ||
         body.bodyMarkdown !== undefined ||
         body.anonymous !== undefined ||
-        body.tags !== undefined;
+        body.tags !== undefined ||
+        body.private !== undefined;
+      if (body.private === true && !row.private)
+        throw new AuthError(
+          422,
+          "post_already_public",
+          "A public post cannot be made private",
+        );
+      const publishing = body.private === false && row.private;
       const duplicate =
         body.duplicateOfPostId !== undefined ||
         body.duplicateStatus !== undefined;
@@ -746,6 +886,8 @@ export class PostService {
         );
       if (body.pinned !== undefined && !staff)
         throw new AuthError(403, "permission_denied", "Pinning is staff-only");
+      if (row.announcement && body.anonymous)
+        throw validation("Announcements cannot be anonymous");
       if (
         duplicate &&
         !staff &&
@@ -803,9 +945,16 @@ export class PostService {
           target.id === row.id
         )
           throw validation("Duplicate target is invalid");
+        // The source's readers could not follow a redirect to a private post.
+        if (target.private)
+          throw new AuthError(
+            422,
+            "duplicate_target_private",
+            "A post cannot be merged into a private post",
+          );
       }
       await db.query(
-        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
+        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,private=$8,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [
           id,
           body.title ?? row.title,
@@ -814,8 +963,18 @@ export class PostService {
           body.pinned ?? row.pinned,
           targetId,
           status,
+          publishing ? false : row.private,
         ],
       );
+      if (publishing && staff && !author && row.author_user_id)
+        await recordActivity(db, {
+          courseId: row.course_id,
+          postId: id,
+          actorId: userId,
+          kind: "post_published",
+          recipients: "author",
+          follow: false,
+        });
       if (status === "confirmed" && row.duplicate_status !== "confirmed")
         await endCollaborationSessions(db, { postId: id });
       if (body.tags !== undefined)
@@ -855,6 +1014,86 @@ export class PostService {
         : this.project(db, updated, userId, member.role);
     });
   }
+  /** Follows or unfollows a readable post; an unfollow stops automatic follows. */
+  async setFollowing(postId: string, userId: string, following: boolean) {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    const row = await this.row(this.pool, postId);
+    if (!row) throw notFound();
+    const member = await this.membership(this.pool, row.course_id, userId);
+    readable(row, userId, member.role);
+    if (row.deleted_at || row.duplicate_status === "confirmed")
+      throw notFound();
+    await this.pool.query(
+      `INSERT INTO post_follows (post_id,course_id,user_id,following) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (post_id,user_id) DO UPDATE SET following=excluded.following,updated_at=now()`,
+      [postId, row.course_id, userId, following],
+    );
+    return { following };
+  }
+
+  /** Marks every post in the course read for the caller as of now. */
+  async markCourseRead(courseId: string, userId: string) {
+    if (!UUID_PATTERN.test(courseId)) throw notFound();
+    await this.membership(this.pool, courseId, userId);
+    await this.pool.query(
+      `INSERT INTO course_read_marks (course_id,user_id,read_before) VALUES ($1,$2,clock_timestamp())
+       ON CONFLICT (course_id,user_id) DO UPDATE SET read_before=excluded.read_before`,
+      [courseId, userId],
+    );
+  }
+
+  /** Records or replaces the caller's single vote on an active poll. */
+  async vote(postId: string, userId: string, optionId: string) {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, postId, true);
+      if (!row) throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      if (row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      if (row.type !== "poll")
+        throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      if (member.status !== "active")
+        throw new AuthError(409, "poll_closed", "The poll or course is closed");
+      const option = UUID_PATTERN.test(optionId)
+        ? await db.query(
+            "SELECT 1 FROM poll_options WHERE id=$1 AND post_id=$2",
+            [optionId, postId],
+          )
+        : undefined;
+      if (!option?.rowCount)
+        throw new AuthError(
+          422,
+          "poll_option_invalid",
+          "The option does not belong to this poll",
+        );
+      await db.query(
+        `INSERT INTO poll_votes (course_id,post_id,user_id,option_id) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (post_id,user_id) DO UPDATE SET option_id=excluded.option_id,updated_at=now()`,
+        [row.course_id, postId, userId, optionId],
+      );
+      return { postId, ...(await this.pollState(db, postId, userId)) };
+    });
+  }
+
+  /** Removes the caller's vote; succeeds when there was none. */
+  async unvote(postId: string, userId: string) {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    const row = await this.row(this.pool, postId);
+    if (!row) throw notFound();
+    const member = await this.membership(this.pool, row.course_id, userId);
+    readable(row, userId, member.role);
+    if (row.deleted_at || row.duplicate_status === "confirmed")
+      throw notFound();
+    if (row.type !== "poll")
+      throw new AuthError(422, "not_a_poll", "The post is not a poll");
+    await this.pool.query(
+      "DELETE FROM poll_votes WHERE post_id=$1 AND user_id=$2",
+      [postId, userId],
+    );
+  }
+
   async delete(
     id: string,
     userId: string,
@@ -870,6 +1109,7 @@ export class PostService {
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
       if (row.deleted_at) throw notFound();
+      readable(row, userId, member.role);
       this.writable(member.status);
       this.checkRevision(row, etag);
       if (row.duplicate_status === "confirmed")

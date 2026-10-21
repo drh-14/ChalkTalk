@@ -1,6 +1,14 @@
 ## Posts
 
-**Implementation status:** JSON question and note creation, listing/search, retrieval, update, deletion, and daily deduplicated post views are implemented. Active questions and notes can have files uploaded separately after saving; see the [OpenAPI attachment contract](../openapi.yaml) for current parent-scoped upload, download, and removal routes. Questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. Poll creation, poll voting, the multipart post create/update shapes and attachment-processing/download-refresh fields below remain future targets and are not live. Poll creation and multipart post create/update return `422 validation_failed`, `type=poll` list filtering returns `400 invalid_request`, and vote routes are unavailable. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
+**Implementation status:** JSON question, note, and poll creation, listing/search, retrieval, update, deletion, poll voting, announcements, and daily deduplicated post views are implemented. Active questions and notes can have files uploaded separately after saving; see the [OpenAPI attachment contract](../openapi.yaml) for current parent-scoped upload, download, and removal routes. Questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. The multipart post create/update shapes and attachment-processing/download-refresh fields below remain future targets and are not live; multipart create/update returns `422 validation_failed`. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
+
+**Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 options of 1–200 characters, trimmed and distinct ignoring case, fixed after creation. Every member sees each option's `voteCount` and whether they `selected` it; who voted for what is never exposed. Each member has one vote, which `PUT /posts/{postId}/vote` sets or changes and `DELETE` retracts. Votes do not change the post's `version` or activity time. Polls take no answers or followups.
+
+**Following and unread:** Every active post projection includes `following` and `unread` for the viewer. Members follow a post automatically when they create it, answer it, edit an answer on it, or post a followup or reply on it, unless they unfollowed it; see [Notifications](notifications.md). A post is `unread` when its last activity is later than both the viewer's last opening of it and their course read mark, or neither exists. Retrieving a post records it, and the caller's notifications for it, as read, so its own response reports `unread: false`.
+
+**Private posts:** Any member may create a question or note with `private: true`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
+
+**Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member, which the job worker sends only while the announcement, the course, and the membership still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
 
@@ -87,6 +95,10 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `anonymous` (boolean, optional): Hide the author from course members.
 
 `tags` (list of string, optional): Post tags.
+
+`announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to the course; cannot be combined with `anonymous`.
+
+`private` (boolean, optional; default false): Questions and notes only. Makes the post readable only by its author and course staff.
 
 ###### `CreatePollPostRequest` fields
 
@@ -190,6 +202,14 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
 
+`data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
+
+`data.private` (boolean, required): Whether only the author and course staff can read the post.
+
+`data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
+
+`data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
+
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
 `data.duplicateStatus` (enum: none, suggested, confirmed, required): Duplicate-review state.
@@ -291,6 +311,10 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 `validation_failed`: The post fields are invalid.
 
+`private_announcement`: An announcement cannot be private.
+
+`private_poll`: A poll cannot be private.
+
 ##### `500 Internal Server Error`
 
 `internal_error`: The server could not complete the request.
@@ -305,7 +329,7 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 ### **`GET /api/v1/courses/{courseId}/posts`**
 
-Lists or searches the posts in a course. Ordinary search text combines English full-text matches with word-level fuzzy matches in titles and bodies. Fuzzy matching requires at least one query term of three or more searchable characters, ignores shorter terms and English stopwords, and requires every remaining term to match in either field. Queries with no eligible fuzzy terms use full-text matching and ranking alone. Under relevance sorting, exact full-text matches precede fuzzy-only matches within each pinned group; title similarity contributes more than body similarity within the groups. With deployment-configured embeddings and the optional pgvector schema, semantic-only matches follow both groups within each pinned group, ordered by cosine similarity without an initial cutoff. Pinned results still precede unpinned results. A missing key, vector schema, working embedding provider, or unhealthy current-generation index leaves only the established full-text and fuzzy search path available. Pending current-generation catch-up work or a failed current-generation indexing job makes the index unhealthy until successful revision-checked indexing; post writes still succeed during enqueue and indexing failures. Quoted phrases, `OR`, and excluded-term queries retain their existing full-text-only meaning unless an explicit `semanticQuery` accompanies `q`. Confirmed duplicates are excluded from ordinary lists and searches, including Related questions, before ranking and pagination. Related questions keeps its existing `OR` expression in `q` and sends the draft text separately as `semanticQuery`; this adds semantic candidates only when configured, without changing the `OR` expression. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+Lists or searches the posts in a course. Ordinary search text combines English full-text matches with word-level fuzzy matches in titles and bodies. Fuzzy matching requires at least one query term of three or more searchable characters, ignores shorter terms and English stopwords, and requires every remaining term to match in either field. Queries with no eligible fuzzy terms use full-text matching and ranking alone. Under relevance sorting, exact full-text matches precede fuzzy-only matches within each pinned group; title similarity contributes more than body similarity within the groups. With deployment-configured embeddings and the optional pgvector schema, semantic-only matches follow both groups within each pinned group, ordered by cosine similarity without an initial cutoff. Semantic indexing and expansion apply only to questions and notes; polls retain the lexical/fuzzy path, and a poll-only query does not call the embedding provider. Private question and note candidates follow the same current author/staff visibility rules before ranking and pagination. Pinned results still precede unpinned results. A missing key, vector schema, working embedding provider, or unhealthy current-generation index leaves only the established full-text and fuzzy search path available. Pending current-generation catch-up work or a failed current-generation indexing job makes the index unhealthy until successful revision-checked indexing; post writes still succeed during enqueue and indexing failures. Quoted phrases, `OR`, and excluded-term queries retain their existing full-text-only meaning unless an explicit `semanticQuery` accompanies `q`. Confirmed duplicates are excluded from ordinary lists and searches, including Related questions, before ranking and pagination. Related questions keeps its existing `OR` expression in `q` and sends the draft text separately as `semanticQuery`; this adds semantic candidates only when configured, without changing the `OR` expression. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -344,6 +368,10 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 `answered` (boolean, optional): Filter question posts by answer presence.
 
 `pinned` (boolean, optional): Filter by pinned state. Combine with `type` to list pinned posts of one type.
+
+`announcement` (literal true, optional): List announcements only. Any other value returns `400 invalid_request`.
+
+`private` (literal true, optional): List only the private posts the caller can read: their own for a student, every private post for staff. Any other value returns `400 invalid_request`.
 
 `authorRole` (enum: instructor, ta, optional; values instructor, ta): Filter by the author's current role in the course. A post matches only while its author holds that role; posts by deleted accounts never match. For a student, anonymous posts other than the student's own are removed before ranking, pagination, `hasMore`, and counts, so the filter cannot reveal an anonymous author's role. Instructors and TAs match anonymous posts by that role.
 
@@ -400,6 +428,14 @@ None specific to this operation.
 See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data[].pinned` (boolean, required): Whether staff pinned the post.
+
+`data[].announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
+
+`data[].private` (boolean, required): Whether only the author and course staff can read the post.
+
+`data[].following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
+
+`data[].unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
 
 `data[].duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -551,6 +587,8 @@ None.
 
 `ETag` (string): Opaque revision token for a later `If-Match` request.
 
+`Cache-Control` (string): `private, no-store`, because `following` and `unread` are per viewer and change without a new revision.
+
 `Location` (string, on `303`): Same-course canonical post URL.
 
 `Cache-Control` (string, on `303`): `private, no-store`.
@@ -582,6 +620,14 @@ None.
 See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
+
+`data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
+
+`data.private` (boolean, required): Whether only the author and course staff can read the post.
+
+`data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
+
+`data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -743,6 +789,8 @@ None.
 
 `pinned` (boolean, optional): Staff-controlled pinned state.
 
+`private` (boolean, optional): `false` makes a private post public; the author or staff only, and it cannot be undone. `true` on a public post returns `422 post_already_public`, and is ignored on a private post.
+
 `duplicateOfPostId` (string or null, optional): Original post ID, or null to clear the relationship.
 
 `duplicateStatus` (enum: none, suggested, confirmed, optional): Duplicate-review state.
@@ -806,6 +854,14 @@ None.
 See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.pinned` (boolean, required): Whether staff pinned the post.
+
+`data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
+
+`data.private` (boolean, required): Whether only the author and course staff can read the post.
+
+`data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
+
+`data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -917,6 +973,10 @@ curl --request PATCH '/api/v1/posts/post_123' \
 ##### `422 Unprocessable Content`
 
 `validation_failed`: No valid editable field was supplied.
+
+`post_already_public`: A public post cannot be made private.
+
+`duplicate_target_private`: A post cannot be marked as a duplicate of a private post.
 
 ##### `428 Precondition Required`
 
@@ -1253,6 +1313,263 @@ curl --request DELETE '/api/v1/posts/post_123/vote' \
 ##### `422 Unprocessable Content`
 
 `not_a_poll`: The post is not a poll.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+##### `503 Service Unavailable`
+
+`service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="followPost"></a>
+
+### **`PUT /api/v1/posts/{postId}/follow`**
+
+Follows a post the caller can read, so its activity notifies them.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Course member who can read the post.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+`Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+
+`X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
+
+#### Path parameters
+
+`postId` (string, required, 1–255 characters): Identifies the post resource.
+
+#### Query parameters
+
+None.
+
+#### Request body
+
+None.
+
+**Success:** `200 OK`.
+
+**Response media:** `application/json`.
+
+#### Response body
+
+##### `data` (object, required): The caller's follow state.
+
+`data.following` (boolean, required): Whether the caller now follows the post.
+
+#### Example request
+
+```bash
+curl --request PUT '/api/v1/posts/post_123/follow' \
+    --header 'Accept: application/json' \
+    --header 'Origin: https://app.example.edu' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'X-CSRF-Token: opaque_csrf_token'
+```
+
+#### Example success response
+
+```json
+{
+  "data": {
+    "following": true
+  }
+}
+```
+
+#### Errors
+
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `404 Not Found`
+
+`not_found`: The post does not exist, is deleted or a confirmed duplicate, or is not visible to the caller.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+##### `503 Service Unavailable`
+
+`service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="unfollowPost"></a>
+
+### **`DELETE /api/v1/posts/{postId}/follow`**
+
+Stops notifications for the post. The unfollow persists: later activity by the caller does not follow the post again automatically.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Course member who can read the post.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+`Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+
+`X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
+
+#### Path parameters
+
+`postId` (string, required, 1–255 characters): Identifies the post resource.
+
+#### Query parameters
+
+None.
+
+#### Request body
+
+None.
+
+**Success:** `200 OK`.
+
+**Response media:** `application/json`.
+
+#### Response body
+
+##### `data` (object, required): The caller's follow state.
+
+`data.following` (boolean, required): Whether the caller now follows the post.
+
+#### Example request
+
+```bash
+curl --request DELETE '/api/v1/posts/post_123/follow' \
+    --header 'Accept: application/json' \
+    --header 'Origin: https://app.example.edu' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'X-CSRF-Token: opaque_csrf_token'
+```
+
+#### Example success response
+
+```json
+{
+  "data": {
+    "following": false
+  }
+}
+```
+
+#### Errors
+
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `404 Not Found`
+
+`not_found`: The post does not exist, is deleted or a confirmed duplicate, or is not visible to the caller.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+##### `503 Service Unavailable`
+
+`service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="markCourseRead"></a>
+
+### **`POST /api/v1/courses/{courseId}/read-marks`**
+
+Marks every post in the course read for the caller as of now. Later activity makes a post unread again.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Course member.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+`Origin` (required, string): Browser origin, which must exactly match a deployment-configured HTTPS frontend origin.
+
+`X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
+
+#### Path parameters
+
+`courseId` (string, required, 1–255 characters): Identifies the course resource.
+
+#### Query parameters
+
+None.
+
+#### Request body
+
+None.
+
+**Success:** `204 No Content`.
+
+**Response media:** None.
+
+#### Response body
+
+None.
+
+#### Example request
+
+```bash
+curl --request POST '/api/v1/courses/course_123/read-marks' \
+    --header 'Origin: https://app.example.edu' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session' \
+    --header 'X-CSRF-Token: opaque_csrf_token'
+```
+
+#### Example success response
+
+```http
+204 No Content
+```
+
+#### Errors
+
+##### `403 Forbidden`
+
+`csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `404 Not Found`
+
+`not_found`: The course does not exist or the caller is not a member.
 
 ##### `500 Internal Server Error`
 

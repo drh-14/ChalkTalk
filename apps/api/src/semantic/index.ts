@@ -76,13 +76,14 @@ export class SemanticIndex {
   async healthy(): Promise<boolean> {
     await this.registerGeneration(this.pool);
     const result = await this.pool.query<{ unhealthy: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM semantic_post_catchup
-                      WHERE generation=$1 LIMIT 1)
+      `SELECT EXISTS (SELECT 1 FROM semantic_post_catchup d JOIN posts p ON p.id=d.post_id
+                      WHERE d.generation=$1
+                        AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note') LIMIT 1)
          OR EXISTS (
            SELECT 1 FROM jobs j JOIN posts p ON p.id=(j.payload->>'postId')::uuid
            WHERE j.kind='index_post' AND j.status <> 'succeeded'
              AND j.last_error IS NOT NULL AND j.payload->>'generation'=$1
-             AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+             AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note')
              AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
            LIMIT 1
          ) AS unhealthy`,
@@ -96,7 +97,7 @@ export class SemanticIndex {
     if (!(await this.available(db))) return false;
     const source = await db.query<{ source_revision: string }>(
       `SELECT ${POST_REVISION_SQL} AS source_revision FROM posts p
-       WHERE p.id=$1 AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'`,
+       WHERE p.id=$1 AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note')`,
       [postId],
     );
     const revision = source.rows[0]?.source_revision;
@@ -138,7 +139,7 @@ export class SemanticIndex {
     }>(
       `SELECT d.post_id FROM semantic_post_catchup d
        JOIN posts p ON p.id=d.post_id
-       WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+       WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note')
          AND d.generation=$1
          AND NOT EXISTS (
            SELECT 1 FROM jobs j WHERE j.kind='index_post'
@@ -162,7 +163,7 @@ export class SemanticIndex {
       `WITH batch AS MATERIALIZED (
          SELECT p.id,p.updated_at,p.title,p.body_markdown
          FROM posts p
-         WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+         WHERE p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note')
            ${after ? "AND (p.updated_at,p.id)>($2::timestamptz,$3::uuid)" : ""}
          ORDER BY p.updated_at,p.id LIMIT 100
        ), revisions AS MATERIALIZED (
@@ -191,7 +192,7 @@ export class SemanticIndex {
          WHERE j.kind='index_post' AND j.status='dead'
            AND j.updated_at < now()-interval '1 hour'
            AND j.payload->>'generation'=$1
-           AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+           AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note')
            AND j.deduplication_key=p.id::text||':'||$1||':'||${POST_REVISION_SQL}
            AND NOT EXISTS (
              SELECT 1 FROM post_embeddings e WHERE e.post_id=p.id
@@ -220,7 +221,7 @@ export class SemanticIndex {
     }>(
       `SELECT p.title,p.body_markdown,${POST_REVISION_SQL} AS source_revision
        FROM posts p WHERE p.id=$1 AND p.deleted_at IS NULL
-         AND p.duplicate_status <> 'confirmed'`,
+         AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note')`,
       [postId],
     );
     const post = source.rows[0];
@@ -239,7 +240,7 @@ export class SemanticIndex {
       await client.query("BEGIN");
       const current = await client.query<{ source_revision: string }>(
         `SELECT ${POST_REVISION_SQL} AS source_revision FROM posts p
-         WHERE p.id=$1 AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed'
+         WHERE p.id=$1 AND p.deleted_at IS NULL AND p.duplicate_status <> 'confirmed' AND p.type IN ('question','note')
          FOR UPDATE OF p`,
         [postId],
       );

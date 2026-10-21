@@ -275,9 +275,9 @@ test("instructor retries upload with the same key and preserves existing files o
   ).toBeVisible();
   await shot(page, "upload-failure");
   await page.getByRole("button", { name: "Upload file" }).click();
-  await expect(page.getByRole("status")).toContainText(
-    "New notes.txt uploaded.",
-  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "New notes.txt uploaded." }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: /New notes.txt/ })).toBeVisible();
   expect(uploads).toHaveLength(2);
   expect(uploads[0].key).toBeTruthy();
@@ -293,7 +293,9 @@ test("instructor retries upload with the same key and preserves existing files o
   await page.getByRole("button", { name: "Upload file" }).click();
   await expect.poll(() => uploads.length).toBe(3);
   expect(uploads[2].key).not.toBe(uploads[1].key);
-  await expect(page.getByRole("status")).toContainText("Other.txt uploaded.");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Other.txt uploaded." }),
+  ).toBeVisible();
 });
 
 test("mobile wraps long literal filenames and keyboard reaches the download", async ({
@@ -624,6 +626,150 @@ for (const [device, width] of [
     await page.getByRole("button", { name: "Load more", exact: true }).click();
     await expect(
       page.getByRole("link", { name: "Second page.md", exact: true }),
+    ).toBeVisible();
+  });
+}
+
+for (const [device, width] of [
+  ["desktop", 1280],
+  ["mobile", 390],
+]) {
+  test(`native resource Choose File matches Add link and keeps picker access on ${device}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    let release;
+    const uploadGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    await open(page, { role: "instructor", uploadGate });
+    const picker = page.getByLabel("Choose a course file", { exact: true });
+    const primary = page.getByRole("button", { name: "Add link", exact: true });
+    await page.getByLabel("Link title", { exact: true }).fill("Handbook");
+    await page
+      .getByLabel("Link URL", { exact: true })
+      .fill("https://example.edu/handbook");
+    await expect(primary).toBeEnabled();
+    await expect(picker).toHaveAttribute(
+      "accept",
+      ".pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.docx,.pptx",
+    );
+    const read = async (locator, properties, pseudo = false) =>
+      locator.evaluate(
+        (element, { properties, pseudo }) => {
+          const style = globalThis.getComputedStyle(
+            element,
+            pseudo ? "::file-selector-button" : null,
+          );
+          return Object.fromEntries(
+            properties.map((property) => [
+              property,
+              style.getPropertyValue(property),
+            ]),
+          );
+        },
+        { properties, pseudo },
+      );
+    const appearance = [
+      "background-color",
+      "color",
+      "border-top-width",
+      "border-top-style",
+      "font-family",
+      "font-size",
+      "font-weight",
+      "border-radius",
+      "padding",
+      "min-height",
+      "cursor",
+    ];
+    await page.mouse.move(0, 0);
+    expect(await read(picker, appearance, true)).toEqual(
+      await read(primary, appearance),
+    );
+    await shot(page, `browse-${device}`);
+    await primary.hover();
+    await expect
+      .poll(
+        async () =>
+          (await read(primary, ["background-color"]))["background-color"],
+      )
+      .toBe("rgb(23, 61, 49)");
+    const hover = await read(primary, ["background-color", "transform"]);
+    await picker.hover({ position: { x: 20, y: 20 } });
+    await expect
+      .poll(() => read(picker, ["background-color", "transform"], true))
+      .toEqual(hover);
+    await shot(page, `browse-${device}-hover`);
+    await primary.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    const outline = await read(primary, [
+      "outline-color",
+      "outline-style",
+      "outline-width",
+      "outline-offset",
+    ]);
+    await picker.focus();
+    await expect
+      .poll(() =>
+        picker.evaluate((element) => element.matches(":focus-visible")),
+      )
+      .toBe(true);
+    expect(
+      await read(picker, [
+        "outline-color",
+        "outline-style",
+        "outline-width",
+        "outline-offset",
+      ]),
+    ).toEqual(outline);
+    await shot(page, `browse-${device}-focus`);
+    const clicked = page.waitForEvent("filechooser");
+    await picker.click({ position: { x: 20, y: 20 } });
+    await (
+      await clicked
+    ).setFiles({
+      name: "Clicked notes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("clicked"),
+    });
+    await expect(
+      page.getByRole("button", { name: "Upload file", exact: true }),
+    ).toBeEnabled();
+    const keyed = page.waitForEvent("filechooser");
+    await picker.focus();
+    await picker.press("Enter");
+    await (
+      await keyed
+    ).setFiles({
+      name: "Keyboard notes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("keyboard"),
+    });
+    await expect(picker).toHaveValue(/Keyboard notes\.txt$/);
+    expect(
+      await page.evaluate(
+        () =>
+          globalThis.document.documentElement.scrollWidth <=
+          globalThis.innerWidth,
+      ),
+    ).toBe(true);
+    await shot(page, `browse-${device}-selected`);
+    await page
+      .getByRole("button", { name: "Upload file", exact: true })
+      .click();
+    await expect(picker).toBeDisabled();
+    await expect(primary).toBeDisabled();
+    expect(await read(picker, ["opacity", "cursor"], true)).toEqual(
+      await read(primary, ["opacity", "cursor"]),
+    );
+    await shot(page, `browse-${device}-disabled`);
+    release();
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Keyboard notes.txt uploaded." }),
     ).toBeVisible();
   });
 }

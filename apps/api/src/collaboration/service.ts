@@ -2,6 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
+import { canReadPost, readablePost } from "../posts/visibility.js";
+import { consumeRateLimit } from "../database/rate-limit.js";
 
 export const COLLABORATION_LANGUAGES = [
   "plaintext",
@@ -40,6 +42,7 @@ export type CollaborationParticipant = {
   userId: string;
   displayName: string;
   role: "creator" | "invitee";
+  permission: "edit" | "view";
 };
 export type CollaborationSession = {
   id: string;
@@ -106,6 +109,8 @@ export type CollaborationSessionServiceOptions = {
   /** How long ending waits for the collaboration server to persist the final text. */
   endTimeoutMs?: number;
   endPollMs?: number;
+  /** Per-user limits: sessions created per hour and tickets per 10 minutes. */
+  rateLimits?: { createPerHour: number; ticketsPerTenMinutes: number };
 };
 
 export class CollaborationSessionService {
@@ -177,9 +182,10 @@ export class CollaborationSessionService {
     if (!member) throw notFound();
     const staff = STAFF.has(member.role);
     if (!staff) {
+      // A private anchor hides its sessions from members who cannot read it.
       const post = await db.query<{ removed: boolean }>(
-        "SELECT (deleted_at IS NOT NULL OR duplicate_status='confirmed') AS removed FROM posts WHERE id=$1",
-        [row.post_id],
+        "SELECT (deleted_at IS NOT NULL OR duplicate_status='confirmed' OR (private AND author_user_id IS DISTINCT FROM $2)) AS removed FROM posts WHERE id=$1",
+        [row.post_id, userId],
       );
       if (post.rows[0]?.removed) throw notFound();
       if (row.created_by_user_id !== userId) {
@@ -210,8 +216,9 @@ export class CollaborationSessionService {
     const participants = await db.query<{
       user_id: string;
       display_name: string;
+      permission: "edit" | "view";
     }>(
-      "SELECT p.user_id,u.display_name FROM collaboration_participants p JOIN users u ON u.id=p.user_id WHERE p.collaboration_session_id=$1 ORDER BY (p.user_id=$2) DESC,p.created_at,p.user_id",
+      "SELECT p.user_id,u.display_name,p.permission FROM collaboration_participants p JOIN users u ON u.id=p.user_id WHERE p.collaboration_session_id=$1 ORDER BY (p.user_id=$2) DESC,p.created_at,p.user_id",
       [row.id, row.created_by_user_id],
     );
     return {
@@ -229,6 +236,10 @@ export class CollaborationSessionService {
           participant.user_id === row.created_by_user_id
             ? "creator"
             : "invitee",
+        permission:
+          participant.user_id === row.created_by_user_id
+            ? "edit"
+            : participant.permission,
       })),
       endedAt: row.ended_at?.toISOString() ?? null,
       createdAt: row.created_at.toISOString(),
@@ -308,8 +319,8 @@ export class CollaborationSessionService {
       if (member.status !== "active") throw archived();
       const post = UUID_PATTERN.test(body.postId)
         ? await db.query<{ title: string }>(
-            "SELECT title FROM posts WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL AND duplicate_status<>'confirmed' FOR SHARE",
-            [body.postId, courseId],
+            "SELECT title FROM posts WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL AND duplicate_status<>'confirmed' AND (NOT private OR author_user_id=$3 OR $4) FOR SHARE",
+            [body.postId, courseId, userId, STAFF.has(member.role)],
           )
         : undefined;
       if (!post?.rows[0])
@@ -320,6 +331,14 @@ export class CollaborationSessionService {
         );
       const title =
         body.title ?? post.rows[0].title.trim().slice(0, 120).trim();
+      // After the idempotent replay check, so a replay is never limited.
+      await consumeRateLimit(
+        db,
+        "collaboration-create",
+        userId,
+        this.options.rateLimits?.createPerHour ?? 30,
+        3600,
+      );
       const id = uuidv7();
       await db.query(
         "INSERT INTO collaboration_sessions (id,course_id,post_id,title,language,created_by_user_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,clock_timestamp(),clock_timestamp())",
@@ -384,7 +403,7 @@ export class CollaborationSessionService {
     const clauses = [
       "s.course_id=$1",
       "($3 OR s.created_by_user_id=$2 OR EXISTS (SELECT 1 FROM collaboration_participants cp WHERE cp.collaboration_session_id=s.id AND cp.user_id=$2))",
-      "($3 OR (p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'))",
+      "($3 OR (p.deleted_at IS NULL AND p.duplicate_status<>'confirmed' AND (NOT p.private OR p.author_user_id=$2)))",
     ];
     if (query.status === "ended") clauses.push("s.lifecycle_state='ended'");
     if (query.status === "active") clauses.push("s.lifecycle_state<>'ended'");
@@ -435,6 +454,86 @@ export class CollaborationSessionService {
       page: {
         nextCursor: hasMore
           ? this.cursorFor(courseId, userId, filters, page.at(-1)!)
+          : null,
+        hasMore,
+      },
+    };
+  }
+
+  /** The viewer's own sessions across their active courses, newest first. */
+  async listForUser(
+    userId: string,
+    query: Omit<ListCollaborationSessions, "anchorId">,
+  ) {
+    // Cursors carry this scope so a course-list cursor cannot be replayed here.
+    const scope = "me";
+    const filters = JSON.stringify([query.status ?? null]);
+    const values: unknown[] = [userId];
+    const add = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    const clauses = [
+      "p.deleted_at IS NULL",
+      "p.duplicate_status<>'confirmed'",
+      readablePost("p", "$1", "m.role"),
+    ];
+    if (query.status === "ended") clauses.push("s.lifecycle_state='ended'");
+    if (query.status === "active") clauses.push("s.lifecycle_state<>'ended'");
+    if (query.cursor) {
+      let decoded: {
+        c?: string;
+        u?: string;
+        f?: string;
+        t?: string;
+        i?: string;
+      };
+      try {
+        decoded = JSON.parse(
+          Buffer.from(query.cursor, "base64url").toString("utf8"),
+        );
+      } catch {
+        throw invalidRequest("Pagination cursor is invalid");
+      }
+      if (
+        decoded.c !== scope ||
+        decoded.u !== userId ||
+        decoded.f !== filters ||
+        typeof decoded.t !== "string" ||
+        Number.isNaN(Date.parse(decoded.t)) ||
+        typeof decoded.i !== "string" ||
+        !UUID_PATTERN.test(decoded.i)
+      )
+        throw invalidRequest("Pagination cursor is invalid");
+      clauses.push(
+        `(s.created_at,s.id)<(${add(decoded.t)}::timestamptz,${add(decoded.i)}::uuid)`,
+      );
+    }
+    // The creator always has a participant row, so one join covers both roles.
+    const rows = await this.pool.query<SessionRow & { course_name: string }>(
+      `SELECT s.*,c.name AS course_name
+       FROM collaboration_participants cp
+       JOIN collaboration_sessions s ON s.id=cp.collaboration_session_id
+       JOIN courses c ON c.id=s.course_id AND c.status='active'
+       JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$1
+       JOIN posts p ON p.id=s.post_id
+       WHERE cp.user_id=$1 AND ${clauses.join(" AND ")}
+       ORDER BY s.created_at DESC,s.id DESC LIMIT ${add(query.limit + 1)}`,
+      values,
+    );
+    const hasMore = rows.rows.length > query.limit;
+    const page = rows.rows.slice(0, query.limit);
+    const data = [];
+    for (const row of page)
+      data.push({
+        ...(await this.project(this.pool, row)),
+        courseName: row.course_name,
+      });
+    return {
+      data,
+      page: {
+        nextCursor: hasMore
+          ? this.cursorFor(scope, userId, filters, page.at(-1)!)
           : null,
         hasMore,
       },
@@ -530,7 +629,12 @@ export class CollaborationSessionService {
       });
   }
 
-  async invite(sessionId: string, userId: string, targetUserId: string) {
+  async invite(
+    sessionId: string,
+    userId: string,
+    targetUserId: string,
+    permission: "edit" | "view" = "edit",
+  ) {
     return this.tx(async (db) => {
       const access = await this.access(db, sessionId, userId, true);
       this.manager(access, userId);
@@ -544,11 +648,43 @@ export class CollaborationSessionService {
           "not_course_member",
           "The user is not a current member of the course",
         );
-      const inserted = await db.query(
-        "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
-        [sessionId, access.row.course_id, targetUserId, userId],
+      const anchor = await db.query<{
+        private: boolean;
+        author_user_id: string | null;
+      }>("SELECT private,author_user_id FROM posts WHERE id=$1", [
+        access.row.post_id,
+      ]);
+      if (
+        anchor.rows[0] &&
+        !canReadPost(anchor.rows[0], targetUserId, target.role)
+      )
+        throw new AuthError(
+          422,
+          "invitee_cannot_read_post",
+          "Only the author and course staff can read this private post",
+        );
+      const inserted = await db.query<{ created_at: Date }>(
+        "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id,permission) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING created_at",
+        [sessionId, access.row.course_id, targetUserId, userId, permission],
       );
-      if (inserted.rowCount) await this.touch(db, sessionId);
+      const invitation = inserted.rows[0];
+      if (invitation) {
+        await this.touch(db, sessionId);
+        // The participant's created_at keys the email, so a new invitation
+        // after a removal sends again while a retried job does not.
+        await db.query(
+          "INSERT INTO jobs (id,kind,payload,deduplication_key) VALUES ($1,'send_collaboration_invitation_email',$2,$3) ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING",
+          [
+            uuidv7(),
+            {
+              sessionId,
+              inviteeUserId: targetUserId,
+              inviterUserId: userId,
+            },
+            `${sessionId}:${targetUserId}:${invitation.created_at.getTime()}`,
+          ],
+        );
+      }
       return this.project(db, await this.reload(db, sessionId));
     });
   }
@@ -593,9 +729,24 @@ export class CollaborationSessionService {
     return this.tx(async (db) => {
       const access = await this.access(db, sessionId, userId, true);
       this.active(access);
+      await consumeRateLimit(
+        db,
+        "collaboration-ticket",
+        userId,
+        this.options.rateLimits?.ticketsPerTenMinutes ?? 300,
+        600,
+      );
+      // Staff and the creator always edit; other viewers get read tickets.
+      const viewer = STAFF.has(access.role)
+        ? undefined
+        : await db.query(
+            "SELECT 1 FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2 AND permission='view'",
+            [sessionId, userId],
+          );
+      const permission = viewer?.rowCount ? "read" : "write";
       const ticket = randomBytes(32).toString("base64url");
       const issued = await db.query<{ expires_at: Date }>(
-        "INSERT INTO collaboration_connection_tickets (id,token_hash,collaboration_session_id,course_id,user_id,auth_session_id,permission,issued_at,expires_at) VALUES ($1,$2,$3,$4,$5,$6,'write',now(),now()+make_interval(secs => $7)) RETURNING expires_at",
+        "INSERT INTO collaboration_connection_tickets (id,token_hash,collaboration_session_id,course_id,user_id,auth_session_id,permission,issued_at,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$8,now(),now()+make_interval(secs => $7)) RETURNING expires_at",
         [
           uuidv7(),
           hashTicket(ticket),
@@ -604,10 +755,12 @@ export class CollaborationSessionService {
           userId,
           authSessionId,
           TICKET_LIFETIME_MS / 1000,
+          permission,
         ],
       );
       return {
         ticket,
+        permission,
         webSocketUrl: this.options.webSocketUrl,
         documentId: documentName(sessionId),
         expiresAt: issued.rows[0]!.expires_at.toISOString(),
@@ -619,9 +772,10 @@ export class CollaborationSessionService {
     const access = await this.access(this.pool, sessionId, userId);
     const document = await this.pool.query<{
       text_projection: string;
+      whiteboard_projection: unknown[];
       persisted_at: Date;
     }>(
-      "SELECT text_projection,persisted_at FROM collaboration_documents WHERE collaboration_session_id=$1",
+      "SELECT text_projection,whiteboard_projection,persisted_at FROM collaboration_documents WHERE collaboration_session_id=$1",
       [sessionId],
     );
     return {
@@ -632,6 +786,7 @@ export class CollaborationSessionService {
           ? ("ended" as const)
           : ("active" as const),
       content: document.rows[0]?.text_projection ?? "",
+      whiteboard: document.rows[0]?.whiteboard_projection ?? [],
       persistedAt: (
         document.rows[0]?.persisted_at ?? access.row.created_at
       ).toISOString(),

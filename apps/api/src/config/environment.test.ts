@@ -22,7 +22,23 @@ describe("authentication environment", () => {
       loginPerEmail: 10,
       resetPerEmail: 5,
       signupPerIp: 100,
+      collaborationCreatePerUser: 30,
+      collaborationTicketPerUser: 300,
     });
+    expect(environment.collaboration.idleEndMinutes).toBe(120);
+  });
+
+  it("bounds the live session idle period", () => {
+    expect(
+      loadEnvironment({ ...base, COLLABORATION_IDLE_END_MINUTES: "45" })
+        .collaboration.idleEndMinutes,
+    ).toBe(45);
+    expect(() =>
+      loadEnvironment({ ...base, COLLABORATION_IDLE_END_MINUTES: "0" }),
+    ).toThrow("COLLABORATION_IDLE_END_MINUTES");
+    expect(() =>
+      loadEnvironment({ ...base, COLLABORATION_IDLE_END_MINUTES: "10081" }),
+    ).toThrow("one week");
   });
 
   it("rejects insecure origins and weak credential-hashing secrets", () => {

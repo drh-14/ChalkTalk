@@ -27,6 +27,16 @@ metrics_check() {
     })().catch(() => { process.exitCode = 1; });'
   done
 }
+collaboration_metrics_check() {
+  compose exec -T collaboration node -e '
+    (async () => {
+      const url = "http://localhost:3100/metrics";
+      const denied = await fetch(url);
+      const allowed = await fetch(url, { headers: { Authorization: `Bearer ${process.env.METRICS_TOKEN}` } });
+      const text = await allowed.text();
+      if (denied.status !== 401 || allowed.status !== 200 || !text.includes("chalktalk_collaboration_connections")) process.exitCode = 1;
+    })().catch(() => { process.exitCode = 1; });'
+}
 indexed() {
   compose exec -T api node -e '
     (async () => {
@@ -79,14 +89,15 @@ worker_indexed() {
 }
 
 metrics_check
+collaboration_metrics_check
 count=0
 until compose exec -T api node -e '
-  fetch("http://prometheus:9090/api/v1/query?query=up%7Bjob%3D~%22chalktalk-%28api%7Cworker%29%22%7D")
+  fetch("http://prometheus:9090/api/v1/query?query=up%7Bjob%3D~%22chalktalk-%28api%7Cworker%7Ccollaboration%29%22%7D")
   .then((response) => response.json()).then((data) => {
-    if (data.data.result.length !== 2 || data.data.result.some((item) => item.value[1] !== "1")) process.exitCode = 1;
+    if (data.data.result.length !== 3 || data.data.result.some((item) => item.value[1] !== "1")) process.exitCode = 1;
   }).catch(() => { process.exitCode = 1; });' >/dev/null 2>&1; do
   count=$((count + 1))
-  if [ "$count" -ge 90 ]; then echo "Prometheus did not scrape API and worker within 90 seconds" >&2; exit 1; fi
+  if [ "$count" -ge 90 ]; then echo "Prometheus did not scrape API, worker, and collaboration within 90 seconds" >&2; exit 1; fi
   sleep 1
 done
 before=$(api_request)

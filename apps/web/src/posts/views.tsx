@@ -8,8 +8,9 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError } from "../auth/client.js";
-import { SessionsPanel } from "../sessions/SessionsPanel.js";
-import { sessionRoute } from "../sessions/client.js";
+import { ActiveSessionLink, SessionsPanel } from "../sessions/SessionsPanel.js";
+import { CourseLiveSessions } from "../sessions/LiveSessionLists.js";
+import { sessionRoute, type CodeSession } from "../sessions/client.js";
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { QuestionResponses } from "../answers/views.js";
@@ -27,6 +28,9 @@ import {
   getPost,
   listMergedPosts,
   listPosts,
+  makePostPublic,
+  markCourseRead,
+  setFollowing,
   setPostPinned,
   unmergePost,
   updatePost,
@@ -45,6 +49,7 @@ import {
   type FeedFilters,
 } from "../app/routes.js";
 import { formatPostTime } from "./time.js";
+import { PollCard } from "./PollCard.js";
 import {
   feedFilters,
   postStatuses,
@@ -104,6 +109,117 @@ function PostByline({ post }: { post: Post }) {
             {time.label}
           </time>
         </>
+      )}
+    </>
+  );
+}
+
+/** Notice on a private post, with Make public for its author and staff. */
+function PrivateNotice({
+  post,
+  own,
+  canPublish,
+  csrfToken,
+  onPublished,
+}: {
+  post: Post;
+  /** Whether the viewer wrote the post. */
+  own: boolean;
+  canPublish: boolean;
+  csrfToken: string;
+  onPublished: (post: Post) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  async function publish() {
+    if (
+      pending ||
+      !window.confirm(
+        "Everyone in the course will be able to see this post. This cannot be undone.",
+      )
+    )
+      return;
+    setPending(true);
+    setError("");
+    try {
+      onPublished(await makePostPublic(post, csrfToken));
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <div className="private-notice" role="note">
+      <span>
+        {own
+          ? "Only you and course staff can see this."
+          : "Only the author and course staff can see this."}
+      </span>
+      {canPublish && (
+        <button
+          type="button"
+          className="button secondary compact"
+          disabled={pending}
+          onClick={() => void publish()}
+        >
+          {pending ? "Making public…" : "Make public"}
+        </button>
+      )}
+      {error && (
+        <p className="form-message error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Follow or unfollow a post to choose whether its activity notifies the viewer. */
+function FollowButton({
+  post,
+  csrfToken,
+  onChange,
+}: {
+  post: Post;
+  csrfToken: string;
+  onChange: (following: boolean) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const following = post.following ?? false;
+  async function toggle() {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      onChange(await setFollowing(post.id, !following, csrfToken));
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <button
+        type="button"
+        className={`button secondary compact follow-button${following ? " following" : ""}`}
+        aria-pressed={following}
+        disabled={pending}
+        onClick={() => void toggle()}
+        title={
+          following
+            ? "You are notified of new answers, followups, and replies"
+            : "Get notified of new answers, followups, and replies"
+        }
+      >
+        {following ? "Following" : "Follow"}
+      </button>
+      {error && (
+        <p className="form-message error" role="alert">
+          {error}
+        </p>
       )}
     </>
   );
@@ -324,10 +440,12 @@ function relatedSemanticQuery(title: string, body: string): string {
   const sample = body.trim().slice(0, 500 - heading.length - 1);
   return [heading, sample].filter(Boolean).join(" ");
 }
+const MAX_POLL_OPTIONS = 10;
 
 function Composer({
   courseId,
   csrfToken,
+  staff = false,
   onCreated,
   onClose,
   onStateChange,
@@ -335,13 +453,18 @@ function Composer({
 }: {
   courseId: string;
   csrfToken: string;
+  /** TAs and instructors may post polls and announcements. */
+  staff?: boolean;
   onCreated: (post: Post) => void;
   onClose: () => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
   /** A starting title, such as a search the reader chose to ask as a question. */
   initialTitle?: string;
 }) {
-  const [type, setType] = useState<"question" | "note">("question");
+  const [type, setType] = useState<"question" | "note" | "poll">("question");
+  const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [announcement, setAnnouncement] = useState(false);
+  const [audience, setAudience] = useState<"course" | "staff">("course");
   const [title, setTitle] = useState(initialTitle);
   const bodyField = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -373,6 +496,7 @@ function Composer({
         body ||
         tags ||
         anonymous ||
+        audience !== "course" ||
         type !== "question" ||
         attachmentQueue.files.length > 0 ||
         published,
@@ -381,6 +505,7 @@ function Composer({
     );
   }, [
     anonymous,
+    audience,
     body,
     initialTitle,
     onStateChange,
@@ -442,16 +567,42 @@ function Composer({
       if (complete) onCreated(published);
       return;
     }
+    const privately = type !== "poll" && audience === "staff";
+    const announcing = type === "note" && announcement && !privately;
+    const labels = pollOptions.map((label) => label.trim());
     const input: CreatePostInput = {
       type,
       title: title.trim(),
       bodyMarkdown: body,
-      anonymous,
+      anonymous: announcing ? false : anonymous,
       tags: tags
         .split(",")
         .map((tag) => tag.trim())
         .filter(Boolean),
+      ...(type === "poll"
+        ? { options: labels.filter(Boolean).map((label) => ({ label })) }
+        : {}),
+      ...(announcing ? { announcement: true } : {}),
+      ...(privately ? { private: true } : {}),
     };
+    if (type === "poll") {
+      const filled = labels.filter(Boolean);
+      if (filled.length < 2) {
+        setError("A poll needs at least 2 options.");
+        return;
+      }
+      if (filled.some((label) => label.length > 200)) {
+        setError("Poll options must be at most 200 characters.");
+        return;
+      }
+      if (
+        new Set(filled.map((label) => label.toLowerCase())).size !==
+        filled.length
+      ) {
+        setError("Poll options must be different from each other.");
+        return;
+      }
+    }
     if (!input.title || input.title.length > 200) {
       setError("Post title must be between 1 and 200 characters.");
       return;
@@ -507,11 +658,12 @@ function Composer({
               <select
                 value={type}
                 onChange={(event) =>
-                  setType(event.target.value as "question" | "note")
+                  setType(event.target.value as "question" | "note" | "poll")
                 }
               >
                 <option value="question">Question</option>
                 <option value="note">Note</option>
+                {staff && <option value="poll">Poll</option>}
               </select>
             </label>
             <label>
@@ -530,6 +682,52 @@ function Composer({
               onChange={setBody}
               containerRef={bodyField}
             />
+            {type === "poll" && (
+              <fieldset className="poll-options-editor">
+                <legend>Poll options</legend>
+                {pollOptions.map((label, index) => (
+                  <div key={index} className="poll-option-row">
+                    <input
+                      aria-label={`Option ${index + 1}`}
+                      value={label}
+                      maxLength={201}
+                      onChange={(event) =>
+                        setPollOptions((current) =>
+                          current.map((value, position) =>
+                            position === index ? event.target.value : value,
+                          ),
+                        )
+                      }
+                    />
+                    {pollOptions.length > 2 && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        aria-label={`Remove option ${index + 1}`}
+                        onClick={() =>
+                          setPollOptions((current) =>
+                            current.filter((_, position) => position !== index),
+                          )
+                        }
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {pollOptions.length < MAX_POLL_OPTIONS && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() =>
+                      setPollOptions((current) => [...current, ""])
+                    }
+                  >
+                    + Add option
+                  </button>
+                )}
+              </fieldset>
+            )}
             <label>
               Tags (comma-separated)
               <input
@@ -537,10 +735,41 @@ function Composer({
                 onChange={(event) => setTags(event.target.value)}
               />
             </label>
+            {type !== "poll" && (
+              <label>
+                Post to
+                <select
+                  value={audience}
+                  onChange={(event) =>
+                    setAudience(event.target.value as "course" | "staff")
+                  }
+                >
+                  <option value="course">Entire class</option>
+                  <option value="staff">Instructors and TAs</option>
+                </select>
+              </label>
+            )}
+            {staff && type === "note" && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={announcement && audience !== "staff"}
+                  disabled={audience === "staff"}
+                  onChange={(event) => setAnnouncement(event.target.checked)}
+                />
+                Post as announcement (pinned and emailed to the class)
+              </label>
+            )}
             <label className="checkbox-label">
               <input
                 type="checkbox"
-                checked={anonymous}
+                checked={
+                  anonymous &&
+                  !(type === "note" && announcement && audience !== "staff")
+                }
+                disabled={
+                  type === "note" && announcement && audience !== "staff"
+                }
                 onChange={(event) => setAnonymous(event.target.checked)}
               />
               Post anonymously
@@ -1035,6 +1264,7 @@ function DiscussionContent({
   const [localSortQuery, setLocalSortQuery] = useState<string>();
   const [pinPending, setPinPending] = useState(false);
   const [pinError, setPinError] = useState("");
+  const [readError, setReadError] = useState("");
   const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
   const [cursor, setCursor] = useState<string | null>(null);
@@ -1054,6 +1284,10 @@ function DiscussionContent({
     detail.duplicateStatus !== "confirmed" &&
     (staff || (!!userId && detail.author.userId === userId));
   const [editingPostId, setEditingPostId] = useState<string>();
+  const [postSessions, setPostSessions] = useState<{
+    postId: string;
+    sessions: CodeSession[];
+  }>();
   const [mergePending, setMergePending] = useState(false);
   const [selectedReviewId, setSelectedReviewId] = useState<string>();
   const [reviewDetail, setReviewDetail] = useState<Post>();
@@ -1428,6 +1662,11 @@ function DiscussionContent({
   }
   function openPost(id: string) {
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
+    setItems((current) =>
+      current.map((item) =>
+        item.id === id && item.unread ? { ...item, unread: false } : item,
+      ),
+    );
     navigate(postPath(courseId, id, search));
   }
   function clearQuery() {
@@ -1463,6 +1702,33 @@ function DiscussionContent({
         question
       </button>
     ) : null;
+  // Answering or posting a followup follows the post unless the viewer unfollowed it.
+  async function refreshFollowing(id: string) {
+    try {
+      const next = await getPost(id);
+      if ("redirectToPostId" in next || next.deleted) return;
+      setDetail((current) =>
+        current?.id === id && !current.deleted
+          ? { ...current, following: next.following }
+          : current,
+      );
+    } catch {
+      // The button keeps its last known state.
+    }
+  }
+  async function markAllRead() {
+    setReadError("");
+    try {
+      await markCourseRead(courseId, csrfToken);
+      setItems((current) =>
+        current.map((item) =>
+          item.unread ? { ...item, unread: false } : item,
+        ),
+      );
+    } catch (caught) {
+      setReadError(message(caught));
+    }
+  }
   async function togglePin(post: Post) {
     if (pinPending) return;
     setPinPending(true);
@@ -1529,6 +1795,13 @@ function DiscussionContent({
         </header>
       )}
       {courseError && <p role="alert">{courseError}</p>}
+      <CourseLiveSessions
+        courseId={courseId}
+        staff={staff}
+        onOpen={(sessionCourseId, sessionId) =>
+          navigate(sessionRoute(sessionCourseId, sessionId))
+        }
+      />
       <div
         className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}${desktopFilters && filtersCollapsed ? " filters-collapsed" : ""}`}
       >
@@ -1816,59 +2089,95 @@ function DiscussionContent({
                 <p>No duplicate posts found.</p>
               )
             ) : items.length ? (
-              <ul className="post-list">
-                {items.map((post) => (
-                  <li
-                    key={post.id}
-                    className={post.id === postId ? "selected" : undefined}
-                  >
-                    <a
-                      className={`post-card${post.id === postId ? " selected" : ""}`}
-                      href={postPath(courseId, post.id, search)}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        openPost(post.id);
-                      }}
-                      aria-current={post.id === postId ? "page" : undefined}
+              <>
+                {items.some((item) => item.unread && item.id !== postId) && (
+                  <div className="feed-read-bar">
+                    <span>
+                      {
+                        items.filter(
+                          (item) => item.unread && item.id !== postId,
+                        ).length
+                      }{" "}
+                      unread
+                    </span>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => void markAllRead()}
                     >
-                      <span className="post-card-head">
-                        <span className="post-card-title">
-                          <PostTypeBadge type={post.type} />
-                          <strong>{post.title}</strong>
+                      Mark all read
+                    </button>
+                  </div>
+                )}
+                {readError && (
+                  <p className="form-message error" role="alert">
+                    {readError}
+                  </p>
+                )}
+                <ul className="post-list">
+                  {items.map((post) => (
+                    <li
+                      key={post.id}
+                      className={post.id === postId ? "selected" : undefined}
+                    >
+                      <a
+                        className={`post-card${post.id === postId ? " selected" : ""}${post.unread && post.id !== postId ? " unread" : ""}`}
+                        href={postPath(courseId, post.id, search)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          openPost(post.id);
+                        }}
+                        aria-current={post.id === postId ? "page" : undefined}
+                      >
+                        <span className="post-card-head">
+                          <span className="post-card-title">
+                            {post.unread && post.id !== postId && (
+                              <span className="unread-dot">
+                                <span className="visually-hidden">
+                                  Unread:{" "}
+                                </span>
+                              </span>
+                            )}
+                            <PostTypeBadge type={post.type} />
+                            <strong>{post.title}</strong>
+                          </span>
+                          {postStatuses(post).length > 0 && (
+                            <span className="post-statuses">
+                              {postStatuses(post).map((status) => (
+                                <PostStatusBadge
+                                  key={status.label}
+                                  status={status}
+                                />
+                              ))}
+                            </span>
+                          )}
                         </span>
-                        {postStatuses(post).length > 0 && (
-                          <span className="post-statuses">
-                            {postStatuses(post).map((status) => (
-                              <PostStatusBadge
-                                key={status.label}
-                                status={status}
-                              />
-                            ))}
-                          </span>
-                        )}
-                      </span>
-                      <div className="post-card-preview post-markdown">
-                        <PostBody bodyMarkdown={post.bodyMarkdown} inertLinks />
-                      </div>
-                      <span className="post-card-foot">
-                        <small>
-                          <PostByline post={post} />
-                        </small>
-                        {postTypeOf(post.type).extras?.(post) && (
-                          <span className="post-card-extras">
-                            {postTypeOf(post.type).extras?.(post)}
-                          </span>
-                        )}
-                      </span>
-                    </a>
-                    <TagList
-                      tags={post.tags}
-                      active={tags}
-                      onSelect={selectTag}
-                    />
-                  </li>
-                ))}
-              </ul>
+                        <div className="post-card-preview post-markdown">
+                          <PostBody
+                            bodyMarkdown={post.bodyMarkdown}
+                            inertLinks
+                          />
+                        </div>
+                        <span className="post-card-foot">
+                          <small>
+                            <PostByline post={post} />
+                          </small>
+                          {postTypeOf(post.type).extras?.(post) && (
+                            <span className="post-card-extras">
+                              {postTypeOf(post.type).extras?.(post)}
+                            </span>
+                          )}
+                        </span>
+                      </a>
+                      <TagList
+                        tags={post.tags}
+                        active={tags}
+                        onSelect={selectTag}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </>
             ) : query || hasFilters(activeFilters) ? (
               <div className="feed-empty">
                 <p>No posts found.</p>
@@ -1936,6 +2245,7 @@ function DiscussionContent({
                   initialTitle={composerSeed?.title}
                   courseId={courseId}
                   csrfToken={csrfToken}
+                  staff={staff}
                   onClose={leaveComposer}
                   onStateChange={(dirty, pending) => {
                     composerState.current = { dirty, pending };
@@ -2062,17 +2372,92 @@ function DiscussionContent({
                           {postTypeOf(detail.type).label}
                         </p>
                         <h2>{detail.title}</h2>
-                        <p className="post-author">
-                          <PostByline post={detail} />
-                          <ActivityTime post={detail} />
-                        </p>
+                        {detail.private && (
+                          <PrivateNotice
+                            post={detail}
+                            own={detail.author.userId === userId}
+                            canPublish={
+                              course?.status === "active" &&
+                              (staff || detail.author.userId === userId)
+                            }
+                            csrfToken={csrfToken}
+                            onPublished={(next) => {
+                              setDetail(next);
+                              setItems((current) =>
+                                current.map((item) =>
+                                  item.id === next.id ? next : item,
+                                ),
+                              );
+                            }}
+                          />
+                        )}
+                        <div className="post-author-row">
+                          <p className="post-author">
+                            <PostByline post={detail} />
+                            <ActivityTime post={detail} />
+                          </p>
+                          <FollowButton
+                            post={detail}
+                            csrfToken={csrfToken}
+                            onChange={(following) => {
+                              setDetail((current) =>
+                                current?.id === detail.id && !current.deleted
+                                  ? { ...current, following }
+                                  : current,
+                              );
+                              setItems((current) =>
+                                current.map((item) =>
+                                  item.id === detail.id
+                                    ? { ...item, following }
+                                    : item,
+                                ),
+                              );
+                            }}
+                          />
+                        </div>
                         <TagList
                           tags={detail.tags}
                           active={tags}
                           onSelect={selectTag}
                         />
+                        {postView === "posts" && (
+                          <ActiveSessionLink
+                            sessions={
+                              postSessions?.postId === detail.id
+                                ? postSessions.sessions
+                                : undefined
+                            }
+                            onOpen={(sessionId) =>
+                              navigate(sessionRoute(courseId, sessionId))
+                            }
+                          />
+                        )}
                         <div className="post-markdown">
                           <PostBody bodyMarkdown={detail.bodyMarkdown} />
+                          {detail.type === "poll" && detail.options && (
+                            <PollCard
+                              key={detail.id}
+                              postId={detail.id}
+                              options={detail.options}
+                              totalVotes={detail.totalVotes ?? 0}
+                              closed={course?.status !== "active"}
+                              csrfToken={csrfToken}
+                              onChange={(state) => {
+                                setDetail((current) =>
+                                  current?.id === detail.id && !current.deleted
+                                    ? { ...current, ...state }
+                                    : current,
+                                );
+                                setItems((current) =>
+                                  current.map((item) =>
+                                    item.id === detail.id
+                                      ? { ...item, ...state }
+                                      : item,
+                                  ),
+                                );
+                              }}
+                            />
+                          )}
                           <AttachmentManager
                             kind="post"
                             parentId={detail.id}
@@ -2161,12 +2546,17 @@ function DiscussionContent({
                         role={role}
                         courseStatus={course?.status}
                         csrfToken={csrfToken}
+                        onActivity={() => void refreshFollowing(detail.id)}
                       />
                     )}
                     {postView === "posts" && (
                       <SessionsPanel
                         courseId={courseId}
                         postId={detail.id}
+                        tags={detail.tags}
+                        onLoaded={(sessions) =>
+                          setPostSessions({ postId: detail.id, sessions })
+                        }
                         courseStatus={course?.status}
                         csrfToken={csrfToken}
                         onOpen={(sessionId) =>

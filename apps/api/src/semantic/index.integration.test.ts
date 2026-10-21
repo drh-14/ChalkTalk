@@ -797,4 +797,85 @@ integration("semantic post indexing", () => {
     expect(await worker.runOnce()).toBe(true);
     expect(await index.healthy()).toBe(true);
   });
+
+  it("keeps poll writes, stale indexing jobs and backfill outside semantic ownership", async () => {
+    await pool.query(
+      "UPDATE course_memberships SET role='instructor' WHERE course_id=$1 AND user_id=$2",
+      [courseId, userId],
+    );
+    const provider = {
+      embedMany: vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0])),
+    };
+    const index = new SemanticIndex(pool, config, provider);
+    const poll = await new PostService(pool, undefined, index).create(
+      courseId,
+      userId,
+      {
+        type: "poll",
+        title: "Instrument ballot",
+        bodyMarkdown: "Choose a device",
+        options: ["Alpha", "Beta"],
+      },
+    );
+    expect(
+      (await pool.query("SELECT 1 FROM jobs WHERE kind='index_post'")).rowCount,
+    ).toBe(0);
+    expect(await index.enqueue(pool, poll.value.id)).toBe(false);
+    expect(await index.indexPost(poll.value.id)).toBe(false);
+    expect(await index.queueBackfillOne()).toBe(false);
+    expect(provider.embedMany).not.toHaveBeenCalled();
+    await pool.query(
+      "INSERT INTO semantic_post_catchup(post_id,generation) VALUES($1,$2)",
+      [poll.value.id, config.generation],
+    );
+    await pool.query(
+      `INSERT INTO jobs(id,kind,payload,deduplication_key,last_error,status) SELECT $1,'index_post',$2,p.id::text||':'||$3||':'||${POST_REVISION_SQL},'obsolete poll failure','dead' FROM posts p WHERE p.id=$4`,
+      [
+        uuidv7(),
+        JSON.stringify({
+          postId: poll.value.id,
+          generation: config.generation,
+        }),
+        config.generation,
+        poll.value.id,
+      ],
+    );
+    expect(await index.healthy()).toBe(true);
+    expect(await index.queueBackfillOne()).toBe(false);
+    await pool.query(
+      "UPDATE jobs SET status='queued',last_error=NULL WHERE kind='index_post'",
+    );
+    const worker = new JobWorker(
+      pool,
+      "poll-filter-worker",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      index,
+    );
+    expect(await worker.runOnce()).toBe(true);
+    expect(provider.embedMany).not.toHaveBeenCalled();
+    expect(
+      (
+        await pool.query("SELECT 1 FROM post_embeddings WHERE post_id=$1", [
+          poll.value.id,
+        ])
+      ).rowCount,
+    ).toBe(0);
+    const noKey = await new PostService(pool).create(courseId, userId, {
+      type: "poll",
+      title: "No-key ballot",
+      bodyMarkdown: "Choose again",
+      options: ["One", "Two"],
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT 1 FROM semantic_post_catchup WHERE post_id=$1",
+          [noKey.value.id],
+        )
+      ).rowCount,
+    ).toBe(0);
+  });
 });

@@ -293,8 +293,18 @@ integration("collaboration session HTTP contract", () => {
       expect(invited.status).toBe(200);
       expect(invited.headers.etag).toBe('"v2"');
       expect(invited.body.data.participants).toEqual([
-        { userId: as("alice"), displayName: "alice", role: "creator" },
-        { userId: as("bob"), displayName: "bob", role: "invitee" },
+        {
+          userId: as("alice"),
+          displayName: "alice",
+          role: "creator",
+          permission: "edit",
+        },
+        {
+          userId: as("bob"),
+          displayName: "bob",
+          role: "invitee",
+          permission: "edit",
+        },
       ]);
       const again = await invite("tim", session.id, as("bob"));
       expect(again.body.data.participants).toHaveLength(2);
@@ -525,10 +535,15 @@ integration("collaboration session HTTP contract", () => {
         documentId: `collaboration-session:${session.id}`,
         sessionStatus: "active",
         content: "",
+        whiteboard: [],
       });
       await pool.query(
-        "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,persisted_at) VALUES ($1,$2,'print(1)','2026-09-20T14:31:58Z')",
-        [session.id, Buffer.from([0, 0])],
+        "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,whiteboard_projection,persisted_at) VALUES ($1,$2,'print(1)',$3,'2026-09-20T14:31:58Z')",
+        [
+          session.id,
+          Buffer.from([0, 0]),
+          JSON.stringify([{ id: "r1", type: "rectangle", index: "a0" }]),
+        ],
       );
       const saved = await get(
         "tim",
@@ -537,6 +552,7 @@ integration("collaboration session HTTP contract", () => {
       expect(saved.headers["cache-control"]).toBe("no-store");
       expect(saved.body.data).toMatchObject({
         content: "print(1)",
+        whiteboard: [{ id: "r1", type: "rectangle", index: "a0" }],
         persistedAt: "2026-09-20T14:31:58.000Z",
       });
       expect(typeof saved.body.data.capturedAt).toBe("string");
@@ -548,6 +564,350 @@ integration("collaboration session HTTP contract", () => {
           )
         ).status,
       ).toBe(404);
+    });
+  });
+
+  describe("invitations and the viewer's own sessions", () => {
+    const jobsFor = async (sessionId: string) =>
+      (
+        await pool.query<{
+          payload: Record<string, string>;
+          deduplication_key: string;
+        }>(
+          "SELECT payload,deduplication_key FROM jobs WHERE kind='send_collaboration_invitation_email' AND payload->>'sessionId'=$1 ORDER BY created_at",
+          [sessionId],
+        )
+      ).rows;
+
+    it("queues one invitation email per new invitation", async () => {
+      const session = await started("alice");
+      expect(await jobsFor(session.id)).toEqual([]);
+      expect((await invite("alice", session.id, as("tim"))).status).toBe(200);
+      const [first, ...rest] = await jobsFor(session.id);
+      expect(rest).toEqual([]);
+      expect(first!.payload).toEqual({
+        sessionId: session.id,
+        inviteeUserId: as("tim"),
+        inviterUserId: as("alice"),
+      });
+      const invited = await pool.query<{ ms: string }>(
+        "SELECT floor(extract(epoch FROM created_at)*1000)::bigint AS ms FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2",
+        [session.id, as("tim")],
+      );
+      expect(first!.deduplication_key).toBe(
+        `${session.id}:${as("tim")}:${invited.rows[0]!.ms}`,
+      );
+
+      expect((await invite("alice", session.id, as("tim"))).status).toBe(200);
+      expect(await jobsFor(session.id)).toHaveLength(1);
+
+      expect(
+        (
+          await unsafe(
+            request(app(as("alice"))).delete(
+              `/api/v1/collaboration-sessions/${session.id}/participants/${as("tim")}`,
+            ),
+          )
+        ).status,
+      ).toBe(204);
+      expect((await invite("alice", session.id, as("tim"))).status).toBe(200);
+      expect(await jobsFor(session.id)).toHaveLength(2);
+    });
+
+    it("lists the viewer's own sessions across active courses", async () => {
+      await pool.query("UPDATE courses SET name='Second course' WHERE id=$1", [
+        other.courseId,
+      ]);
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'ta') ON CONFLICT DO NOTHING",
+        [other.courseId, as("tim")],
+      );
+      const here = await started("bob");
+      await invite("bob", here.id, as("tim"));
+      const elsewhere = (
+        await service.create(other.courseId, as("olga"), {
+          postId: other.postId,
+        })
+      ).value;
+      await service.invite(elsewhere.id, as("olga"), as("tim"));
+      const notMine = await started("carol");
+
+      const mine = await get(
+        "tim",
+        "/api/v1/users/me/collaboration-sessions?status=active",
+      );
+      expect(mine.status).toBe(200);
+      const ids = mine.body.data.map((item: { id: string }) => item.id);
+      expect(ids).toContain(here.id);
+      expect(ids).toContain(elsewhere.id);
+      expect(ids).not.toContain(notMine.id);
+      expect(
+        mine.body.data.find((item: { id: string }) => item.id === elsewhere.id),
+      ).toMatchObject({
+        courseId: other.courseId,
+        courseName: "Second course",
+        status: "active",
+        anchor: { postId: other.postId },
+        participants: expect.arrayContaining([
+          expect.objectContaining({ userId: as("tim"), role: "invitee" }),
+        ]),
+      });
+
+      // Paging walks the same set, newest first, with a cursor bound to it.
+      const first = await get(
+        "tim",
+        "/api/v1/users/me/collaboration-sessions?status=active&limit=1",
+      );
+      expect(first.body.data).toHaveLength(1);
+      expect(first.body.page.hasMore).toBe(true);
+      const second = await get(
+        "tim",
+        `/api/v1/users/me/collaboration-sessions?status=active&limit=1&cursor=${first.body.page.nextCursor}`,
+      );
+      expect(second.body.data[0].id).not.toBe(first.body.data[0].id);
+      expect(
+        (
+          await get(
+            "tim",
+            `/api/v1/users/me/collaboration-sessions?status=ended&cursor=${first.body.page.nextCursor}`,
+          )
+        ).status,
+      ).toBe(400);
+      expect(
+        (
+          await get(
+            "tim",
+            "/api/v1/users/me/collaboration-sessions?status=open",
+          )
+        ).status,
+      ).toBe(400);
+
+      // Ended sessions move to the ended filter.
+      const current = await get(
+        "bob",
+        `/api/v1/collaboration-sessions/${here.id}`,
+      );
+      await patch("bob", here.id, current.headers.etag!, { status: "ended" });
+      const ended = await get(
+        "tim",
+        "/api/v1/users/me/collaboration-sessions?status=ended",
+      );
+      expect(ended.body.data.map((item: { id: string }) => item.id)).toContain(
+        here.id,
+      );
+
+      // Archived courses, left courses, and deleted posts drop out.
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        other.courseId,
+      ]);
+      const archived = await get(
+        "tim",
+        "/api/v1/users/me/collaboration-sessions",
+      );
+      expect(
+        archived.body.data.map((item: { id: string }) => item.id),
+      ).not.toContain(elsewhere.id);
+      await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+        other.courseId,
+      ]);
+      const visible = async () =>
+        (
+          await get("tim", "/api/v1/users/me/collaboration-sessions")
+        ).body.data.map((item: { id: string }) => item.id);
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [other.courseId, as("tim")],
+      );
+      expect(await visible()).not.toContain(elsewhere.id);
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'ta')",
+        [other.courseId, as("tim")],
+      );
+      await service.invite(elsewhere.id, as("olga"), as("tim"));
+      expect(await visible()).toContain(elsewhere.id);
+      await pool.query(
+        "UPDATE posts SET deleted_at=now(),author_user_id=NULL,title=NULL,body_markdown=NULL WHERE id=$1",
+        [other.postId],
+      );
+      expect(await visible()).not.toContain(elsewhere.id);
+    });
+
+    it("requires a signed-in user", async () => {
+      expect(
+        (
+          await request(app(as("tim"))).get(
+            "/api/v1/users/me/collaboration-sessions",
+          )
+        ).status,
+      ).toBe(401);
+    });
+  });
+
+  describe("rate limits", () => {
+    it("limits session creation and tickets per user with Retry-After", async () => {
+      const own = await seedCourse(pool, { rita: "student" });
+      const rita = own.users.rita!;
+      const authSession = uuidv7();
+      authSessions[rita] = authSession;
+      await pool.query(
+        "INSERT INTO sessions (id,user_id,credential_hash,csrf_token_hash,expires_at) VALUES ($1,$2,$3,$3,now()+interval '1 day')",
+        [authSession, rita, Buffer.from("rita-credential-hash-padding-32b")],
+      );
+      const limited = new CollaborationSessionService(pool, {
+        webSocketUrl: "wss://app.example.edu/collaboration",
+        rateLimits: { createPerHour: 2, ticketsPerTenMinutes: 2 },
+      });
+      const limitedApp = () =>
+        createApp({
+          environment,
+          authService: {
+            session: async () => ({
+              id: authSession,
+              user: {
+                id: rita,
+                email: "rita@example.edu",
+                displayName: "Rita",
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                version: 1,
+              },
+              expiresAt: "2026-12-01T00:00:00.000Z",
+              csrfToken: "csrf",
+            }),
+          } as unknown as AuthService,
+          collaborationSessionService: limited,
+        });
+      const createAs = (key?: string) => {
+        const test = unsafe(
+          request(limitedApp()).post(
+            `/api/v1/courses/${own.courseId}/collaboration-sessions`,
+          ),
+        );
+        return (key ? test.set("Idempotency-Key", key) : test).send({
+          anchor: { postId: own.postId },
+        });
+      };
+      const count = async () =>
+        Number(
+          (
+            await pool.query(
+              "SELECT count(*) FROM collaboration_sessions WHERE created_by_user_id=$1",
+              [rita],
+            )
+          ).rows[0].count,
+        );
+
+      const first = await createAs("rita-1");
+      expect(first.status).toBe(201);
+      // A replay of the same request is not counted.
+      expect((await createAs("rita-1")).status).toBe(201);
+      expect((await createAs()).status).toBe(201);
+      const limitedCreate = await createAs();
+      expect(limitedCreate.status).toBe(429);
+      expect(limitedCreate.body.error.code).toBe("rate_limited");
+      expect(Number(limitedCreate.headers["retry-after"])).toBeGreaterThan(0);
+      expect(Number(limitedCreate.headers["retry-after"])).toBeLessThanOrEqual(
+        3600,
+      );
+      expect(await count()).toBe(2);
+
+      const ticket = () =>
+        unsafe(
+          request(limitedApp()).post(
+            `/api/v1/collaboration-sessions/${first.body.data.id}/connection-tickets`,
+          ),
+        ).send();
+      const tickets = async () =>
+        Number(
+          (
+            await pool.query(
+              "SELECT count(*) FROM collaboration_connection_tickets WHERE user_id=$1",
+              [rita],
+            )
+          ).rows[0].count,
+        );
+      expect((await ticket()).status).toBe(201);
+      expect((await ticket()).status).toBe(201);
+      const limitedTicket = await ticket();
+      expect(limitedTicket.status).toBe(429);
+      expect(limitedTicket.body.error.code).toBe("rate_limited");
+      expect(Number(limitedTicket.headers["retry-after"])).toBeLessThanOrEqual(
+        600,
+      );
+      expect(await tickets()).toBe(2);
+    });
+  });
+
+  describe("viewers", () => {
+    const inviteWith = (
+      sessionId: string,
+      userId: string,
+      permission?: unknown,
+    ) =>
+      unsafe(
+        request(app(as("alice"))).post(
+          `/api/v1/collaboration-sessions/${sessionId}/participants`,
+        ),
+      ).send(permission === undefined ? { userId } : { userId, permission });
+    const ticketFor = (name: string, sessionId: string) =>
+      unsafe(
+        request(app(as(name))).post(
+          `/api/v1/collaboration-sessions/${sessionId}/connection-tickets`,
+        ),
+      ).send();
+    const permissionOf = (
+      body: {
+        data: { participants: { userId: string; permission: string }[] };
+      },
+      userId: string,
+    ) =>
+      body.data.participants.find(
+        (participant) => participant.userId === userId,
+      )?.permission;
+
+    it("invites as editor by default or as viewer, and keeps an existing permission", async () => {
+      const session = await started("alice");
+      const editor = await inviteWith(session.id, as("bob"));
+      expect(editor.status).toBe(200);
+      expect(permissionOf(editor.body, as("bob"))).toBe("edit");
+      expect(permissionOf(editor.body, as("alice"))).toBe("edit");
+      const viewer = await inviteWith(session.id, as("carol"), "view");
+      expect(permissionOf(viewer.body, as("carol"))).toBe("view");
+      const again = await inviteWith(session.id, as("carol"), "edit");
+      expect(again.status).toBe(200);
+      expect(permissionOf(again.body, as("carol"))).toBe("view");
+      const invalid = await inviteWith(session.id, as("tim"), "admin");
+      expect(invalid.status).toBe(422);
+      expect(invalid.body.error.code).toBe("validation_failed");
+      const read = await get(
+        "alice",
+        `/api/v1/collaboration-sessions/${session.id}`,
+      );
+      expect(permissionOf(read.body, as("carol"))).toBe("view");
+    });
+
+    it("issues read tickets to viewers and write tickets to editors and staff", async () => {
+      const session = await started("alice");
+      await inviteWith(session.id, as("bob"));
+      await inviteWith(session.id, as("carol"), "view");
+      await inviteWith(session.id, as("tim"), "view");
+      const permissions: Record<string, string> = {};
+      for (const name of ["alice", "bob", "carol", "tim"]) {
+        const response = await ticketFor(name, session.id);
+        expect(response.status).toBe(201);
+        permissions[name] = response.body.data.permission;
+      }
+      expect(permissions).toEqual({
+        alice: "write",
+        bob: "write",
+        carol: "read",
+        tim: "write",
+      });
+      const stored = await pool.query<{ permission: string }>(
+        "SELECT permission FROM collaboration_connection_tickets WHERE collaboration_session_id=$1 AND user_id=$2",
+        [session.id, as("carol")],
+      );
+      expect(stored.rows.map((row) => row.permission)).toEqual(["read"]);
     });
   });
 });

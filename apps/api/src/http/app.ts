@@ -46,6 +46,7 @@ import {
   type CreateCollaborationSession,
   type UpdateCollaborationSession,
 } from "../collaboration/service.js";
+import { NotificationService } from "../notifications/service.js";
 
 import { CourseResourceService } from "../course-resources/service.js";
 
@@ -62,6 +63,7 @@ export interface AppDependencies {
   observability?: Observability;
   contentAttachmentService?: ContentAttachmentService;
   collaborationSessionService?: CollaborationSessionService;
+  notificationService?: NotificationService;
 }
 type AuthContext = {
   credential: string;
@@ -84,6 +86,8 @@ function testEnvironment(): Environment {
       resetPerEmail: 5,
       resetPerIp: 100,
       signupPerIp: 100,
+      collaborationCreatePerUser: 30,
+      collaborationTicketPerUser: 300,
     },
     observability: {
       enabled: false,
@@ -93,6 +97,7 @@ function testEnvironment(): Environment {
     collaboration: {
       port: 3100,
       publicUrl: "wss://localhost:5173/collaboration",
+      idleEndMinutes: 120,
     },
     smtp: {
       host: "localhost",
@@ -239,12 +244,22 @@ function sessionCreationBody(input: unknown): JsonObject {
 }
 
 function profileUpdateBody(input: unknown): JsonObject {
-  const body = strictBody(input, ["displayName", "emailVerificationToken"]);
+  const body = strictBody(input, [
+    "displayName",
+    "emailVerificationToken",
+    "notificationEmails",
+  ]);
   if (
     body.displayName === undefined &&
-    body.emailVerificationToken === undefined
+    body.emailVerificationToken === undefined &&
+    body.notificationEmails === undefined
   )
     throw validationError("A profile field is required");
+  if (
+    body.notificationEmails !== undefined &&
+    typeof body.notificationEmails !== "boolean"
+  )
+    throw validationError("Notification emails must be true or false");
   if (body.displayName !== undefined)
     stringWithin(body.displayName, "Display name", 1, 100);
   if (body.emailVerificationToken !== undefined)
@@ -387,24 +402,74 @@ function postTags(value: unknown): string[] | undefined {
     throw validationError("Tags are invalid");
   return names;
 }
+function pollOptions(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 10)
+    throw validationError("A poll needs 2 to 10 options");
+  const labels = value.map((item) => {
+    const label =
+      item && typeof item === "object" && !Array.isArray(item)
+        ? (item as { label?: unknown }).label
+        : undefined;
+    if (
+      typeof label !== "string" ||
+      Object.keys(item as object).some((key) => key !== "label")
+    )
+      throw validationError("Poll options are invalid");
+    const trimmed = label.trim();
+    if (!trimmed || trimmed.length > 200)
+      throw validationError("Poll option labels must be 1 to 200 characters");
+    return trimmed;
+  });
+  if (
+    new Set(labels.map((label) => label.toLowerCase())).size !== labels.length
+  )
+    throw validationError("Poll options must be distinct");
+  return labels;
+}
 function postCreateBody(value: unknown): CreatePost {
   const body = strictBody(
     value,
-    ["type", "title", "bodyMarkdown", "anonymous", "tags"],
+    [
+      "type",
+      "title",
+      "bodyMarkdown",
+      "anonymous",
+      "tags",
+      "options",
+      "announcement",
+      "private",
+    ],
     ["type", "title", "bodyMarkdown"],
   );
-  if (body.type !== "question" && body.type !== "note")
+  if (body.type !== "question" && body.type !== "note" && body.type !== "poll")
     throw validationError("Post type is invalid");
   const title = stringWithin(body.title, "Title", 1, 200);
   const bodyMarkdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
   if (body.anonymous !== undefined && typeof body.anonymous !== "boolean")
     throw validationError("Anonymous is invalid");
+  if (
+    body.type === "poll"
+      ? body.options === undefined
+      : body.options !== undefined
+  )
+    throw validationError("Only polls have options");
+  if (body.announcement !== undefined && typeof body.announcement !== "boolean")
+    throw validationError("Announcement is invalid");
+  if (body.announcement && body.type !== "note")
+    throw validationError("Only notes can be announcements");
+  if (body.announcement && body.anonymous)
+    throw validationError("Announcements cannot be anonymous");
+  if (body.private !== undefined && typeof body.private !== "boolean")
+    throw validationError("Private is invalid");
   return {
     type: body.type,
     title,
     bodyMarkdown,
     anonymous: body.anonymous as boolean | undefined,
     tags: postTags(body.tags),
+    ...(body.type === "poll" ? { options: pollOptions(body.options) } : {}),
+    ...(body.announcement ? { announcement: true } : {}),
+    ...(body.private ? { private: true } : {}),
   };
 }
 function answerCreateBody(value: unknown): CreateAnswer {
@@ -431,6 +496,8 @@ function postListQuery(query: Request["query"]): ListPosts {
     "createdBefore",
     "answered",
     "pinned",
+    "announcement",
+    "private",
     "authorRole",
     "duplicateStatus",
     "sort",
@@ -456,7 +523,12 @@ function postListQuery(query: Request["query"]): ListPosts {
   )
     throw new AuthError(400, "invalid_request", "Semantic query is invalid");
   const type = one("type");
-  if (type !== undefined && type !== "question" && type !== "note")
+  if (
+    type !== undefined &&
+    type !== "question" &&
+    type !== "note" &&
+    type !== "poll"
+  )
     throw new AuthError(400, "invalid_request", "Type is invalid");
   const rawTags =
     query.tag === undefined
@@ -501,6 +573,12 @@ function postListQuery(query: Request["query"]): ListPosts {
   const rawPinned = one("pinned");
   if (rawPinned !== undefined && rawPinned !== "true" && rawPinned !== "false")
     throw new AuthError(400, "invalid_request", "Pinned is invalid");
+  const rawAnnouncement = one("announcement");
+  if (rawAnnouncement !== undefined && rawAnnouncement !== "true")
+    throw new AuthError(400, "invalid_request", "Announcement is invalid");
+  const rawPrivate = one("private");
+  if (rawPrivate !== undefined && rawPrivate !== "true")
+    throw new AuthError(400, "invalid_request", "Private is invalid");
   const authorRole = one("authorRole");
   if (
     authorRole !== undefined &&
@@ -539,6 +617,8 @@ function postListQuery(query: Request["query"]): ListPosts {
     createdBefore,
     answered: rawAnswered === undefined ? undefined : rawAnswered === "true",
     pinned: rawPinned === undefined ? undefined : rawPinned === "true",
+    announcement: rawAnnouncement === "true" ? true : undefined,
+    private: rawPrivate === "true" ? true : undefined,
     authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
@@ -627,6 +707,7 @@ function postUpdateBody(value: unknown): UpdatePost {
     "pinned",
     "duplicateOfPostId",
     "duplicateStatus",
+    "private",
   ]);
   if (Object.keys(body).length === 0)
     throw validationError("An update field is required");
@@ -637,6 +718,8 @@ function postUpdateBody(value: unknown): UpdatePost {
     throw validationError("Anonymous is invalid");
   if (body.pinned !== undefined && typeof body.pinned !== "boolean")
     throw validationError("Pinned is invalid");
+  if (body.private !== undefined && typeof body.private !== "boolean")
+    throw validationError("Private is invalid");
   if (
     body.duplicateOfPostId !== undefined &&
     body.duplicateOfPostId !== null &&
@@ -668,6 +751,7 @@ export function createApp(
     observability,
     contentAttachmentService,
     collaborationSessionService,
+    notificationService,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -1674,7 +1758,10 @@ export function createApp(
             .send();
           return;
         }
-        response.set("ETag", postEtag(value)).json({ data: value });
+        // Following and unread are per viewer and change without a new version.
+        response
+          .set({ ETag: postEtag(value), "Cache-Control": "private, no-store" })
+          .json({ data: value });
       } catch (error) {
         next(error);
       }
@@ -1708,6 +1795,74 @@ export function createApp(
           param(request.params.postId),
           auth(response).session.user.id,
           request.header("if-match"),
+        );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const [method, following] of [
+    ["put", true],
+    ["delete", false],
+  ] as const)
+    app[method](
+      "/api/v1/posts/:postId/follow",
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          const value = await posts().setFollowing(
+            param(request.params.postId),
+            auth(response).session.user.id,
+            following,
+          );
+          response.json({ data: value });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  app.post(
+    "/api/v1/courses/:courseId/read-marks",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await posts().markCourseRead(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+        );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/posts/:postId/vote",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["optionId"], ["optionId"]);
+        const value = await posts().vote(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          stringWithin(body.optionId, "Option", 1, 255),
+        );
+        response.json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/posts/:postId/vote",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await posts().unvote(
+          param(request.params.postId),
+          auth(response).session.user.id,
         );
         response.status(204).send();
       } catch (error) {
@@ -2022,6 +2177,85 @@ export function createApp(
       }
     },
   );
+  const notifications = (): NotificationService => {
+    if (!notificationService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Notification service is unavailable",
+      );
+    return notificationService;
+  };
+  app.get(
+    "/api/v1/users/me/notifications/unread-count",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response.json({
+          data: await notifications().unreadCount(current.session.user.id),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/users/me/notifications",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { limit, cursor } = listQuery(request.query);
+        const rawUnread = request.query.unread;
+        if (rawUnread !== undefined && rawUnread !== "true")
+          throw new AuthError(400, "invalid_request", "Filter is invalid");
+        if (
+          Object.keys(request.query).some(
+            (key) => !["limit", "cursor", "unread"].includes(key),
+          )
+        )
+          throw new AuthError(400, "invalid_request", "Filter is invalid");
+        response.json(
+          await notifications().list(current.session.user.id, {
+            limit,
+            cursor,
+            unread: rawUnread === "true",
+          }),
+        );
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/users/me/notifications/read",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const empty =
+          request.body === undefined ||
+          (typeof request.body === "object" &&
+            request.body !== null &&
+            Object.keys(request.body).length === 0);
+        let ids: string[] | undefined;
+        if (!empty) {
+          requireJsonRequest(request);
+          const body = strictBody(request.body, ["ids"], ["ids"]);
+          if (
+            !Array.isArray(body.ids) ||
+            body.ids.some((id) => typeof id !== "string")
+          )
+            throw validationError("Notification ids are invalid");
+          ids = body.ids as string[];
+        }
+        await notifications().markRead(auth(response).session.user.id, ids);
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   const collaboration = (): CollaborationSessionService => {
     if (!collaborationSessionService)
       throw new AuthError(
@@ -2074,6 +2308,26 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/users/me/collaboration-sessions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { limit, cursor, filter } = listQuery(request.query, {
+          key: "status",
+          values: ["active", "ended"],
+        });
+        const result = await collaboration().listForUser(
+          current.session.user.id,
+          { limit, cursor, status: filter as "active" | "ended" | undefined },
+        );
+        response.json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/collaboration-sessions/:sessionId",
     optionalReadOrigin,
     async (request, response, next) => {
@@ -2114,11 +2368,26 @@ export function createApp(
     async (request, response, next) => {
       try {
         requireJsonRequest(request);
-        const body = strictBody(request.body, ["userId"], ["userId"]);
+        const body = strictBody(
+          request.body,
+          ["userId", "permission"],
+          ["userId"],
+        );
+        if (
+          body.permission !== undefined &&
+          body.permission !== "edit" &&
+          body.permission !== "view"
+        )
+          throw new AuthError(
+            422,
+            "validation_failed",
+            "Permission must be edit or view",
+          );
         const value = await collaboration().invite(
           param(request.params.sessionId),
           auth(response).session.user.id,
           stringWithin(body.userId, "User", 1, 255),
+          body.permission as "edit" | "view" | undefined,
         );
         response.set("ETag", collaborationEtag(value)).json({ data: value });
       } catch (error) {

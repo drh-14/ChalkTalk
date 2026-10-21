@@ -96,3 +96,30 @@
   border-radius: var(--radius-lg);
   padding: var(--space-3) var(--space-5);
 }
+
+.course-files input[type="file"]::file-selector-button {
+  background: var(--accent);
+  color: #fffdf7;
+  border: 0;
+  border-radius: var(--radius-lg);
+  font: inherit;
+  font-weight: 700;
+  min-height: 3rem;
+  padding: var(--space-3) var(--space-5);
+  cursor: pointer;
+  transition:
+    background 0.16s,
+    transform 0.16s;
+}
+.course-files input[type="file"]:hover:not(:disabled)::file-selector-button {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+.course-files input[type="file"]:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+.course-files input[type="file"]:disabled::file-selector-button {
+  cursor: wait;
+  opacity: 0.7;
+}

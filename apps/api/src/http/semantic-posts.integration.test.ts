@@ -8,7 +8,7 @@ import { loadEnvironment } from "../config/environment.js";
 import type { AuthService } from "../auth/service.js";
 import { PostService } from "../posts/service.js";
 import { readEmbeddingConfig } from "../semantic/provider.js";
-import { SemanticIndex } from "../semantic/index.js";
+import { POST_REVISION_SQL, SemanticIndex } from "../semantic/index.js";
 import { createApp } from "./app.js";
 
 const url = process.env.TEST_VECTOR_DATABASE_URL;
@@ -32,14 +32,14 @@ const environment = loadEnvironment({
   FRONTEND_BASE_URL: "https://app.example.edu",
 });
 const cookie = "__Host-chalktalk_session=opaque";
-function app() {
+function app(viewerId = userId) {
   return createApp({
     environment,
     authService: {
       session: async () => ({
         id: uuidv7(),
         user: {
-          id: userId,
+          id: viewerId,
           email: "member@example.edu",
           displayName: "Member",
           createdAt: new Date().toISOString(),
@@ -516,5 +516,133 @@ integration("semantic post search HTTP contract", () => {
       [[source.value.id, deleted.value.id]],
     );
     expect(embeddingsAfter.rowCount).toBe(0);
+  });
+
+  it("filters private semantic matches before pagination for each current role and membership", async () => {
+    const isolatedCourse = uuidv7();
+    const [student, ta, instructor, outsider] = [
+      uuidv7(),
+      uuidv7(),
+      uuidv7(),
+      uuidv7(),
+    ];
+    for (const id of [student, ta, instructor, outsider])
+      await pool.query(
+        "INSERT INTO users(id,organization_id,email,display_name,password_hash) VALUES($1,$2,$3,'Compatibility member','x')",
+        [id, orgId, `${id}@example.edu`],
+      );
+    await pool.query(
+      "INSERT INTO courses(id,organization_id,created_by_user_id,name,join_code) VALUES($1,$2,$3,'Visibility course',$4)",
+      [isolatedCourse, orgId, userId, uuidv7().slice(0, 8)],
+    );
+    for (const [id, role] of [
+      [userId, "student"],
+      [student, "student"],
+      [ta, "ta"],
+      [instructor, "instructor"],
+    ])
+      await pool.query(
+        "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,$3)",
+        [isolatedCourse, id, role],
+      );
+    const ids = [uuidv7(), uuidv7(), uuidv7()];
+    for (const [position, id] of ids.entries()) {
+      await pool.query(
+        "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,private) VALUES($1,$2,$3,'question',$4,'Visibility-sensitive optical text',$5)",
+        [
+          id,
+          isolatedCourse,
+          userId,
+          `Optical visibility ${position}`,
+          position < 2,
+        ],
+      );
+      await index.indexPost(id);
+    }
+    const read = (viewer: string, cursor?: string) =>
+      request(app(viewer))
+        .get(
+          `/api/v1/courses/${isolatedCourse}/posts?q=spectrometer&sort=relevance&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        )
+        .set("Cookie", cookie);
+    const publicPage = await read(student);
+    expect(publicPage.status).toBe(200);
+    expect(publicPage.body.data.map((post: { id: string }) => post.id)).toEqual(
+      [ids[2]],
+    );
+    expect(publicPage.body.page).toEqual({ hasMore: false, nextCursor: null });
+    for (const viewer of [userId, ta, instructor]) {
+      const found: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const response = await read(viewer, cursor ?? undefined);
+        expect(response.status).toBe(200);
+        found.push(
+          ...response.body.data.map((post: { id: string }) => post.id),
+        );
+        cursor = response.body.page.nextCursor;
+      } while (cursor);
+      expect(found.sort()).toEqual([...ids].sort());
+    }
+    const forbidden = await read(outsider);
+    expect(forbidden.status).toBe(404);
+    expect(forbidden.body.data).toBeUndefined();
+    expect(
+      (
+        await request(app(student))
+          .get(`/api/v1/posts/${ids[0]}`)
+          .set("Cookie", cookie)
+      ).status,
+    ).toBe(404);
+    const published = await request(app(instructor))
+      .patch(`/api/v1/posts/${ids[0]}`)
+      .set("Cookie", cookie)
+      .set("Origin", "https://app.example.edu")
+      .set("X-CSRF-Token", "csrf")
+      .set("If-Match", '"v1"')
+      .send({ private: false, title: "Published optical current revision" });
+    expect(published.status).toBe(200);
+    const stale = await read(student);
+    expect(
+      stale.body.data.map((post: { id: string }) => post.id),
+    ).not.toContain(ids[0]);
+    await index.indexPost(ids[0]!);
+    const first = await read(student);
+    const second = await read(student, first.body.page.nextCursor);
+    expect(
+      [...first.body.data, ...second.body.data]
+        .map((post: { id: string }) => post.id)
+        .sort(),
+    ).toEqual([ids[0], ids[2]].sort());
+    expect(second.body.page.hasMore).toBe(false);
+    await pool.query(
+      "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+      [isolatedCourse, ta],
+    );
+    expect((await read(ta)).status).toBe(404);
+  });
+
+  it("keeps polls lexical-only and excludes stale poll vectors from semantic candidates", async () => {
+    const poll = uuidv7();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'poll','Optical ballot','Choose an instrument')",
+      [poll, courseId, userId],
+    );
+    await pool.query(
+      `INSERT INTO post_embeddings(post_id,generation,source_revision,chunk_ordinal,embedding) SELECT p.id,$2,${POST_REVISION_SQL},0,'[1,0]'::public.vector FROM posts p WHERE p.id=$1`,
+      [poll, config.generation],
+    );
+    providerMock.mockClear();
+    const lexical = await list("q=ballot&type=poll&sort=relevance");
+    expect(lexical.status).toBe(200);
+    expect(lexical.body.data.map((post: { id: string }) => post.id)).toEqual([
+      poll,
+    ]);
+    expect(providerMock).not.toHaveBeenCalled();
+    const expanded = await list("q=spectrometer&sort=relevance&limit=100");
+    expect(expanded.status).toBe(200);
+    expect(
+      expanded.body.data.map((post: { id: string }) => post.id),
+    ).not.toContain(poll);
   });
 });

@@ -2,7 +2,7 @@ import type { Post, PostListOptions } from "./client.js";
 
 export type PostStatus = {
   label: string;
-  tone: "positive" | "attention" | "neutral";
+  tone: "positive" | "attention" | "neutral" | "private";
   /** Shown as an icon, with the label kept for screen readers and hover. */
   icon?: "pin";
 };
@@ -44,6 +44,16 @@ export const POST_TYPES: Record<string, PostTypeConfig> = {
     tone: "note",
     options: { type: "note" },
   },
+  poll: {
+    label: "Poll",
+    plural: "Polls",
+    tone: "poll",
+    options: { type: "poll" },
+    extras: (post) =>
+      post.totalVotes === undefined
+        ? undefined
+        : `${post.totalVotes} ${post.totalVotes === 1 ? "vote" : "votes"}`,
+  },
 };
 export const FALLBACK_POST_TYPE: PostTypeConfig = {
   label: "Post",
@@ -57,6 +67,10 @@ export const postTypeOf = (type: string): PostTypeConfig =>
 /** A post's own type statuses followed by statuses every type shares. */
 export function postStatuses(post: Post): PostStatus[] {
   return [
+    ...(post.private ? [{ label: "Private", tone: "private" as const }] : []),
+    ...(post.announcement
+      ? [{ label: "Announcement", tone: "attention" as const }]
+      : []),
     ...(postTypeOf(post.type).statuses?.(post) ?? []),
     ...(post.pinned
       ? [{ label: "Pinned", tone: "neutral" as const, icon: "pin" as const }]
@@ -95,6 +109,18 @@ export const feedFilters = (userId?: string): FeedFilter[] => [
     label: "TA posts",
     options: { authorRole: "ta" },
     nested: true,
+  },
+  {
+    key: "announcements",
+    label: "Announcements",
+    options: { announcement: true },
+    nested: false,
+  },
+  {
+    key: "private",
+    label: "Private",
+    options: { private: true },
+    nested: false,
   },
   ...Object.entries(POST_TYPES).map(([key, type]) => ({
     key,
