@@ -1,3 +1,7 @@
+import {
+  CourseInformationService,
+  informationEtag,
+} from "../course-information/service.js";
 import { randomUUID } from "node:crypto";
 import {
   logUnexpectedError,
@@ -60,6 +64,7 @@ export interface AppDependencies {
   statisticsService?: StatisticsService;
   courseFileService?: CourseFileService;
   courseResourceService?: CourseResourceService;
+  courseInformationService?: CourseInformationService;
   observability?: Observability;
   contentAttachmentService?: ContentAttachmentService;
   collaborationSessionService?: CollaborationSessionService;
@@ -740,6 +745,7 @@ export function createApp(
     statisticsService,
     courseFileService,
     courseResourceService,
+    courseInformationService,
     observability,
     contentAttachmentService,
     collaborationSessionService,
@@ -1484,6 +1490,172 @@ export function createApp(
           auth(response).session.user.id,
         );
         response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  const information = () => {
+    if (!courseInformationService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Course information is unavailable",
+      );
+    return courseInformationService;
+  };
+  app.get(
+    "/api/v1/courses/:courseId/staff",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response.set("Cache-Control", "private, no-store").json({
+          data: await information().staff(
+            param(request.params.courseId),
+            current.session.user.id,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/staff/:userId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["contact", "location", "officeHours"],
+          ["contact", "location", "officeHours"],
+        );
+        const value = await information().updateStaff(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.userId),
+          {
+            contact: body.contact,
+            location: body.location,
+            officeHours: body.officeHours,
+          },
+          request.header("if-match"),
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/courses/:courseId/information/syllabus",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+      try {
+        const courseId = param(request.params.courseId),
+          userId = auth(response).session.user.id;
+        await information().checkSyllabusWrite(
+          courseId,
+          userId,
+          request.header("if-match"),
+        );
+        upload = await readMultipart(request);
+        const value = await information().replaceSyllabus(
+          courseId,
+          userId,
+          upload,
+          request.header("if-match"),
+          courseFiles(),
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      } finally {
+        await upload?.cleanup();
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/information/syllabus",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const value = await information().removeSyllabus(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/information",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await information().read(
+          param(request.params.courseId),
+          current.session.user.id,
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/information",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["descriptionMarkdown", "website"],
+          ["descriptionMarkdown", "website"],
+        );
+        const value = await information().update(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          {
+            descriptionMarkdown: body.descriptionMarkdown,
+            website: body.website,
+          },
+          request.header("if-match"),
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
       } catch (error) {
         next(error);
       }

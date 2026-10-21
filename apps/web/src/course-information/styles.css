@@ -1,0 +1,109 @@
+.course-resources-area {
+  max-width: 68rem;
+  margin: 0 auto;
+}
+.course-resource-tabs {
+  display: flex;
+  gap: 0.35rem;
+  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 1rem 0;
+  flex-wrap: wrap;
+}
+.course-resource-tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0.35rem 0.35rem 0 0;
+  padding: 0.8rem 1rem;
+  color: var(--ink-muted);
+}
+.course-resource-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+}
+.course-information {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+  overflow-wrap: anywhere;
+}
+.course-information header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+.course-information h2 {
+  margin: 0 0 1rem;
+}
+.course-information label {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.85rem 0;
+  font-weight: 600;
+}
+.course-information input,
+.course-information textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.course-information textarea {
+  min-height: 5rem;
+}
+.course-information-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.course-information-error {
+  color: #b42318;
+}
+.course-information-empty,
+.course-staff-role {
+  color: var(--ink-muted);
+}
+.course-information-syllabus {
+  margin-top: 2rem;
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+.course-staff-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+}
+.course-staff-card {
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #fff;
+  padding: 1.25rem;
+}
+.course-staff-card h3 {
+  margin: 0;
+}
+.course-staff-card dt {
+  font-weight: 600;
+  margin-top: 0.85rem;
+}
+.course-staff-card dd {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+}
+@media (max-width: 540px) {
+  .course-information {
+    padding: 1rem 0.75rem;
+  }
+  .course-resource-tabs {
+    gap: 0;
+    padding: 0.5rem 0.25rem 0;
+  }
+  .course-resource-tabs button {
+    padding: 0.7rem 0.6rem;
+    font-size: 0.9rem;
+  }
+}
