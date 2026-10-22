@@ -117,7 +117,7 @@ export class CourseResourceService {
     }
     const found = await this.pool.query<Row>(
       `WITH resources AS (
-    SELECT 'upload'::text AS kind,id,course_id,NULL::text AS title,NULL::text AS url,file_name,media_type,size_bytes,created_at FROM course_files WHERE course_id=$1 AND deleted_at IS NULL
+    SELECT 'upload'::text AS kind,id,course_id,NULL::text AS title,NULL::text AS url,file_name,media_type,size_bytes,created_at FROM course_files WHERE course_id=$1 AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM course_information i WHERE i.syllabus_file_id=course_files.id)
     UNION ALL
     SELECT 'link'::text AS kind,id,course_id,title,url,NULL::text,NULL::text,NULL::bigint,created_at FROM course_resource_links WHERE course_id=$1
    ) SELECT *,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_timestamp FROM resources

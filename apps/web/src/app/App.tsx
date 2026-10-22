@@ -29,7 +29,7 @@ import {
   type Course,
   type Versioned,
 } from "../courses/client.js";
-import { CourseResources } from "../course-files/views.js";
+import { CourseResourcesArea } from "../course-information/views.js";
 import { CourseStatistics } from "../statistics/views.js";
 import { Discussion } from "../posts/views.js";
 import { SessionView } from "../sessions/SessionView.js";
@@ -1082,10 +1082,10 @@ function CourseFrame({
             onNavigate={onNavigate}
           />
         ) : section === "resources" ? (
-          <CourseResources
+          <CourseResourcesArea
             key={courseId}
             courseId={courseId}
-            canUpload={
+            canEdit={
               instructor?.courseId === courseId &&
               instructor.allowed &&
               visibleCourse.data.status === "active"

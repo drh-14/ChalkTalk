@@ -85,6 +85,11 @@ async function open(
         { ETag: '"v1"' },
       );
     if (
+      url.pathname === "/api/v1/users/me/notifications/unread-count" &&
+      req.method() === "GET"
+    )
+      return respond({ data: { count: 0 } });
+    if (
       url.pathname === "/api/v1/courses/course-1/resources" &&
       req.method() === "GET"
     ) {

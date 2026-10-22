@@ -406,6 +406,14 @@ export class JobWorker {
           throw new Error(
             "Object storage and key are required to delete a course file",
           );
+        if (job.kind === "delete_course_file") {
+          const referenced = await this.pool.query(
+            "SELECT 1 FROM course_information i JOIN course_files f ON f.id=i.syllabus_file_id WHERE f.object_key=$1",
+            [job.payload.objectKey],
+          );
+          if (referenced.rowCount)
+            throw new Error("File is still referenced by course information");
+        }
         await this.objectStore.client.send(
           new DeleteObjectCommand({
             Bucket: this.objectStore.bucket,
