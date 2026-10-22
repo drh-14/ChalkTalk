@@ -211,3 +211,182 @@ it("shows no activity for a zero-filled daily series", async () => {
   expect(await screen.findByText("No activity in this period.")).toBeTruthy();
   expect(screen.queryByRole("img")).toBeNull();
 });
+
+it("downloads the selected period's daily CSV and retains statistics on export failure", async () => {
+  const createObjectURL = vi.fn(() => "blob:statistics");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.includes("/export/students"))
+      return json({ error: { message: "Export unavailable" } }, 503);
+    if (url.includes("/export/daily"))
+      return new Response("date,questions_created\r\n", {
+        headers: { "Content-Type": "text/csv" },
+      });
+    if (url.includes("/students"))
+      return json({ data: [], page: { hasMore: false, nextCursor: null } });
+    return json(summary(url.includes("period=7d") ? "7d" : "30d"));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(<CourseStatistics courseId="course_1" />);
+  await screen.findByText("Course statistics");
+  await user.selectOptions(screen.getByLabelText("Period"), "7d");
+  await screen.findByText("No students are currently enrolled.");
+  await user.click(
+    screen.getByRole("button", { name: "Download daily activity CSV" }),
+  );
+  expect(
+    fetchMock.mock.calls.some(([url]) =>
+      url.includes("/export/daily?period=7d"),
+    ),
+  ).toBe(true);
+  await user.click(
+    screen.getByRole("button", { name: "Download student roster CSV" }),
+  );
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "Export unavailable",
+  );
+  expect(screen.getByText("Course statistics")).toBeTruthy();
+});
+
+it.each(["period", "course"] as const)(
+  "ignores a failed export after the %s changes",
+  async (change) => {
+    let rejectExport!: (reason: Error) => void;
+    const pendingExport = new Promise<Response>((_resolve, reject) => {
+      rejectExport = reject;
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/export/daily")) return pendingExport;
+      if (url.includes("/students"))
+        return json({ data: [], page: { hasMore: false, nextCursor: null } });
+      return json(summary(url.includes("period=7d") ? "7d" : "30d"));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { rerender } = render(<CourseStatistics courseId="course_1" />);
+    await screen.findByText("No students are currently enrolled.");
+    await user.click(
+      screen.getByRole("button", { name: "Download daily activity CSV" }),
+    );
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Download student roster CSV",
+      }).disabled,
+    ).toBe(true);
+    if (change === "period") {
+      await user.selectOptions(screen.getByLabelText("Period"), "7d");
+    } else {
+      rerender(<CourseStatistics courseId="course_2" />);
+    }
+    await screen.findByText("No students are currently enrolled.");
+    await waitFor(() =>
+      expect(
+        screen.getByRole<HTMLButtonElement>("button", {
+          name: "Download student roster CSV",
+        }).disabled,
+      ).toBe(false),
+    );
+    await act(async () => {
+      rejectExport(new Error("Old export failed"));
+      await pendingExport.catch(() => undefined);
+    });
+    expect(screen.queryByText("Old export failed")).toBeNull();
+  },
+);
+
+it("keeps the current export busy when an older export completes", async () => {
+  let finishOldExport!: (response: Response) => void;
+  let finishNewExport!: (response: Response) => void;
+  const oldExport = new Promise<Response>((resolve) => {
+    finishOldExport = resolve;
+  });
+  const newExport = new Promise<Response>((resolve) => {
+    finishNewExport = resolve;
+  });
+  const createObjectURL = vi.fn(() => "blob:statistics");
+  vi.stubGlobal("URL", {
+    createObjectURL,
+    revokeObjectURL: vi.fn(),
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.includes("/export/daily")) return oldExport;
+      if (url.includes("/export/students")) return newExport;
+      if (url.includes("/students"))
+        return json({ data: [], page: { hasMore: false, nextCursor: null } });
+      return json(summary(url.includes("period=7d") ? "7d" : "30d"));
+    }),
+  );
+  const user = userEvent.setup();
+  render(<CourseStatistics courseId="course_1" />);
+  await screen.findByText("No students are currently enrolled.");
+  await user.click(
+    screen.getByRole("button", { name: "Download daily activity CSV" }),
+  );
+  await user.selectOptions(screen.getByLabelText("Period"), "7d");
+  await screen.findByText("No students are currently enrolled.");
+  await user.click(
+    screen.getByRole("button", { name: "Download student roster CSV" }),
+  );
+  await act(async () => {
+    finishOldExport(new Response("date\r\n"));
+    await oldExport;
+  });
+  expect(createObjectURL).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole<HTMLButtonElement>("button", {
+      name: "Download daily activity CSV",
+    }).disabled,
+  ).toBe(true);
+  await act(async () => {
+    finishNewExport(json({ error: { message: "Current export failed" } }, 503));
+    await newExport;
+  });
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "Current export failed",
+  );
+});
+
+it("does not download an old course's completed student export", async () => {
+  let finishExport!: (response: Response) => void;
+  const pendingExport = new Promise<Response>((resolve) => {
+    finishExport = resolve;
+  });
+  const createObjectURL = vi.fn(() => "blob:statistics");
+  vi.stubGlobal("URL", {
+    createObjectURL,
+    revokeObjectURL: vi.fn(),
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.includes("/export/students")) return pendingExport;
+      if (url.includes("/students"))
+        return json({ data: [], page: { hasMore: false, nextCursor: null } });
+      return json(summary("30d"));
+    }),
+  );
+  const user = userEvent.setup();
+  const { rerender } = render(<CourseStatistics courseId="course_1" />);
+  await screen.findByText("No students are currently enrolled.");
+  await user.click(
+    screen.getByRole("button", { name: "Download student roster CSV" }),
+  );
+  rerender(<CourseStatistics courseId="course_2" />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Download student roster CSV",
+      }).disabled,
+    ).toBe(false),
+  );
+  await act(async () => {
+    finishExport(new Response("user_id,display_name\r\n"));
+    await pendingExport;
+  });
+  expect(createObjectURL).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+});

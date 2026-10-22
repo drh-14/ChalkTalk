@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  downloadStatisticsCsv,
   getStudents,
   getSummary,
   type Period,
@@ -30,6 +31,8 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
   const [loading, setLoading] = useState(true);
   const [moreLoading, setMoreLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [exportError, setExportError] = useState<string>();
+  const [exporting, setExporting] = useState<"daily" | "students">();
   const requestVersion = useRef(0);
   useEffect(() => {
     const versionRef = requestVersion;
@@ -38,6 +41,8 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
     setLoading(true);
     setMoreLoading(false);
     setError(undefined);
+    setExportError(undefined);
+    setExporting(undefined);
     setSummary(undefined);
     setStudents([]);
     setCursor(null);
@@ -79,6 +84,23 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
       if (version === requestVersion.current) setMoreLoading(false);
     }
   }
+  async function download(kind: "daily" | "students") {
+    const version = requestVersion.current;
+    setExportError(undefined);
+    setExporting(kind);
+    try {
+      await downloadStatisticsCsv(
+        courseId,
+        period,
+        kind,
+        () => version === requestVersion.current,
+      );
+    } catch (caught) {
+      if (version === requestVersion.current) setExportError(asMessage(caught));
+    } finally {
+      if (version === requestVersion.current) setExporting(undefined);
+    }
+  }
   const max = Math.max(
     1,
     ...(summary?.dailyActivity.map(
@@ -109,6 +131,27 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
           </select>
         </label>
       </div>
+      <div className="statistics-exports">
+        <button
+          className="button"
+          disabled={!!exporting}
+          onClick={() => void download("daily")}
+        >
+          Download daily activity CSV
+        </button>
+        <button
+          className="button"
+          disabled={!!exporting}
+          onClick={() => void download("students")}
+        >
+          Download student roster CSV
+        </button>
+      </div>
+      {exportError && (
+        <p className="form-message error" role="alert">
+          {exportError}
+        </p>
+      )}
       <p className="statistics-note">
         Recorded views begin when course statistics is enabled. Earlier view
         counts may be incomplete.
