@@ -2360,3 +2360,122 @@ it("retains current attachments when an independent answer draft explicitly over
   expect(screen.getByRole("img", { name: "diagram.png" })).toBeTruthy();
   expect(screen.getByRole("link", { name: "proof.docx" })).toBeTruthy();
 });
+
+it("lets staff resolve and reopen a discussion and reports the change", async () => {
+  let resolved = false;
+  const calls: { url: string; init?: RequestInit }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/resolution")) {
+        resolved = init?.method === "PUT";
+        return json({ data: followup({ resolved, canResolve: true }) });
+      }
+      if (url.endsWith("/answers")) return answers([]);
+      return discussions([followup({ resolved, canResolve: true })]);
+    }),
+  );
+  const onActivity = vi.fn();
+  const user = userEvent.setup();
+  render(<QuestionResponses {...props} role="ta" onActivity={onActivity} />);
+  const status = await screen.findByRole("group", {
+    name: "Discussion status",
+  });
+  const open = within(status).getByRole("button", { name: "Unresolved" });
+  const done = within(status).getByRole("button", { name: "Resolved" });
+  expect(open.getAttribute("aria-pressed")).toBe("true");
+  await user.click(done);
+  await waitFor(() => expect(done.getAttribute("aria-pressed")).toBe("true"));
+  const put = calls.find((call) => call.init?.method === "PUT")!;
+  expect(put.url).toBe("/api/v1/followups/f1/resolution");
+  expect(put.init?.headers).toMatchObject({ "X-CSRF-Token": "csrf" });
+  expect(onActivity).toHaveBeenCalledTimes(1);
+  await user.click(open);
+  await waitFor(() => expect(open.getAttribute("aria-pressed")).toBe("true"));
+  expect(calls.some((call) => call.init?.method === "DELETE")).toBe(true);
+  expect(onActivity).toHaveBeenCalledTimes(2);
+});
+
+it("shows a read-only status to members who cannot resolve, and none on replies", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/answers")) return answers([]);
+      if (url.endsWith("/replies"))
+        return discussions([
+          followup({ id: "f2", parentId: "f1", bodyMarkdown: "A reply" }),
+        ]);
+      return discussions([
+        followup({ resolved: true, canResolve: false, replyCount: 1 }),
+      ]);
+    }),
+  );
+  render(<QuestionResponses {...props} />);
+  const root = await screen.findByRole("article", {
+    name: "Followup by Ada Lovelace",
+  });
+  expect(screen.queryByRole("group", { name: "Discussion status" })).toBeNull();
+  expect(root.querySelector(".discussion-status")?.textContent).toBe(
+    "Resolved",
+  );
+  await userEvent
+    .setup()
+    .click(within(root).getByRole("button", { name: "Show 1 replies" }));
+  await within(root).findByText("A reply");
+  expect(root.querySelectorAll(".discussion-status")).toHaveLength(1);
+});
+
+it("shows a resolved discussion as unresolved after a nested reply", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && url.endsWith("/replies"))
+        return json(
+          {
+            data: followup({
+              id: "f3",
+              parentId: "f2",
+              bodyMarkdown: "Still stuck",
+            }),
+          },
+          201,
+        );
+      if (url.endsWith("/answers")) return answers([]);
+      if (url.endsWith("/f1/replies"))
+        return discussions([
+          followup({ id: "f2", parentId: "f1", bodyMarkdown: "Try this" }),
+        ]);
+      if (url.endsWith("/replies")) return discussions([]);
+      return discussions([
+        followup({ resolved: true, canResolve: true, replyCount: 1 }),
+      ]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(<QuestionResponses {...props} role="ta" />);
+  const status = await screen.findByRole("group", {
+    name: "Discussion status",
+  });
+  expect(
+    within(status)
+      .getByRole("button", { name: "Resolved" })
+      .getAttribute("aria-pressed"),
+  ).toBe("true");
+  await user.click(screen.getByRole("button", { name: "Show 1 replies" }));
+  const reply = (await screen.findByText("Try this")).closest("article")!;
+  await user.click(within(reply).getByRole("button", { name: "Reply" }));
+  await user.type(
+    within(reply).getByRole("textbox", { name: "Followup" }),
+    "Still stuck",
+  );
+  await user.click(within(reply).getByRole("button", { name: "Post reply" }));
+  await screen.findByText("Still stuck");
+  await waitFor(() =>
+    expect(
+      within(status)
+        .getByRole("button", { name: "Unresolved" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true"),
+  );
+});

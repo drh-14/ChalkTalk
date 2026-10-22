@@ -1,3 +1,4 @@
+import { CourseInformationService } from "./course-information/service.js";
 import {
   S3Client,
   HeadBucketCommand,
@@ -77,6 +78,7 @@ const app = createApp({
   statisticsService: new StatisticsService(pool),
   courseFileService: new CourseFileService(pool, s3, bucket),
   courseResourceService: new CourseResourceService(pool),
+  courseInformationService: new CourseInformationService(pool),
   contentAttachmentService: new ContentAttachmentService(pool, s3, bucket),
   notificationService: new NotificationService(pool),
   collaborationSessionService: new CollaborationSessionService(pool, {

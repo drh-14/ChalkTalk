@@ -3385,6 +3385,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                too_many_mentions:
+                  summary: The body mentions more than 20 people.
+                  value:
+                    error:
+                      code: too_many_mentions
+                      message: The body mentions more than 20 people.
+                      requestId: req_createPost
+                      details: []
                 private_announcement:
                   summary: An announcement cannot be private.
                   value:
@@ -3707,6 +3715,14 @@ paths:
           description: Filter question posts by answer presence.
           schema:
             type: boolean
+        - name: unresolvedFollowups
+          in: query
+          required: false
+          description: Only true is accepted; lists questions with at least one unresolved followup discussion.
+          schema:
+            type: boolean
+            enum:
+              - true
         - name: pinned
           in: query
           required: false
@@ -4078,6 +4094,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                too_many_mentions:
+                  summary: The body mentions more than 20 people.
+                  value:
+                    error:
+                      code: too_many_mentions
+                      message: The body mentions more than 20 people.
+                      requestId: req_updatePost
+                      details: []
                 post_already_public:
                   summary: A public post cannot be made private.
                   value:
@@ -5523,6 +5547,199 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  "/followups/{followupId}/resolution":
+    put:
+      tags: [Answers]
+      summary: Resolve followup discussion
+      description: Marks a root followup resolved. Idempotent; changes neither the followup's version nor the question's last activity. A new reply anywhere in the discussion reopens it.
+      operationId: resolveFollowup
+      security:
+        - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/FollowupId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: The followup with its new state; its ETag is unchanged.
+          headers:
+            ETag:
+              "$ref": "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveFollowupResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_resolveFollowup
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                permission_denied:
+                  summary: Only staff and the question's author can resolve discussions.
+                  value:
+                    error:
+                      code: permission_denied
+                      message: Only staff and the question's author can resolve discussions.
+                      requestId: req_resolveFollowup
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The followup does not exist, is deleted, or is not visible to the caller.
+                  value:
+                    error:
+                      code: not_found
+                      message: The followup does not exist, is deleted, or is not visible to the caller.
+                      requestId: req_resolveFollowup
+                      details: []
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                course_archived:
+                  summary: The course is not active.
+                  value:
+                    error:
+                      code: course_archived
+                      message: The course is not active.
+                      requestId: req_resolveFollowup
+                      details: []
+        "422":
+          description: Unprocessable Content
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_a_discussion:
+                  summary: Only a followup discussion can be resolved, not a reply.
+                  value:
+                    error:
+                      code: not_a_discussion
+                      message: Only a followup discussion can be resolved, not a reply.
+                      requestId: req_resolveFollowup
+                      details: []
+    delete:
+      tags: [Answers]
+      summary: Reopen followup discussion
+      description: Marks a root followup unresolved. Idempotent; changes neither the followup's version nor the question's last activity.
+      operationId: reopenFollowup
+      security:
+        - session_cookie: []
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/FollowupId"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: The followup with its new state; its ETag is unchanged.
+          headers:
+            ETag:
+              "$ref": "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveFollowupResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_reopenFollowup
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                permission_denied:
+                  summary: Only staff and the question's author can resolve discussions.
+                  value:
+                    error:
+                      code: permission_denied
+                      message: Only staff and the question's author can resolve discussions.
+                      requestId: req_reopenFollowup
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The followup does not exist, is deleted, or is not visible to the caller.
+                  value:
+                    error:
+                      code: not_found
+                      message: The followup does not exist, is deleted, or is not visible to the caller.
+                      requestId: req_reopenFollowup
+                      details: []
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                course_archived:
+                  summary: The course is not active.
+                  value:
+                    error:
+                      code: course_archived
+                      message: The course is not active.
+                      requestId: req_reopenFollowup
+                      details: []
+        "422":
+          description: Unprocessable Content
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_a_discussion:
+                  summary: Only a followup discussion can be resolved, not a reply.
+                  value:
+                    error:
+                      code: not_a_discussion
+                      message: Only a followup discussion can be resolved, not a reply.
+                      requestId: req_reopenFollowup
+                      details: []
   "/followups/{followupId}/upvote":
     put:
       tags: [Answers]
@@ -10240,6 +10457,83 @@ paths:
                       message: The course does not exist or is not visible to the caller.
                       requestId: req_markCourseRead
                       details: []
+  "/courses/{courseId}/mention-suggestions":
+    get:
+      tags:
+        - Notifications
+      summary: Suggest members to mention
+      description: Up to 8 current members whose display names contain q, ignoring case, prefix matches first, excluding the caller and deleted accounts. With postId, only members who can read that post. Only q and postId are accepted.
+      operationId: listMentionSuggestions
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 50
+        - name: postId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Suggested members.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    type: array
+                    maxItems: 8
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        - userId
+                        - displayName
+                        - role
+                      properties:
+                        userId:
+                          type: string
+                        displayName:
+                          type: string
+                        role:
+                          type: string
+                          enum:
+                            - student
+                            - ta
+                            - instructor
+              example:
+                data:
+                  - userId: user_456
+                    displayName: Grace Hopper
+                    role: ta
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
   "/users/me/notifications":
     get:
       tags:
@@ -12530,6 +12824,10 @@ components:
         answered:
           type: boolean
           description: Whether an active answer card exists.
+        unresolvedFollowups:
+          type: integer
+          minimum: 0
+          description: Number of active followup discussions that are unresolved.
       additionalProperties: false
       required:
         - deleted
@@ -12554,6 +12852,7 @@ components:
         - updatedAt
         - version
         - answered
+        - unresolvedFollowups
     NotePost:
       type: object
       properties:
@@ -13071,8 +13370,13 @@ components:
         upvoteCount: { type: integer, minimum: 0 }
         viewerUpvoted: { type: boolean }
         replyCount: { type: integer, minimum: 0 }
-        attachments:
-          { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        resolved:
+          type: boolean
+          description: Whether this discussion (root followup) is resolved; always false for replies.
+        canResolve:
+          type: boolean
+          description: Whether the viewer may resolve or reopen this discussion.
       required:
         [
           id,
@@ -13090,6 +13394,8 @@ components:
           viewerUpvoted,
           replyCount,
           attachments,
+          resolved,
+          canResolve,
         ]
     FollowupRead:
       $ref: "#/components/schemas/Followup"
@@ -15313,6 +15619,7 @@ components:
             - reply_created
             - announcement
             - post_published
+            - mentioned
           description: What happened on the post.
         courseId:
           type: string

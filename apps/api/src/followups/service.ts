@@ -4,6 +4,7 @@ import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import { canReadPost } from "../posts/visibility.js";
 import { recordActivity } from "../notifications/activity.js";
+import { newMentions, parseMentions } from "../notifications/mentions.js";
 import {
   hideAttachmentsForParent,
   listAttachments,
@@ -21,6 +22,7 @@ type Row = {
   body_markdown: string | null;
   anonymous: boolean;
   deleted_at: Date | null;
+  resolved_at: Date | null;
   created_order: string;
   updated_at: Date;
   version: string;
@@ -41,6 +43,10 @@ export type Followup = {
   viewerUpvoted: boolean;
   replyCount: number;
   attachments: Attachment[];
+  /** Discussions (root followups) only; always false for replies. */
+  resolved: boolean;
+  /** Whether the viewer may resolve or reopen this discussion. */
+  canResolve: boolean;
 };
 export type CreateFollowup = { bodyMarkdown: string; anonymous?: boolean };
 export type FollowupPage = {
@@ -173,6 +179,18 @@ export class FollowupService {
       );
       replyCount = Number(replies.rows[0].count);
     }
+    // Staff and the question's author may resolve an active discussion.
+    let canResolve = false;
+    if (!row.parent_followup_id && !row.deleted_at && status === "active") {
+      if (rank[role] > 0) canResolve = true;
+      else {
+        const asker = await db.query<{ author_user_id: string | null }>(
+          "SELECT author_user_id FROM posts WHERE id=$1",
+          [row.post_id],
+        );
+        canResolve = asker.rows[0]?.author_user_id === userId;
+      }
+    }
     return {
       id: row.id,
       postId: row.post_id,
@@ -194,7 +212,51 @@ export class FollowupService {
       attachments: row.deleted_at
         ? []
         : await listAttachments(db, "followup", row.id),
+      resolved: !row.parent_followup_id && row.resolved_at !== null,
+      canResolve,
     };
+  }
+
+  /** Marks a discussion resolved or unresolved without touching its revision. */
+  async setResolved(
+    id: string,
+    userId: string,
+    resolved: boolean,
+  ): Promise<Followup> {
+    return this.tx(async (db) => {
+      // Lock the question before the followup, as every followup write does.
+      const initial = await this.row(db, id);
+      const question = await this.question(db, initial.post_id, userId, true);
+      const row = await this.row(db, id, true);
+      if (row.deleted_at) throw notFound();
+      this.active(question.status);
+      if (row.parent_followup_id)
+        throw new AuthError(
+          422,
+          "not_a_discussion",
+          "Only a followup discussion can be resolved, not a reply",
+        );
+      if (rank[question.role] === 0 && question.author_user_id !== userId)
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff and the question's author can resolve discussions",
+        );
+      await db.query(
+        `UPDATE followups SET
+           resolved_at = CASE WHEN $2 THEN coalesce(resolved_at, now()) END,
+           resolved_by_user_id = CASE WHEN $2 THEN coalesce(resolved_by_user_id, $3) END
+         WHERE id=$1`,
+        [id, resolved, userId],
+      );
+      return this.project(
+        db,
+        await this.row(db, id),
+        userId,
+        question.role,
+        question.status,
+      );
+    });
   }
 
   async create(
@@ -274,6 +336,18 @@ export class FollowupService {
           input.anonymous ?? false,
         ],
       );
+      if (parentId)
+        // A new reply anywhere in a discussion reopens it.
+        await db.query(
+          `WITH RECURSIVE chain AS (
+             SELECT id,parent_followup_id FROM followups WHERE id=$1
+             UNION ALL
+             SELECT f.id,f.parent_followup_id FROM followups f JOIN chain c ON f.id=c.parent_followup_id
+           )
+           UPDATE followups SET resolved_at=NULL,resolved_by_user_id=NULL
+           WHERE id=(SELECT id FROM chain WHERE parent_followup_id IS NULL) AND resolved_at IS NOT NULL`,
+          [parentId],
+        );
       await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [postId],
@@ -284,6 +358,7 @@ export class FollowupService {
         actorId: userId,
         kind: parentId ? "reply_created" : "followup_created",
         anonymous: input.anonymous ?? false,
+        mentions: parseMentions(input.bodyMarkdown),
         follow: true,
       });
       const value = await this.project(
@@ -434,6 +509,7 @@ export class FollowupService {
           "Author or staff role is required",
         );
       this.revision(row, etag);
+      const mentions = newMentions(row.body_markdown, bodyMarkdown);
       await db.query(
         "UPDATE followups SET body_markdown=$2,updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [id, bodyMarkdown],
@@ -442,6 +518,16 @@ export class FollowupService {
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
       );
+      // Edits notify only people they newly mention.
+      if (mentions.userIds.length || mentions.staff)
+        await recordActivity(db, {
+          courseId: question.course_id,
+          postId: row.post_id,
+          actorId: userId,
+          anonymous: row.anonymous,
+          mentions,
+          follow: false,
+        });
       return this.project(
         db,
         await this.row(db, id),

@@ -10,7 +10,7 @@
 
 **Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member, which the job worker sends only while the announcement, the course, and the membership still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
 
-Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md).
+Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md). Post bodies may [mention](notifications.md) course members; creating or editing a body that mentions more than 20 people returns `422 too_many_mentions`.
 
 ## Retained deleted posts
 
@@ -224,6 +224,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
 
+`data.unresolvedFollowups` (integer, required when `type` is `question`): Number of active followup discussions that are unresolved; see [Resolving discussions](answers.md).
+
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 
 `data.options[].id` (string, required): Opaque stable poll-option identifier.
@@ -367,6 +369,8 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `answered` (boolean, optional): Filter question posts by answer presence.
 
+`unresolvedFollowups` (literal true, optional): List only questions with at least one unresolved followup discussion. Any other value returns `400 invalid_request`.
+
 `pinned` (boolean, optional): Filter by pinned state. Combine with `type` to list pinned posts of one type.
 
 `announcement` (literal true, optional): List announcements only. Any other value returns `400 invalid_request`.
@@ -450,6 +454,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data[].version` (integer, required): Revision number used to construct the resource ETag.
 
 `data[].answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+
+`data[].unresolvedFollowups` (integer, required when `type` is `question`): Number of active followup discussions that are unresolved; see [Resolving discussions](answers.md).
 
 ###### `data[].options` (list of objects, required when `type` is `poll`): Poll choices.
 
@@ -642,6 +648,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.version` (integer, required): Revision number used to construct the resource ETag.
 
 `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+
+`data.unresolvedFollowups` (integer, required when `type` is `question`): Number of active followup discussions that are unresolved; see [Resolving discussions](answers.md).
 
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 
@@ -876,6 +884,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.version` (integer, required): Revision number used to construct the resource ETag.
 
 `data.answered` (boolean, required when `type` is `question`): Whether a student or staff answer exists.
+
+`data.unresolvedFollowups` (integer, required when `type` is `question`): Number of active followup discussions that are unresolved; see [Resolving discussions](answers.md).
 
 ###### `data.options` (list of objects, required when `type` is `poll`): Poll choices.
 

@@ -175,6 +175,7 @@ export class CourseFileService {
     userId: string,
     upload: NewUpload,
     key?: string,
+    associate?: (client: PoolClient, file: CourseFile) => Promise<void>,
   ): Promise<CourseFile> {
     await this.authorizeUpload(courseId, userId, key);
     const name = basename(upload.fileName);
@@ -296,6 +297,7 @@ export class CourseFileService {
         ],
       );
       const value = project(inserted.rows[0]!);
+      await associate?.(client, value);
       if (key)
         await client.query(
           "INSERT INTO idempotency_records (scope,key,request_hash,response_status,response_body,expires_at) VALUES ($1,$2,$3,201,$4,now()+interval '24 hours')",
@@ -391,6 +393,16 @@ export class CourseFileService {
         );
       if (status !== "active")
         throw new AuthError(409, "course_archived", "Course is archived");
+      const reference = await client.query(
+        "SELECT 1 FROM course_information WHERE course_id=$1 AND syllabus_file_id=$2",
+        [courseId, fileId],
+      );
+      if (reference.rowCount)
+        throw new AuthError(
+          409,
+          "file_in_use",
+          "Remove or replace the syllabus before deleting this file",
+        );
       await client.query(
         "UPDATE course_files SET deleted_at=clock_timestamp() WHERE id=$1",
         [fileId],

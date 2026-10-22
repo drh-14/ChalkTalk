@@ -72,6 +72,14 @@ export function postStatuses(post: Post): PostStatus[] {
       ? [{ label: "Announcement", tone: "attention" as const }]
       : []),
     ...(postTypeOf(post.type).statuses?.(post) ?? []),
+    ...(post.unresolvedFollowups
+      ? [
+          {
+            label: `${post.unresolvedFollowups} unresolved`,
+            tone: "attention" as const,
+          },
+        ]
+      : []),
     ...(post.pinned
       ? [{ label: "Pinned", tone: "neutral" as const, icon: "pin" as const }]
       : []),
@@ -86,7 +94,7 @@ export type FeedFilter = {
   nested: boolean;
 };
 /** Sidebar filters: all posts, author filters, then each supported post type. */
-export const feedFilters = (userId?: string): FeedFilter[] => [
+export const feedFilters = (userId?: string, staff = false): FeedFilter[] => [
   { key: "all", label: "All posts", options: {}, nested: false },
   ...(userId
     ? [
@@ -122,6 +130,17 @@ export const feedFilters = (userId?: string): FeedFilter[] => [
     options: { private: true },
     nested: false,
   },
+  // Staff work through questions whose followup discussions still need a reply.
+  ...(staff
+    ? [
+        {
+          key: "unresolved",
+          label: "Unresolved",
+          options: { unresolvedFollowups: true as const },
+          nested: false,
+        },
+      ]
+    : []),
   ...Object.entries(POST_TYPES).map(([key, type]) => ({
     key,
     label: type.plural,

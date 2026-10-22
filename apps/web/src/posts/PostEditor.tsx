@@ -1,3 +1,8 @@
+import {
+  autocompletion,
+  completionKeymap,
+  type CompletionContext,
+} from "@codemirror/autocomplete";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import {
@@ -18,6 +23,7 @@ import {
 import katex from "katex";
 import { useEffect, useId, useRef, useState, type Ref } from "react";
 import { formatBody, type FormatAction } from "./formatting.js";
+import { mentionOptions, type MentionSource } from "./mentions.js";
 import {
   type MathAnalysis,
   type MathDiagnostic,
@@ -162,12 +168,15 @@ export function PostEditor({
   ref,
   label = "Post body",
   disabled = false,
+  mentions,
 }: {
   value: string;
   onChange: (value: string) => void;
   ref: Ref<PostEditorHandle>;
   label?: string;
   disabled?: boolean;
+  /** Suggests members after `@`; without it, @ is ordinary text. */
+  mentions?: MentionSource;
 }) {
   const diagnosticsId = useId();
   const host = useRef<HTMLDivElement>(null);
@@ -177,6 +186,8 @@ export function PostEditor({
   const worker = useRef<Worker | null>(null);
   const version = useRef(0);
   const onChangeRef = useRef(onChange);
+  const mentionsRef = useRef(mentions);
+  mentionsRef.current = mentions;
   const [diagnostics, setDiagnostics] = useState<MathDiagnostic[]>([]);
   const [status, setStatus] = useState("");
   onChangeRef.current = onChange;
@@ -247,7 +258,32 @@ export function PostEditor({
         EditorView.editable.of(!disabled),
       ]),
       history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
+      keymap.of([...completionKeymap, ...defaultKeymap, ...historyKeymap]),
+      autocompletion({
+        activateOnTyping: true,
+        icons: false,
+        override: [
+          async (context: CompletionContext) => {
+            const source = mentionsRef.current;
+            // An @ at the start of a word, followed by up to 30 name characters.
+            const typed = context.matchBefore(
+              /(?:^|(?<=[\s(]))@[\p{L}\p{N}._'-]{0,30}$/u,
+            );
+            if (!source || !typed) return null;
+            const query = typed.text.slice(1);
+            try {
+              const members = await source(query);
+              return {
+                from: typed.from,
+                options: mentionOptions(query, members),
+                filter: false,
+              };
+            } catch {
+              return null;
+            }
+          },
+        ],
+      }),
       markdown(),
       EditorView.lineWrapping,
       placeholder(

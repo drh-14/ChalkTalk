@@ -290,6 +290,7 @@ export class JobWorker {
       followup_created: ["New followup on", "posted a followup on"],
       reply_created: ["New reply on", "replied on"],
       post_published: ["Your post is now public:", "made your post public:"],
+      mentioned: ["You were mentioned on", "mentioned you on"],
     };
     const [subject, verb] = wording[row.kind] ?? ["Activity on", "posted on"];
     // The email cannot tell whether the reader may see an anonymous name.
@@ -415,6 +416,14 @@ export class JobWorker {
           throw new Error(
             "Object storage and key are required to delete a course file",
           );
+        if (job.kind === "delete_course_file") {
+          const referenced = await this.pool.query(
+            "SELECT 1 FROM course_information i JOIN course_files f ON f.id=i.syllabus_file_id WHERE f.object_key=$1",
+            [job.payload.objectKey],
+          );
+          if (referenced.rowCount)
+            throw new Error("File is still referenced by course information");
+        }
         await this.objectStore.client.send(
           new DeleteObjectCommand({
             Bucket: this.objectStore.bucket,

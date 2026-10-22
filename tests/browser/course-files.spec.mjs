@@ -85,6 +85,11 @@ async function open(
         { ETag: '"v1"' },
       );
     if (
+      url.pathname === "/api/v1/users/me/notifications/unread-count" &&
+      req.method() === "GET"
+    )
+      return respond({ data: { count: 0 } });
+    if (
       url.pathname === "/api/v1/courses/course-1/resources" &&
       req.method() === "GET"
     ) {
@@ -771,5 +776,49 @@ for (const [device, width] of [
         .getByRole("status")
         .filter({ hasText: "Keyboard notes.txt uploaded." }),
     ).toBeVisible();
+  });
+}
+
+for (const [device, width] of [
+  ["desktop", 1280],
+  ["mobile", 390],
+]) {
+  test(`resource filename gap increases ten percent on ${device}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await open(page, { role: "instructor" });
+    const picker = page.getByLabel("Choose a course file", { exact: true });
+    const check = async () => {
+      expect(
+        await picker.evaluate(
+          (input) =>
+            globalThis.getComputedStyle(input, "::file-selector-button")
+              .marginInlineEnd,
+        ),
+      ).toBe("4.4px");
+      expect(
+        await page.evaluate(
+          () =>
+            globalThis.document.documentElement.scrollWidth <=
+            globalThis.innerWidth,
+        ),
+      ).toBe(true);
+    };
+    await expect(picker).toHaveValue("");
+    await check();
+    await shot(page, `gap-${device}-empty`);
+    const name = "Long-course-lecture-notes-".repeat(7) + ".txt";
+    await picker.setInputFiles({
+      name,
+      mimeType: "text/plain",
+      buffer: Buffer.from("notes"),
+    });
+    expect(await picker.evaluate((input) => input.files[0].name)).toBe(name);
+    await expect(
+      page.getByRole("button", { name: "Upload file", exact: true }),
+    ).toBeEnabled();
+    await check();
+    await shot(page, `gap-${device}-long-filename`);
   });
 }

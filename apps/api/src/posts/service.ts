@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import { recordActivity } from "../notifications/activity.js";
+import { newMentions, parseMentions } from "../notifications/mentions.js";
 import { canReadPost, readablePost } from "./visibility.js";
 import { endCollaborationSessions } from "../collaboration/lifecycle.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
@@ -78,6 +79,8 @@ export type ListPosts = {
   announcement?: boolean;
   /** Only private posts the viewer can read. */
   private?: true;
+  /** Only questions with an unresolved followup discussion. */
+  unresolvedFollowups?: true;
   tags?: string[];
   tagMatch?: "all";
   authorId?: string;
@@ -102,6 +105,9 @@ const validation = (message: string) =>
 const STAFF = new Set<Role>(["ta", "instructor"]);
 const ANSWERED =
   "EXISTS (SELECT 1 FROM answers a WHERE a.post_id=p.id AND a.deleted_at IS NULL)";
+/** Active, unresolved followup discussions on the post aliased `p`. */
+const UNRESOLVED =
+  "FROM followups uf WHERE uf.post_id=p.id AND uf.parent_followup_id IS NULL AND uf.deleted_at IS NULL AND uf.resolved_at IS NULL";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -271,12 +277,24 @@ export class PostService {
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
       lastActivityAt: row.last_activity_at.toISOString(),
-      ...(row.type === "question" ? { answered: row.answered } : {}),
+      ...(row.type === "question"
+        ? {
+            answered: row.answered,
+            unresolvedFollowups: await this.unresolvedFollowups(db, row.id),
+          }
+        : {}),
       ...(row.type === "poll"
         ? await this.pollState(db, row.id, viewerId)
         : {}),
       ...(await this.viewerState(db, row, viewerId)),
     };
+  }
+  private async unresolvedFollowups(db: Db, postId: string) {
+    const result = await db.query<{ count: number }>(
+      `SELECT count(*)::int AS count ${UNRESOLVED.replace("uf.post_id=p.id", "uf.post_id=$1")}`,
+      [postId],
+    );
+    return result.rows[0]!.count;
   }
   /** Options with counts and the viewer's choice, plus the total. */
   private async pollState(db: Db, postId: string, viewerId: string) {
@@ -447,6 +465,8 @@ export class PostService {
         postId: id,
         actorId: userId,
         ...(body.announcement ? { kind: "announcement" as const } : {}),
+        anonymous: body.anonymous ?? false,
+        mentions: parseMentions(body.bodyMarkdown),
         follow: true,
       });
       const row = await this.row(db, id);
@@ -611,6 +631,8 @@ export class PostService {
       readablePost("p", add(userId), add(member.role)),
     ];
     if (options.private) clauses.push("p.private");
+    if (options.unresolvedFollowups)
+      clauses.push(`p.type='question' AND EXISTS (SELECT 1 ${UNRESOLVED})`);
     const possibleFuzzyTerms = (
       options.q?.match(/[\p{L}\p{N}]+/gu) ?? []
     ).filter((term) => [...term].length >= 3);
@@ -875,6 +897,10 @@ export class PostService {
           "A public post cannot be made private",
         );
       const publishing = body.private === false && row.private;
+      const mentions =
+        body.bodyMarkdown === undefined
+          ? { userIds: [], staff: false }
+          : newMentions(row.body_markdown, body.bodyMarkdown);
       const duplicate =
         body.duplicateOfPostId !== undefined ||
         body.duplicateStatus !== undefined;
@@ -966,6 +992,15 @@ export class PostService {
           publishing ? false : row.private,
         ],
       );
+      if (mentions.userIds.length || mentions.staff)
+        await recordActivity(db, {
+          courseId: row.course_id,
+          postId: id,
+          actorId: userId,
+          anonymous: body.anonymous ?? row.anonymous,
+          mentions,
+          follow: false,
+        });
       if (publishing && staff && !author && row.author_user_id)
         await recordActivity(db, {
           courseId: row.course_id,
@@ -1029,6 +1064,50 @@ export class PostService {
       [postId, row.course_id, userId, following],
     );
     return { following };
+  }
+
+  /**
+   * Members whose names contain the query, for the @mention picker. With a
+   * post, only members who can read it are suggested.
+   */
+  async mentionSuggestions(
+    courseId: string,
+    userId: string,
+    query: string,
+    postId?: string,
+  ) {
+    if (!UUID_PATTERN.test(courseId)) throw notFound();
+    const member = await this.membership(this.pool, courseId, userId);
+    let post: Row | undefined;
+    if (postId !== undefined) {
+      if (!UUID_PATTERN.test(postId)) throw notFound();
+      post = await this.row(this.pool, postId);
+      if (!post || post.course_id !== courseId || post.deleted_at)
+        throw notFound();
+      readable(post, userId, member.role);
+    }
+    // LIKE treats %, _, and the escape character itself as special.
+    const literal = query.replace(/[\\%_]/g, (match) => `\\${match}`);
+    const result = await this.pool.query<{
+      user_id: string;
+      display_name: string;
+      role: Role;
+    }>(
+      `SELECT m.user_id,u.display_name,m.role
+       FROM course_memberships m
+       JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
+       LEFT JOIN posts p ON p.id=$4
+       WHERE m.course_id=$1 AND m.user_id<>$2 AND u.display_name ILIKE $3
+         AND (p.id IS NULL OR ${readablePost("p", "m.user_id", "m.role")})
+       ORDER BY (u.display_name ILIKE $5) DESC, lower(u.display_name), m.user_id
+       LIMIT 8`,
+      [courseId, userId, `%${literal}%`, post?.id ?? null, `${literal}%`],
+    );
+    return result.rows.map((row) => ({
+      userId: row.user_id,
+      displayName: row.display_name,
+      role: row.role,
+    }));
   }
 
   /** Marks every post in the course read for the caller as of now. */

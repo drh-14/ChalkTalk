@@ -4,6 +4,7 @@ import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import { canReadPost } from "../posts/visibility.js";
 import { recordActivity } from "../notifications/activity.js";
+import { newMentions, parseMentions } from "../notifications/mentions.js";
 import {
   hideAttachmentsForParent,
   listAttachments,
@@ -284,6 +285,7 @@ export class AnswerService {
           actorId: userId,
           kind: "answer_created",
           anonymous: body.anonymous ?? false,
+          mentions: parseMentions(body.bodyMarkdown),
           follow: true,
         });
         const value = await this.project(
@@ -437,6 +439,7 @@ export class AnswerService {
       this.checkRevision(row, etag);
       if (bodyMarkdown === row.body_markdown)
         return this.project(db, row, member.role, userId);
+      const mentions = newMentions(row.body_markdown, bodyMarkdown);
       await db.query(
         "UPDATE answers SET body_markdown=$2,endorsed_at=NULL,endorsed_by_user_id=NULL,version=version+1,updated_at=statement_timestamp() WHERE id=$1",
         [answerId, bodyMarkdown],
@@ -459,6 +462,7 @@ export class AnswerService {
         actorId: userId,
         kind: "answer_edited",
         anonymous: row.anonymous,
+        mentions,
         follow: true,
       });
       return this.project(

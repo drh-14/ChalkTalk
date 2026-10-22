@@ -172,7 +172,7 @@ The ordinary migrations and PostgreSQL startup do not require pgvector. An opera
 - `id`: `uuid_v7`; primary key.
 - `user_id`: `uuid_v7`; the recipient.
 - `course_id`, `post_id`: `uuid_v7`; `(course_id, post_id)` references the post, cascading.
-- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, `announcement`, or `post_published` (staff made the recipient's private post public).
+- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, `announcement`, `post_published` (staff made the recipient's private post public), or `mentioned` (the recipient was mentioned in the content).
 - `actor_user_id`: `uuid_v7`, nullable; who acted. `actor_anonymous`: `boolean`; the actor posted anonymously, so students see "Anonymous".
 - `created_at`: `timestamptz`. `read_at`: `timestamptz`, nullable.
 - Indexes: `(user_id, created_at DESC, id DESC)` for listing, partial `(user_id)` where unread for counts, and `(post_id, user_id)` for marking the notifications of an opened post read.
@@ -271,8 +271,10 @@ The save-only migration checks nonempty historical Yjs documents in bounded page
 - `anonymous`: `boolean`.
 - `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
+- `resolved_at`: `timestamptz`, nullable; when staff or the question's author resolved the discussion. Only root followups can be resolved (`followups_resolution_root_check`), and a new reply anywhere in the discussion clears it.
+- `resolved_by_user_id`: `uuid_v7`, nullable; foreign key to `users.id`, set exactly when `resolved_at` is (`followups_resolution_pair_check`).
 
-Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`. Deleted roots or replies with children retain a bodyless tombstone; deleted leaves are excluded from ordinary reads.
+Direct followups are indexed by `(post_id, parent_followup_id, created_at, id)`. Deleted roots or replies with children retain a bodyless tombstone; deleted leaves are excluded from ordinary reads. A partial index on `(post_id)` covers active, unresolved root followups for question counts and the unresolved filter.
 
 The non-deleted answer body check retains historical empty strings from former live edits, but REST creation and saves require nonblank content. Followup and reply bodies remain nonblank REST content. Deleted rows still require `body_markdown IS NULL`.
 

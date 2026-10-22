@@ -1171,6 +1171,28 @@ To stop these emails, turn off "Email me about activity on posts I follow" in yo
       );
     });
 
+    it("emails a mentioned follower once, as a mention", async () => {
+      await fresh();
+      const { courseId, postId, studentId, taId } = await seedAnswered();
+      while (await worker.runOnce());
+      delivered.length = 0;
+      await new FollowupService(pool).create(postId, taId, {
+        bodyMarkdown: `[@Sam](mention:${studentId}) does this help?`,
+      });
+      while (await worker.runOnce());
+      expect(delivered).toEqual([
+        {
+          to: `sam-n-${sequence}@jobs.example.edu`,
+          subject: `[Biology ${sequence}] You were mentioned on "Mitosis phases"`,
+          text: `Tara TA mentioned you on "Mitosis phases" in Biology ${sequence}.
+
+https://app.example.edu/courses/${courseId}/posts/${postId}
+
+To stop these emails, turn off "Email me about activity on posts I follow" in your account settings.`,
+        },
+      ]);
+    });
+
     it("emails the author when staff make their private post public", async () => {
       await fresh();
       const { courseId, postId, taId } = await seedAnswered();

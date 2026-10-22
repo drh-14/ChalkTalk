@@ -43,6 +43,7 @@ const FILTER_VALUES = new Set([
   "tas",
   "announcements",
   "private",
+  "unresolved",
   ...Object.keys(POST_TYPES),
 ]);
 const SORTS: readonly FeedSort[] = [

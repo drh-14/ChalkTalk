@@ -11,6 +11,8 @@ These events create one notification for each other follower who is a current co
 
 When a TA or instructor makes someone's private post public, its author receives a `post_published` notification.
 
+**Mentions:** A Markdown body (post, answer, followup, or reply) mentions a member with `[@Display text](mention:<userId>)`, and `@staff` mentions every current TA and instructor. Mentions inside code spans and code blocks are ignored. Creating content sends a `mentioned` notification to each mentioned user who is a current member with an account that is not deleted, can read the post, and is not the author; editing sends one only to people the previous body did not mention. Someone who is both mentioned and a follower receives only the `mentioned` notification for that write. A body that mentions more than 20 individual users returns `422 too_many_mentions` (`@staff` counts as one). Mention notifications follow the anonymity and email rules below.
+
 An announcement creates an `announcement` notification for every other current course member. The actor is never notified of their own activity.
 
 Notifications are listed only while the caller is still a member of the course who can read the post, and the post is neither deleted nor a confirmed duplicate. Followers who can no longer read a private post, for example a TA who became a student, are not notified. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
@@ -63,7 +65,7 @@ None.
 
 `data[].id` (string, required): Opaque stable identifier.
 
-`data[].kind` (enum: answer_created, answer_edited, answer_endorsed, followup_created, reply_created, announcement, post_published, required): What happened.
+`data[].kind` (enum: answer_created, answer_edited, answer_endorsed, followup_created, reply_created, announcement, post_published, mentioned, required): What happened.
 
 `data[].courseId` (string, required): Course of the post.
 
@@ -248,6 +250,92 @@ curl --request POST '/api/v1/users/me/notifications/read' \
 ##### `422 Unprocessable Content`
 
 `validation_failed`: The ids are missing, more than 100, or not UUIDs, or the body has other fields.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+##### `503 Service Unavailable`
+
+`service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="listMentionSuggestions"></a>
+
+### **`GET /api/v1/courses/{courseId}/mention-suggestions`**
+
+Suggests course members to mention, for the editor's `@` picker.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Course member.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+#### Path parameters
+
+`courseId` (string, required, 1–255 characters): Identifies the course resource.
+
+#### Query parameters
+
+`q` (string, optional, 0–50 characters): Text the display name must contain, ignoring case. Names that start with it come first.
+
+`postId` (string, optional): Suggest only members who can read this post, which the caller must be able to read.
+
+Any other parameter returns `400 invalid_request`.
+
+**Success:** `200 OK`.
+
+**Response media:** `application/json`.
+
+#### Response body
+
+##### `data` (list of objects, required): At most 8 current members, excluding the caller and deleted accounts.
+
+`data[].userId` (string, required): Opaque stable identifier.
+
+`data[].displayName` (string, required): Visible account name.
+
+`data[].role` (enum: student, ta, instructor, required): The member's course role.
+
+#### Example request
+
+```bash
+curl '/api/v1/courses/course_123/mention-suggestions?q=gra' \
+    --header 'Accept: application/json' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session'
+```
+
+#### Example success response
+
+```json
+{
+  "data": [
+    { "userId": "user_456", "displayName": "Grace Hopper", "role": "ta" }
+  ]
+}
+```
+
+#### Errors
+
+##### `400 Bad Request`
+
+`invalid_request`: The query is too long or has unknown parameters.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `404 Not Found`
+
+`not_found`: The course does not exist or the caller is not a member, or the post is not readable.
 
 ##### `500 Internal Server Error`
 

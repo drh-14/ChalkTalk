@@ -1,3 +1,7 @@
+import {
+  CourseInformationService,
+  informationEtag,
+} from "../course-information/service.js";
 import { randomUUID } from "node:crypto";
 import {
   logUnexpectedError,
@@ -60,6 +64,7 @@ export interface AppDependencies {
   statisticsService?: StatisticsService;
   courseFileService?: CourseFileService;
   courseResourceService?: CourseResourceService;
+  courseInformationService?: CourseInformationService;
   observability?: Observability;
   contentAttachmentService?: ContentAttachmentService;
   collaborationSessionService?: CollaborationSessionService;
@@ -498,6 +503,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "pinned",
     "announcement",
     "private",
+    "unresolvedFollowups",
     "authorRole",
     "duplicateStatus",
     "sort",
@@ -579,6 +585,13 @@ function postListQuery(query: Request["query"]): ListPosts {
   const rawPrivate = one("private");
   if (rawPrivate !== undefined && rawPrivate !== "true")
     throw new AuthError(400, "invalid_request", "Private is invalid");
+  const rawUnresolved = one("unresolvedFollowups");
+  if (rawUnresolved !== undefined && rawUnresolved !== "true")
+    throw new AuthError(
+      400,
+      "invalid_request",
+      "Unresolved followups filter is invalid",
+    );
   const authorRole = one("authorRole");
   if (
     authorRole !== undefined &&
@@ -619,6 +632,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     pinned: rawPinned === undefined ? undefined : rawPinned === "true",
     announcement: rawAnnouncement === "true" ? true : undefined,
     private: rawPrivate === "true" ? true : undefined,
+    unresolvedFollowups: rawUnresolved === "true" ? true : undefined,
     authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
@@ -748,6 +762,7 @@ export function createApp(
     statisticsService,
     courseFileService,
     courseResourceService,
+    courseInformationService,
     observability,
     contentAttachmentService,
     collaborationSessionService,
@@ -1497,6 +1512,172 @@ export function createApp(
       }
     },
   );
+  const information = () => {
+    if (!courseInformationService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Course information is unavailable",
+      );
+    return courseInformationService;
+  };
+  app.get(
+    "/api/v1/courses/:courseId/staff",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response.set("Cache-Control", "private, no-store").json({
+          data: await information().staff(
+            param(request.params.courseId),
+            current.session.user.id,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/staff/:userId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["contact", "location", "officeHours"],
+          ["contact", "location", "officeHours"],
+        );
+        const value = await information().updateStaff(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.userId),
+          {
+            contact: body.contact,
+            location: body.location,
+            officeHours: body.officeHours,
+          },
+          request.header("if-match"),
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/courses/:courseId/information/syllabus",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+      try {
+        const courseId = param(request.params.courseId),
+          userId = auth(response).session.user.id;
+        await information().checkSyllabusWrite(
+          courseId,
+          userId,
+          request.header("if-match"),
+        );
+        upload = await readMultipart(request);
+        const value = await information().replaceSyllabus(
+          courseId,
+          userId,
+          upload,
+          request.header("if-match"),
+          courseFiles(),
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      } finally {
+        await upload?.cleanup();
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/information/syllabus",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const value = await information().removeSyllabus(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/information",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await information().read(
+          param(request.params.courseId),
+          current.session.user.id,
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/information",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["descriptionMarkdown", "website"],
+          ["descriptionMarkdown", "website"],
+        );
+        const value = await information().update(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          {
+            descriptionMarkdown: body.descriptionMarkdown,
+            website: body.website,
+          },
+          request.header("if-match"),
+        );
+        response
+          .set({
+            ETag: informationEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.get(
     "/api/v1/courses/:courseId/resources",
     optionalReadOrigin,
@@ -1822,6 +2003,33 @@ export function createApp(
         }
       },
     );
+  app.get(
+    "/api/v1/courses/:courseId/mention-suggestions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { q = "", postId, ...rest } = request.query;
+        if (
+          Object.keys(rest).length ||
+          typeof q !== "string" ||
+          q.length > 50 ||
+          (postId !== undefined && typeof postId !== "string")
+        )
+          throw new AuthError(400, "invalid_request", "Query is invalid");
+        response.json({
+          data: await posts().mentionSuggestions(
+            param(request.params.courseId),
+            current.session.user.id,
+            q,
+            postId as string | undefined,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.post(
     "/api/v1/courses/:courseId/read-marks",
     ...authenticatedUnsafe,
@@ -2145,6 +2353,26 @@ export function createApp(
       },
     );
   }
+  for (const [method, resolved] of [
+    ["put", true],
+    ["delete", false],
+  ] as const)
+    app[method](
+      "/api/v1/followups/:followupId/resolution",
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          const value = await followups().setResolved(
+            param(request.params.followupId),
+            auth(response).session.user.id,
+            resolved,
+          );
+          response.set("ETag", followupEtag(value)).json({ data: value });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
   app.put(
     "/api/v1/answers/:answerId/endorsement",
     ...authenticatedUnsafe,
