@@ -98,6 +98,7 @@
 }
 
 .course-files input[type="file"]::file-selector-button {
+  margin-inline-end: 4.4px;
   background: var(--accent);
   color: #fffdf7;
   border: 0;
