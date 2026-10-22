@@ -5375,7 +5375,7 @@ it("lets staff post a note as a non-anonymous announcement", async () => {
   const anonymous = screen.getByRole("checkbox", { name: "Post anonymously" });
   await user.click(anonymous);
   const announce = await screen.findByRole("checkbox", {
-    name: "Post as announcement (pinned and emailed to the class)",
+    name: "Post as announcement (pinned; email sent to subscribers)",
   });
   await user.click(announce);
   expect((anonymous as HTMLInputElement).disabled).toBe(true);
@@ -5434,7 +5434,7 @@ it("offers students neither polls nor announcements, and badges announcements", 
   await user.selectOptions(type, "note");
   expect(
     screen.queryByRole("checkbox", {
-      name: "Post as announcement (pinned and emailed to the class)",
+      name: "Post as announcement (pinned; email sent to subscribers)",
     }),
   ).toBeNull();
 });
@@ -5555,7 +5555,7 @@ it("posts privately to staff and turns off the announcement option meanwhile", a
     "note",
   );
   const announce = await screen.findByRole("checkbox", {
-    name: "Post as announcement (pinned and emailed to the class)",
+    name: "Post as announcement (pinned; email sent to subscribers)",
   });
   await user.click(announce);
   const audience = screen.getByRole("combobox", { name: "Post to" });

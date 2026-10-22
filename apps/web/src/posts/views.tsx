@@ -753,7 +753,7 @@ function Composer({
                   disabled={audience === "staff"}
                   onChange={(event) => setAnnouncement(event.target.checked)}
                 />
-                Post as announcement (pinned and emailed to the class)
+                Post as announcement (pinned; email sent to subscribers)
               </label>
             )}
             <label className="checkbox-label">

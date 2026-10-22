@@ -197,107 +197,131 @@ export class JobWorker {
   }
 
   private async sendAnnouncementEmail(job: Job): Promise<void> {
-    if (!this.emailSender || !this.frontendBaseUrl)
+    const emailSender = this.emailSender;
+    if (!emailSender || !this.frontendBaseUrl)
       throw new Error("Announcement email delivery is not configured");
     const { postId, userId } = job.payload;
     if (!postId || !userId)
       throw new Error("Announcement email job payload is invalid");
-    // Sends only while the announcement stands and the recipient is a member.
-    const found = await this.pool.query<{
-      title: string;
-      body_markdown: string;
-      course_id: string;
-      course_name: string;
-      author_name: string;
-      email: string;
-    }>(
-      `SELECT p.title,p.body_markdown,p.course_id,c.name AS course_name,
+    await this.transaction(async (client) => {
+      const claimed = await client.query(
+        "SELECT id FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
+        [job.id, this.workerId, job.attempts],
+      );
+      if (!claimed.rows[0]) return;
+      // Sends only while the announcement stands and the recipient is a member.
+      const found = await client.query<{
+        title: string;
+        body_markdown: string;
+        course_id: string;
+        course_name: string;
+        author_name: string;
+        email: string;
+      }>(
+        `SELECT p.title,p.body_markdown,p.course_id,c.name AS course_name,
               author.display_name AS author_name,recipient.email
        FROM posts p
        JOIN courses c ON c.id=p.course_id AND c.status='active'
        JOIN users author ON author.id=p.author_user_id
-       JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
+       JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2 AND m.announcement_emails
        JOIN users recipient ON recipient.id=$2 AND recipient.deleted_at IS NULL
        WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL`,
-      [postId, userId],
-    );
-    const row = found.rows[0];
-    if (!row || job.deduplicationKey !== `${postId}:${userId}`) return;
-    const clean = (value: string) => value.replace(/\s+/g, " ").trim();
-    const limit = 2000;
-    const body =
-      row.body_markdown.length > limit
-        ? `${row.body_markdown.slice(0, limit).trimEnd()}…`
-        : row.body_markdown;
-    const url = new URL(
-      `/courses/${encodeURIComponent(row.course_id)}/posts/${encodeURIComponent(postId)}`,
-      this.frontendBaseUrl,
-    ).toString();
-    await this.emailSender.send({
-      to: row.email,
-      subject: `[${clean(row.course_name)}] ${clean(row.title)}`,
-      text: `${clean(row.author_name)} posted an announcement in ${clean(row.course_name)}:\n\n${clean(row.title)}\n\n${body}\n\n${url}`,
+        [postId, userId],
+      );
+      const row = found.rows[0];
+      if (!row || job.deduplicationKey !== `${postId}:${userId}`) return;
+      const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+      const limit = 2000;
+      const body =
+        row.body_markdown.length > limit
+          ? `${row.body_markdown.slice(0, limit).trimEnd()}…`
+          : row.body_markdown;
+      const url = new URL(
+        `/courses/${encodeURIComponent(row.course_id)}/posts/${encodeURIComponent(postId)}`,
+        this.frontendBaseUrl,
+      ).toString();
+      await emailSender.send({
+        to: row.email,
+        subject: `[${clean(row.course_name)}] ${clean(row.title)}`,
+        text: `${clean(row.author_name)} posted an announcement in ${clean(row.course_name)}:\n\n${clean(row.title)}\n\n${body}\n\n${url}`,
+      });
+      await client.query(
+        "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1",
+        [job.id],
+      );
     });
   }
 
   private async sendNotificationEmail(job: Job): Promise<void> {
-    if (!this.emailSender || !this.frontendBaseUrl)
+    const emailSender = this.emailSender;
+    if (!emailSender || !this.frontendBaseUrl)
       throw new Error("Notification email delivery is not configured");
     const { notificationId } = job.payload;
     if (!notificationId || job.deduplicationKey !== notificationId)
       throw new Error("Notification email job payload is invalid");
-    // Sends only while the notification is unread, the post visible, and the
-    // recipient still a member who wants these emails.
-    const found = await this.pool.query<{
-      kind: string;
-      post_id: string;
-      course_id: string;
-      course_name: string;
-      title: string;
-      email: string;
-      actor_name: string | null;
-      actor_anonymous: boolean;
-    }>(
-      `SELECT n.kind,n.post_id,n.course_id,c.name AS course_name,p.title,recipient.email,
+    await this.transaction(async (client) => {
+      const claimed = await client.query(
+        "SELECT id FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
+        [job.id, this.workerId, job.attempts],
+      );
+      if (!claimed.rows[0]) return;
+      // Sends only while the notification is unread, the post visible, and the
+      // recipient still a member who wants these emails.
+      const found = await client.query<{
+        kind: string;
+        post_id: string;
+        course_id: string;
+        course_name: string;
+        title: string;
+        email: string;
+        actor_name: string | null;
+        actor_anonymous: boolean;
+      }>(
+        `SELECT n.kind,n.post_id,n.course_id,c.name AS course_name,p.title,recipient.email,
               CASE WHEN actor.deleted_at IS NULL THEN actor.display_name END AS actor_name,n.actor_anonymous
        FROM notifications n
-       JOIN users recipient ON recipient.id=n.user_id AND recipient.deleted_at IS NULL AND recipient.notification_emails
-       JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id
+       JOIN users recipient ON recipient.id=n.user_id AND recipient.deleted_at IS NULL
+       JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id AND m.activity_emails
        JOIN courses c ON c.id=n.course_id
        JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
          AND (NOT p.private OR p.author_user_id=n.user_id OR m.role IN ('ta','instructor'))
        LEFT JOIN users actor ON actor.id=n.actor_user_id
        WHERE n.id=$1 AND n.read_at IS NULL`,
-      [notificationId],
-    );
-    const row = found.rows[0];
-    if (!row) return;
-    const clean = (value: string) => value.replace(/\s+/g, " ").trim();
-    const wording: Record<string, [string, string]> = {
-      answer_created: ["New answer on", "answered"],
-      answer_edited: ["Answer updated on", "updated the answer on"],
-      answer_endorsed: ["Answer endorsed on", "endorsed the answer on"],
-      followup_created: ["New followup on", "posted a followup on"],
-      reply_created: ["New reply on", "replied on"],
-      post_published: ["Your post is now public:", "made your post public:"],
-      mentioned: ["You were mentioned on", "mentioned you on"],
-    };
-    const [subject, verb] = wording[row.kind] ?? ["Activity on", "posted on"];
-    // The email cannot tell whether the reader may see an anonymous name.
-    const actor =
-      row.actor_anonymous || !row.actor_name
-        ? "Someone"
-        : clean(row.actor_name);
-    const title = clean(row.title);
-    const course = clean(row.course_name);
-    const url = new URL(
-      `/courses/${encodeURIComponent(row.course_id)}/posts/${encodeURIComponent(row.post_id)}`,
-      this.frontendBaseUrl,
-    ).toString();
-    await this.emailSender.send({
-      to: row.email,
-      subject: `[${course}] ${subject} "${title}"`,
-      text: `${actor} ${verb} "${title}" in ${course}.\n\n${url}\n\nTo stop these emails, turn off "Email me about activity on posts I follow" in your account settings.`,
+        [notificationId],
+      );
+      const row = found.rows[0];
+      if (!row) return;
+      const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+      const wording: Record<string, [string, string]> = {
+        answer_created: ["New answer on", "answered"],
+        answer_edited: ["Answer updated on", "updated the answer on"],
+        answer_endorsed: ["Answer endorsed on", "endorsed the answer on"],
+        followup_created: ["New followup on", "posted a followup on"],
+        reply_created: ["New reply on", "replied on"],
+        post_published: ["Your post is now public:", "made your post public:"],
+        mentioned: ["You were mentioned on", "mentioned you on"],
+      };
+      const [subject, verb] = wording[row.kind] ?? ["Activity on", "posted on"];
+      // The email cannot tell whether the reader may see an anonymous name.
+      const actor =
+        row.actor_anonymous || !row.actor_name
+          ? "Someone"
+          : clean(row.actor_name);
+      const title = clean(row.title);
+      const course = clean(row.course_name);
+      const url = new URL(
+        `/courses/${encodeURIComponent(row.course_id)}/posts/${encodeURIComponent(row.post_id)}`,
+        this.frontendBaseUrl,
+      ).toString();
+      await emailSender.send({
+        to: row.email,
+        subject: `[${course}] ${subject} "${title}"`,
+        text: `${actor} ${verb} "${title}" in ${course}.\n\n${url}\n\nTo stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
+      });
+      await client.query(
+        "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1",
+        [job.id],
+      );
     });
   }
 

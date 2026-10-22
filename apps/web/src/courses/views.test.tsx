@@ -349,6 +349,62 @@ describe("course browser workflows", () => {
     expect((await screen.findByRole("status")).textContent).toBe("Copied");
   });
 
+  it("saves one per-course email switch without changing the others", async () => {
+    const own = {
+      ...student,
+      user: instructor.user,
+      emailPreferences: {
+        activityEmails: false,
+        announcementEmails: true,
+        digestEmails: true,
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: own }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]))
+      .mockResolvedValueOnce(
+        response(
+          { data: { ...own.emailPreferences, digestEmails: false } },
+          200,
+          '"v2"',
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    const digest = await screen.findByRole("checkbox", {
+      name: "Daily digest emails",
+    });
+    expect((digest as HTMLInputElement).checked).toBe(true);
+    await user.click(digest);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      `/api/v1/courses/${course.id}/members/me/email-preferences`,
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ digestEmails: false }),
+      }),
+    );
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: "Announcement emails",
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    expect((digest as HTMLInputElement).checked).toBe(false);
+  });
+
   it("shows students read-only details without a join code and offers leaving", async () => {
     vi.stubGlobal(
       "fetch",

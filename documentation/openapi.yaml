@@ -3136,6 +3136,60 @@ paths:
         - "$ref": "#/components/parameters/UserId"
         - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
+  "/courses/{courseId}/members/me/email-preferences":
+    get:
+      tags: [Course Memberships]
+      summary: Read own course email preferences
+      operationId: getCourseEmailPreferences
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: Current email preferences and membership ETag.
+          headers:
+            ETag: { "$ref": "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema:
+                {
+                  "$ref": "#/components/schemas/CourseEmailPreferencesResponse",
+                }
+        "401": { description: Authentication required }
+        "404": { description: Membership not found }
+    patch:
+      tags: [Course Memberships]
+      summary: Update own course email preferences
+      operationId: updateCourseEmailPreferences
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/Origin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { "$ref": "#/components/schemas/UpdateCourseEmailPreferences" }
+      responses:
+        "200":
+          description: Updated email preferences and membership ETag.
+          headers:
+            ETag: { "$ref": "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema:
+                {
+                  "$ref": "#/components/schemas/CourseEmailPreferencesResponse",
+                }
+        "401": { description: Authentication required }
+        "403": { description: CSRF validation failed }
+        "404": { description: Membership not found }
+        "412": { description: Membership version conflict }
+        "422": { description: Validation failed }
+        "428": { description: If-Match required }
   "/courses/{courseId}/members/me":
     delete:
       tags:
@@ -12119,7 +12173,8 @@ components:
           maxLength: 100
         notificationEmails:
           type: boolean
-          description: Whether the user is emailed about activity on posts they follow; false by default.
+          description: Legacy account activity-email choice retained for migration only; per-course membership preferences now control delivery.
+          deprecated: true
         createdAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
@@ -12334,6 +12389,9 @@ components:
             - student
             - ta
             - instructor
+        emailPreferences:
+          "$ref": "#/components/schemas/CourseEmailPreferences"
+          description: Present only when retrieving your own membership.
         createdAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
@@ -12524,7 +12582,7 @@ components:
           description: Whether staff pinned the post.
         announcement:
           type: boolean
-          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
@@ -12663,7 +12721,7 @@ components:
           description: Whether staff pinned the post.
         announcement:
           type: boolean
-          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
@@ -12793,7 +12851,7 @@ components:
           description: Whether staff pinned the post.
         announcement:
           type: boolean
-          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to the course. Always false for questions and polls.
+          description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
@@ -14502,6 +14560,29 @@ components:
       additionalProperties: false
       required:
         - data
+    CourseEmailPreferences:
+      type: object
+      properties:
+        activityEmails: { type: boolean }
+        announcementEmails: { type: boolean }
+        digestEmails: { type: boolean }
+      required: [activityEmails, announcementEmails, digestEmails]
+      additionalProperties: false
+    UpdateCourseEmailPreferences:
+      type: object
+      properties:
+        activityEmails: { type: boolean }
+        announcementEmails: { type: boolean }
+        digestEmails: { type: boolean }
+      minProperties: 1
+      additionalProperties: false
+    CourseEmailPreferencesResponse:
+      type: object
+      properties:
+        data:
+          "$ref": "#/components/schemas/CourseEmailPreferences"
+      required: [data]
+      additionalProperties: false
     MembershipResponse:
       type: object
       properties:
@@ -15034,9 +15115,6 @@ components:
           description: Single-use opaque token proving control of a replacement email address in the account's current school domain.
           minLength: 1
           maxLength: 4096
-        notificationEmails:
-          type: boolean
-          description: Turns emails about activity on followed posts on or off.
       additionalProperties: false
       minProperties: 1
     ChangePasswordRequest:
@@ -15221,7 +15299,7 @@ components:
           uniqueItems: true
         announcement:
           type: boolean
-          description: TAs and instructors only. Posts the note as an announcement, pinned and emailed to every other course member; cannot be combined with anonymous.
+          description: TAs and instructors only. Posts the note as an announcement, pinned and emailed to other course members who enable announcement emails; cannot be combined with anonymous.
           default: false
         private:
           type: boolean

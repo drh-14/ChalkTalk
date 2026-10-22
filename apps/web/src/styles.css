@@ -2085,6 +2085,32 @@ a:focus-visible {
 .account-email {
   overflow-wrap: anywhere;
 }
+.account-email-course {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  margin: var(--space-4) 0 0;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+}
+.account-email-course legend {
+  font-weight: 700;
+  padding: 0 var(--space-2);
+}
+.account-section .account-email-course .checkbox-label {
+  align-items: center;
+  display: flex;
+  font-weight: 400;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+.account-section .account-email-course input[type="checkbox"] {
+  flex: 0 0 auto;
+  height: 1rem;
+  min-height: 1rem;
+  margin: 0;
+  padding: 0;
+  width: 1rem;
+}
 .account-danger {
   border-color: #e5c7bf;
   grid-column: 1 / -1;

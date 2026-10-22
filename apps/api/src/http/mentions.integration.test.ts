@@ -176,9 +176,10 @@ integration("mentions HTTP contract", () => {
   });
 
   it("notifies all staff for @staff and queues email for those who opted in", async () => {
-    await pool.query("UPDATE users SET notification_emails=true WHERE id=$1", [
-      ids.ta,
-    ]);
+    await pool.query(
+      "UPDATE course_memberships SET activity_emails=true WHERE user_id=$1",
+      [ids.ta],
+    );
     try {
       const { id } = await question();
       const followup = await unsafe(
@@ -192,7 +193,7 @@ integration("mentions HTTP contract", () => {
       );
       expect(jobs.rows.map((row) => row.user_id)).toEqual([ids.ta]);
     } finally {
-      await pool.query("UPDATE users SET notification_emails=false");
+      await pool.query("UPDATE course_memberships SET activity_emails=false");
     }
   });
 

@@ -20,7 +20,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `display_name`: `varchar(100)`.
 - `password_hash`: `text`.
 - `deleted_at`: `timestamptz`, nullable.
-- `notification_emails`: `boolean`, default false; whether the user is emailed about activity on posts they follow.
+- `notification_emails`: `boolean`, default false; legacy account activity-email preference used to backfill per-course membership choices. It no longer controls delivery.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
 
@@ -123,6 +123,8 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `role`: `text`; `student`, `ta`, or `instructor`.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
+- `activity_emails`: `boolean`, default false; per-course activity email choice. Existing memberships inherit the legacy account choice.
+- `announcement_emails`, `digest_emails`: `boolean`, default true; independent per-course email choices. Delivery rechecks them at send time.
 
 Account deletion locks each affected `courses` row before testing instructor cardinality. Any future writer that adds, removes, or changes an instructor membership must lock the same course row first; this shared protocol prevents a concurrent mutation from deleting a course's final instructor.
 
@@ -138,7 +140,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `title`: `varchar(200)`, nullable.
 - `body_markdown`: `text`, nullable.
 - `anonymous`, `pinned`: `boolean`.
-- `announcement`: `boolean`, default false; only a non-anonymous note can be an announcement (`posts_announcement_check`). Announcements are created pinned by staff and emailed to the course; see [Create post](api/posts.md#createPost).
+- `announcement`: `boolean`, default false; only a non-anonymous note can be an announcement (`posts_announcement_check`). Announcements are created pinned by staff and emailed to current members who enable announcement emails; see [Create post](api/posts.md#createPost).
 - `private`: `boolean`, default false; readable only by the author and course staff. Announcements and polls are never private (`posts_private_check`), and a private post can become public but never the reverse. A partial index on `(course_id, last_activity_at DESC)` for active private posts serves the private filter.
 - `duplicate_of_post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
 - `duplicate_status`: `text`; `none`, `suggested`, or `confirmed`.

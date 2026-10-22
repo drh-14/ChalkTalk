@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AccountPage } from "./AccountPage.js";
 import type { Session, User } from "../auth/client.js";
@@ -26,8 +32,14 @@ function json(data: unknown, status = 200, etag = '"v1"') {
   });
 }
 
-function setup(fetchMock: ReturnType<typeof vi.fn>) {
-  vi.stubGlobal("fetch", fetchMock);
+function setup(fetchMock: ReturnType<typeof vi.fn>, courses?: unknown) {
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+    if (url === "/api/v1/courses" && courses === undefined)
+      return Promise.resolve(
+        json({ data: [], page: { nextCursor: null, hasMore: false } }),
+      );
+    return fetchMock(url, init);
+  });
   const onUserChange = vi.fn();
   const onDeleted = vi.fn();
   render(
@@ -71,33 +83,129 @@ describe("account page", () => {
     );
   });
 
-  it("turns activity emails on with the current revision", async () => {
-    const changed = { ...profile, notificationEmails: true, version: 2 };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        json({ data: { ...profile, notificationEmails: false } }),
-      )
-      .mockResolvedValueOnce(json({ data: changed }, 200, '"v2"'));
-    const { user, onUserChange } = setup(fetchMock);
+  it("directs email choices to course settings instead of a global account toggle", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: profile }));
+    setup(fetchMock);
+    await screen.findByText(profile.email);
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "Email me about activity on posts I follow",
+      }),
+    ).toBeNull();
+  });
 
-    const box = await screen.findByRole("checkbox", {
-      name: "Email me about activity on posts I follow",
+  it("loads all course pages and saves independent choices with conflicts", async () => {
+    const first = { id: "course-a", name: "Physics" };
+    const second = { id: "course-b", name: "Math" };
+    let version = 1;
+    let activity = false;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/users/me") return json({ data: profile });
+      if (url === "/api/v1/courses")
+        return json({
+          data: [first],
+          page: { nextCursor: "next", hasMore: true },
+        });
+      if (url === "/api/v1/courses?cursor=next")
+        return json({
+          data: [second],
+          page: { nextCursor: null, hasMore: false },
+        });
+      if (url.endsWith("email-preferences") && init?.method === "PATCH") {
+        if (url.includes("course-a") && version === 1) {
+          version = 2;
+          return json(
+            { error: { code: "version_conflict", message: "Stale" } },
+            412,
+          );
+        }
+        activity = true;
+        version++;
+        return json(
+          {
+            data: {
+              activityEmails: activity,
+              announcementEmails: true,
+              digestEmails: true,
+            },
+          },
+          200,
+          `"v${version}"`,
+        );
+      }
+      if (url.endsWith("email-preferences"))
+        return json(
+          {
+            data: {
+              activityEmails: activity,
+              announcementEmails: true,
+              digestEmails: true,
+            },
+          },
+          200,
+          `"v${version}"`,
+        );
+      throw new Error(`Unexpected ${url}`);
     });
-    expect((box as HTMLInputElement).checked).toBe(false);
-    await user.click(box);
-
-    expect(await screen.findByText("Activity emails on")).toBeTruthy();
-    expect((box as HTMLInputElement).checked).toBe(true);
-    expect(onUserChange).toHaveBeenLastCalledWith(changed);
-    const [, init] = fetchMock.mock.calls[1]!;
-    expect(init).toMatchObject({
-      method: "PATCH",
-      headers: expect.objectContaining({ "If-Match": '"v1"' }),
-    });
-    expect(JSON.parse(init.body as string)).toEqual({
-      notificationEmails: true,
-    });
+    const { user } = setup(fetchMock, true);
+    const physics = await screen.findByRole("group", { name: "Physics" });
+    const math = await screen.findByRole("group", { name: "Math" });
+    await waitFor(() =>
+      expect(
+        (
+          within(math).getByRole("checkbox", {
+            name: "Daily digest emails",
+          }) as HTMLInputElement
+        ).checked,
+      ).toBe(true),
+    );
+    await user.click(
+      within(physics).getByRole("checkbox", {
+        name: "Activity emails on followed posts",
+      }),
+    );
+    expect((await within(physics).findByRole("alert")).textContent).toContain(
+      "changed elsewhere",
+    );
+    expect(
+      (
+        within(physics).getByRole("checkbox", {
+          name: "Activity emails on followed posts",
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    await user.click(
+      within(physics).getByRole("checkbox", {
+        name: "Activity emails on followed posts",
+      }),
+    );
+    expect((await within(physics).findByRole("status")).textContent).toContain(
+      "Email preference saved",
+    );
+    expect(
+      (
+        within(physics).getByRole("checkbox", {
+          name: "Activity emails on followed posts",
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    expect(
+      (
+        within(math).getByRole("checkbox", {
+          name: "Activity emails on followed posts",
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/courses/course-a/members/me/email-preferences",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.objectContaining({
+          "If-Match": '"v2"',
+          "X-CSRF-Token": "csrf_token",
+        }),
+      }),
+    );
   });
 
   it("requires matching new passwords and clears the fields on success", async () => {

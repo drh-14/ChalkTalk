@@ -74,7 +74,7 @@ export async function recordActivity(
      created AS (${insert} RETURNING id,user_id)
      INSERT INTO jobs (id,kind,payload,deduplication_key)
      SELECT gen_random_uuid(),'send_notification_email',jsonb_build_object('notificationId',c.id),c.id::text
-     FROM created c JOIN users u ON u.id=c.user_id AND u.notification_emails`,
+     FROM created c JOIN course_memberships m ON m.course_id=$1 AND m.user_id=c.user_id AND m.activity_emails`,
     [
       courseId,
       postId,
@@ -117,7 +117,7 @@ async function recordMentions(
      ), emails AS (
        INSERT INTO jobs (id,kind,payload,deduplication_key)
        SELECT gen_random_uuid(),'send_notification_email',jsonb_build_object('notificationId',c.id),c.id::text
-       FROM created c JOIN users u ON u.id=c.user_id AND u.notification_emails
+       FROM created c JOIN course_memberships m ON m.course_id=$1 AND m.user_id=c.user_id AND m.activity_emails
      )
      SELECT user_id FROM created`,
     [

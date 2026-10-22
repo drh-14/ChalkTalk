@@ -189,6 +189,7 @@ integration("daily course email digest", () => {
       "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($3,$2,'student') ON CONFLICT DO NOTHING",
       [ids.physics, ids.alice, ids.chemistry],
     );
+    await pool.query("UPDATE course_memberships SET digest_emails=true");
     sender = new RecordingSender();
     digest = new DigestService(
       pool,
@@ -237,6 +238,22 @@ integration("daily course email digest", () => {
     expect(await digest.schedule(new Date("2026-10-15T00:00:00Z"))).toBe(1);
     await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
     expect(sender.messages[0]?.text).toContain("Always on");
+  });
+
+  it("honors per-course digest opt-out after schedule but before delivery", async () => {
+    await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Physics update",
+    );
+    expect(await digest.schedule(new Date("2026-10-15T00:00:00Z"))).toBe(1);
+    await pool.query(
+      "UPDATE course_memberships SET digest_emails=false WHERE course_id=$1 AND user_id=$2",
+      [ids.physics, ids.alice],
+    );
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(sender.messages).toEqual([]);
   });
 
   it("sends distinct course emails for visible external question, answer, and followup creation", async () => {
