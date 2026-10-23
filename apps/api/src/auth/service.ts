@@ -629,7 +629,6 @@ export class AuthService {
     input: {
       displayName?: unknown;
       emailVerificationToken?: unknown;
-      notificationEmails?: unknown;
     },
   ): Promise<UserProfile> {
     const session = await this.session(sessionCredential);
@@ -644,19 +643,8 @@ export class AuthService {
           ? input.displayName.trim()
           : null;
     if (
-      input.notificationEmails !== undefined &&
-      typeof input.notificationEmails !== "boolean"
-    )
-      throw new AuthError(
-        422,
-        "validation_failed",
-        "Notification emails must be true or false",
-      );
-    if (
       displayName === null ||
-      (displayName === undefined &&
-        input.emailVerificationToken === undefined &&
-        input.notificationEmails === undefined)
+      (displayName === undefined && input.emailVerificationToken === undefined)
     )
       throw new AuthError(
         422,
@@ -714,16 +702,10 @@ export class AuthService {
       }
       try {
         const updated = await client.query<UserRow>(
-          `UPDATE users SET email = $1, display_name = COALESCE($2, display_name), notification_emails = COALESCE($5, notification_emails), version = version + 1, updated_at = now()
+          `UPDATE users SET email = $1, display_name = COALESCE($2, display_name), version = version + 1, updated_at = now()
            WHERE id = $3 AND version = $4
            RETURNING id, email, display_name, password_hash, notification_emails, created_at, updated_at, version`,
-          [
-            email,
-            displayName,
-            session.user.id,
-            session.user.version,
-            input.notificationEmails ?? null,
-          ],
+          [email, displayName, session.user.id, session.user.version],
         );
         if (!updated.rows[0])
           throw new AuthError(412, "version_conflict", "Profile has changed");

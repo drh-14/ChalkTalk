@@ -8,12 +8,12 @@ Deliver an automatic email for each course with relevant previous-day discussion
 
 ### Requirement: Automatic per-course delivery and deployment cutover
 
-The system SHALL generate daily course email digests for every active member of an active course without an account preference. The first eligible activity date SHALL be the UTC date on which the database migration is deployed; the first dispatch SHALL occur at or after the next 00:00 UTC. Dates before deployment SHALL not be backfilled.
+The system SHALL generate daily course email digests for active members of active courses with digest emails enabled in their per-course preferences; there SHALL be no account-wide digest preference. The first eligible activity date SHALL be the UTC date on which the database migration is deployed; the first dispatch SHALL occur at or after the next 00:00 UTC. Dates before deployment SHALL not be backfilled.
 
 #### Scenario: First deployment day
 
 - **WHEN** the migration is deployed on October 14 UTC and qualifying activity occurs on October 14
-- **THEN** the first eligible digest is dispatched at or after 00:00 UTC October 15 for that activity, with no email for earlier dates
+- **THEN** the first eligible digest is dispatched at or after 00:00 UTC October 15 for that activity if the member's course digest preference is enabled, with no email for earlier dates
 
 #### Scenario: No profile preference
 
@@ -27,7 +27,7 @@ The system SHALL generate at most one durable digest intent per recipient, activ
 #### Scenario: Two active courses
 
 - **WHEN** another person creates qualifying content in two courses on the previous UTC date
-- **THEN** a member of both receives two course-specific emails
+- **THEN** a member of both with digest emails enabled in both courses receives two course-specific emails
 
 #### Scenario: Note-only course day
 
@@ -51,7 +51,7 @@ The system SHALL generate at most one durable digest intent per recipient, activ
 
 ### Requirement: Durable midnight dispatch and recovery
 
-The system SHALL start dispatch of eligible previous-day digests at or after 00:00 UTC. It SHALL recover eligible dates missed since deployment and retry failed SMTP sends using durable unique intents and expiring claims. Before sending, it SHALL recheck active membership, course status, and current item visibility. It SHALL record success only after SMTP acceptance. It SHALL not claim exactly-once SMTP delivery after ambiguous acceptance.
+The system SHALL start dispatch of eligible previous-day digests at or after 00:00 UTC. It SHALL recover eligible dates missed since deployment and retry failed SMTP sends using durable unique intents and expiring claims. Before sending, it SHALL recheck active membership, the course digest preference, course status, and current item visibility. It SHALL record success only after SMTP acceptance. It SHALL not claim exactly-once SMTP delivery after ambiguous acceptance.
 
 #### Scenario: API process restart
 

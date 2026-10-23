@@ -744,3 +744,35 @@ curl --request DELETE '/api/v1/courses/course_123' \
 ##### `503 Service Unavailable`
 
 `service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="courseEmailPreferences"></a>
+
+### **`GET /api/v1/courses/{courseId}/members/me/email-preferences`**
+
+Returns the authenticated current member's independent email choices for this course, and an `ETag` of the membership version. Other members cannot read these choices. A nonmember receives `404 not_found`; unauthenticated access receives `401 authentication_required`.
+
+**Success:** `200 OK`, `application/json`, `ETag: "vN"`.
+
+```json
+{
+  "data": {
+    "activityEmails": false,
+    "announcementEmails": true,
+    "digestEmails": true
+  }
+}
+```
+
+The three choices are booleans. Existing memberships preserve the former global activity-email choice; new memberships default activity off, announcement and digest on. These settings do not affect in-app notifications.
+
+### **`PATCH /api/v1/courses/{courseId}/members/me/email-preferences`**
+
+Updates one or more of `activityEmails`, `announcementEmails`, or `digestEmails` for the authenticated current member only. Request media is `application/json`. Supply the session cookie, allowed `Origin`, `X-CSRF-Token`, and current `If-Match` ETag. The response uses the same body as GET and returns the new ETag. Omitting a field leaves it unchanged. Unknown keys, non-booleans, and empty objects return `422 validation_failed`. Missing `If-Match` returns `428 precondition_required`; a stale ETag returns `412 version_conflict`; a nonmember receives `404 not_found`.
+
+```json
+{ "digestEmails": false }
+```
+
+Activity, announcement, and digest queueing use the corresponding choice. Delivery checks the latest choice again before sending: an opt-out completed before that check suppresses queued email. An activity or announcement email already in flight may still finish, and its SMTP delivery does not block the preference update.

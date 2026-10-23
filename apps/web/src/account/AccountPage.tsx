@@ -11,11 +11,112 @@ import {
   deleteAccount,
   getProfile,
   updateDisplayName,
-  updateNotificationEmails,
   type Session,
   type User,
   type VersionedProfile,
 } from "../auth/client.js";
+
+import {
+  getEmailPreferences,
+  listCourses,
+  updateEmailPreferences,
+  type Course,
+  type EmailPreferences,
+  type Versioned,
+} from "../courses/client.js";
+
+const emailChoices = [
+  ["activityEmails", "Activity emails on followed posts"],
+  ["announcementEmails", "Announcement emails"],
+  ["digestEmails", "Daily digest emails"],
+] as const;
+
+function CourseEmailSettings({
+  course,
+  csrfToken,
+}: {
+  course: Course;
+  csrfToken: string;
+}) {
+  const [preferences, setPreferences] = useState<Versioned<EmailPreferences>>();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  useEffect(() => {
+    let active = true;
+    void getEmailPreferences(course.id)
+      .then((value) => {
+        if (active) setPreferences(value);
+      })
+      .catch((caught: unknown) => {
+        if (active) setError(message(caught));
+      });
+    return () => {
+      active = false;
+    };
+  }, [course.id]);
+  async function change(key: keyof EmailPreferences, enabled: boolean) {
+    if (!preferences || pending) return;
+    setPending(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      setPreferences(
+        await updateEmailPreferences(
+          course.id,
+          { [key]: enabled },
+          csrfToken,
+          preferences.etag,
+        ),
+      );
+      setNotice("Email preference saved");
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.code === "version_conflict") {
+        try {
+          setPreferences(await getEmailPreferences(course.id));
+          setError(
+            "Your email preferences changed elsewhere. Review the current choices and try again.",
+          );
+        } catch (refreshError) {
+          setError(message(refreshError));
+        }
+      } else setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <fieldset
+      className="account-email-course"
+      disabled={pending || !preferences}
+    >
+      <legend>{course.name}</legend>
+      {!preferences && !error && (
+        <p role="status">Loading email preferences…</p>
+      )}
+      {emailChoices.map(([key, label]) => (
+        <label className="checkbox-label" key={key}>
+          <input
+            type="checkbox"
+            checked={preferences?.data[key] ?? false}
+            onChange={(event) => void change(key, event.target.checked)}
+          />
+          {label}
+        </label>
+      ))}
+      {error && (
+        <p className="form-message error" role="alert">
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p className="form-message success" role="status">
+          {notice}
+        </p>
+      )}
+    </fieldset>
+  );
+}
 
 type Props = {
   session: Session;
@@ -30,6 +131,8 @@ function message(error: unknown): string {
 }
 
 export function AccountPage({ session, onUserChange, onDeleted }: Props) {
+  const [courses, setCourses] = useState<Course[]>();
+  const [coursesError, setCoursesError] = useState<string>();
   const [profile, setProfile] = useState<VersionedProfile>();
   const [loadError, setLoadError] = useState<string>();
   const [name, setName] = useState("");
@@ -42,11 +145,6 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
   const [passwordPending, setPasswordPending] = useState(false);
   const [passwordNotice, setPasswordNotice] = useState<string>();
   const [passwordError, setPasswordError] = useState<string>();
-  const [emailsPending, setEmailsPending] = useState(false);
-  // Shown at once while saving; undefined follows the saved profile.
-  const [emailsChoice, setEmailsChoice] = useState<boolean>();
-  const [emailsNotice, setEmailsNotice] = useState<string>();
-  const [emailsError, setEmailsError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deletePending, setDeletePending] = useState(false);
@@ -70,6 +168,29 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
       active = false;
     };
   }, [onUserChange]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadCourses() {
+      try {
+        const all: Course[] = [];
+        let cursor: string | undefined;
+        do {
+          const result = await listCourses(cursor);
+          if (!active) return;
+          all.push(...result.data);
+          cursor = result.page.nextCursor ?? undefined;
+        } while (cursor);
+        if (active) setCourses(all);
+      } catch (caught) {
+        if (active) setCoursesError(message(caught));
+      }
+    }
+    void loadCourses();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (confirmDelete) deletePasswordInput.current?.focus();
@@ -111,33 +232,6 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
       else setNameError(message(error));
     } finally {
       setNamePending(false);
-    }
-  }
-
-  async function saveEmails(notificationEmails: boolean) {
-    if (!profile || emailsPending) return;
-    setEmailsPending(true);
-    setEmailsChoice(notificationEmails);
-    setEmailsError(undefined);
-    setEmailsNotice(undefined);
-    try {
-      const updated = await updateNotificationEmails(
-        notificationEmails,
-        profile.etag,
-        session.csrfToken,
-      );
-      setProfile(updated);
-      onUserChange(updated.data);
-      setEmailsNotice(
-        notificationEmails ? "Activity emails on" : "Activity emails off",
-      );
-    } catch (error) {
-      if (error instanceof ApiError && error.code === "version_conflict")
-        await refreshAfterConflict(setEmailsError);
-      else setEmailsError(message(error));
-    } finally {
-      setEmailsChoice(undefined);
-      setEmailsPending(false);
     }
   }
 
@@ -288,37 +382,33 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
               </button>
             </form>
           </section>
+
           <section
             className="account-section"
-            aria-labelledby="account-notifications-heading"
+            aria-labelledby="account-email-heading"
           >
-            <h2 id="account-notifications-heading">Notifications</h2>
+            <h2 id="account-email-heading">Course email notifications</h2>
             <p>
-              The bell always shows activity on posts you follow. You can also
-              get it by email.
+              Choose emails for each course. In-app notifications are unchanged.
             </p>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={
-                  emailsChoice ?? profile.data.notificationEmails ?? false
-                }
-                disabled={emailsPending}
-                onChange={(event) => void saveEmails(event.target.checked)}
-              />
-              Email me about activity on posts I follow
-            </label>
-            {emailsError && (
+            {!courses && !coursesError && <p role="status">Loading courses…</p>}
+            {coursesError && (
               <p className="form-message error" role="alert">
-                {emailsError}
+                {coursesError}
               </p>
             )}
-            {emailsNotice && (
-              <p className="form-message success" role="status">
-                {emailsNotice}
-              </p>
+            {courses?.length === 0 && (
+              <p>You are not enrolled in any courses.</p>
             )}
+            {courses?.map((course) => (
+              <CourseEmailSettings
+                key={course.id}
+                course={course}
+                csrfToken={session.csrfToken}
+              />
+            ))}
           </section>
+
           <section
             className="account-section"
             aria-labelledby="account-password-heading"

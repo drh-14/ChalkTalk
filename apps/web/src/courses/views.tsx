@@ -12,8 +12,10 @@ import {
   listOrganizations,
   removeMembership,
   updateCourse,
+  updateEmailPreferences,
   updateMembership,
   type Course,
+  type EmailPreferences,
   type Membership,
   type Versioned,
 } from "./client.js";
@@ -303,6 +305,8 @@ export function CourseDetail({
   const course = sharedCourse ?? localCourse;
   const setCourse = onCourseChange ?? setLocalCourse;
   const [ownMembership, setOwnMembership] = useState<Membership>();
+  const [emailPending, setEmailPending] = useState(false);
+  const [emailNotice, setEmailNotice] = useState<string>();
   const [members, setMembers] = useState<Membership[]>();
   const [membersCursor, setMembersCursor] = useState<string | null>();
   const [membersPageError, setMembersPageError] = useState<string>();
@@ -373,6 +377,43 @@ export function CourseDetail({
       refresh(true, true);
     } else setError(message(caught));
   };
+  async function changeEmailPreference(
+    key: keyof EmailPreferences,
+    enabled: boolean,
+  ) {
+    if (!ownMembership?.emailPreferences || emailPending) return;
+    setEmailPending(true);
+    setEmailNotice(undefined);
+    setError(undefined);
+    try {
+      const result = await updateEmailPreferences(
+        courseId,
+        { [key]: enabled },
+        csrfToken,
+        `"v${ownMembership.version}"`,
+      );
+      setOwnMembership({
+        ...ownMembership,
+        version: Number(result.etag.slice(2, -1)),
+        emailPreferences: result.data,
+      });
+      setEmailNotice("Email preference saved");
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.code === "version_conflict") {
+        try {
+          const latest = await getMembership(courseId, userId);
+          setOwnMembership(latest.data);
+          setError(
+            "Your email preferences changed elsewhere. Review the current choices and try again.",
+          );
+        } catch (refreshError) {
+          setError(message(refreshError));
+        }
+      } else setError(message(caught));
+    } finally {
+      setEmailPending(false);
+    }
+  }
   const instructor = ownMembership?.role === "instructor";
   const canManage = (member: Membership) =>
     instructor &&
@@ -613,6 +654,44 @@ export function CourseDetail({
           )}
         </dl>
       </section>
+      {ownMembership.emailPreferences && (
+        <section
+          className="settings-card"
+          aria-labelledby="course-email-heading"
+        >
+          <div className="section-title">
+            <h2 id="course-email-heading">Email notifications</h2>
+          </div>
+          <p>
+            Choose which emails you receive from this course. In-app
+            notifications are unchanged.
+          </p>
+          {(
+            [
+              ["activityEmails", "Activity emails on followed posts"],
+              ["announcementEmails", "Announcement emails"],
+              ["digestEmails", "Daily digest emails"],
+            ] as const
+          ).map(([key, label]) => (
+            <label className="checkbox-label" key={key}>
+              <input
+                type="checkbox"
+                checked={ownMembership.emailPreferences![key]}
+                disabled={emailPending}
+                onChange={(event) =>
+                  void changeEmailPreference(key, event.target.checked)
+                }
+              />
+              {label}
+            </label>
+          ))}
+          {emailNotice && (
+            <p className="form-message success" role="status">
+              {emailNotice}
+            </p>
+          )}
+        </section>
+      )}
       <section className="members-card" aria-labelledby="members-heading">
         <div className="section-title">
           <h2 id="members-heading">Members</h2>

@@ -923,7 +923,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         [courseId, organizationId, taId, `CS ${sequence}`],
       );
       await pool.query(
-        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'ta')",
+        "INSERT INTO course_memberships (course_id,user_id,role,activity_emails) VALUES ($1,$2,'student',true),($1,$3,'ta',false)",
         [courseId, studentId, taId],
       );
       const post = await new PostService(pool).create(courseId, studentId, {
@@ -1056,6 +1056,59 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       ]);
     });
 
+    it("does not block announcement opt-out during SMTP delivery", async () => {
+      await fresh();
+      const seeded = await seedAnnouncement();
+      let sending!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        sending = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const slowWorker = new JobWorker(
+        pool,
+        "held-announcement_emails",
+        {
+          send: async (message) => {
+            sending();
+            await held;
+            delivered.push(message);
+          },
+        },
+        "https://app.example.edu",
+      );
+      const delivery = slowWorker.runOnce();
+      await started;
+      const optOut = pool.query(
+        "UPDATE course_memberships SET announcement_emails=false WHERE course_id=$1 AND user_id=$2",
+        [seeded.courseId, seeded.studentId],
+      );
+      const completedEarly = await Promise.race([
+        optOut.then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 1_000),
+        ),
+      ]);
+      release();
+      await delivery;
+      await optOut;
+      expect(completedEarly).toBe(true);
+      expect(delivered).toHaveLength(1);
+    });
+
+    it("honors announcement opt-out after queueing", async () => {
+      await fresh();
+      const seeded = await seedAnnouncement();
+      await pool.query(
+        "UPDATE course_memberships SET announcement_emails=false WHERE course_id=$1 AND user_id=$2",
+        [seeded.courseId, seeded.studentId],
+      );
+      while (await worker.runOnce());
+      expect(delivered).toEqual([]);
+    });
+
     it("truncates a long body", async () => {
       await fresh();
       await seedAnnouncement("a".repeat(2_500));
@@ -1115,7 +1168,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         [courseId, organizationId, taId, `Biology ${sequence}`],
       );
       await pool.query(
-        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'ta')",
+        "INSERT INTO course_memberships (course_id,user_id,role,activity_emails) VALUES ($1,$2,'student',true),($1,$3,'ta',false)",
         [courseId, studentId, taId],
       );
       const post = await new PostService(pool).create(courseId, studentId, {
@@ -1142,9 +1195,62 @@ integration("JobWorker PostgreSQL lifecycle", () => {
 
 https://app.example.edu/courses/${courseId}/posts/${postId}
 
-To stop these emails, turn off "Email me about activity on posts I follow" in your account settings.`,
+To stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
         },
       ]);
+    });
+
+    it("does not block activity opt-out during SMTP delivery", async () => {
+      await fresh();
+      const seeded = await seedAnswered();
+      let sending!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        sending = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const slowWorker = new JobWorker(
+        pool,
+        "held-activity_emails",
+        {
+          send: async (message) => {
+            sending();
+            await held;
+            delivered.push(message);
+          },
+        },
+        "https://app.example.edu",
+      );
+      const delivery = slowWorker.runOnce();
+      await started;
+      const optOut = pool.query(
+        "UPDATE course_memberships SET activity_emails=false WHERE course_id=$1 AND user_id=$2",
+        [seeded.courseId, seeded.studentId],
+      );
+      const completedEarly = await Promise.race([
+        optOut.then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 1_000),
+        ),
+      ]);
+      release();
+      await delivery;
+      await optOut;
+      expect(completedEarly).toBe(true);
+      expect(delivered).toHaveLength(1);
+    });
+
+    it("honors activity opt-out after queueing", async () => {
+      await fresh();
+      const seeded = await seedAnswered();
+      await pool.query(
+        "UPDATE course_memberships SET activity_emails=false WHERE course_id=$1 AND user_id=$2",
+        [seeded.courseId, seeded.studentId],
+      );
+      while (await worker.runOnce());
+      expect(delivered).toEqual([]);
     });
 
     it("hides an anonymous actor and words each kind", async () => {
@@ -1154,7 +1260,7 @@ To stop these emails, turn off "Email me about activity on posts I follow" in yo
       delivered.length = 0;
       // The TA follows too, so the student's anonymous followup reaches them.
       await pool.query(
-        "UPDATE users SET notification_emails=true WHERE id=$1",
+        "UPDATE course_memberships SET activity_emails=true WHERE user_id=$1",
         [taId],
       );
       await new FollowupService(pool).create(postId, studentId, {
@@ -1188,7 +1294,7 @@ To stop these emails, turn off "Email me about activity on posts I follow" in yo
 
 https://app.example.edu/courses/${courseId}/posts/${postId}
 
-To stop these emails, turn off "Email me about activity on posts I follow" in your account settings.`,
+To stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
         },
       ]);
     });
@@ -1218,7 +1324,7 @@ To stop these emails, turn off "Email me about activity on posts I follow" in yo
 
 https://app.example.edu/courses/${courseId}/posts/${postId}
 
-To stop these emails, turn off "Email me about activity on posts I follow" in your account settings.`,
+To stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
         },
       ]);
     });
@@ -1230,7 +1336,7 @@ To stop these emails, turn off "Email me about activity on posts I follow" in yo
       delivered.length = 0;
       await pool.query("UPDATE posts SET private=true WHERE id=$1", [postId]);
       await pool.query(
-        "UPDATE users SET notification_emails=true WHERE id=$1",
+        "UPDATE course_memberships SET activity_emails=true WHERE user_id=$1",
         [taId],
       );
       // The TA was notified, then demoted before the email went out.
@@ -1260,7 +1366,7 @@ To stop these emails, turn off "Email me about activity on posts I follow" in yo
       );
       const optedOut = await seedAnswered();
       await pool.query(
-        "UPDATE users SET notification_emails=false WHERE id=$1",
+        "UPDATE course_memberships SET activity_emails=false WHERE user_id=$1",
         [optedOut.studentId],
       );
       const left = await seedAnswered();

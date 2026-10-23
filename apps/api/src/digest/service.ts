@@ -109,7 +109,7 @@ export class DigestService {
                 (a.created_at AT TIME ZONE 'UTC')::date AS activity_date
            FROM activity a
            JOIN courses c ON c.id=a.course_id AND c.status='active'
-           JOIN course_memberships m ON m.course_id=a.course_id
+           JOIN course_memberships m ON m.course_id=a.course_id AND m.digest_emails
            JOIN users u ON u.id=m.user_id
           WHERE u.deleted_at IS NULL
             AND a.author_user_id <> u.id
@@ -178,7 +178,7 @@ export class DigestService {
         course_name: string;
       }>(
         `SELECT u.email,c.name AS course_name FROM users u
-           JOIN course_memberships m ON m.user_id=u.id AND m.course_id=$2
+           JOIN course_memberships m ON m.user_id=u.id AND m.course_id=$2 AND m.digest_emails
            JOIN courses c ON c.id=m.course_id
           WHERE u.id=$1 AND u.deleted_at IS NULL AND c.status='active'
           FOR SHARE OF m,c`,

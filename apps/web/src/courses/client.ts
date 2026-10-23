@@ -13,11 +13,18 @@ export type Course = {
   version: number;
 };
 
+export type EmailPreferences = {
+  activityEmails: boolean;
+  announcementEmails: boolean;
+  digestEmails: boolean;
+};
+
 export type Membership = {
   id: string;
   courseId: string;
   user: { id: string; displayName: string };
   role: "student" | "ta" | "instructor";
+  emailPreferences?: EmailPreferences;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -209,6 +216,29 @@ export function deleteCourse(
   return request<Course>(
     `/courses/${courseId}`,
     jsonRequest("DELETE", undefined, {
+      "X-CSRF-Token": csrfToken,
+      "If-Match": etag,
+    }),
+  );
+}
+
+export function getEmailPreferences(
+  courseId: string,
+): Promise<Versioned<EmailPreferences>> {
+  return request<EmailPreferences>(
+    `/courses/${courseId}/members/me/email-preferences`,
+  );
+}
+
+export function updateEmailPreferences(
+  courseId: string,
+  change: Partial<EmailPreferences>,
+  csrfToken: string,
+  etag: string,
+): Promise<Versioned<EmailPreferences>> {
+  return request<EmailPreferences>(
+    `/courses/${courseId}/members/me/email-preferences`,
+    jsonRequest("PATCH", change, {
       "X-CSRF-Token": csrfToken,
       "If-Match": etag,
     }),

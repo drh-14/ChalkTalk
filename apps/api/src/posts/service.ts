@@ -447,7 +447,7 @@ export class PostService {
            SELECT gen_random_uuid(),'send_announcement_email',
              jsonb_build_object('postId',$1::uuid,'userId',m.user_id),$1::text||':'||m.user_id
            FROM course_memberships m JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
-           WHERE m.course_id=$2 AND m.user_id<>$3
+           WHERE m.course_id=$2 AND m.user_id<>$3 AND m.announcement_emails
            ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING`,
           [id, courseId, userId],
         );

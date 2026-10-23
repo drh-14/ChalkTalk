@@ -17,7 +17,7 @@ An announcement creates an `announcement` notification for every other current c
 
 Notifications are listed only while the caller is still a member of the course who can read the post, and the post is neither deleted nor a confirmed duplicate. Followers who can no longer read a private post, for example a TA who became a student, are not notified. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
 
-**Email:** Users who turn on `notificationEmails` with [Update profile](auth.md) are emailed about each notification other than announcements, which already email every member. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. An anonymous actor appears as "Someone".
+**Email:** Members who enable `activityEmails` in their [per-course email preferences](courses.md#courseEmailPreferences) are emailed about each notification other than announcements. `announcementEmails` and `digestEmails` independently control those course emails. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. An anonymous actor appears as "Someone".
 
 <a id="listNotifications"></a>
 

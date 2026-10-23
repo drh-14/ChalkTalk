@@ -8,7 +8,7 @@
 
 **Private posts:** Any member may create a question or note with `private: true`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
 
-**Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member, which the job worker sends only while the announcement, the course, and the membership still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
+**Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member with announcement emails enabled, which the job worker sends only while the announcement, the course, the membership, and that preference still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md). Post bodies may [mention](notifications.md) course members; creating or editing a body that mentions more than 20 people returns `422 too_many_mentions`.
 
@@ -96,7 +96,7 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 
 `tags` (list of string, optional): Post tags.
 
-`announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to the course; cannot be combined with `anonymous`.
+`announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to members who enable announcement emails; cannot be combined with `anonymous`.
 
 `private` (boolean, optional; default false): Questions and notes only. Makes the post readable only by its author and course staff.
 

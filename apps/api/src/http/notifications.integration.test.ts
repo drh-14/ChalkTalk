@@ -7,6 +7,7 @@ import type { AuthService } from "../auth/service.js";
 import { AnswerService } from "../answers/service.js";
 import { FollowupService } from "../followups/service.js";
 import { NotificationService } from "../notifications/service.js";
+import { CourseService } from "../courses/service.js";
 import { PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
 
@@ -64,6 +65,7 @@ function app(userId: string) {
     answerService: new AnswerService(pool),
     followupService: new FollowupService(pool),
     notificationService: new NotificationService(pool),
+    courseService: new CourseService(pool),
   });
 }
 function unsafe(test: request.Test) {
@@ -146,6 +148,73 @@ integration("notifications HTTP contract", () => {
     await pool?.end();
     await admin?.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await admin?.end();
+  });
+
+  it("lets a current member update independent course email preferences with ETags", async () => {
+    const path = `/api/v1/courses/${ids.course}/members/me/email-preferences`;
+    const initial = await get(ids.asker, path);
+    expect(initial.status).toBe(200);
+    expect(initial.body.data).toEqual({
+      activityEmails: false,
+      announcementEmails: true,
+      digestEmails: true,
+    });
+    expect(initial.headers.etag).toBe('"v1"');
+
+    const invalid = await unsafe(request(app(ids.asker)).patch(path))
+      .set("If-Match", initial.headers.etag)
+      .send({ digestEmails: "no" });
+    expect(invalid.status).toBe(422);
+    const missing = await unsafe(request(app(ids.asker)).patch(path)).send({
+      digestEmails: false,
+    });
+    expect(missing.status).toBe(428);
+    const updated = await unsafe(request(app(ids.asker)).patch(path))
+      .set("If-Match", initial.headers.etag)
+      .send({ digestEmails: false });
+    expect(updated.status).toBe(200);
+    expect(updated.headers.etag).toBe('"v2"');
+    expect(updated.body.data).toEqual({
+      activityEmails: false,
+      announcementEmails: true,
+      digestEmails: false,
+    });
+    const stale = await unsafe(request(app(ids.asker)).patch(path))
+      .set("If-Match", initial.headers.etag)
+      .send({ activityEmails: true });
+    expect(stale.status).toBe(412);
+    expect((await get(ids.outsider, path)).status).toBe(404);
+    expect((await request(app(ids.asker)).get(path)).status).toBe(401);
+    const noCsrf = await request(app(ids.asker))
+      .patch(path)
+      .set("Cookie", cookie)
+      .set("Origin", environment.frontendBaseUrl)
+      .set("If-Match", updated.headers.etag)
+      .send({ activityEmails: true });
+    expect(noCsrf.status).toBe(403);
+    const unknown = await unsafe(request(app(ids.asker)).patch(path))
+      .set("If-Match", updated.headers.etag)
+      .send({ marketingEmails: true });
+    expect(unknown.status).toBe(422);
+    const otherMember = await get(
+      ids.asker,
+      `/api/v1/courses/${ids.course}/members/${ids.classmate}`,
+    );
+    expect(otherMember.body.data).not.toHaveProperty("emailPreferences");
+    const self = await get(
+      ids.asker,
+      `/api/v1/courses/${ids.course}/members/${ids.asker}`,
+    );
+    expect(self.body.data.emailPreferences.digestEmails).toBe(false);
+    const other = await get(
+      ids.outsider,
+      `/api/v1/courses/${ids.otherCourse}/members/me/email-preferences`,
+    );
+    expect(other.body.data.activityEmails).toBe(false);
+    await pool.query(
+      "UPDATE course_memberships SET digest_emails=true WHERE course_id=$1 AND user_id=$2",
+      [ids.course, ids.asker],
+    );
   });
 
   it("enforces notification keys, kinds, and cascades in the schema", async () => {
@@ -369,7 +438,7 @@ integration("notifications HTTP contract", () => {
 
   it("announces to every other member and queues email only for opted-in recipients", async () => {
     await pool.query(
-      "UPDATE users SET notification_emails=true WHERE id = ANY($1::uuid[])",
+      "UPDATE course_memberships SET activity_emails=true WHERE user_id = ANY($1::uuid[])",
       [[ids.classmate, ids.ta]],
     );
     const created = await unsafe(
@@ -409,7 +478,7 @@ integration("notifications HTTP contract", () => {
     expect(queued.rows[0].user_id).toBe(ids.classmate);
     const job = queued.rows[0];
     expect(job.payload).toEqual({ notificationId: job.deduplication_key });
-    await pool.query("UPDATE users SET notification_emails=false");
+    await pool.query("UPDATE course_memberships SET activity_emails=false");
     await clearAll();
   });
 

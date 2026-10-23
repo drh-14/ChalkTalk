@@ -23,13 +23,13 @@ Core features include:
 - course resources,
 - polls,
 - notifications,
-- automatic daily email summaries of qualifying previous-day activity for active course members,
+- optional per-course daily email summaries of qualifying previous-day activity,
 - moderation tools,
 - basic course statistics.
 
 ChalkTalk's goal is to turn a semester's discussion history into a searchable and reusable course knowledge base rather than a collection of disconnected posts.
 
-To manage your account, select your name in the signed-in top bar. Account settings lets you change your display name or password, or delete your account after confirming with your current password. Deletion signs you out and leaves past contributions with your name removed. If you are a course's final instructor, assign another instructor before deleting your account.
+To manage your account, select your name in the signed-in top bar. Account settings lets you change your display name or password, manage each course's activity, announcement, and daily-digest emails, or delete your account after confirming with your current password. You can also change email choices in each course's settings. Deletion signs you out and leaves past contributions with your name removed. If you are a course's final instructor, assign another instructor before deleting your account.
 
 ## Team
 

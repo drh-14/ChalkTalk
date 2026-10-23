@@ -159,23 +159,6 @@ export function updateDisplayName(
   );
 }
 
-export function updateNotificationEmails(
-  notificationEmails: boolean,
-  etag: string,
-  csrfToken: string,
-): Promise<VersionedProfile> {
-  return profileRequest(
-    jsonRequest(
-      "PATCH",
-      { notificationEmails },
-      {
-        "If-Match": etag,
-        "X-CSRF-Token": csrfToken,
-      },
-    ),
-  );
-}
-
 export function changePassword(
   currentPassword: string,
   newPassword: string,

@@ -25,6 +25,7 @@ export type Membership = {
   courseId: string;
   user: { id: string; displayName: string };
   role: "student" | "ta" | "instructor";
+  emailPreferences?: EmailPreferences;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -44,6 +45,9 @@ type MemberRow = {
   user_id: string;
   display_name: string;
   role: Membership["role"];
+  activity_emails?: boolean;
+  announcement_emails?: boolean;
+  digest_emails?: boolean;
   created_at: Date;
   updated_at: Date;
   version: number;
@@ -72,6 +76,22 @@ const member = (row: MemberRow): Membership => ({
   createdAt: row.created_at.toISOString(),
   updatedAt: row.updated_at.toISOString(),
   version: jsonVersion(row.version),
+});
+export type EmailPreferences = {
+  activityEmails: boolean;
+  announcementEmails: boolean;
+  digestEmails: boolean;
+};
+type EmailPreferenceRow = {
+  activity_emails: boolean;
+  announcement_emails: boolean;
+  digest_emails: boolean;
+  version: number;
+};
+const emailPreferences = (row: EmailPreferenceRow): EmailPreferences => ({
+  activityEmails: row.activity_emails,
+  announcementEmails: row.announcement_emails,
+  digestEmails: row.digest_emails,
 });
 export const courseEtag = (value: { version: number }) => `"v${value.version}"`;
 const JOIN_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -548,6 +568,61 @@ export class CourseService {
     );
     return result.rows.map(member);
   }
+  async getEmailPreferences(
+    courseId: string,
+    userId: string,
+  ): Promise<{
+    data: EmailPreferences;
+    version: number;
+  }> {
+    const found = await this.pool.query<EmailPreferenceRow>(
+      "SELECT activity_emails,announcement_emails,digest_emails,version FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+      [courseId, userId],
+    );
+    const row = found.rows[0];
+    if (!row) throw new AuthError(404, "not_found", "Membership is not found");
+    return { data: emailPreferences(row), version: jsonVersion(row.version) };
+  }
+  async updateEmailPreferences(
+    courseId: string,
+    userId: string,
+    ifMatch: string | undefined,
+    input: Partial<EmailPreferences>,
+  ): Promise<{ data: EmailPreferences; version: number }> {
+    return this.tx(async (client) => {
+      const found = await client.query<EmailPreferenceRow>(
+        "SELECT activity_emails,announcement_emails,digest_emails,version FROM course_memberships WHERE course_id=$1 AND user_id=$2 FOR UPDATE",
+        [courseId, userId],
+      );
+      const row = found.rows[0];
+      if (!row)
+        throw new AuthError(404, "not_found", "Membership is not found");
+      if (!ifMatch)
+        throw new AuthError(
+          428,
+          "precondition_required",
+          "If-Match is required",
+        );
+      if (ifMatch !== courseEtag(row))
+        throw new AuthError(412, "version_conflict", "Membership has changed");
+      const updated = await client.query<EmailPreferenceRow>(
+        `UPDATE course_memberships SET activity_emails=$3,announcement_emails=$4,digest_emails=$5,
+          version=version+1,updated_at=now() WHERE course_id=$1 AND user_id=$2
+          RETURNING activity_emails,announcement_emails,digest_emails,version`,
+        [
+          courseId,
+          userId,
+          input.activityEmails ?? row.activity_emails,
+          input.announcementEmails ?? row.announcement_emails,
+          input.digestEmails ?? row.digest_emails,
+        ],
+      );
+      return {
+        data: emailPreferences(updated.rows[0]!),
+        version: jsonVersion(updated.rows[0]!.version),
+      };
+    });
+  }
   async getMember(
     courseId: string,
     userId: string,
@@ -555,12 +630,17 @@ export class CourseService {
   ): Promise<Membership> {
     await this.get(courseId, userId);
     const result = await this.pool.query<MemberRow>(
-      "SELECT m.course_id,m.user_id,u.display_name,m.role,m.created_at,m.updated_at,m.version FROM course_memberships m JOIN users u ON u.id=m.user_id WHERE m.course_id=$1 AND m.user_id=$2",
+      "SELECT m.course_id,m.user_id,u.display_name,m.role,m.activity_emails,m.announcement_emails,m.digest_emails,m.created_at,m.updated_at,m.version FROM course_memberships m JOIN users u ON u.id=m.user_id WHERE m.course_id=$1 AND m.user_id=$2",
       [courseId, targetUserId],
     );
     if (!result.rows[0])
       throw new AuthError(404, "not_found", "Membership is not found");
-    return member(result.rows[0]);
+    const value = member(result.rows[0]);
+    if (userId === targetUserId)
+      value.emailPreferences = emailPreferences(
+        result.rows[0] as EmailPreferenceRow,
+      );
+    return value;
   }
   async membersPage(
     courseId: string,

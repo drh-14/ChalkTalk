@@ -252,22 +252,12 @@ function sessionCreationBody(input: unknown): JsonObject {
 }
 
 function profileUpdateBody(input: unknown): JsonObject {
-  const body = strictBody(input, [
-    "displayName",
-    "emailVerificationToken",
-    "notificationEmails",
-  ]);
+  const body = strictBody(input, ["displayName", "emailVerificationToken"]);
   if (
     body.displayName === undefined &&
-    body.emailVerificationToken === undefined &&
-    body.notificationEmails === undefined
+    body.emailVerificationToken === undefined
   )
     throw validationError("A profile field is required");
-  if (
-    body.notificationEmails !== undefined &&
-    typeof body.notificationEmails !== "boolean"
-  )
-    throw validationError("Notification emails must be true or false");
   if (body.displayName !== undefined)
     stringWithin(body.displayName, "Display name", 1, 100);
   if (body.emailVerificationToken !== undefined)
@@ -385,6 +375,23 @@ function memberUpdateBody(input: unknown): JsonObject {
     body.role !== "instructor"
   )
     throw validationError("Role is invalid");
+  return body;
+}
+function emailPreferencesBody(input: unknown): {
+  activityEmails?: boolean;
+  announcementEmails?: boolean;
+  digestEmails?: boolean;
+} {
+  const body = strictBody(input, [
+    "activityEmails",
+    "announcementEmails",
+    "digestEmails",
+  ]);
+  if (
+    !Object.keys(body).length ||
+    Object.values(body).some((value) => typeof value !== "boolean")
+  )
+    throw validationError("Email preferences must be booleans");
   return body;
 }
 function requireJsonRequest(request: Request): void {
@@ -1338,6 +1345,41 @@ export function createApp(
           options.cursor,
         );
         response.json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/members/me/email-preferences",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await courses().getEmailPreferences(
+          param(request.params.courseId),
+          current.session.user.id,
+        );
+        response.set("ETag", courseEtag(value)).json({ data: value.data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/members/me/email-preferences",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = emailPreferencesBody(request.body);
+        const value = await courses().updateEmailPreferences(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body,
+        );
+        response.set("ETag", courseEtag(value)).json({ data: value.data });
       } catch (error) {
         next(error);
       }

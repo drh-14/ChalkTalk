@@ -1093,45 +1093,22 @@ integrationTest("AuthService PostgreSQL integration", () => {
     ]);
   });
 
-  it("reads and updates the activity email preference on the profile", async () => {
+  it("rejects the obsolete global activity-email profile field", async () => {
     const app = createApp({ environment, authService: service });
     const user = await createVerifiedUser("activity-emails@example.edu");
     const login = await service.login(
       user.email,
       "correct horse battery staple",
     );
-    const cookie = `${SESSION_COOKIE_NAME}=${login.credential}`;
-    const profile = await request(app)
-      .get("/api/v1/users/me")
-      .set("Cookie", cookie);
-    expect(profile.status).toBe(200);
-    expect(profile.body.data.notificationEmails).toBe(false);
-    const patch = (etag: string, body: object) =>
-      request(app)
-        .patch("/api/v1/users/me")
-        .set("Origin", environment.frontendBaseUrl)
-        .set("Cookie", cookie)
-        .set("X-CSRF-Token", login.session.csrfToken)
-        .set("If-Match", etag)
-        .send(body);
-    const invalid = await patch(profile.headers.etag, {
-      notificationEmails: "yes",
-    });
-    expect(invalid.status).toBe(422);
-    expect(invalid.body.error.code).toBe("validation_failed");
-    const updated = await patch(profile.headers.etag, {
-      notificationEmails: true,
-    });
-    expect(updated.status).toBe(200);
-    expect(updated.body.data).toMatchObject({
-      notificationEmails: true,
-      displayName: profile.body.data.displayName,
-      version: profile.body.data.version + 1,
-    });
-    const reread = await request(app)
-      .get("/api/v1/users/me")
-      .set("Cookie", cookie);
-    expect(reread.body.data.notificationEmails).toBe(true);
+    const response = await request(app)
+      .patch("/api/v1/users/me")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("Cookie", `${SESSION_COOKIE_NAME}=${login.credential}`)
+      .set("X-CSRF-Token", login.session.csrfToken)
+      .set("If-Match", `"v${login.session.user.version}"`)
+      .send({ notificationEmails: true });
+    expect(response.status).toBe(422);
+    expect(response.body.error.code).toBe("validation_failed");
   });
 
   it("rejects display names longer than 100 characters during signup without creating an account", async () => {

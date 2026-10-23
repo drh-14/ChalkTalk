@@ -163,7 +163,7 @@ None.
 
 `data.displayName` (string, required): Visible account name.
 
-`data.notificationEmails` (boolean, required): Whether the user is emailed about activity on posts they follow; `false` by default. See [Notifications](notifications.md).
+`data.notificationEmails` (boolean, required): Legacy account preference retained for migration; it no longer controls delivery. Use [per-course email preferences](courses.md#courseEmailPreferences).
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
@@ -591,7 +591,7 @@ None.
 
 `data.displayName` (string, required): Visible account name.
 
-`data.notificationEmails` (boolean, required): Whether the user is emailed about activity on posts they follow; `false` by default. See [Notifications](notifications.md).
+`data.notificationEmails` (boolean, required): Legacy account preference retained for migration; it no longer controls delivery. Use [per-course email preferences](courses.md#courseEmailPreferences).
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
@@ -681,7 +681,7 @@ None.
 
 `emailVerificationToken` (string, optional): Single-use token proving control of a replacement email address in the account's current school domain.
 
-`notificationEmails` (boolean, optional): Turns emails about activity on followed posts on or off. Any other type returns `422 validation_failed`.
+`notificationEmails` is no longer accepted; use [per-course email preferences](courses.md#courseEmailPreferences). Supplying it returns `422 validation_failed`.
 
 #### Multipart parts
 
@@ -705,7 +705,7 @@ None.
 
 `data.displayName` (string, required): Visible account name.
 
-`data.notificationEmails` (boolean, required): Whether the user is emailed about activity on posts they follow; `false` by default. See [Notifications](notifications.md).
+`data.notificationEmails` (boolean, required): Legacy account preference retained for migration; it no longer controls delivery. Use [per-course email preferences](courses.md#courseEmailPreferences).
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
