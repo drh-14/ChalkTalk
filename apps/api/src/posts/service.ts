@@ -46,6 +46,11 @@ export type CreatePost = {
   tags?: string[];
   /** Poll choices, in order; required for polls only. */
   options?: string[];
+  selectionMode?: "single" | "multiple";
+  maxSelections?: number;
+  closesAt?: string;
+  releaseMode?: "live" | "manual" | "automatic";
+  explanation?: string;
   /** Notes only, staff only: pinned and emailed to the course. */
   announcement?: boolean;
   /** Questions and notes only: readable by the author and course staff. */
@@ -284,7 +289,7 @@ export class PostService {
           }
         : {}),
       ...(row.type === "poll"
-        ? await this.pollState(db, row.id, viewerId)
+        ? await this.pollState(db, row.id, viewerId, role)
         : {}),
       ...(await this.viewerState(db, row, viewerId)),
     };
@@ -296,15 +301,64 @@ export class PostService {
     );
     return result.rows[0]!.count;
   }
-  /** Options with counts and the viewer's choice, plus the total. */
-  private async pollState(db: Db, postId: string, viewerId: string) {
+  private async pollSettings(db: Db, postId: string) {
+    const result = await db.query<{
+      selection_mode: "single" | "multiple";
+      max_selections: number;
+      closes_at: Date | null;
+      closed_at: Date | null;
+      release_mode: "live" | "manual" | "automatic";
+      results_released_at: Date | null;
+      explanation: string | null;
+      due: boolean;
+    }>(
+      `SELECT *,closes_at <= clock_timestamp() AS due FROM poll_settings WHERE post_id=$1`,
+      [postId],
+    );
+    const settings = result.rows[0];
+    if (!settings)
+      throw new AuthError(500, "internal_error", "Poll settings are missing");
+    return settings;
+  }
+  private effectivePoll(
+    settings: Awaited<ReturnType<PostService["pollSettings"]>>,
+  ) {
+    const closed = Boolean(settings.closed_at || settings.due);
+    const resultsReleased = Boolean(
+      settings.results_released_at ||
+      settings.release_mode === "live" ||
+      (settings.release_mode === "automatic" && closed),
+    );
+    return { closed, resultsReleased };
+  }
+  private async assertBallotOpen(db: Db, postId: string) {
+    const result = await db.query<{ open: boolean }>(
+      `SELECT closed_at IS NULL AND (closes_at IS NULL OR closes_at > clock_timestamp()) AS open
+       FROM poll_settings WHERE post_id=$1`,
+      [postId],
+    );
+    if (!result.rows[0]?.open)
+      throw new AuthError(409, "poll_closed", "The poll or course is closed");
+  }
+  /** Viewer-aware poll state; unreleased aggregates never leave the API. */
+  private async pollState(
+    db: Db,
+    postId: string,
+    viewerId: string,
+    role: Role,
+  ) {
+    const settings = await this.pollSettings(db, postId);
+    const { closed, resultsReleased } = this.effectivePoll(settings);
+    const showResults = STAFF.has(role) || resultsReleased;
     const options = await db.query<{
       id: string;
       label: string;
       vote_count: string;
       selected: boolean;
+      total_votes: number;
     }>(
-      `SELECT o.id,o.label,count(v.user_id) AS vote_count,coalesce(bool_or(v.user_id=$2),false) AS selected
+      `SELECT o.id,o.label,count(v.user_id) AS vote_count,coalesce(bool_or(v.user_id=$2),false) AS selected,
+              (SELECT count(DISTINCT user_id)::int FROM poll_votes WHERE post_id=$1) AS total_votes
        FROM poll_options o LEFT JOIN poll_votes v ON v.option_id=o.id
        WHERE o.post_id=$1 GROUP BY o.id,o.label,o.position ORDER BY o.position`,
       [postId, viewerId],
@@ -312,12 +366,25 @@ export class PostService {
     const list = options.rows.map((option) => ({
       id: option.id,
       label: option.label,
-      voteCount: Number(option.vote_count),
       selected: option.selected,
+      ...(showResults ? { voteCount: Number(option.vote_count) } : {}),
     }));
     return {
       options: list,
-      totalVotes: list.reduce((total, option) => total + option.voteCount, 0),
+      selectionMode: settings.selection_mode,
+      maxSelections: settings.max_selections,
+      closesAt: settings.closes_at?.toISOString() ?? null,
+      closed,
+      releaseMode: settings.release_mode,
+      resultsReleased,
+      ...(showResults
+        ? {
+            totalVotes: options.rows[0]?.total_votes ?? 0,
+            ...(settings.explanation
+              ? { explanation: settings.explanation }
+              : {}),
+          }
+        : {}),
     };
   }
   /** Whether the viewer follows the post and has unread activity on it. */
@@ -356,128 +423,170 @@ export class PostService {
     body: CreatePost,
     key?: string,
   ): Promise<{ value: Post; status: number }> {
+    return this.tx((db) => this.createInTx(db, courseId, userId, body, key));
+  }
+  private async createInTx(
+    db: PoolClient,
+    courseId: string,
+    userId: string,
+    body: CreatePost,
+    key?: string,
+  ): Promise<{ value: Post; status: number }> {
     if (key !== undefined && (key.length < 1 || key.length > 255))
       throw validation("Idempotency-Key is invalid");
     const scope = `post-create:${userId}:${courseId}`;
     const hash = createHash("sha256").update(JSON.stringify(body)).digest();
-    return this.tx(async (db) => {
-      const member = await this.membership(db, courseId, userId, true);
-      if (key !== undefined) {
-        await db.query(
-          "SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",
-          [scope, key],
-        );
-        const old = await db.query<{
-          request_hash: Buffer;
-          response_body: Post;
-          response_status: number;
-        }>(
-          "SELECT request_hash,response_body,response_status FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at>now()",
-          [scope, key],
-        );
-        if (old.rows[0]) {
-          if (!old.rows[0].request_hash.equals(hash))
+    const member = await this.membership(db, courseId, userId, true);
+    if (key !== undefined) {
+      await db.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1),hashtext($2))",
+        [scope, key],
+      );
+      const old = await db.query<{
+        request_hash: Buffer;
+        response_body: Post;
+        response_status: number;
+      }>(
+        "SELECT request_hash,response_body,response_status FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at>now()",
+        [scope, key],
+      );
+      if (old.rows[0]) {
+        if (!old.rows[0].request_hash.equals(hash))
+          throw new AuthError(
+            409,
+            "idempotency_key_reused",
+            "Idempotency key was reused",
+          );
+        if (body.type === "poll") {
+          this.writable(member.status);
+          if (!STAFF.has(member.role))
             throw new AuthError(
-              409,
-              "idempotency_key_reused",
-              "Idempotency key was reused",
+              403,
+              "permission_denied",
+              "Only staff may create polls",
             );
+          const current = await this.row(db, old.rows[0].response_body.id);
+          if (!current) throw notFound();
           return {
-            value: old.rows[0].response_body,
+            value: await this.project(db, current, userId, member.role),
             status: old.rows[0].response_status,
           };
         }
-        await db.query(
-          "DELETE FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at<=now()",
-          [scope, key],
-        );
+        return {
+          value: old.rows[0].response_body,
+          status: old.rows[0].response_status,
+        };
       }
-      this.writable(member.status);
-      const staff = STAFF.has(member.role);
-      if (body.type === "poll" && !staff)
-        throw new AuthError(
-          403,
-          "permission_denied",
-          "Only staff may create polls",
-        );
-      if (body.announcement && !staff)
-        throw new AuthError(
-          403,
-          "permission_denied",
-          "Only staff may post announcements",
-        );
-      if (body.private && body.announcement)
-        throw new AuthError(
-          422,
-          "private_announcement",
-          "Announcements are for the whole course and cannot be private",
-        );
-      if (body.private && body.type === "poll")
-        throw new AuthError(422, "private_poll", "Polls cannot be private");
-      const id = uuidv7();
       await db.query(
-        "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
+        "DELETE FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at<=now()",
+        [scope, key],
       );
-      const created = await db.query<{ created_on: string }>(
-        `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
+    }
+    this.writable(member.status);
+    const staff = STAFF.has(member.role);
+    if (body.type === "poll" && !staff)
+      throw new AuthError(
+        403,
+        "permission_denied",
+        "Only staff may create polls",
+      );
+    if (body.announcement && !staff)
+      throw new AuthError(
+        403,
+        "permission_denied",
+        "Only staff may post announcements",
+      );
+    if (body.private && body.announcement)
+      throw new AuthError(
+        422,
+        "private_announcement",
+        "Announcements are for the whole course and cannot be private",
+      );
+    if (body.private && body.type === "poll")
+      throw new AuthError(422, "private_poll", "Polls cannot be private");
+    if (
+      body.type === "poll" &&
+      body.closesAt &&
+      (!Number.isFinite(Date.parse(body.closesAt)) ||
+        Date.parse(body.closesAt) <= Date.now())
+    )
+      throw validation("Close time must be in the future");
+    const id = uuidv7();
+    await db.query(
+      "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
+    );
+    const created = await db.query<{ created_on: string }>(
+      `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
          INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,created_at,updated_at,last_activity_at)
          SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,stamp.at,stamp.at,stamp.at FROM stamp
          RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on`,
+      [
+        id,
+        courseId,
+        userId,
+        body.type,
+        body.title,
+        body.bodyMarkdown,
+        body.anonymous ?? false,
+        body.announcement ?? false,
+        body.private ?? false,
+      ],
+    );
+    for (const [position, label] of (body.options ?? []).entries())
+      await db.query(
+        "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES ($1,$2,$3,$4,$5)",
+        [uuidv7(), courseId, id, position, label],
+      );
+    if (body.type === "poll")
+      await db.query(
+        `INSERT INTO poll_settings (post_id,selection_mode,max_selections,closes_at,release_mode,results_released_at,explanation)
+           VALUES ($1,$2,$3,$4,$5,CASE WHEN $5='live' THEN clock_timestamp() ELSE NULL END,$6)`,
         [
           id,
-          courseId,
-          userId,
-          body.type,
-          body.title,
-          body.bodyMarkdown,
-          body.anonymous ?? false,
-          body.announcement ?? false,
-          body.private ?? false,
+          body.selectionMode ?? "single",
+          body.maxSelections ?? 1,
+          body.closesAt ?? null,
+          body.releaseMode ?? "live",
+          body.explanation ?? null,
         ],
       );
-      for (const [position, label] of (body.options ?? []).entries())
-        await db.query(
-          "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES ($1,$2,$3,$4,$5)",
-          [uuidv7(), courseId, id, position, label],
-        );
-      if (body.announcement)
-        // One job per recipient, so a failing address retries on its own.
-        await db.query(
-          `INSERT INTO jobs (id,kind,payload,deduplication_key)
+    if (body.announcement)
+      // One job per recipient, so a failing address retries on its own.
+      await db.query(
+        `INSERT INTO jobs (id,kind,payload,deduplication_key)
            SELECT gen_random_uuid(),'send_announcement_email',
              jsonb_build_object('postId',$1::uuid,'userId',m.user_id),$1::text||':'||m.user_id
            FROM course_memberships m JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
            WHERE m.course_id=$2 AND m.user_id<>$3 AND m.announcement_emails
            ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING`,
-          [id, courseId, userId],
-        );
-      if (body.type === "question")
-        await db.query(
-          "INSERT INTO question_creation_daily_counts(course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1) ON CONFLICT (course_id,user_id,created_on) DO UPDATE SET question_count=question_creation_daily_counts.question_count+1",
-          [courseId, userId, created.rows[0]!.created_on],
-        );
-      await this.replaceTags(db, id, courseId, body.tags ?? []);
-      await this.optionalSemanticWrite(db, id, () =>
-        this.semantic!.enqueue(db, id),
+        [id, courseId, userId],
       );
-      await recordActivity(db, {
-        courseId,
-        postId: id,
-        actorId: userId,
-        ...(body.announcement ? { kind: "announcement" as const } : {}),
-        anonymous: body.anonymous ?? false,
-        mentions: parseMentions(body.bodyMarkdown),
-        follow: true,
-      });
-      const row = await this.row(db, id);
-      const value = await this.project(db, row!, userId, member.role);
-      if (key !== undefined)
-        await db.query(
-          "INSERT INTO idempotency_records (scope,key,request_hash,response_status,response_body,expires_at) VALUES ($1,$2,$3,201,$4,now()+interval '24 hours')",
-          [scope, key, hash, value],
-        );
-      return { value, status: 201 };
+    if (body.type === "question")
+      await db.query(
+        "INSERT INTO question_creation_daily_counts(course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1) ON CONFLICT (course_id,user_id,created_on) DO UPDATE SET question_count=question_creation_daily_counts.question_count+1",
+        [courseId, userId, created.rows[0]!.created_on],
+      );
+    await this.replaceTags(db, id, courseId, body.tags ?? []);
+    await this.optionalSemanticWrite(db, id, () =>
+      this.semantic!.enqueue(db, id),
+    );
+    await recordActivity(db, {
+      courseId,
+      postId: id,
+      actorId: userId,
+      ...(body.announcement ? { kind: "announcement" as const } : {}),
+      anonymous: body.anonymous ?? false,
+      mentions: parseMentions(body.bodyMarkdown),
+      follow: true,
     });
+    const row = await this.row(db, id);
+    const value = await this.project(db, row!, userId, member.role);
+    if (key !== undefined)
+      await db.query(
+        "INSERT INTO idempotency_records (scope,key,request_hash,response_status,response_body,expires_at) VALUES ($1,$2,$3,201,$4,now()+interval '24 hours')",
+        [scope, key, hash, value],
+      );
+    return { value, status: 201 };
   }
   async get(id: string, userId: string): Promise<Post | MergedReference> {
     const row = await this.row(this.pool, id);
@@ -1121,8 +1230,8 @@ export class PostService {
     );
   }
 
-  /** Records or replaces the caller's single vote on an active poll. */
-  async vote(postId: string, userId: string, optionId: string) {
+  /** Replaces the caller's whole ballot atomically. */
+  async vote(postId: string, userId: string, choice: string | string[]) {
     if (!UUID_PATTERN.test(postId)) throw notFound();
     return this.tx(async (db) => {
       const row = await this.row(db, postId, true);
@@ -1133,31 +1242,146 @@ export class PostService {
         throw notFound();
       if (row.type !== "poll")
         throw new AuthError(422, "not_a_poll", "The post is not a poll");
-      if (member.status !== "active")
+      const settings = await this.pollSettings(db, postId);
+      if (member.status !== "active" || this.effectivePoll(settings).closed)
         throw new AuthError(409, "poll_closed", "The poll or course is closed");
-      const option = UUID_PATTERN.test(optionId)
-        ? await db.query(
-            "SELECT 1 FROM poll_options WHERE id=$1 AND post_id=$2",
-            [optionId, postId],
-          )
-        : undefined;
-      if (!option?.rowCount)
+      const ids = typeof choice === "string" ? [choice] : choice;
+      if (
+        (typeof choice === "string" && settings.selection_mode !== "single") ||
+        ids.length < 1 ||
+        ids.length > settings.max_selections ||
+        new Set(ids).size !== ids.length ||
+        ids.some((id) => !UUID_PATTERN.test(id))
+      )
+        throw new AuthError(
+          422,
+          "poll_option_invalid",
+          "Ballot choices are invalid",
+        );
+      const options = await db.query<{ id: string }>(
+        "SELECT id FROM poll_options WHERE post_id=$1 AND id=ANY($2::uuid[])",
+        [postId, ids],
+      );
+      if (options.rowCount !== ids.length)
         throw new AuthError(
           422,
           "poll_option_invalid",
           "The option does not belong to this poll",
         );
       await db.query(
-        `INSERT INTO poll_votes (course_id,post_id,user_id,option_id) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (post_id,user_id) DO UPDATE SET option_id=excluded.option_id,updated_at=now()`,
-        [row.course_id, postId, userId, optionId],
+        `DELETE FROM poll_votes WHERE post_id=$1 AND user_id=$2
+         AND EXISTS (SELECT 1 FROM poll_settings WHERE post_id=$1 AND closed_at IS NULL
+                     AND (closes_at IS NULL OR closes_at > clock_timestamp()))`,
+        [postId, userId],
       );
-      return { postId, ...(await this.pollState(db, postId, userId)) };
+      const inserted = await db.query(
+        `INSERT INTO poll_votes (course_id,post_id,user_id,option_id)
+         SELECT $1,$2,$3,choice.option_id FROM unnest($4::uuid[]) AS choice(option_id)
+         WHERE EXISTS (SELECT 1 FROM poll_settings WHERE post_id=$2 AND closed_at IS NULL
+                       AND (closes_at IS NULL OR closes_at > clock_timestamp()))`,
+        [row.course_id, postId, userId, ids],
+      );
+      if (inserted.rowCount !== ids.length)
+        throw new AuthError(409, "poll_closed", "The poll or course is closed");
+      await this.assertBallotOpen(db, postId);
+      return {
+        postId,
+        ...(await this.pollState(db, postId, userId, member.role)),
+      };
     });
   }
 
   /** Removes the caller's vote; succeeds when there was none. */
   async unvote(postId: string, userId: string) {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    await this.tx(async (db) => {
+      const row = await this.row(db, postId, true);
+      if (!row) throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      if (row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      if (row.type !== "poll")
+        throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      const settings = await this.pollSettings(db, postId);
+      if (member.status !== "active" || this.effectivePoll(settings).closed)
+        throw new AuthError(409, "poll_closed", "The poll or course is closed");
+      await db.query(
+        `DELETE FROM poll_votes WHERE post_id=$1 AND user_id=$2
+         AND EXISTS (SELECT 1 FROM poll_settings WHERE post_id=$1 AND closed_at IS NULL
+                     AND (closes_at IS NULL OR closes_at > clock_timestamp()))`,
+        [postId, userId],
+      );
+      await this.assertBallotOpen(db, postId);
+    });
+  }
+
+  /** Serializes staff poll transitions with ballots on the post row. */
+  async transitionPoll(
+    postId: string,
+    userId: string,
+    etag: string | undefined,
+    action: "close" | "reopen" | "release",
+  ): Promise<Post> {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, postId, true);
+      if (!row) throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      if (row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      if (row.type !== "poll")
+        throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      if (!STAFF.has(member.role))
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff may manage polls",
+        );
+      this.writable(member.status);
+      this.checkRevision(row, etag);
+      const settings = await this.pollSettings(db, postId);
+      const effective = this.effectivePoll(settings);
+      if (
+        (action === "close" && effective.closed) ||
+        (action === "reopen" && !effective.closed)
+      )
+        throw new AuthError(
+          409,
+          "poll_state_conflict",
+          "Poll is already in that state",
+        );
+      if (action === "close")
+        await db.query(
+          `UPDATE poll_settings SET closed_at=clock_timestamp(),results_released_at=CASE WHEN release_mode='automatic' THEN coalesce(results_released_at,clock_timestamp()) ELSE results_released_at END WHERE post_id=$1`,
+          [postId],
+        );
+      else if (action === "reopen")
+        await db.query(
+          `UPDATE poll_settings SET closed_at=NULL,closes_at=CASE WHEN closes_at<=clock_timestamp() THEN NULL ELSE closes_at END,results_released_at=CASE WHEN release_mode='automatic' AND $2 THEN coalesce(results_released_at,clock_timestamp()) ELSE results_released_at END WHERE post_id=$1`,
+          [postId, effective.closed],
+        );
+      else
+        await db.query(
+          "UPDATE poll_settings SET results_released_at=coalesce(results_released_at,clock_timestamp()) WHERE post_id=$1",
+          [postId],
+        );
+      await db.query(
+        "UPDATE posts SET version=version+1,updated_at=clock_timestamp() WHERE id=$1",
+        [postId],
+      );
+      return this.project(
+        db,
+        (await this.row(db, postId))!,
+        userId,
+        member.role,
+      );
+    });
+  }
+
+  /** Only aggregate values leave the database; no ballot rows are returned. */
+  async pollCsv(postId: string, userId: string): Promise<string> {
     if (!UUID_PATTERN.test(postId)) throw notFound();
     const row = await this.row(this.pool, postId);
     if (!row) throw notFound();
@@ -1167,10 +1391,75 @@ export class PostService {
       throw notFound();
     if (row.type !== "poll")
       throw new AuthError(422, "not_a_poll", "The post is not a poll");
-    await this.pool.query(
-      "DELETE FROM poll_votes WHERE post_id=$1 AND user_id=$2",
-      [postId, userId],
+    if (!STAFF.has(member.role))
+      throw new AuthError(
+        403,
+        "permission_denied",
+        "Only staff may export polls",
+      );
+    await this.pollSettings(this.pool, postId);
+    const result = await this.pool.query<{
+      label: string;
+      count: number;
+      ballots: number;
+    }>(
+      `SELECT o.label,count(v.user_id)::int AS count,
+              (SELECT count(DISTINCT user_id)::int FROM poll_votes WHERE post_id=$1) AS ballots
+       FROM poll_options o LEFT JOIN poll_votes v ON v.option_id=o.id
+       WHERE o.post_id=$1 GROUP BY o.id ORDER BY o.position`,
+      [postId],
     );
+    const cell = (value: string | number) => {
+      let raw = String(value);
+      if (/^[\s]*[=+@-]/.test(raw)) raw = `'${raw}`;
+      return `"${raw.replaceAll('"', '""')}"`;
+    };
+    return (
+      [
+        "option,count,ballots",
+        ...result.rows.map((r) =>
+          [r.label, r.count, r.ballots].map(cell).join(","),
+        ),
+      ].join("\r\n") + "\r\n"
+    );
+  }
+
+  async clonePoll(postId: string, userId: string): Promise<Post> {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, postId, true);
+      if (!row) throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      if (row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      if (row.type !== "poll")
+        throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      if (!STAFF.has(member.role))
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff may clone polls",
+        );
+      this.writable(member.status);
+      const settings = await this.pollSettings(db, postId);
+      const options = await db.query<{ label: string }>(
+        "SELECT label FROM poll_options WHERE post_id=$1 ORDER BY position",
+        [postId],
+      );
+      const created = await this.createInTx(db, row.course_id, userId, {
+        type: "poll",
+        title: row.title!,
+        bodyMarkdown: row.body_markdown!,
+        options: options.rows.map((r) => r.label),
+        selectionMode: settings.selection_mode,
+        maxSelections: settings.max_selections,
+        releaseMode:
+          settings.release_mode === "live" ? "manual" : settings.release_mode,
+        ...(settings.explanation ? { explanation: settings.explanation } : {}),
+      });
+      return created.value;
+    });
   }
 
   async delete(

@@ -90,6 +90,14 @@ const message = (error: unknown) =>
   error instanceof Error
     ? error.message
     : "Something went wrong. Please try again.";
+const validCloseDate = (value: string) => {
+  const date = value.slice(0, 10);
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  return (
+    Number.isFinite(parsed) &&
+    new Date(parsed).toISOString().slice(0, 10) === date
+  );
+};
 const discussionPath = (courseId: string, search = "") =>
   `/courses/${encodeURIComponent(courseId)}${search}`;
 const postPath = (courseId: string, postId: string, search = "") =>
@@ -465,6 +473,15 @@ function Composer({
 }) {
   const [type, setType] = useState<"question" | "note" | "poll">("question");
   const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [selectionMode, setSelectionMode] = useState<"single" | "multiple">(
+    "single",
+  );
+  const [maxSelections, setMaxSelections] = useState(2);
+  const [closesAt, setClosesAt] = useState("");
+  const [releaseMode, setReleaseMode] = useState<
+    "live" | "manual" | "automatic"
+  >("live");
+  const [explanation, setExplanation] = useState("");
   const [announcement, setAnnouncement] = useState(false);
   const [audience, setAudience] = useState<"course" | "staff">("course");
   const [title, setTitle] = useState(initialTitle);
@@ -582,11 +599,23 @@ function Composer({
         .map((tag) => tag.trim())
         .filter(Boolean),
       ...(type === "poll"
-        ? { options: labels.filter(Boolean).map((label) => ({ label })) }
+        ? {
+            options: labels.filter(Boolean).map((label) => ({ label })),
+            selectionMode,
+            ...(selectionMode === "multiple" ? { maxSelections } : {}),
+            ...(closesAt &&
+            validCloseDate(closesAt) &&
+            !Number.isNaN(Date.parse(closesAt))
+              ? { closesAt: new Date(closesAt).toISOString() }
+              : {}),
+            ...(releaseMode === "live" ? {} : { releaseMode }),
+            ...(explanation.trim() ? { explanation: explanation.trim() } : {}),
+          }
         : {}),
       ...(announcing ? { announcement: true } : {}),
       ...(privately ? { private: true } : {}),
     };
+    const payload = JSON.stringify(input);
     if (type === "poll") {
       const filled = labels.filter(Boolean);
       if (filled.length < 2) {
@@ -604,6 +633,25 @@ function Composer({
         setError("Poll options must be different from each other.");
         return;
       }
+      if (
+        selectionMode === "multiple" &&
+        (!Number.isInteger(maxSelections) ||
+          maxSelections < 2 ||
+          maxSelections > filled.length)
+      ) {
+        setError(`Maximum selections must be between 2 and ${filled.length}.`);
+        return;
+      }
+      if (
+        closesAt &&
+        (!validCloseDate(closesAt) ||
+          Number.isNaN(Date.parse(closesAt)) ||
+          (Date.parse(closesAt) <= Date.now() &&
+            lastAttempt.current?.body !== payload))
+      ) {
+        setError("Choose a future poll close time.");
+        return;
+      }
     }
     if (!input.title || input.title.length > 200) {
       setError("Post title must be between 1 and 200 characters.");
@@ -617,7 +665,6 @@ function Composer({
       setError("Use at most 10 tags of 40 characters each.");
       return;
     }
-    const payload = JSON.stringify(input);
     const key =
       lastAttempt.current?.body === payload
         ? lastAttempt.current.key
@@ -729,6 +776,73 @@ function Composer({
                   </button>
                 )}
               </fieldset>
+            )}
+            {type === "poll" && (
+              <div className="poll-settings">
+                <label>
+                  Selection mode
+                  <select
+                    value={selectionMode}
+                    onChange={(event) => {
+                      const mode = event.target.value as "single" | "multiple";
+                      setSelectionMode(mode);
+                      if (mode === "multiple")
+                        setReleaseMode((current) =>
+                          current === "live" ? "manual" : current,
+                        );
+                    }}
+                  >
+                    <option value="single">Choose one</option>
+                    <option value="multiple">Choose multiple</option>
+                  </select>
+                </label>
+                {selectionMode === "multiple" && (
+                  <label>
+                    Maximum selections
+                    <input
+                      type="number"
+                      min={2}
+                      max={MAX_POLL_OPTIONS}
+                      value={maxSelections}
+                      onChange={(event) =>
+                        setMaxSelections(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                )}
+                <label>
+                  Close time (optional)
+                  <input
+                    type="datetime-local"
+                    value={closesAt}
+                    onChange={(event) => setClosesAt(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Results release
+                  <select
+                    value={releaseMode}
+                    onChange={(event) =>
+                      setReleaseMode(
+                        event.target.value as "live" | "manual" | "automatic",
+                      )
+                    }
+                  >
+                    {selectionMode === "single" && (
+                      <option value="live">Live</option>
+                    )}
+                    <option value="manual">Staff release</option>
+                    <option value="automatic">Automatically when closed</option>
+                  </select>
+                </label>
+                <label>
+                  Results explanation (optional)
+                  <textarea
+                    value={explanation}
+                    onChange={(event) => setExplanation(event.target.value)}
+                  />
+                </label>
+              </div>
             )}
             <label>
               Tags (comma-separated)
@@ -2469,9 +2583,35 @@ function DiscussionContent({
                                 key={detail.id}
                                 postId={detail.id}
                                 options={detail.options}
-                                totalVotes={detail.totalVotes ?? 0}
-                                closed={course?.status !== "active"}
+                                totalVotes={detail.totalVotes}
+                                selectionMode={detail.selectionMode}
+                                maxSelections={detail.maxSelections}
+                                closesAt={detail.closesAt}
+                                releaseMode={detail.releaseMode}
+                                resultsReleased={detail.resultsReleased}
+                                explanation={detail.explanation}
+                                closed={
+                                  course?.status !== "active" ||
+                                  Boolean(detail.closed)
+                                }
                                 csrfToken={csrfToken}
+                                staff={staff}
+                                courseActive={course?.status === "active"}
+                                version={detail.version}
+                                onPostChange={(updated) => {
+                                  setDetail(updated);
+                                  setItems((current) =>
+                                    current.map((item) =>
+                                      item.id === updated.id ? updated : item,
+                                    ),
+                                  );
+                                }}
+                                onCloned={(created) => {
+                                  setItems((current) => [created, ...current]);
+                                  navigate(
+                                    postPath(courseId, created.id, search),
+                                  );
+                                }}
                                 onChange={(state) => {
                                   setDetail((current) =>
                                     current?.id === detail.id &&

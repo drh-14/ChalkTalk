@@ -84,6 +84,8 @@ async function insertPost(
     "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown) VALUES ($1,$2,$3,$4,'Title','Body')",
     [id, courseId, ids.author, type],
   );
+  if (type === "poll")
+    await pool.query("INSERT INTO poll_settings (post_id) VALUES ($1)", [id]);
   return id;
 }
 function answer(
