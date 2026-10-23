@@ -4,9 +4,10 @@ import { Discussion } from "../posts/views.js";
 import "../styles.css";
 
 export function Fixture() {
-  const [postId, setPostId] = useState(
-    new URLSearchParams(location.search).get("post") ?? "p1",
-  );
+  const [postId, setPostId] = useState<string | undefined>(() => {
+    const selected = new URLSearchParams(location.search).get("post");
+    return selected === "none" ? undefined : (selected ?? "p1");
+  });
   return (
     <main className="course-page discussion">
       <header className="course-header">
@@ -32,7 +33,7 @@ export function Fixture() {
         postId={postId}
         onNavigate={(path) => {
           const id = path.match(/\/posts\/([^/?]+)/)?.[1];
-          if (id) setPostId(id);
+          setPostId(id);
         }}
       />
     </main>

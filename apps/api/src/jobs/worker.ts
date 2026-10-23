@@ -387,6 +387,9 @@ export class JobWorker {
       );
       await client.query("DELETE FROM posts WHERE course_id=$1", [courseId]);
       await client.query("DELETE FROM tags WHERE course_id=$1", [courseId]);
+      await client.query("DELETE FROM post_folders WHERE course_id=$1", [
+        courseId,
+      ]);
       const objects = await client.query<{ object_key: string }>(
         "SELECT object_key FROM course_files WHERE course_id=$1 FOR UPDATE",
         [courseId],

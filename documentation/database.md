@@ -135,6 +135,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `id`: `uuid_v7`; primary key.
 - `course_id`: `uuid_v7`; foreign key to `courses.id`.
 - `author_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
+- `folder_id`: `uuid`, nullable; with `course_id`, foreign key to `post_folders(course_id, id)`. Null means Unfiled. Deleting a folder clears this value and advances affected post versions.
 - `(course_id, id)`: unique key used by same-course foreign keys.
 - `type`: `text`; `question`, `note`, or `poll`.
 - `title`: `varchar(200)`, nullable.
@@ -189,6 +190,15 @@ The ordinary migrations and PostgreSQL startup do not require pgvector. An opera
 
 - `course_id`, `user_id`: `uuid_v7`; primary key; references the course membership, cascading.
 - `read_before`: `timestamptz`; set by Mark all read. A post is unread when its `last_activity_at` is later than both this and the user's `post_reads.read_at`.
+
+### `post_folders`
+
+- `id`: `uuid_v7`; primary key.
+- `course_id`: `uuid_v7`; foreign key to `courses.id`; `(course_id, id)` is unique for same-course post references.
+- `name`: `varchar(64)`, trimmed and 1–64 Unicode code points; unique per course ignoring case, displayed alphabetically.
+- `created_at`: `timestamptz`.
+
+Folder names are staff-managed and independent of tags. Existing posts default to Unfiled. Folder deletion clears their `folder_id` in the same transaction.
 
 ### `tags`
 
