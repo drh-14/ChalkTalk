@@ -130,6 +130,17 @@ Account deletion locks each affected `courses` row before testing instructor car
 
 ## Posts, answers, and polls
 
+### `post_drafts`
+
+- `id`: UUID primary key.
+- `course_id`, `user_id`: UUID composite foreign key to `course_memberships(course_id,user_id)` with `ON DELETE CASCADE`; the draft is removed when its owner leaves the course, deletes their account, or the course is removed.
+- `content`: JSONB object of validated partial text and new-post metadata, never attachments. Drafts are owner-only application resources and are not post/feed/activity rows.
+- `created_at`, `updated_at`: `timestamptz`; drafts have no expiration.
+- `version`: positive `bigint`, starting at 1 and incremented on replacement; used for `If-Match` and atomic publish.
+- `(course_id,user_id,updated_at DESC,id DESC)` index serves the owner's newest-first draft list.
+
+Publishing an owned draft locks its revision and deletes it in the same transaction that inserts the post and its normal side effects. A failed post creation rolls the deletion back.
+
 ### `posts`
 
 - `id`: `uuid_v7`; primary key.

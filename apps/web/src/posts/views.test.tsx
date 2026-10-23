@@ -2181,14 +2181,32 @@ it("opens the composer in the detail panel and restores the selected post when c
   ).toBeTruthy();
 });
 
-it("asks before discarding a draft when selecting a post or closing the composer", async () => {
+it("saves the latest draft before navigating to another post", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) =>
-      url.endsWith("/courses/course-1")
-        ? json({ data: course })
-        : page([post("p1", "First question")]),
-    ),
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/courses/course-1") && !init?.method)
+        return json({ data: course });
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "draft-navigation",
+              courseId: course.id,
+              content: JSON.parse(String(init.body)).content,
+              createdAt: "2026-01-01",
+              updatedAt: "2026-01-01",
+              version: 1,
+            },
+          }),
+          {
+            status: 201,
+            headers: { "Content-Type": "application/json", ETag: '"v1"' },
+          },
+        );
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([post("p1", "First question")]);
+    }),
   );
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const navigate = vi.fn();
@@ -2200,27 +2218,45 @@ it("asks before discarding a draft when selecting a post or closing the composer
   await user.click(screen.getByRole("button", { name: "Create post" }));
   await user.type(screen.getByRole("textbox", { name: "Post title" }), "Draft");
   await user.click(screen.getByRole("link", { name: /First question/ }));
-  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(confirm).not.toHaveBeenCalled();
   expect(navigate).not.toHaveBeenCalled();
   expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
     "value",
     "Draft",
   );
-  await user.click(screen.getByRole("button", { name: "Close composer" }));
-  expect(confirm).toHaveBeenCalledTimes(2);
-  expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
-  confirm.mockReturnValue(true);
+  await screen.findByText("Draft saved.");
   await user.click(screen.getByRole("link", { name: /First question/ }));
   expect(navigate).toHaveBeenCalledWith("/courses/course-1/posts/p1");
   expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
+  expect(confirm).not.toHaveBeenCalled();
 });
 
-it("shows a mobile Back to posts action for the composer and confirms draft discard", async () => {
+it("shows a mobile Back to posts action that waits for draft autosave", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) =>
-      url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
-    ),
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/courses/course-1") && !init?.method)
+        return json({ data: course });
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "draft-back",
+              courseId: course.id,
+              content: JSON.parse(String(init.body)).content,
+              createdAt: "2026-01-01",
+              updatedAt: "2026-01-01",
+              version: 1,
+            },
+          }),
+          {
+            status: 201,
+            headers: { "Content-Type": "application/json", ETag: '"v1"' },
+          },
+        );
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([]);
+    }),
   );
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const user = userEvent.setup();
@@ -2239,11 +2275,11 @@ it("shows a mobile Back to posts action for the composer and confirms draft disc
     "Draft body",
   );
   await user.click(screen.getByRole("button", { name: /Back to posts/ }));
-  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(confirm).not.toHaveBeenCalled();
   expect(screen.getByRole("textbox", { name: "Post body" }).textContent).toBe(
     "Draft body",
   );
-  confirm.mockReturnValue(true);
+  await screen.findByText("Draft saved.");
   await user.click(screen.getByRole("button", { name: /Back to posts/ }));
   expect(screen.queryByRole("textbox", { name: "Post body" })).toBeNull();
 });
@@ -2682,7 +2718,7 @@ it("shows an unavailable state for a hidden post returned as 404", async () => {
   expect(screen.queryByText("Anonymous")).toBeNull();
 });
 
-it("rejects blank and overlong composer fields before sending creation", async () => {
+it("rejects blank composer fields and caps title length before creation", async () => {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") throw new Error("Unexpected create request");
     return url.endsWith("/courses/course-1")
@@ -2702,9 +2738,10 @@ it("rejects blank and overlong composer fields before sending creation", async (
     screen.getByRole("textbox", { name: "Post title" }),
     "x".repeat(201),
   );
-  await user.type(screen.getByRole("textbox", { name: "Post body" }), "body");
-  await user.click(screen.getByRole("button", { name: "Publish post" }));
-  expect(screen.getByRole("alert").textContent).toContain("200 characters");
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "x".repeat(200),
+  );
   expect(
     fetchMock.mock.calls.every(([, init]) => init?.method !== "POST"),
   ).toBe(true);
@@ -4550,8 +4587,26 @@ it("asks an unmatched search as a new question with the body focused", async () 
   const urls: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
       urls.push(url);
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "draft-search",
+              courseId: course.id,
+              content: JSON.parse(String(init.body)).content,
+              createdAt: "2026-01-01",
+              updatedAt: "2026-01-01",
+              version: 1,
+            },
+          }),
+          {
+            status: 201,
+            headers: { "Content-Type": "application/json", ETag: '"v1"' },
+          },
+        );
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
       return page([]);
     }),
   );
@@ -4589,6 +4644,7 @@ it("asks an unmatched search as a new question with the body focused", async () 
       ),
     ).toBe(true),
   );
+  await screen.findByText("Draft saved.");
   await user.click(screen.getByRole("button", { name: "Close composer" }));
   expect(confirm).not.toHaveBeenCalled();
   expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
@@ -4720,6 +4776,87 @@ it("keeps a created note and retries only its failed attachment", async () => {
     ),
   ).toHaveLength(1);
   expect(uploads).toBe(2);
+});
+
+it("removes a consumed draft and locks remaining drafts during attachment retry", async () => {
+  const drafts = [
+    {
+      id: "draft-published",
+      courseId: course.id,
+      content: {
+        type: "question",
+        title: "Published idea",
+        bodyMarkdown: "Saved body",
+        anonymous: false,
+        tags: [],
+      },
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+      version: 1,
+    },
+    {
+      id: "draft-other",
+      courseId: course.id,
+      content: {
+        type: "question",
+        title: "Other draft",
+        bodyMarkdown: "",
+        anonymous: false,
+        tags: [],
+      },
+      createdAt: "2026-01-02",
+      updatedAt: "2026-01-02",
+      version: 1,
+    },
+  ];
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/post-drafts/draft-published"))
+      return new Response(JSON.stringify({ data: drafts[0] }), {
+        headers: { "Content-Type": "application/json", ETag: '"v1"' },
+      });
+    if (url.endsWith("/post-drafts")) return json({ data: drafts });
+    if (url.endsWith("/posts") && init?.method === "POST")
+      return json({ data: post("new-post", "Published idea") }, 201);
+    if (url.endsWith("/posts/new-post/attachments") && init?.method === "POST")
+      return json(
+        { error: { code: "storage_unavailable", message: "Try later" } },
+        503,
+      );
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Published idea" }),
+  );
+  await user.upload(
+    screen.getByLabelText("Add files"),
+    new File(["test"], "notes.pdf", { type: "application/pdf" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  expect(await screen.findByText(/notes.pdf: Try later/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /^Published idea$/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "Other draft" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  expect(
+    screen.getByRole("button", { name: "Discard Other draft" }),
+  ).toHaveProperty("disabled", true);
+  expect(
+    fetchMock.mock.calls.filter(
+      ([url, init]) => url.endsWith("/posts") && init?.method === "POST",
+    ),
+  ).toHaveLength(1);
 });
 
 it("retains an existing post's failed file after refreshing a successful sibling upload", async () => {
@@ -5836,4 +5973,1681 @@ it("offers students no Unresolved filter and shows no badge without unresolved d
   const card = (await screen.findByText("All settled")).closest("a")!;
   expect(card.textContent).not.toContain("unresolved");
   expect(choiceLabels("Show")).not.toContain("Unresolved");
+});
+
+it("reopens one of several private drafts with its saved text and no restored attachment", async () => {
+  const drafts = [
+    {
+      id: "draft-2",
+      courseId: course.id,
+      content: {
+        type: "question",
+        title: "Second idea",
+        bodyMarkdown: "",
+        anonymous: false,
+        tags: [],
+      },
+      createdAt: "2026-01-02",
+      updatedAt: "2026-01-02",
+      version: 1,
+    },
+    {
+      id: "draft-1",
+      courseId: course.id,
+      content: {
+        type: "note",
+        title: "First idea",
+        bodyMarkdown: "Saved body",
+        anonymous: true,
+        tags: ["draft"],
+      },
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+      version: 2,
+    },
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/post-drafts")) return json({ data: drafts });
+      if (url.endsWith("/post-drafts/draft-1"))
+        return new Response(JSON.stringify({ data: drafts[1] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ETag: '"v2"' },
+        });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: /Saved drafts/ }));
+  await user.click(await screen.findByRole("button", { name: "First idea" }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "First idea",
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Post body" }).textContent,
+  ).toContain("Saved body");
+  expect(
+    screen.getByText(/Attachments are not saved with drafts/),
+  ).toBeTruthy();
+});
+
+it("debounces a private draft autosave and shows a version conflict without overwriting local text", async () => {
+  let saves = 0;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/post-drafts") && init?.method === "POST") {
+      saves += 1;
+      return new Response(
+        JSON.stringify({
+          data: {
+            id: "draft-1",
+            courseId: course.id,
+            content: JSON.parse(String(init.body)).content,
+            createdAt: "2026-01-01",
+            updatedAt: "2026-01-01",
+            version: 1,
+          },
+        }),
+        {
+          status: 201,
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        },
+      );
+    }
+    if (url.endsWith("/post-drafts/draft-1") && init?.method === "PUT")
+      return json(
+        { error: { code: "version_conflict", message: "Changed elsewhere" } },
+        412,
+      );
+    if (url.endsWith("/post-drafts")) return json({ data: [] });
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "My draft",
+  );
+  await waitFor(() => expect(saves).toBe(1), { timeout: 3000 });
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " later",
+  );
+  await screen.findByText(/changed elsewhere/i, {}, { timeout: 3000 });
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "My draft later",
+  );
+  expect(
+    screen.getByRole("button", { name: /Save local as new draft/ }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: /Reload server draft/ }),
+  ).toBeTruthy();
+});
+
+it("shows archived drafts read-only and permits conditional discard without publication", async () => {
+  const draft = {
+    id: "draft-archived",
+    courseId: course.id,
+    content: {
+      type: "question",
+      title: "Old idea",
+      bodyMarkdown: "Still useful",
+      anonymous: false,
+      tags: [],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 3,
+  };
+  let discarded = false;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/post-drafts") && !init?.method)
+      return json({ data: discarded ? [] : [draft] });
+    if (
+      url.endsWith("/post-drafts/draft-archived") &&
+      init?.method === "DELETE"
+    ) {
+      discarded = true;
+      return new Response(null, { status: 204 });
+    }
+    if (url.endsWith("/post-drafts/draft-archived"))
+      return new Response(JSON.stringify({ data: draft }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: '"v3"' },
+      });
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={{ ...course, status: "archived" }}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Old idea" }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  expect(screen.getByRole("button", { name: "Publish post" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  await user.click(screen.getByRole("button", { name: "Discard Old idea" }));
+  await waitFor(() => expect(discarded).toBe(true));
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+      "value",
+      "",
+    ),
+  );
+  expect(
+    fetchMock.mock.calls.some(
+      ([, init]) => init?.method === "POST" || init?.method === "PUT",
+    ),
+  ).toBe(false);
+});
+
+it("retains local text after a draft save failure and retries it explicitly", async () => {
+  let attempts = 0;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/post-drafts") && init?.method === "POST") {
+      attempts += 1;
+      if (attempts === 1)
+        return json(
+          { error: { code: "service_unavailable", message: "Offline" } },
+          503,
+        );
+      return new Response(
+        JSON.stringify({
+          data: {
+            id: "retry-draft",
+            courseId: course.id,
+            content: JSON.parse(String(init.body)).content,
+            createdAt: "2026-01-01",
+            updatedAt: "2026-01-01",
+            version: 1,
+          },
+        }),
+        {
+          status: 201,
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        },
+      );
+    }
+    if (url.endsWith("/post-drafts")) return json({ data: [] });
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Keep this text",
+  );
+  await screen.findByRole(
+    "button",
+    { name: "Retry draft save" },
+    { timeout: 3000 },
+  );
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Keep this text",
+  );
+  await user.click(screen.getByRole("button", { name: "Retry draft save" }));
+  await screen.findByText("Draft saved.");
+  expect(attempts).toBe(2);
+});
+
+it("publishes a selected draft with its current server revision and removes it from the draft list", async () => {
+  const draft = {
+    id: "draft-publish",
+    courseId: course.id,
+    content: {
+      type: "note",
+      title: "Saved note",
+      bodyMarkdown: "Ready body",
+      anonymous: false,
+      tags: [],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 4,
+  };
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    calls.push({ url, init });
+    if (url.endsWith("/post-drafts") && !init?.method)
+      return json({ data: [draft] });
+    if (url.endsWith("/post-drafts/draft-publish"))
+      return new Response(JSON.stringify({ data: draft }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: '"v4"' },
+      });
+    if (url.endsWith("/posts") && init?.method === "POST")
+      return json({ data: post("new-note", "Saved note") }, 201);
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const navigate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={navigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Saved note" }));
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(navigate).toHaveBeenCalledWith("/courses/course-1/posts/new-note"),
+  );
+  const publish = calls.find(
+    ({ url, init }) => url.endsWith("/posts") && init?.method === "POST",
+  )!;
+  expect(JSON.parse(String(publish.init?.body))).toMatchObject({
+    title: "Saved note",
+    draftId: "draft-publish",
+    draftVersion: 4,
+  });
+});
+
+it("does not publish a changed draft when its in-flight save fails", async () => {
+  const draft = {
+    id: "draft-save-fails",
+    courseId: course.id,
+    content: {
+      type: "note",
+      title: "Saved note",
+      bodyMarkdown: "Original body",
+      anonymous: false,
+      tags: [],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  let failSave!: (response: Response) => void;
+  const pendingSave = new Promise<Response>((resolve) => {
+    failSave = resolve;
+  });
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/post-drafts") && !init?.method)
+      return json({ data: [draft] });
+    if (url.endsWith("/post-drafts/draft-save-fails") && init?.method === "PUT")
+      return pendingSave;
+    if (url.endsWith("/post-drafts/draft-save-fails"))
+      return new Response(JSON.stringify({ data: draft }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ETag: '"v1"' },
+      });
+    if (url.endsWith("/posts") && init?.method === "POST")
+      return json({ data: post("unexpected", "Saved note") }, 201);
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Saved note" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " edited",
+  );
+  await waitFor(
+    () =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            url.endsWith("/post-drafts/draft-save-fails") &&
+            init?.method === "PUT",
+        ),
+      ).toBe(true),
+    { timeout: 3000 },
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  failSave(
+    json({ error: { code: "service_unavailable", message: "Offline" } }, 503),
+  );
+  await screen.findByRole("button", { name: "Retry draft save" });
+  expect(
+    fetchMock.mock.calls.some(
+      ([url, init]) => url.endsWith("/posts") && init?.method === "POST",
+    ),
+  ).toBe(false);
+  expect(
+    fetchMock.mock.calls.filter(
+      ([url, init]) =>
+        url.endsWith("/post-drafts/draft-save-fails") && init?.method === "PUT",
+    ),
+  ).toHaveLength(1);
+});
+
+it("serializes autosaves and persists edits made while the first save is pending", async () => {
+  let releaseCreate!: (response: Response) => void;
+  const createPending = new Promise<Response>((resolve) => {
+    releaseCreate = resolve;
+  });
+  const writes: Array<{
+    method: string;
+    content: { title: string };
+    etag?: string;
+  }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts") && init?.method === "POST") {
+        writes.push({
+          method: "POST",
+          content: JSON.parse(String(init.body)).content,
+        });
+        return createPending;
+      }
+      if (url.endsWith("/post-drafts/draft-1") && init?.method === "PUT") {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push({
+          method: "PUT",
+          content,
+          etag: String(new Headers(init.headers).get("If-Match")),
+        });
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "draft-1",
+              courseId: course.id,
+              content,
+              createdAt: "2026-01-01",
+              updatedAt: "2026-01-01",
+              version: 2,
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json", ETag: '"v2"' },
+          },
+        );
+      }
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "First");
+  await waitFor(() => expect(writes).toHaveLength(1), { timeout: 3000 });
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " plus later",
+  );
+  releaseCreate(
+    new Response(
+      JSON.stringify({
+        data: {
+          id: "draft-1",
+          courseId: course.id,
+          content: writes[0].content,
+          createdAt: "2026-01-01",
+          updatedAt: "2026-01-01",
+          version: 1,
+        },
+      }),
+      {
+        status: 201,
+        headers: { "Content-Type": "application/json", ETag: '"v1"' },
+      },
+    ),
+  );
+  await waitFor(() => expect(writes).toHaveLength(2), { timeout: 3000 });
+  expect(writes).toMatchObject([
+    { method: "POST", content: { title: "First" } },
+    { method: "PUT", content: { title: "First plus later" }, etag: '"v1"' },
+  ]);
+});
+
+it("blocks close until the latest draft save succeeds, then leaves without discarding saved text", async () => {
+  let releaseSave!: (response: Response) => void;
+  const pendingSave = new Promise<Response>((resolve) => {
+    releaseSave = resolve;
+  });
+  let saves = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts") && init?.method === "POST") {
+        saves += 1;
+        return pendingSave;
+      }
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([]);
+    }),
+  );
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Keep me",
+  );
+  await user.click(screen.getByRole("button", { name: "Close composer" }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Keep me",
+  );
+  expect(screen.getByText(/Saving latest draft before leaving/)).toBeTruthy();
+  await waitFor(() => expect(saves).toBe(1));
+  releaseSave(
+    new Response(
+      JSON.stringify({
+        data: {
+          id: "saved-draft",
+          courseId: course.id,
+          content: {
+            type: "question",
+            title: "Keep me",
+            bodyMarkdown: "",
+            anonymous: false,
+            tags: [],
+          },
+          createdAt: "2026-01-01",
+          updatedAt: "2026-01-01",
+          version: 1,
+        },
+      }),
+      {
+        status: 201,
+        headers: { "Content-Type": "application/json", ETag: '"v1"' },
+      },
+    ),
+  );
+  await screen.findByText("Draft saved.");
+  await user.click(screen.getByRole("button", { name: "Close composer" }));
+  expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
+  expect(confirm).not.toHaveBeenCalled();
+});
+
+it("keeps a failed leave save in the composer until Retry or explicit Discard", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return json(
+          { error: { code: "service_unavailable", message: "Offline" } },
+          503,
+        );
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Unsaved local",
+  );
+  await user.click(screen.getByRole("button", { name: "Close composer" }));
+  await screen.findByRole("button", { name: "Retry draft save" });
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Unsaved local",
+  );
+  await user.click(screen.getByRole("button", { name: "Close composer" }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
+  await user.click(
+    screen.getByRole("button", { name: "Discard unsaved changes and close" }),
+  );
+  expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
+});
+
+it("freezes every editor field while publishing waits for the latest draft save", async () => {
+  let releaseSave!: (response: Response) => void;
+  const saving = new Promise<Response>((resolve) => {
+    releaseSave = resolve;
+  });
+  const writes: Array<{
+    title: string;
+    bodyMarkdown: string;
+    draftVersion?: number;
+  }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return saving;
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      if (url.endsWith("/posts") && init?.method === "POST") {
+        writes.push(JSON.parse(String(init.body)));
+        return json({ data: post("published-1", "Original") }, 201);
+      }
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Original",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Saved body",
+  );
+  await screen.findByText("Saving draft…", {}, { timeout: 3000 });
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  expect(
+    screen
+      .getByRole("textbox", { name: "Post body" })
+      .getAttribute("contenteditable"),
+  ).toBe("false");
+  expect(screen.getByRole("button", { name: "Close composer" })).toBeTruthy();
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " changed",
+  );
+  releaseSave(
+    new Response(
+      JSON.stringify({
+        data: {
+          id: "draft-1",
+          courseId: course.id,
+          content: {
+            type: "question",
+            title: "Original",
+            bodyMarkdown: "Saved body",
+            anonymous: false,
+            tags: [],
+          },
+          createdAt: "2026-01-01",
+          updatedAt: "2026-01-01",
+          version: 1,
+        },
+      }),
+      {
+        status: 201,
+        headers: { "Content-Type": "application/json", ETag: '"v1"' },
+      },
+    ),
+  );
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(writes[0]).toMatchObject({
+    title: "Original",
+    bodyMarkdown: "Saved body",
+    draftVersion: 1,
+  });
+});
+
+it("updates the draft list and discard version after reloading a conflict", async () => {
+  const original = {
+    id: "draft-1",
+    courseId: course.id,
+    content: {
+      type: "question",
+      title: "Original",
+      bodyMarkdown: "Body",
+      anonymous: false,
+      tags: [],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  const remote = {
+    ...original,
+    content: { ...original.content, title: "Remote revision" },
+    version: 2,
+  };
+  let reads = 0;
+  let discardedVersion = "";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts/draft-1") && init?.method === "PUT")
+        return json(
+          { error: { code: "version_conflict", message: "Changed elsewhere" } },
+          412,
+        );
+      if (url.endsWith("/post-drafts/draft-1") && init?.method === "DELETE") {
+        discardedVersion = new Headers(init.headers).get("If-Match") ?? "";
+        return new Response(null, { status: 204 });
+      }
+      if (url.endsWith("/post-drafts/draft-1")) {
+        const draft = reads++ === 0 ? original : remote;
+        return new Response(JSON.stringify({ data: draft }), {
+          headers: {
+            "Content-Type": "application/json",
+            ETag: `"v${draft.version}"`,
+          },
+        });
+      }
+      if (url.endsWith("/post-drafts")) return json({ data: [original] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Original" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " local",
+  );
+  await screen.findByRole(
+    "button",
+    { name: "Reload server draft" },
+    { timeout: 3000 },
+  );
+  await user.click(screen.getByRole("button", { name: "Reload server draft" }));
+  await user.click(
+    await screen.findByRole("button", { name: "Discard Remote revision" }),
+  );
+  expect(discardedVersion).toBe('"v2"');
+});
+
+it("requires queued-file confirmation before explicit failed-save close", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return json(
+          { error: { code: "service_unavailable", message: "Offline" } },
+          503,
+        );
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([]);
+    }),
+  );
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.upload(
+    screen.getByLabelText("Add files"),
+    new File(["hi"], "queued.txt", { type: "text/plain" }),
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Unsaved",
+  );
+  await screen.findByRole(
+    "button",
+    { name: "Retry draft save" },
+    { timeout: 3000 },
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Discard unsaved changes and close" }),
+  );
+  expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
+  expect(confirm).toHaveBeenCalledWith(
+    "Discard queued attachments before leaving?",
+  );
+  confirm.mockReturnValue(true);
+  await user.click(
+    screen.getByRole("button", { name: "Discard unsaved changes and close" }),
+  );
+  expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
+});
+
+it("does not report leave success while an edit made during saving is still unsaved", async () => {
+  let finishFirst!: (response: Response) => void;
+  let finishSecond!: (response: Response) => void;
+  const first = new Promise<Response>((resolve) => {
+    finishFirst = resolve;
+  });
+  const second = new Promise<Response>((resolve) => {
+    finishSecond = resolve;
+  });
+  let writes = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts") && init?.method === "POST") {
+        writes++;
+        return first;
+      }
+      if (url.endsWith("/post-drafts/draft-1") && init?.method === "PUT") {
+        writes++;
+        return second;
+      }
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "First");
+  await waitFor(() => expect(writes).toBe(1), { timeout: 3000 });
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " later",
+  );
+  await user.click(screen.getByRole("button", { name: "Close composer" }));
+  finishFirst(
+    new Response(
+      JSON.stringify({
+        data: {
+          id: "draft-1",
+          courseId: course.id,
+          content: {
+            type: "question",
+            title: "First",
+            bodyMarkdown: "",
+            anonymous: false,
+            tags: [],
+          },
+          createdAt: "2026-01-01",
+          updatedAt: "2026-01-01",
+          version: 1,
+        },
+      }),
+      {
+        status: 201,
+        headers: { "Content-Type": "application/json", ETag: '"v1"' },
+      },
+    ),
+  );
+  await waitFor(() => expect(writes).toBe(2), { timeout: 3000 });
+  expect(screen.queryByText("Draft saved. You can leave now.")).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "First later",
+  );
+  finishSecond(
+    new Response(
+      JSON.stringify({
+        data: {
+          id: "draft-1",
+          courseId: course.id,
+          content: {
+            type: "question",
+            title: "First later",
+            bodyMarkdown: "",
+            anonymous: false,
+            tags: [],
+          },
+          createdAt: "2026-01-01",
+          updatedAt: "2026-01-01",
+          version: 2,
+        },
+      }),
+      { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+    ),
+  );
+  await screen.findByText("Draft saved. You can leave now.");
+});
+
+it("requires queued-file confirmation before discarding the open saved draft", async () => {
+  const draft = {
+    id: "draft-1",
+    courseId: course.id,
+    content: {
+      type: "question",
+      title: "Saved",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: [],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  let deletes = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts/draft-1") && init?.method === "DELETE") {
+        deletes++;
+        return new Response(null, { status: 204 });
+      }
+      if (url.endsWith("/post-drafts/draft-1"))
+        return new Response(JSON.stringify({ data: draft }), {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        });
+      if (url.endsWith("/post-drafts")) return json({ data: [draft] });
+      return page([]);
+    }),
+  );
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Saved" }));
+  await user.upload(
+    screen.getByLabelText("Add files"),
+    new File(["hi"], "queued.txt", { type: "text/plain" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Discard Saved" }));
+  expect(deletes).toBe(0);
+  expect(confirm).toHaveBeenCalledWith(
+    "Discard queued attachments before leaving?",
+  );
+  confirm.mockReturnValue(true);
+  await user.click(screen.getByRole("button", { name: "Discard Saved" }));
+  await waitFor(() => expect(deletes).toBe(1));
+});
+
+it("preserves comma-bearing draft tags when other metadata autosaves", async () => {
+  const draft = {
+    id: "draft-tags",
+    courseId: course.id,
+    content: {
+      type: "question",
+      title: "Tagged",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: ["foo,bar", 'quoted"tag'],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  const writes: string[][] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts/draft-tags") && init?.method === "PUT") {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push(content.tags);
+        return new Response(
+          JSON.stringify({ data: { ...draft, content, version: 2 } }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }
+      if (url.endsWith("/post-drafts/draft-tags"))
+        return new Response(JSON.stringify({ data: draft }), {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        });
+      if (url.endsWith("/post-drafts")) return json({ data: [draft] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Tagged" }));
+  expect(
+    screen.getByRole("textbox", { name: /Tags \(comma-separated\)/ }),
+  ).toHaveProperty("value", '"foo,bar", "quoted""tag"');
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " updated",
+  );
+  await waitFor(() => expect(writes).toHaveLength(1), { timeout: 3000 });
+  expect(writes[0]).toEqual(["foo,bar", 'quoted"tag']);
+});
+
+it("preserves draft-only tags after publish validation fails", async () => {
+  const tags = [
+    "",
+    " ",
+    "",
+    "foo,bar",
+    'quoted"tag',
+    " foo ",
+    "bar\t",
+    "\t baz",
+  ];
+  const draft = {
+    id: "draft-spaces",
+    courseId: course.id,
+    content: {
+      type: "question" as const,
+      title: "Tagged",
+      bodyMarkdown: "Ready body",
+      anonymous: false,
+      tags,
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  const draftWrites: string[][] = [];
+  const publishedTags: string[][] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts/draft-spaces") && init?.method === "PUT") {
+        const content = JSON.parse(String(init.body)).content;
+        draftWrites.push(content.tags);
+        return new Response(
+          JSON.stringify({ data: { ...draft, content, version: 2 } }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }
+      if (url.endsWith("/post-drafts/draft-spaces"))
+        return new Response(JSON.stringify({ data: draft }), {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        });
+      if (url.endsWith("/post-drafts")) return json({ data: [draft] });
+      if (url.endsWith("/posts") && init?.method === "POST") {
+        publishedTags.push(JSON.parse(String(init.body)).tags);
+        return json(
+          { error: { code: "validation_failed", message: "Tags are invalid" } },
+          422,
+        );
+      }
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  const onNavigate = vi.fn();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={onNavigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Tagged" }));
+  expect(
+    screen.getByRole("textbox", { name: /Tags \(comma-separated\)/ }),
+  ).toHaveProperty(
+    "value",
+    '"", " ", "", "foo,bar", "quoted""tag", " foo ", "bar\\u0009", "\\u0009 baz"',
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " updated",
+  );
+  await waitFor(() => expect(draftWrites).toHaveLength(1), { timeout: 3000 });
+  expect(draftWrites[0]).toEqual(tags);
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() => expect(publishedTags).toHaveLength(1));
+  expect(publishedTags[0]).toEqual(tags);
+  expect(await screen.findByText("Tags are invalid")).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Tagged updated",
+  );
+  expect(screen.getByRole("textbox", { name: "Post body" }).textContent).toBe(
+    "Ready body",
+  );
+  expect(
+    screen.getByRole("textbox", { name: /Tags \(comma-separated\)/ }),
+  ).toHaveProperty(
+    "value",
+    '"", " ", "", "foo,bar", "quoted""tag", " foo ", "bar\\u0009", "\\u0009 baz"',
+  );
+  expect(onNavigate).not.toHaveBeenCalled();
+});
+
+it("preserves newline-bearing draft tags through reopen and autosave", async () => {
+  const tags = [
+    "line\nbreak",
+    "carriage\rreturn",
+    "pair\r\nend",
+    "slash\\u000a,tail",
+  ];
+  const draft = {
+    id: "draft-newlines",
+    courseId: course.id,
+    content: {
+      type: "question" as const,
+      title: "Tagged",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags,
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  const writes: string[][] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith("/post-drafts/draft-newlines") &&
+        init?.method === "PUT"
+      ) {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push(content.tags);
+        return new Response(
+          JSON.stringify({ data: { ...draft, content, version: 2 } }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }
+      if (url.endsWith("/post-drafts/draft-newlines"))
+        return new Response(JSON.stringify({ data: draft }), {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        });
+      if (url.endsWith("/post-drafts")) return json({ data: [draft] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Tagged" }));
+  expect(
+    screen.getByRole("textbox", { name: /Tags \(comma-separated\)/ }),
+  ).toHaveProperty(
+    "value",
+    '"line\\u000abreak", "carriage\\u000dreturn", "pair\\u000d\\u000aend", "slash\\\\u000a,tail"',
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " updated",
+  );
+  await waitFor(() => expect(writes).toHaveLength(1), { timeout: 3000 });
+  expect(writes[0]).toEqual(tags);
+});
+
+it("preserves newline-bearing draft titles and poll options through autosave", async () => {
+  const draft = {
+    id: "draft-multiline-metadata",
+    courseId: course.id,
+    content: {
+      type: "poll" as const,
+      title: "Why\nnow?",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: [],
+      options: ["First\noption", "Second\noption"],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  const writes: (typeof draft.content)[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith("/post-drafts/draft-multiline-metadata") &&
+        init?.method === "PUT"
+      ) {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push(content);
+        return new Response(
+          JSON.stringify({ data: { ...draft, content, version: 2 } }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }
+      if (url.endsWith("/post-drafts/draft-multiline-metadata"))
+        return new Response(JSON.stringify({ data: draft }), {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        });
+      if (url.endsWith("/post-drafts")) return json({ data: [draft] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: /^Why/ }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    draft.content.title,
+  );
+  expect(screen.getByRole("textbox", { name: "Option 1" })).toHaveProperty(
+    "value",
+    draft.content.options[0],
+  );
+  expect(screen.getByRole("textbox", { name: "Option 2" })).toHaveProperty(
+    "value",
+    draft.content.options[1],
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Details",
+  );
+  await waitFor(() => expect(writes).toHaveLength(1), { timeout: 3000 });
+  expect(writes[0]).toMatchObject({
+    title: draft.content.title,
+    options: draft.content.options,
+    bodyMarkdown: "Details",
+  });
+});
+
+it("retains raw CR and CRLF draft metadata when reopening and editing", async () => {
+  const draft = {
+    id: "draft-crlf-metadata",
+    courseId: course.id,
+    content: {
+      type: "poll" as const,
+      title: "Why\rnow\r\nlater\nend?",
+      bodyMarkdown: "Saved body",
+      anonymous: false,
+      tags: [""],
+      options: ["First\rpart\r\nfinal", "Second\r\nchoice"],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  let currentDraft = draft;
+  const writes: (typeof draft.content)[] = [];
+  const published: Array<{
+    title: string;
+    tags: string[];
+    options: { label: string }[];
+  }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith("/post-drafts/draft-crlf-metadata") &&
+        init?.method === "PUT"
+      ) {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push(content);
+        currentDraft = {
+          ...currentDraft,
+          content,
+          version: currentDraft.version + 1,
+        };
+        return new Response(JSON.stringify({ data: currentDraft }), {
+          headers: {
+            "Content-Type": "application/json",
+            ETag: `"v${currentDraft.version}"`,
+          },
+        });
+      }
+      if (url.endsWith("/post-drafts/draft-crlf-metadata"))
+        return new Response(JSON.stringify({ data: currentDraft }), {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        });
+      if (url.endsWith("/post-drafts")) return json({ data: [currentDraft] });
+      if (url.endsWith("/posts") && init?.method === "POST") {
+        published.push(JSON.parse(String(init.body)));
+        return json(
+          { error: { code: "validation_failed", message: "Tags are invalid" } },
+          422,
+        );
+      }
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: /^Why/ }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Why\nnow\nlater\nend?",
+  );
+  expect(screen.getByRole("textbox", { name: "Option 1" })).toHaveProperty(
+    "value",
+    "First\npart\nfinal",
+  );
+  await user.type(screen.getByRole("textbox", { name: "Post body" }), " more");
+  await waitFor(() => expect(writes).toHaveLength(1), { timeout: 3000 });
+  expect(writes[0]).toMatchObject({
+    title: draft.content.title,
+    options: draft.content.options,
+  });
+  const titleField = screen.getByRole("textbox", {
+    name: "Post title",
+  }) as HTMLTextAreaElement;
+  titleField.focus();
+  titleField.setSelectionRange(0, 0);
+  await user.keyboard("New ");
+  const optionField = screen.getByRole("textbox", {
+    name: "Option 1",
+  }) as HTMLTextAreaElement;
+  optionField.focus();
+  optionField.setSelectionRange(5, 5);
+  await user.keyboard(" edited");
+  const editedTitle = `New ${draft.content.title}`;
+  const editedOption = `First edited${draft.content.options[0].slice(5)}`;
+  await waitFor(() => expect(writes.length).toBeGreaterThan(1), {
+    timeout: 3000,
+  });
+  expect(writes.at(-1)).toMatchObject({
+    title: editedTitle,
+    options: [editedOption, draft.content.options[1]],
+  });
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() => expect(published).toHaveLength(1));
+  expect(published[0]).toMatchObject({
+    title: editedTitle,
+    tags: [""],
+    options: [{ label: editedOption }, { label: draft.content.options[1] }],
+  });
+  expect(await screen.findByText("Tags are invalid")).toBeTruthy();
+  expect(screen.getByRole("button", { name: /^New Why/ })).toBeTruthy();
+});
+
+it("prevents title and poll option edits beyond the raw draft limit", async () => {
+  const boundary = `${"x".repeat(198)}\r\n`;
+  const draft = {
+    id: "draft-length-boundary",
+    courseId: course.id,
+    content: {
+      type: "poll" as const,
+      title: boundary,
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: [],
+      options: [boundary, "Second option"],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  const writes: (typeof draft.content)[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (
+        url.endsWith("/post-drafts/draft-length-boundary") &&
+        init?.method === "PUT"
+      ) {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push(content);
+        return new Response(
+          JSON.stringify({ data: { ...draft, content, version: 2 } }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }
+      if (url.endsWith("/post-drafts/draft-length-boundary"))
+        return new Response(JSON.stringify({ data: draft }), {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        });
+      if (url.endsWith("/post-drafts")) return json({ data: [draft] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: /^x/ }));
+  const titleField = screen.getByRole("textbox", { name: "Post title" });
+  const optionField = screen.getByRole("textbox", { name: "Option 1" });
+  expect(titleField).toHaveProperty("value", `${"x".repeat(198)}\n`);
+  expect(optionField).toHaveProperty("value", `${"x".repeat(198)}\n`);
+  await user.type(titleField, "y");
+  await user.type(optionField, "y");
+  expect(titleField).toHaveProperty("value", `${"x".repeat(198)}\n`);
+  expect(optionField).toHaveProperty("value", `${"x".repeat(198)}\n`);
+  await user.type(screen.getByRole("textbox", { name: "Post body" }), "Body");
+  await waitFor(() => expect(writes).toHaveLength(1), { timeout: 3000 });
+  expect(writes[0]).toMatchObject({
+    title: boundary,
+    options: [boundary, "Second option"],
+  });
+});
+
+it("treats an unquoted blank tag field as no tags", async () => {
+  const writes: string[][] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts") && init?.method === "POST") {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push(content.tags);
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "draft-blank-tags",
+              courseId: course.id,
+              content,
+              createdAt: "2026-01-01",
+              updatedAt: "2026-01-01",
+              version: 1,
+            },
+          }),
+          {
+            status: 201,
+            headers: { "Content-Type": "application/json", ETag: '"v1"' },
+          },
+        );
+      }
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), "Idea");
+  await waitFor(() => expect(writes).toHaveLength(1), { timeout: 3000 });
+  expect(writes[0]).toEqual([]);
+});
+
+it("shows a malformed draft-list response as a contract error", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/post-drafts"))
+        return json({ data: [{ id: "bad", version: 1 }] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    expect.stringContaining("Invalid saved drafts response"),
+  );
+});
+
+it("keeps a draft switch pending without losing edits or queued files", async () => {
+  const first = {
+    id: "draft-a",
+    courseId: course.id,
+    content: {
+      type: "question",
+      title: "First",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: [],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  const second = {
+    ...first,
+    id: "draft-b",
+    content: { ...first.content, title: "Second" },
+  };
+  let releaseSecond!: (response: Response) => void;
+  const loading = new Promise<Response>((resolve) => {
+    releaseSecond = resolve;
+  });
+  const writes: Array<{ id: string; title: string }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts/draft-a") && init?.method === "PUT") {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push({ id: "draft-a", title: content.title });
+        return new Response(
+          JSON.stringify({ data: { ...first, content, version: 2 } }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }
+      if (url.endsWith("/post-drafts/draft-b") && init?.method === "PUT") {
+        const content = JSON.parse(String(init.body)).content;
+        writes.push({ id: "draft-b", title: content.title });
+        return new Response(
+          JSON.stringify({ data: { ...second, content, version: 2 } }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }
+      if (url.endsWith("/post-drafts/draft-a"))
+        return new Response(JSON.stringify({ data: first }), {
+          headers: { "Content-Type": "application/json", ETag: '"v1"' },
+        });
+      if (url.endsWith("/post-drafts/draft-b")) return loading;
+      if (url.endsWith("/post-drafts")) return json({ data: [first, second] });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "First" }));
+  await user.click(screen.getByRole("button", { name: "Second" }));
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  expect(screen.getByLabelText("Add files")).toHaveProperty("disabled", true);
+  await user.type(screen.getByRole("textbox", { name: "Post title" }), " lost");
+  await user.upload(
+    screen.getByLabelText("Add files"),
+    new File(["hi"], "queued.txt", { type: "text/plain" }),
+  );
+  releaseSecond(
+    new Response(JSON.stringify({ data: second }), {
+      headers: { "Content-Type": "application/json", ETag: '"v1"' },
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+      "value",
+      "Second",
+    ),
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " edited",
+  );
+  await waitFor(() => expect(writes).toHaveLength(1), { timeout: 3000 });
+  expect(writes).toEqual([{ id: "draft-b", title: "Second edited" }]);
+  expect(screen.queryByText("queued.txt")).toBeNull();
+});
+
+it("ignores an older list response after reloading a newer draft", async () => {
+  const old = {
+    id: "draft-1",
+    courseId: course.id,
+    content: {
+      type: "question",
+      title: "Old",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: [],
+    },
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+    version: 1,
+  };
+  const current = {
+    ...old,
+    content: { ...old.content, title: "Current" },
+    version: 2,
+  };
+  let releaseList!: (response: Response) => void;
+  const staleList = new Promise<Response>((resolve) => {
+    releaseList = resolve;
+  });
+  let lists = 0;
+  let reads = 0;
+  let discardedVersion = "";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-drafts/draft-1") && init?.method === "PUT")
+        return new Response(JSON.stringify({ data: current }), {
+          headers: { "Content-Type": "application/json", ETag: '"v2"' },
+        });
+      if (url.endsWith("/post-drafts/draft-1") && init?.method === "DELETE") {
+        discardedVersion = new Headers(init.headers).get("If-Match") ?? "";
+        return new Response(null, { status: 204 });
+      }
+      if (url.endsWith("/post-drafts/draft-1")) {
+        const draft = reads++ === 0 ? old : current;
+        return new Response(JSON.stringify({ data: draft }), {
+          headers: {
+            "Content-Type": "application/json",
+            ETag: `"v${draft.version}"`,
+          },
+        });
+      }
+      if (url.endsWith("/post-drafts"))
+        return lists++ === 0 ? json({ data: [old] }) : staleList;
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Saved drafts" }));
+  await user.click(await screen.findByRole("button", { name: "Old" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " updated",
+  );
+  await waitFor(() => expect(lists).toBe(2), { timeout: 3000 });
+  await user.click(await screen.findByRole("button", { name: "Current" }));
+  releaseList(json({ data: [old] }));
+  await user.click(
+    await screen.findByRole("button", { name: "Discard Current" }),
+  );
+  expect(discardedVersion).toBe('"v2"');
 });

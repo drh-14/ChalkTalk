@@ -50,6 +50,28 @@ export type CreatePost = {
   announcement?: boolean;
   /** Questions and notes only: readable by the author and course staff. */
   private?: boolean;
+  /** Consume this owned draft revision in the same transaction as creation. */
+  draftId?: string;
+  draftVersion?: number;
+};
+export type DraftContent = {
+  type: "question" | "note" | "poll";
+  title: string;
+  bodyMarkdown: string;
+  anonymous: boolean;
+  tags: string[];
+  options?: string[];
+  announcement?: boolean;
+  private?: boolean;
+};
+type DraftRow = {
+  id: string;
+  course_id: string;
+  user_id: string;
+  content: DraftContent;
+  created_at: Date;
+  updated_at: Date;
+  version: string | number;
 };
 export type UpdatePost = Partial<
   Omit<CreatePost, "type" | "options" | "announcement">
@@ -95,6 +117,7 @@ export type ListPosts = {
   cursor?: string;
 };
 export const postEtag = (post: { version: number }) => `"v${post.version}"`;
+export const draftEtag = postEtag;
 const notFound = () => new AuthError(404, "not_found", "Post is not found");
 /** Private posts the viewer cannot read look exactly like missing ones. */
 const readable = (row: Row, viewerId: string, role: Role) => {
@@ -213,6 +236,99 @@ export class PostService {
   private writable(status: string) {
     if (status !== "active")
       throw new AuthError(409, "course_archived", "Course is not active");
+  }
+  private draftValue(row: DraftRow) {
+    return {
+      id: row.id,
+      courseId: row.course_id,
+      content: row.content,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString(),
+      version: Number(row.version),
+    };
+  }
+  private async draftMembership(db: Db, courseId: string, userId: string) {
+    const member = await this.membership(db, courseId, userId);
+    if (member.status === "deleting") throw notFound();
+    return member;
+  }
+  private async draftRow(
+    db: Db,
+    courseId: string,
+    userId: string,
+    draftId: string,
+    lock = false,
+  ) {
+    if (!UUID_PATTERN.test(draftId)) throw notFound();
+    const result = await db.query<DraftRow>(
+      `SELECT * FROM post_drafts WHERE id=$1 AND course_id=$2 AND user_id=$3${lock ? " FOR UPDATE" : ""}`,
+      [draftId, courseId, userId],
+    );
+    if (!result.rows[0]) throw notFound();
+    return result.rows[0];
+  }
+  private checkDraftRevision(row: DraftRow, etag: string | undefined) {
+    if (!etag)
+      throw new AuthError(428, "precondition_required", "If-Match is required");
+    if (etag !== draftEtag({ version: Number(row.version) }))
+      throw new AuthError(412, "version_conflict", "Draft version has changed");
+  }
+  async listDrafts(courseId: string, userId: string) {
+    await this.draftMembership(this.pool, courseId, userId);
+    const result = await this.pool.query<DraftRow>(
+      "SELECT * FROM post_drafts WHERE course_id=$1 AND user_id=$2 ORDER BY updated_at DESC,id DESC",
+      [courseId, userId],
+    );
+    return result.rows.map((row) => this.draftValue(row));
+  }
+  async getDraft(courseId: string, userId: string, draftId: string) {
+    await this.draftMembership(this.pool, courseId, userId);
+    return this.draftValue(
+      await this.draftRow(this.pool, courseId, userId, draftId),
+    );
+  }
+  async createDraft(courseId: string, userId: string, content: DraftContent) {
+    return this.tx(async (db) => {
+      const member = await this.membership(db, courseId, userId, true);
+      this.writable(member.status);
+      const result = await db.query<DraftRow>(
+        "INSERT INTO post_drafts(id,course_id,user_id,content) VALUES ($1,$2,$3,$4) RETURNING *",
+        [uuidv7(), courseId, userId, content],
+      );
+      return this.draftValue(result.rows[0]!);
+    });
+  }
+  async updateDraft(
+    courseId: string,
+    userId: string,
+    draftId: string,
+    etag: string | undefined,
+    content: DraftContent,
+  ) {
+    return this.tx(async (db) => {
+      const member = await this.membership(db, courseId, userId, true);
+      this.writable(member.status);
+      const row = await this.draftRow(db, courseId, userId, draftId, true);
+      this.checkDraftRevision(row, etag);
+      const result = await db.query<DraftRow>(
+        "UPDATE post_drafts SET content=$2,version=version+1,updated_at=now() WHERE id=$1 RETURNING *",
+        [draftId, content],
+      );
+      return this.draftValue(result.rows[0]!);
+    });
+  }
+  async deleteDraft(
+    courseId: string,
+    userId: string,
+    draftId: string,
+    etag: string | undefined,
+  ) {
+    return this.tx(async (db) => {
+      await this.draftMembership(db, courseId, userId);
+      const row = await this.draftRow(db, courseId, userId, draftId, true);
+      this.checkDraftRevision(row, etag);
+      await db.query("DELETE FROM post_drafts WHERE id=$1", [draftId]);
+    });
   }
   private async row(
     db: Db,
@@ -393,6 +509,21 @@ export class PostService {
         );
       }
       this.writable(member.status);
+      if (body.draftId !== undefined) {
+        const draft = await this.draftRow(
+          db,
+          courseId,
+          userId,
+          body.draftId,
+          true,
+        );
+        if (Number(draft.version) !== body.draftVersion)
+          throw new AuthError(
+            412,
+            "version_conflict",
+            "Draft version has changed",
+          );
+      }
       const staff = STAFF.has(member.role);
       if (body.type === "poll" && !staff)
         throw new AuthError(
@@ -471,6 +602,8 @@ export class PostService {
       });
       const row = await this.row(db, id);
       const value = await this.project(db, row!, userId, member.role);
+      if (body.draftId !== undefined)
+        await db.query("DELETE FROM post_drafts WHERE id=$1", [body.draftId]);
       if (key !== undefined)
         await db.query(
           "INSERT INTO idempotency_records (scope,key,request_hash,response_status,response_body,expires_at) VALUES ($1,$2,$3,201,$4,now()+interval '24 hours')",

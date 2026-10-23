@@ -148,6 +148,8 @@ test.describe("rendered discussion attachments", () => {
             page: { nextCursor: null, hasMore: false },
           },
         });
+      if (path === "/api/v1/courses/course-1/post-drafts" && method === "GET")
+        return json([]);
       if (path === "/api/v1/posts/p1" && method === "GET")
         return json(post("p1", "question", [picture]));
       if (path === "/api/v1/posts/p2" && method === "GET")

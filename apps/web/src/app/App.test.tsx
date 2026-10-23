@@ -53,6 +53,34 @@ function jsonResponse(body: unknown, status = 200, headers: HeadersInit = {}) {
   });
 }
 
+function withPostDrafts(
+  fetcher: (url: string, init?: RequestInit) => Promise<Response>,
+) {
+  let version = 0;
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/post-drafts") && init?.method === "POST") {
+      version += 1;
+      return jsonResponse(
+        {
+          data: {
+            id: "app-test-draft",
+            courseId: course.id,
+            content: JSON.parse(String(init.body)).content,
+            createdAt: "2026-10-22T00:00:00Z",
+            updatedAt: "2026-10-22T00:00:00Z",
+            version,
+          },
+        },
+        201,
+        { ETag: `"v${version}"` },
+      );
+    }
+    if (url.endsWith("/post-drafts") && !init?.method)
+      return jsonResponse({ data: [] });
+    return fetcher(url, init);
+  });
+}
+
 function deferredResponse() {
   let resolve!: (response: Response) => void;
   const promise = new Promise<Response>((done) => {
@@ -111,16 +139,18 @@ describe("ChalkTalk auth entry", () => {
     setPath(`/courses/${course.id}`);
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/sessions/current"))
-          return jsonResponse({ data: session });
-        if (url.endsWith(`/courses/${course.id}`))
-          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
-        return jsonResponse({
-          data: [],
-          page: { nextCursor: null, hasMore: false },
-        });
-      }),
+      withPostDrafts(
+        vi.fn(async (url: string) => {
+          if (url.endsWith("/sessions/current"))
+            return jsonResponse({ data: session });
+          if (url.endsWith(`/courses/${course.id}`))
+            return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+          return jsonResponse({
+            data: [],
+            page: { nextCursor: null, hasMore: false },
+          });
+        }),
+      ),
     );
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
@@ -132,8 +162,11 @@ describe("ChalkTalk auth entry", () => {
       "My draft",
     );
     await user.click(screen.getByRole("link", { name: "Ada Lovelace" }));
-    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
     expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    await screen.findByText("Draft saved.");
+    expect(confirm).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("link", { name: "Ada Lovelace" }));
+    expect(window.location.pathname).toBe("/account");
     confirm.mockRestore();
   });
 
@@ -238,16 +271,18 @@ describe("ChalkTalk auth entry", () => {
     setPath(`/courses/${course.id}`);
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/sessions/current"))
-          return jsonResponse({ data: session });
-        if (url.endsWith(`/courses/${course.id}`))
-          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
-        return jsonResponse({
-          data: [],
-          page: { nextCursor: null, hasMore: false },
-        });
-      }),
+      withPostDrafts(
+        vi.fn(async (url: string) => {
+          if (url.endsWith("/sessions/current"))
+            return jsonResponse({ data: session });
+          if (url.endsWith(`/courses/${course.id}`))
+            return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+          return jsonResponse({
+            data: [],
+            page: { nextCursor: null, hasMore: false },
+          });
+        }),
+      ),
     );
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
@@ -265,23 +300,28 @@ describe("ChalkTalk auth entry", () => {
       "value",
       "My draft",
     );
-    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
+    expect(confirm).not.toHaveBeenCalled();
+    await screen.findByText("Draft saved.");
+    await user.click(screen.getByRole("link", { name: "Course settings" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}/settings`);
     confirm.mockRestore();
   });
   it("shows the ChalkTalk logo in the course header and guards drafts when it is followed", async () => {
     setPath(`/courses/${course.id}`);
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/sessions/current"))
-          return jsonResponse({ data: session });
-        if (url.endsWith(`/courses/${course.id}`))
-          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
-        return jsonResponse({
-          data: [],
-          page: { nextCursor: null, hasMore: false },
-        });
-      }),
+      withPostDrafts(
+        vi.fn(async (url: string) => {
+          if (url.endsWith("/sessions/current"))
+            return jsonResponse({ data: session });
+          if (url.endsWith(`/courses/${course.id}`))
+            return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+          return jsonResponse({
+            data: [],
+            page: { nextCursor: null, hasMore: false },
+          });
+        }),
+      ),
     );
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
@@ -297,9 +337,9 @@ describe("ChalkTalk auth entry", () => {
       "My draft",
     );
     await user.click(logo);
-    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
     expect(window.location.pathname).toBe(`/courses/${course.id}`);
-    confirm.mockReturnValue(true);
+    await screen.findByText("Draft saved.");
+    expect(confirm).not.toHaveBeenCalled();
     await user.click(logo);
     expect(window.location.pathname).toBe("/home");
     confirm.mockRestore();
@@ -318,7 +358,7 @@ describe("ChalkTalk auth entry", () => {
         page: { nextCursor: null, hasMore: false },
       });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withPostDrafts(fetchMock));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     render(<App />);
@@ -335,11 +375,11 @@ describe("ChalkTalk auth entry", () => {
       "My draft",
     );
     await user.click(signOut);
-    expect(confirm).toHaveBeenCalledWith("Discard your unsaved post draft?");
     expect(
       fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
     ).toBe(false);
-    confirm.mockReturnValue(true);
+    await screen.findByText("Draft saved.");
+    expect(confirm).not.toHaveBeenCalled();
     await user.click(signOut);
     await screen.findByRole("heading", {
       name: "Discuss the work that matters.",
@@ -458,7 +498,7 @@ describe("ChalkTalk auth entry", () => {
         page: { nextCursor: null, hasMore: false },
       });
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withPostDrafts(fetchMock));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     render(<App />);
@@ -469,15 +509,14 @@ describe("ChalkTalk auth entry", () => {
       screen.getByRole("textbox", { name: "Post title" }),
       "My draft",
     );
-    for (const name of ["All courses", "Course resources"]) {
-      await user.click(banner.getByRole("link", { name }));
-      expect(window.location.pathname).toBe(`/courses/${course.id}`);
-      expect(
-        screen.getByRole("textbox", { name: "Post title" }),
-      ).toHaveProperty("value", "My draft");
-    }
-    expect(confirm).toHaveBeenCalledTimes(2);
-    confirm.mockReturnValue(true);
+    await user.click(banner.getByRole("link", { name: "All courses" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+      "value",
+      "My draft",
+    );
+    await screen.findByText("Draft saved.");
+    expect(confirm).not.toHaveBeenCalled();
     await user.click(banner.getByRole("link", { name: "Course resources" }));
     expect(window.location.pathname).toBe(`/courses/${course.id}/resources`);
     expect(
@@ -834,7 +873,7 @@ describe("ChalkTalk auth entry", () => {
 
   it("keeps the course and draft when switching course is declined", async () => {
     setPath(`/courses/${course.id}`);
-    vi.stubGlobal("fetch", courseRoutesFetch());
+    vi.stubGlobal("fetch", withPostDrafts(courseRoutesFetch()));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     render(<App />);
@@ -847,12 +886,16 @@ describe("ChalkTalk auth entry", () => {
     );
     await user.click(screen.getByRole("button", { name: /Switch course/ }));
     await user.click(await screen.findByRole("link", { name: /Calculus II/ }));
-    expect(confirm).toHaveBeenCalledTimes(1);
     expect(window.location.pathname).toBe(`/courses/${course.id}`);
     expect(
       (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
         .value,
     ).toBe("Draft");
+    await screen.findByText("Draft saved.");
+    expect(confirm).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /Switch course/ }));
+    await user.click(screen.getByRole("link", { name: /Calculus II/ }));
+    expect(window.location.pathname).toBe("/courses/course_456");
     confirm.mockRestore();
   });
 
@@ -1032,23 +1075,25 @@ describe("ChalkTalk auth entry", () => {
     };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/sessions/current"))
-          return jsonResponse({ data: session });
-        if (url.endsWith(`/courses/${course.id}`))
-          return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
-        if (url.endsWith(`/members/${session.user.id}`))
-          return jsonResponse({ data: member });
-        if (url.endsWith("/members"))
+      withPostDrafts(
+        vi.fn(async (url: string) => {
+          if (url.endsWith("/sessions/current"))
+            return jsonResponse({ data: session });
+          if (url.endsWith(`/courses/${course.id}`))
+            return jsonResponse({ data: course }, 200, { ETag: '"v1"' });
+          if (url.endsWith(`/members/${session.user.id}`))
+            return jsonResponse({ data: member });
+          if (url.endsWith("/members"))
+            return jsonResponse({
+              data: [member],
+              page: { nextCursor: null, hasMore: false },
+            });
           return jsonResponse({
-            data: [member],
+            data: [],
             page: { nextCursor: null, hasMore: false },
           });
-        return jsonResponse({
-          data: [],
-          page: { nextCursor: null, hasMore: false },
-        });
-      }),
+        }),
+      ),
     );
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
@@ -1064,7 +1109,8 @@ describe("ChalkTalk auth entry", () => {
     await act(async () => {
       window.history.back();
     });
-    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    await screen.findByText("Draft saved.");
+    expect(confirm).not.toHaveBeenCalled();
     expect(window.location.pathname).toBe(`/courses/${course.id}`);
     expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
       "value",

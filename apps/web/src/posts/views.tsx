@@ -25,21 +25,29 @@ import { useAttachmentQueue } from "../attachments/queue.js";
 import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
+  createPostDraft,
   createPost,
+  deletePostDraft,
+  getPostDraft,
   getDuplicateReview,
   getPost,
   listMergedPosts,
   listPosts,
+  listPostDrafts,
   makePostPublic,
   markCourseRead,
   setFollowing,
   setPostPinned,
   unmergePost,
   updatePost,
+  updatePostDraft,
   type CreatePostInput,
   type MergedPost,
   type Post,
   type PostDetail,
+  type PostDraft,
+  type PostDraftContent,
+  type DraftRevision,
   type PostListOptions,
   type PostSort,
 } from "./client.js";
@@ -443,13 +451,151 @@ function relatedSemanticQuery(title: string, body: string): string {
   return [heading, sample].filter(Boolean).join(" ");
 }
 const MAX_POLL_OPTIONS = 10;
+const MAX_DRAFT_FIELD_LENGTH = 200;
+
+function draftFingerprint(content: PostDraftContent) {
+  return JSON.stringify({
+    type: content.type,
+    title: content.title,
+    bodyMarkdown: content.bodyMarkdown,
+    anonymous: content.anonymous,
+    tags: content.tags,
+    ...(content.type === "poll" ? { options: content.options ?? [] } : {}),
+    ...(content.announcement ? { announcement: true } : {}),
+    ...(content.private ? { private: true } : {}),
+  });
+}
+
+function parseComposerTags(value: string): string[] {
+  const result: string[] = [];
+  let field = "";
+  let quoted = false;
+  let wasQuoted = false;
+  let closedQuote = false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character === "\\" && quoted && value[index + 1] === "\\") {
+      field += "\\";
+      index++;
+    } else if (
+      character === "\\" &&
+      quoted &&
+      value[index + 1] === "u" &&
+      /^[0-9a-fA-F]{4}$/.test(value.slice(index + 2, index + 6))
+    ) {
+      field += String.fromCharCode(
+        parseInt(value.slice(index + 2, index + 6), 16),
+      );
+      index += 5;
+    } else if (character === '"' && quoted && value[index + 1] === '"') {
+      field += '"';
+      index++;
+    } else if (character === '"' && quoted) {
+      quoted = false;
+      closedQuote = true;
+    } else if (character === '"' && !field.trim()) {
+      field = "";
+      quoted = true;
+      wasQuoted = true;
+    } else if (character === "," && !quoted) {
+      if (wasQuoted || field.trim())
+        result.push(wasQuoted ? field : field.trim());
+      field = "";
+      wasQuoted = false;
+      closedQuote = false;
+    } else if (closedQuote && /\s/.test(character)) {
+      continue;
+    } else {
+      field += character;
+    }
+  }
+  if (wasQuoted || field.trim()) result.push(wasQuoted ? field : field.trim());
+  return result;
+}
+
+function formatComposerTags(tags: string[]): string {
+  return tags
+    .map((tag) => {
+      const quoted =
+        tag === "" ||
+        tag !== tag.trim() ||
+        [...tag].some((character) => {
+          const code = character.charCodeAt(0);
+          return (
+            character === "," || character === '"' || code < 32 || code === 127
+          );
+        });
+      if (!quoted) return tag;
+      const encoded = [...tag]
+        .map((character) => {
+          if (character === "\\") return "\\\\";
+          if (character === '"') return '""';
+          const code = character.charCodeAt(0);
+          return code < 32 || code === 127
+            ? `\\u${code.toString(16).padStart(4, "0")}`
+            : character;
+        })
+        .join("");
+      return `"${encoded}"`;
+    })
+    .join(", ");
+}
+
+function editDraftMetadataText(
+  original: string,
+  edited: string,
+  caret: number,
+): string {
+  if (!original.includes("\r"))
+    return edited.length <= MAX_DRAFT_FIELD_LENGTH ? edited : original;
+  let displayed = "";
+  const offsets = [0];
+  for (let index = 0; index < original.length; index++) {
+    if (original[index] === "\r") {
+      if (original[index + 1] === "\n") index++;
+      displayed += "\n";
+    } else {
+      displayed += original[index];
+    }
+    offsets.push(index + 1);
+  }
+  if (displayed === edited) return original;
+  const prefixLimit = Math.max(
+    0,
+    caret - Math.max(0, edited.length - displayed.length),
+  );
+  let prefix = 0;
+  while (
+    prefix < prefixLimit &&
+    prefix < displayed.length &&
+    prefix < edited.length &&
+    displayed[prefix] === edited[prefix]
+  )
+    prefix++;
+  let suffix = 0;
+  while (
+    suffix < displayed.length - prefix &&
+    suffix < edited.length - prefix &&
+    displayed[displayed.length - suffix - 1] ===
+      edited[edited.length - suffix - 1]
+  )
+    suffix++;
+  const translated =
+    original.slice(0, offsets[prefix]) +
+    edited.slice(prefix, edited.length - suffix) +
+    original.slice(offsets[displayed.length - suffix]);
+  return translated.length <= MAX_DRAFT_FIELD_LENGTH ? translated : original;
+}
 
 function Composer({
   courseId,
   csrfToken,
   staff = false,
+  archived = false,
   onCreated,
   onClose,
+  onDiscardLocalChanges,
+  onLeaveRequestChange,
   onStateChange,
   initialTitle = "",
 }: {
@@ -457,8 +603,11 @@ function Composer({
   csrfToken: string;
   /** TAs and instructors may post polls and announcements. */
   staff?: boolean;
+  archived?: boolean;
   onCreated: (post: Post) => void;
   onClose: () => void;
+  onDiscardLocalChanges: () => void;
+  onLeaveRequestChange: (guard: () => boolean) => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
   /** A starting title, such as a search the reader chose to ask as a question. */
   initialTitle?: string;
@@ -476,10 +625,24 @@ function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [body, setBody] = useState("");
+  const [editorGeneration, setEditorGeneration] = useState(0);
   const [anonymous, setAnonymous] = useState(false);
   const [tags, setTags] = useState("");
   const [pending, setPending] = useState(false);
+  const [switchingDraft, setSwitchingDraft] = useState(false);
   const [error, setError] = useState("");
+  const [drafts, setDrafts] = useState<PostDraft[]>([]);
+  const [draftStatus, setDraftStatus] = useState<
+    "idle" | "saving" | "saved" | "error" | "conflict"
+  >("idle");
+  const [draftError, setDraftError] = useState("");
+  const [leaveNotice, setLeaveNotice] = useState("");
+  const [revision, setRevision] = useState<DraftRevision>();
+  const revisionRef = useRef<DraftRevision | undefined>(undefined);
+  const savePromise = useRef<Promise<boolean> | undefined>(undefined);
+  const saveTimer = useRef<number | undefined>(undefined);
+  const listGeneration = useRef(0);
+  const conflictRef = useRef(false);
   const [published, setPublished] = useState<Post>();
   const attachmentQueue = useAttachmentQueue();
   const [suggestions, setSuggestions] = useState<Post[]>([]);
@@ -490,31 +653,282 @@ function Composer({
     undefined,
   );
   const query = relatedQuery(title, body);
+  const draftContent = useMemo<PostDraftContent>(
+    () => ({
+      type,
+      title,
+      bodyMarkdown: body,
+      anonymous,
+      tags: parseComposerTags(tags),
+      ...(type === "poll" ? { options: pollOptions } : {}),
+      ...(type === "note" && announcement ? { announcement: true } : {}),
+      ...(type !== "poll" && audience === "staff" ? { private: true } : {}),
+    }),
+    [type, title, body, anonymous, tags, pollOptions, announcement, audience],
+  );
+  const contentRef = useRef(draftContent);
+  contentRef.current = draftContent;
+  const savedContent = useRef(
+    draftFingerprint({
+      type: "question",
+      title: "",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: [],
+    }),
+  );
+  const refreshDrafts = useCallback(() => {
+    const generation = ++listGeneration.current;
+    void listPostDrafts(courseId)
+      .then((items) => {
+        if (generation !== listGeneration.current) return;
+        if (
+          !Array.isArray(items) ||
+          items.some(
+            (item) =>
+              !item?.id ||
+              !item.content ||
+              !["question", "note", "poll"].includes(item.content.type) ||
+              typeof item.content.title !== "string" ||
+              typeof item.content.bodyMarkdown !== "string" ||
+              typeof item.content.anonymous !== "boolean" ||
+              !Array.isArray(item.content.tags) ||
+              !Number.isInteger(item.version),
+          )
+        )
+          throw new Error("Invalid saved drafts response.");
+        setDrafts((current) =>
+          items.map((item) => {
+            const newer = current.find(
+              (draft) => draft.id === item.id && draft.version > item.version,
+            );
+            return newer ?? item;
+          }),
+        );
+      })
+      .catch((caught) => {
+        if (generation !== listGeneration.current) return;
+        setDraftError(message(caught));
+      });
+  }, [courseId]);
+  useEffect(refreshDrafts, [refreshDrafts]);
+
+  const saveDraft = useCallback(async (): Promise<boolean> => {
+    if (archived || conflictRef.current) return false;
+    if (savePromise.current) return savePromise.current;
+    const snapshot = draftFingerprint(contentRef.current);
+    if (snapshot === savedContent.current) return true;
+    setDraftStatus("saving");
+    setDraftError("");
+    const request = revisionRef.current
+      ? updatePostDraft(
+          courseId,
+          revisionRef.current.draft.id,
+          revisionRef.current.etag,
+          contentRef.current,
+          csrfToken,
+        )
+      : createPostDraft(courseId, contentRef.current, csrfToken);
+    const pendingSave = request
+      .then((next) => {
+        revisionRef.current = next;
+        setRevision(next);
+        setDrafts((current) => {
+          const index = current.findIndex(
+            (draft) => draft.id === next.draft.id,
+          );
+          if (index < 0) return [next.draft, ...current];
+          return current.map((draft) =>
+            draft.id === next.draft.id ? next.draft : draft,
+          );
+        });
+        savedContent.current = snapshot;
+        const changedDuringSave =
+          draftFingerprint(contentRef.current) !== snapshot;
+        setDraftStatus(changedDuringSave ? "idle" : "saved");
+        setLeaveNotice((current) =>
+          current && !changedDuringSave
+            ? "Draft saved. You can leave now."
+            : current,
+        );
+        if (changedDuringSave) {
+          window.clearTimeout(saveTimer.current);
+          saveTimer.current = window.setTimeout(() => void saveDraft(), 700);
+        }
+        refreshDrafts();
+        return true;
+      })
+      .catch((caught) => {
+        if (caught instanceof ApiError && caught.status === 412) {
+          conflictRef.current = true;
+          setDraftStatus("conflict");
+          setDraftError(
+            "This draft changed elsewhere. Your local text is still here.",
+          );
+        } else {
+          setDraftStatus("error");
+          setDraftError(`Draft not saved: ${message(caught)}`);
+        }
+        setLeaveNotice((current) =>
+          current
+            ? "Draft was not saved. Retry or discard unsaved changes to leave."
+            : current,
+        );
+        return false;
+      })
+      .finally(() => {
+        savePromise.current = undefined;
+      });
+    savePromise.current = pendingSave;
+    return pendingSave;
+  }, [archived, courseId, csrfToken, refreshDrafts]);
+
+  useEffect(() => {
+    if (archived || published || conflictRef.current || switchingDraft) return;
+    if (draftFingerprint(draftContent) === savedContent.current) return;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      void saveDraft();
+    }, 700);
+    return () => window.clearTimeout(saveTimer.current);
+  }, [archived, draftContent, published, saveDraft, switchingDraft]);
+
+  function prepareToLeave() {
+    if (switchingDraft) return false;
+    if (archived || published) return true;
+    if (savePromise.current) {
+      setLeaveNotice(
+        "Saving latest draft before leaving. Try again when saved.",
+      );
+      return false;
+    }
+    if (conflictRef.current) {
+      setLeaveNotice(
+        "This draft changed elsewhere. Reload it or save local text as a new draft before leaving.",
+      );
+      return false;
+    }
+    if (draftFingerprint(contentRef.current) === savedContent.current)
+      return true;
+    if (draftStatus === "error") {
+      setLeaveNotice(
+        "Draft was not saved. Retry or discard unsaved changes to leave.",
+      );
+      return false;
+    }
+    window.clearTimeout(saveTimer.current);
+    setLeaveNotice("Saving latest draft before leaving. Try again when saved.");
+    void saveDraft();
+    return false;
+  }
+  useEffect(() => {
+    onLeaveRequestChange(prepareToLeave);
+  });
+
+  async function openDraft(draftId: string, force = false) {
+    if (switchingDraft || savePromise.current || draftStatus === "saving")
+      return;
+    if (
+      !force &&
+      draftFingerprint(contentRef.current) !== savedContent.current &&
+      !window.confirm("Discard unsaved local draft changes?")
+    )
+      return;
+    if (
+      attachmentQueue.files.length > 0 &&
+      !window.confirm(
+        "Queued attachments are not saved with drafts. Discard them to switch drafts?",
+      )
+    )
+      return;
+    ++listGeneration.current;
+    setSwitchingDraft(true);
+    window.clearTimeout(saveTimer.current);
+    try {
+      const next = await getPostDraft(courseId, draftId);
+      setDrafts((current) =>
+        current.map((draft) =>
+          draft.id === next.draft.id ? next.draft : draft,
+        ),
+      );
+      attachmentQueue.files.forEach((item) => attachmentQueue.remove(item.key));
+      revisionRef.current = next;
+      setRevision(next);
+      savedContent.current = draftFingerprint(next.draft.content);
+      conflictRef.current = false;
+      setDraftStatus("saved");
+      setDraftError("");
+      setType(next.draft.content.type);
+      setTitle(next.draft.content.title);
+      setBody(next.draft.content.bodyMarkdown);
+      setEditorGeneration((generation) => generation + 1);
+      setAnonymous(next.draft.content.anonymous);
+      setTags(formatComposerTags(next.draft.content.tags));
+      setPollOptions(next.draft.content.options ?? []);
+      setAnnouncement(Boolean(next.draft.content.announcement));
+      setAudience(next.draft.content.private ? "staff" : "course");
+    } catch (caught) {
+      setDraftError(message(caught));
+    } finally {
+      setSwitchingDraft(false);
+    }
+  }
+
+  async function discardDraft(draft: PostDraft) {
+    if (
+      revisionRef.current?.draft.id === draft.id &&
+      attachmentQueue.files.length > 0 &&
+      !window.confirm("Discard queued attachments before leaving?")
+    )
+      return;
+    try {
+      await deletePostDraft(
+        courseId,
+        draft.id,
+        `"v${draft.version}"`,
+        csrfToken,
+      );
+      ++listGeneration.current;
+      setDrafts((current) => current.filter((item) => item.id !== draft.id));
+      if (revisionRef.current?.draft.id === draft.id) {
+        attachmentQueue.files.forEach((item) =>
+          attachmentQueue.remove(item.key),
+        );
+        revisionRef.current = undefined;
+        setRevision(undefined);
+        savedContent.current = draftFingerprint({
+          type: "question",
+          title: "",
+          bodyMarkdown: "",
+          anonymous: false,
+          tags: [],
+        });
+        setType("question");
+        setTitle("");
+        setBody("");
+        setEditorGeneration((generation) => generation + 1);
+        setAnonymous(false);
+        setTags("");
+        setPollOptions(["", ""]);
+        setAnnouncement(false);
+        setAudience("course");
+        setDraftStatus("idle");
+      }
+      refreshDrafts();
+    } catch (caught) {
+      setDraftError(message(caught));
+    }
+  }
 
   useEffect(() => {
     onStateChange(
-      Boolean(
-        title !== initialTitle ||
-        body ||
-        tags ||
-        anonymous ||
-        audience !== "course" ||
-        type !== "question" ||
-        attachmentQueue.files.length > 0 ||
-        published,
-      ),
-      pending,
+      Boolean(attachmentQueue.files.length > 0 || published),
+      pending || switchingDraft,
     );
   }, [
-    anonymous,
-    audience,
-    body,
-    initialTitle,
     onStateChange,
     pending,
-    tags,
-    title,
-    type,
+    switchingDraft,
     attachmentQueue.files.length,
     published,
   ]);
@@ -557,7 +971,7 @@ function Composer({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (pending || switchingDraft || archived) return;
     if (published) {
       setPending(true);
       const complete = await attachmentQueue.upload(
@@ -577,10 +991,7 @@ function Composer({
       title: title.trim(),
       bodyMarkdown: body,
       anonymous: announcing ? false : anonymous,
-      tags: tags
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean),
+      tags: parseComposerTags(tags),
       ...(type === "poll"
         ? { options: labels.filter(Boolean).map((label) => ({ label })) }
         : {}),
@@ -617,16 +1028,35 @@ function Composer({
       setError("Use at most 10 tags of 40 characters each.");
       return;
     }
-    const payload = JSON.stringify(input);
-    const key =
-      lastAttempt.current?.body === payload
-        ? lastAttempt.current.key
-        : crypto.randomUUID();
-    lastAttempt.current = { body: payload, key };
+    window.clearTimeout(saveTimer.current);
     setPending(true);
     setError("");
     try {
+      if (savePromise.current && !(await savePromise.current)) return;
+      if (
+        revisionRef.current &&
+        draftFingerprint(contentRef.current) !== savedContent.current
+      ) {
+        if (!(await saveDraft())) return;
+      }
+      if (conflictRef.current) return;
+      if (revisionRef.current) {
+        input.draftId = revisionRef.current.draft.id;
+        input.draftVersion = revisionRef.current.draft.version;
+      }
+      const payload = JSON.stringify(input);
+      const key =
+        lastAttempt.current?.body === payload
+          ? lastAttempt.current.key
+          : crypto.randomUUID();
+      lastAttempt.current = { body: payload, key };
       const created = await createPost(courseId, input, csrfToken, key);
+      if (input.draftId) {
+        ++listGeneration.current;
+        setDrafts((current) =>
+          current.filter((draft) => draft.id !== input.draftId),
+        );
+      }
       setPublished(created);
       const complete = await attachmentQueue.upload(
         "post",
@@ -648,6 +1078,100 @@ function Composer({
           Close composer
         </button>
       </div>
+      <section className="post-drafts-panel" aria-label="Saved post drafts">
+        <h3>Saved drafts</h3>
+        {drafts.length === 0 ? (
+          <p>No saved drafts yet.</p>
+        ) : (
+          <ul className="post-drafts-list">
+            {drafts.map((draft) => (
+              <li key={draft.id}>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={pending || switchingDraft || Boolean(published)}
+                  onClick={() => void openDraft(draft.id)}
+                >
+                  {draft.content.title || "Untitled draft"}
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={pending || switchingDraft || Boolean(published)}
+                  onClick={() => void discardDraft(draft)}
+                >
+                  Discard {draft.content.title || "untitled draft"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {archived && (
+        <p role="status">
+          This course is archived. Drafts can be read or discarded, but not
+          edited or published.
+        </p>
+      )}
+      {draftStatus === "saving" && <p role="status">Saving draft…</p>}
+      {draftStatus === "saved" && <p role="status">Draft saved.</p>}
+      {leaveNotice && <p role="status">{leaveNotice}</p>}
+      {draftError && (
+        <p className="form-message error" role="alert">
+          {draftError}
+        </p>
+      )}
+      {draftStatus === "error" && (
+        <button
+          type="button"
+          className="text-button"
+          disabled={pending || switchingDraft}
+          onClick={() => void saveDraft()}
+        >
+          Retry draft save
+        </button>
+      )}
+      {(draftStatus === "error" || draftStatus === "conflict") && (
+        <button
+          type="button"
+          className="text-button"
+          disabled={pending || switchingDraft}
+          onClick={onDiscardLocalChanges}
+        >
+          Discard unsaved changes and close
+        </button>
+      )}
+      {draftStatus === "conflict" && (
+        <div>
+          <button
+            type="button"
+            className="text-button"
+            disabled={pending || switchingDraft}
+            onClick={() => {
+              if (revision) void openDraft(revision.draft.id, true);
+            }}
+          >
+            Reload server draft
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={pending || switchingDraft}
+            onClick={() => {
+              revisionRef.current = undefined;
+              setRevision(undefined);
+              conflictRef.current = false;
+              void saveDraft();
+            }}
+          >
+            Save local as new draft
+          </button>
+        </div>
+      )}
+      <p>
+        Attachments are not saved with drafts and will not return after a
+        reload.
+      </p>
       <form onSubmit={submit} noValidate>
         {published ? (
           <p role="status">
@@ -659,6 +1183,7 @@ function Composer({
               Post type
               <select
                 value={type}
+                disabled={archived || pending || switchingDraft}
                 onChange={(event) =>
                   setType(event.target.value as "question" | "note" | "poll")
                 }
@@ -670,16 +1195,29 @@ function Composer({
             </label>
             <label>
               Post title
-              <input
+              <textarea
                 aria-label="Post title"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                maxLength={201}
+                className="post-title-input"
+                rows={1}
+                disabled={archived || pending || switchingDraft}
+                value={title.replace(/\r\n?/g, "\n")}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  const caret = event.currentTarget.selectionStart;
+                  setTitle((current) =>
+                    editDraftMetadataText(current, value, caret),
+                  );
+                }}
+                maxLength={
+                  MAX_DRAFT_FIELD_LENGTH - (title.match(/\r\n/g)?.length ?? 0)
+                }
                 required
               />
             </label>
             <MarkdownEditorField
+              key={editorGeneration}
               label="Post body"
+              disabled={archived || pending || switchingDraft}
               value={body}
               onChange={setBody}
               containerRef={bodyField}
@@ -689,23 +1227,33 @@ function Composer({
                 <legend>Poll options</legend>
                 {pollOptions.map((label, index) => (
                   <div key={index} className="poll-option-row">
-                    <input
+                    <textarea
                       aria-label={`Option ${index + 1}`}
-                      value={label}
-                      maxLength={201}
-                      onChange={(event) =>
-                        setPollOptions((current) =>
-                          current.map((value, position) =>
-                            position === index ? event.target.value : value,
-                          ),
-                        )
+                      rows={1}
+                      value={label.replace(/\r\n?/g, "\n")}
+                      disabled={archived || pending || switchingDraft}
+                      maxLength={
+                        MAX_DRAFT_FIELD_LENGTH -
+                        (label.match(/\r\n/g)?.length ?? 0)
                       }
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        const caret = event.currentTarget.selectionStart;
+                        setPollOptions((current) =>
+                          current.map((option, position) =>
+                            position === index
+                              ? editDraftMetadataText(option, value, caret)
+                              : option,
+                          ),
+                        );
+                      }}
                     />
                     {pollOptions.length > 2 && (
                       <button
                         type="button"
                         className="text-button"
                         aria-label={`Remove option ${index + 1}`}
+                        disabled={archived || pending || switchingDraft}
                         onClick={() =>
                           setPollOptions((current) =>
                             current.filter((_, position) => position !== index),
@@ -721,6 +1269,7 @@ function Composer({
                   <button
                     type="button"
                     className="text-button"
+                    disabled={archived || pending || switchingDraft}
                     onClick={() =>
                       setPollOptions((current) => [...current, ""])
                     }
@@ -734,6 +1283,7 @@ function Composer({
               Tags (comma-separated)
               <input
                 value={tags}
+                disabled={archived || pending || switchingDraft}
                 onChange={(event) => setTags(event.target.value)}
               />
             </label>
@@ -742,6 +1292,7 @@ function Composer({
                 Post to
                 <select
                   value={audience}
+                  disabled={archived || pending || switchingDraft}
                   onChange={(event) =>
                     setAudience(event.target.value as "course" | "staff")
                   }
@@ -756,7 +1307,12 @@ function Composer({
                 <input
                   type="checkbox"
                   checked={announcement && audience !== "staff"}
-                  disabled={audience === "staff"}
+                  disabled={
+                    archived ||
+                    pending ||
+                    switchingDraft ||
+                    audience === "staff"
+                  }
                   onChange={(event) => setAnnouncement(event.target.checked)}
                 />
                 Post as announcement (pinned; email sent to subscribers)
@@ -770,7 +1326,10 @@ function Composer({
                   !(type === "note" && announcement && audience !== "staff")
                 }
                 disabled={
-                  type === "note" && announcement && audience !== "staff"
+                  archived ||
+                  pending ||
+                  switchingDraft ||
+                  (type === "note" && announcement && audience !== "staff")
                 }
                 onChange={(event) => setAnonymous(event.target.checked)}
               />
@@ -778,13 +1337,24 @@ function Composer({
             </label>
           </>
         )}
-        <AttachmentSelection queue={attachmentQueue} disabled={pending} />
+        {!archived && (
+          <AttachmentSelection
+            queue={attachmentQueue}
+            disabled={pending || switchingDraft}
+          />
+        )}
         {error && (
           <p className="form-message error" role="alert">
             {error}
           </p>
         )}
-        <button className="button primary" type="submit" disabled={pending}>
+        <button
+          className="button primary"
+          type="submit"
+          disabled={
+            pending || switchingDraft || archived || draftStatus === "conflict"
+          }
+        >
           {pending
             ? "Publishing…"
             : published
@@ -1299,6 +1869,7 @@ function DiscussionContent({
     id: number;
   }>();
   const composerState = useRef({ dirty: false, pending: false });
+  const composerLeaveRequest = useRef<() => boolean>(() => true);
   const editorState = useRef({ dirty: false, pending: false });
   const listScroll = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -1636,9 +2207,10 @@ function DiscussionContent({
     }
     if (!composerOpen) return true;
     if (composerState.current.pending) return false;
+    if (!composerLeaveRequest.current()) return false;
     if (
       composerState.current.dirty &&
-      !window.confirm("Discard your unsaved post draft?")
+      !window.confirm("Discard queued attachments before leaving?")
     )
       return false;
     composerState.current = { dirty: false, pending: false };
@@ -2047,6 +2619,14 @@ function DiscussionContent({
               >
                 + Create post
               </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => openComposer()}
+                aria-label="Saved drafts"
+              >
+                Saved drafts
+              </button>
             </div>
             <p id="post-search-help" className="visually-hidden">
               Search words, "quoted phrases", OR, or -excluded terms.
@@ -2269,7 +2849,26 @@ function DiscussionContent({
                       courseId={courseId}
                       csrfToken={csrfToken}
                       staff={staff}
+                      archived={course?.status !== "active"}
                       onClose={leaveComposer}
+                      onDiscardLocalChanges={() => {
+                        if (
+                          composerState.current.dirty &&
+                          !window.confirm(
+                            "Discard queued attachments before leaving?",
+                          )
+                        )
+                          return;
+                        composerState.current = {
+                          dirty: false,
+                          pending: false,
+                        };
+                        composerLeaveRequest.current = () => true;
+                        setComposerOpen(false);
+                      }}
+                      onLeaveRequestChange={(guard) => {
+                        composerLeaveRequest.current = guard;
+                      }}
                       onStateChange={(dirty, pending) => {
                         composerState.current = { dirty, pending };
                       }}

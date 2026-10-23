@@ -3304,6 +3304,135 @@ paths:
         - "$ref": "#/components/parameters/Origin"
         - "$ref": "#/components/parameters/CourseId"
         - "$ref": "#/components/parameters/CsrfToken"
+  "/courses/{courseId}/post-drafts":
+    get:
+      tags: [Posts]
+      summary: List the current member's private post drafts, newest updated first
+      operationId: listPostDrafts
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: Owner-scoped drafts; no expiration.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/PostDraftListResponse" }
+        "401": { description: Authentication required }
+        "404": { description: Course membership not found }
+    post:
+      tags: [Posts]
+      summary: Create a private incomplete new-post draft
+      operationId: createPostDraft
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/PostDraftWriteRequest" }
+      responses:
+        "201":
+          description: Draft created.
+          headers:
+            Location: { "$ref": "#/components/headers/Location" }
+            ETag: { "$ref": "#/components/headers/ETag" }
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/PostDraftResponse" }
+        "401": { description: Authentication required }
+        "403": { description: Origin or CSRF validation failed }
+        "404": { description: Course membership not found }
+        "409": { description: Course archived }
+        "422":
+          {
+            description: Invalid or unsupported draft content,
+            including NUL or unpaired UTF-16 surrogates,
+          }
+  "/courses/{courseId}/post-drafts/{draftId}":
+    parameters:
+      - "$ref": "#/components/parameters/CourseId"
+      - name: draftId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Posts]
+      summary: Read an owned private post draft
+      operationId: getPostDraft
+      security: [{ session_cookie: [] }]
+      responses:
+        "200":
+          description: Current owned draft.
+          headers:
+            ETag: { "$ref": "#/components/headers/ETag" }
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/PostDraftResponse" }
+        "401": { description: Authentication required }
+        "404": { description: Draft absent or inaccessible }
+    put:
+      tags: [Posts]
+      summary: Replace an owned post draft at its current revision
+      operationId: updatePostDraft
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/PostDraftWriteRequest" }
+      responses:
+        "200":
+          description: Replacement draft.
+          headers:
+            ETag: { "$ref": "#/components/headers/ETag" }
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/PostDraftResponse" }
+        "401": { description: Authentication required }
+        "403": { description: Origin or CSRF validation failed }
+        "404": { description: Draft absent or inaccessible }
+        "409": { description: Course archived }
+        "412": { description: Stale ETag; version_conflict }
+        "422":
+          {
+            description: Invalid or unsupported draft content,
+            including NUL or unpaired UTF-16 surrogates,
+          }
+        "428": { description: If-Match missing; precondition_required }
+    delete:
+      tags: [Posts]
+      summary: Discard an owned post draft at its current revision
+      operationId: deletePostDraft
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          { description: Draft discarded, including from an archived course }
+        "401": { description: Authentication required }
+        "403": { description: Origin or CSRF validation failed }
+        "404": { description: Draft absent or inaccessible }
+        "412": { description: Stale ETag; version_conflict }
+        "428": { description: If-Match missing; precondition_required }
   "/courses/{courseId}/posts":
     post:
       tags:
@@ -3402,6 +3531,18 @@ paths:
                       message: The idempotency key was already used with a different request body.
                       requestId: req_createPost
                       details: []
+        "404":
+          description: The course membership or selected draft is absent or inaccessible.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "412":
+          description: The selected owned draft version is stale; version_conflict.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
         "413":
           description: Content Too Large
           content:
@@ -13428,7 +13569,8 @@ components:
         upvoteCount: { type: integer, minimum: 0 }
         viewerUpvoted: { type: boolean }
         replyCount: { type: integer, minimum: 0 }
-        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        attachments:
+          { type: array, items: { $ref: "#/components/schemas/Attachment" } }
         resolved:
           type: boolean
           description: Whether this discussion (root followup) is resolved; always false for replies.
@@ -15510,6 +15652,14 @@ components:
           type: boolean
           description: Readable only by the author and course TAs and instructors. Cannot be combined with announcement.
           default: false
+        draftId:
+          type: string
+          format: uuid
+          description: Owned draft to consume atomically; supply with draftVersion.
+        draftVersion:
+          type: integer
+          minimum: 1
+          description: Current version of draftId; supply with draftId.
       additionalProperties: false
       required:
         - type
@@ -15553,6 +15703,14 @@ components:
           type: boolean
           description: Readable only by the author and course TAs and instructors. Cannot be combined with announcement.
           default: false
+        draftId:
+          type: string
+          format: uuid
+          description: Owned draft to consume atomically; supply with draftVersion.
+        draftVersion:
+          type: integer
+          minimum: 1
+          description: Current version of draftId; supply with draftId.
       additionalProperties: false
       required:
         - type
@@ -15595,12 +15753,72 @@ components:
           description: Poll choices in display order. Labels are trimmed and must be distinct ignoring case. Options cannot change after creation. Only TAs and instructors may create polls.
           minItems: 2
           maxItems: 10
+        draftId:
+          type: string
+          format: uuid
+          description: Owned draft to consume atomically; supply with draftVersion.
+        draftVersion:
+          type: integer
+          minimum: 1
+          description: Current version of draftId; supply with draftId.
       additionalProperties: false
       required:
         - type
         - title
         - bodyMarkdown
         - options
+    PostDraftContent:
+      type: object
+      description: Incomplete new-post text and metadata; attachments are never stored. Text fields reject NUL and unpaired UTF-16 surrogates.
+      properties:
+        type: { type: string, enum: [question, note, poll] }
+        title: { type: string, maxLength: 200 }
+        bodyMarkdown: { type: string, maxLength: 100000 }
+        anonymous: { type: boolean }
+        tags:
+          type: array
+          maxItems: 10
+          items: { type: string, maxLength: 40 }
+        options:
+          type: array
+          maxItems: 10
+          description: Partial poll option labels, which may be empty.
+          items: { type: string, maxLength: 200 }
+        announcement: { type: boolean }
+        private: { type: boolean }
+      additionalProperties: false
+      required: [type]
+    PostDraftWriteRequest:
+      type: object
+      properties:
+        content: { "$ref": "#/components/schemas/PostDraftContent" }
+      additionalProperties: false
+      required: [content]
+    PostDraft:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        courseId: { type: string, format: uuid }
+        content: { "$ref": "#/components/schemas/PostDraftContent" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+      additionalProperties: false
+      required: [id, courseId, content, createdAt, updatedAt, version]
+    PostDraftResponse:
+      type: object
+      properties:
+        data: { "$ref": "#/components/schemas/PostDraft" }
+      additionalProperties: false
+      required: [data]
+    PostDraftListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { "$ref": "#/components/schemas/PostDraft" }
+      additionalProperties: false
+      required: [data]
     CreatePostRequest:
       oneOf:
         - "$ref": "#/components/schemas/CreateQuestionPostRequest"

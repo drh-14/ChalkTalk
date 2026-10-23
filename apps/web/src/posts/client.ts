@@ -68,7 +68,28 @@ export type CreatePostInput = {
   options?: { label: string }[];
   announcement?: boolean;
   private?: boolean;
+  draftId?: string;
+  draftVersion?: number;
 };
+export type PostDraftContent = {
+  type: "question" | "note" | "poll";
+  title: string;
+  bodyMarkdown: string;
+  anonymous: boolean;
+  tags: string[];
+  options?: string[];
+  announcement?: boolean;
+  private?: boolean;
+};
+export type PostDraft = {
+  id: string;
+  courseId: string;
+  content: PostDraftContent;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+};
+export type DraftRevision = { draft: PostDraft; etag: string };
 export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
   q?: string;
@@ -392,4 +413,97 @@ export async function createPost(
     }),
   );
   return payload.data;
+}
+
+const draftPath = (courseId: string) =>
+  `/api/v1/courses/${encodeURIComponent(courseId)}/post-drafts`;
+const draftDetailPath = (courseId: string, draftId: string) =>
+  `${draftPath(courseId)}/${encodeURIComponent(draftId)}`;
+
+async function draftRevision(response: Response): Promise<DraftRevision> {
+  const payload = await receive<{ data: PostDraft }>(response);
+  const etag = response.headers.get("ETag");
+  if (!etag) throw new Error("Draft response has no version.");
+  return { draft: payload.data, etag };
+}
+
+export async function listPostDrafts(courseId: string): Promise<PostDraft[]> {
+  const payload = await receive<{ data: PostDraft[] }>(
+    await fetch(draftPath(courseId), {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    }),
+  );
+  return payload.data;
+}
+
+export async function getPostDraft(
+  courseId: string,
+  draftId: string,
+): Promise<DraftRevision> {
+  return draftRevision(
+    await fetch(draftDetailPath(courseId, draftId), {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    }),
+  );
+}
+
+export async function createPostDraft(
+  courseId: string,
+  content: PostDraftContent,
+  csrfToken: string,
+): Promise<DraftRevision> {
+  return draftRevision(
+    await fetch(draftPath(courseId), {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+      },
+      body: JSON.stringify({ content }),
+    }),
+  );
+}
+
+export async function updatePostDraft(
+  courseId: string,
+  draftId: string,
+  etag: string,
+  content: PostDraftContent,
+  csrfToken: string,
+): Promise<DraftRevision> {
+  return draftRevision(
+    await fetch(draftDetailPath(courseId, draftId), {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": etag,
+      },
+      body: JSON.stringify({ content }),
+    }),
+  );
+}
+
+export async function deletePostDraft(
+  courseId: string,
+  draftId: string,
+  etag: string,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(draftDetailPath(courseId, draftId), {
+    method: "DELETE",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+      "If-Match": etag,
+    },
+  });
+  if (!response.ok) await receive<never>(response);
 }

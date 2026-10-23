@@ -1,9 +1,10 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SESSION_COOKIE_NAME } from "../auth/crypto.js";
 import { AuthError } from "../auth/errors.js";
 import { type AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
+import { type PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
 
 const environment = loadEnvironment({
@@ -31,6 +32,44 @@ const authenticatedService = {
   }),
   profile: async () => user,
 } as unknown as AuthService;
+
+it("rejects incompatible draft Unicode before calling the persistence service", async () => {
+  const createDraft = vi.fn();
+  const updateDraft = vi.fn();
+  const app = createApp({
+    environment,
+    authService: authenticatedService,
+    postService: { createDraft, updateDraft } as unknown as PostService,
+  });
+  const path =
+    "/api/v1/courses/01a0e5cc-58ae-7009-9f43-d5453c12bca9/post-drafts";
+  const content = {
+    type: "question",
+    title: "Draft",
+    bodyMarkdown: "",
+    anonymous: false,
+    tags: ["bad\u0000tag"],
+  };
+  const created = await request(app)
+    .post(path)
+    .set("Cookie", `${SESSION_COOKIE_NAME}=opaque-session-credential`)
+    .set("Origin", environment.frontendBaseUrl)
+    .set("X-CSRF-Token", "csrf-token")
+    .send({ content });
+  expect(created.status).toBe(422);
+  expect(created.body.error.code).toBe("validation_failed");
+  const replaced = await request(app)
+    .put(`${path}/01a0e5cc-58ae-7009-9f43-cd86eb2ae79c`)
+    .set("Cookie", `${SESSION_COOKIE_NAME}=opaque-session-credential`)
+    .set("Origin", environment.frontendBaseUrl)
+    .set("X-CSRF-Token", "csrf-token")
+    .set("If-Match", '"v1"')
+    .send({ content: { ...content, tags: [], title: "bad\ud800title" } });
+  expect(replaced.status).toBe(422);
+  expect(replaced.body.error.code).toBe("validation_failed");
+  expect(createDraft).not.toHaveBeenCalled();
+  expect(updateDraft).not.toHaveBeenCalled();
+});
 
 describe("authenticated read CORS contract", () => {
   it.each(["/api/v1/sessions/current", "/api/v1/users/me"])(
