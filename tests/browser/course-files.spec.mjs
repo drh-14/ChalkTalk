@@ -76,6 +76,10 @@ async function open(
           expiresAt: "2090-01-01T00:00:00Z",
         },
       });
+    if (url.pathname === "/api/v1/users/me/notifications/unread-count")
+      return respond({ data: { count: 0 } });
+    if (url.pathname === "/api/v1/courses/course-1/resource-sections")
+      return respond({ data: [], version: 1 });
     if (url.pathname === "/api/v1/courses/course-1/members/user-1")
       return respond({ data: { role } });
     if (url.pathname === "/api/v1/courses/course-1")
@@ -112,7 +116,10 @@ async function open(
       });
     }
     if (
-      url.pathname === "/api/v1/courses/course-1/files" &&
+      [
+        "/api/v1/courses/course-1/files",
+        "/api/v1/courses/course-1/resources/files",
+      ].includes(url.pathname) &&
       req.method() === "POST"
     ) {
       uploads.push({
@@ -303,6 +310,36 @@ test("instructor retries upload with the same key and preserves existing files o
   ).toBeVisible();
 });
 
+test("a newly selected file with identical metadata gets a fresh upload key", async ({
+  page,
+}) => {
+  const uploads = await open(page, { role: "instructor", failUpload: true });
+  const select = async (contents) => {
+    await page.getByLabel("Choose a course file").evaluate((input, bytes) => {
+      const transfer = new globalThis.DataTransfer();
+      transfer.items.add(
+        new globalThis.File([bytes], "Same.txt", {
+          type: "text/plain",
+          lastModified: 123,
+        }),
+      );
+      input.files = transfer.files;
+      input.dispatchEvent(new globalThis.Event("change", { bubbles: true }));
+    }, contents);
+  };
+  await select("a");
+  await page.getByRole("button", { name: "Upload file" }).click();
+  await expect(page.getByRole("alert")).toContainText("Storage unavailable");
+  await select("b");
+  await page.getByRole("button", { name: "Upload file" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Same.txt uploaded." }),
+  ).toBeVisible();
+  expect(uploads).toHaveLength(2);
+  expect(uploads[1].key).not.toBe(uploads[0].key);
+  await shot(page, "upload-same-metadata-new-file");
+});
+
 test("mobile wraps long literal filenames and keyboard reaches the download", async ({
   page,
 }) => {
@@ -337,7 +374,9 @@ test("loading feedback and retrying failed pagination retain existing files", as
     listGate,
     failNextPage: true,
   });
-  await expect(page.getByRole("status")).toHaveText("Loading course files…");
+  await expect(page.getByRole("status")).toHaveText(
+    "Loading course resources…",
+  );
   await shot(page, "loading");
   release();
   await expect(
@@ -469,7 +508,7 @@ test("instructor can submit code-point limit titles and URLs", async ({
   await page.getByLabel("Link URL", { exact: true }).fill(url);
   await page.getByRole("button", { name: "Add link", exact: true }).click();
   await expect.poll(() => controls.links.length).toBe(1);
-  expect(controls.links[0].body).toEqual({ kind: "link", title, url });
+  expect(controls.links[0].body).toMatchObject({ kind: "link", title, url });
   await expect(
     page.getByRole("link", { name: new RegExp(title) }),
   ).toBeVisible();
@@ -504,7 +543,7 @@ test("oversized code-point inputs show errors without losing existing resources"
   await shot(page, "link-url-too-long");
 });
 
-test("mixed pagination preserves equal-ID file and link entries", async ({
+test("mixed pagination preserves distinct catalog resource entries", async ({
   page,
 }) => {
   await open(page, {
@@ -513,7 +552,7 @@ test("mixed pagination preserves equal-ID file and link entries", async ({
     nextFiles: [
       {
         kind: "link",
-        id: file.id,
+        id: "same-id-link",
         courseId: "course-1",
         title: "Same ID link",
         url: "https://example.edu/same",

@@ -1,3 +1,4 @@
+import { readableCatalogFile } from "../course-resources/read-policy.js";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { basename } from "node:path";
@@ -63,7 +64,7 @@ export class CourseFileService {
     userId: string,
     instructor: boolean,
     lock = false,
-  ): Promise<string> {
+  ): Promise<{ status: string; role: string }> {
     const found = await db.query<{ status: string; role: string }>(
       `SELECT c.status,m.role FROM courses c JOIN course_memberships m ON m.course_id=c.id JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL WHERE c.id=$1 AND m.user_id=$2${lock ? " FOR UPDATE OF c,m" : ""}`,
       [courseId, userId],
@@ -80,76 +81,106 @@ export class CourseFileService {
         "permission_denied",
         "Instructor role is required",
       );
-    return found.rows[0].status;
+    return found.rows[0];
   }
 
   async list(courseId: string, userId: string, limit: number, cursor?: string) {
-    const status = await this.authorize(this.pool, courseId, userId, false);
-    if (status !== "active" && status !== "archived")
-      throw new AuthError(404, "not_found", "Course is not found");
-    let after: { timestamp: string; id: string } | undefined;
-    if (cursor !== undefined) {
-      try {
-        if (!/^[A-Za-z0-9_-]+$/.test(cursor) || cursor.length > 2048)
-          throw new Error("Invalid encoding");
-        const bytes = Buffer.from(cursor, "base64url");
-        if (bytes.toString("base64url") !== cursor)
-          throw new Error("Invalid encoding");
-        const value: unknown = JSON.parse(bytes.toString("utf8"));
-        if (
-          !Array.isArray(value) ||
-          value.length !== 3 ||
-          value[0] !== courseId ||
-          typeof value[1] !== "string" ||
-          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value[1]) ||
-          value[1].startsWith("0000-") ||
-          !Number.isFinite(Date.parse(value[1])) ||
-          new Date(value[1]).toISOString() !== value[1].slice(0, 23) + "Z" ||
-          typeof value[2] !== "string" ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
-            value[2],
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const membership = await this.authorize(client, courseId, userId, false);
+      if (membership.status !== "active" && membership.status !== "archived")
+        throw new AuthError(404, "not_found", "Course is not found");
+      const access =
+        membership.role === "ta" || membership.role === "instructor"
+          ? "staff"
+          : "class";
+      const catalogVersion =
+        (
+          await client.query<{ version: number }>(
+            "SELECT version FROM course_resource_catalogs WHERE course_id=$1",
+            [courseId],
           )
-        )
-          throw new Error("Invalid cursor");
-        after = { timestamp: value[1], id: value[2] };
-      } catch {
-        throw new AuthError(
-          400,
-          "invalid_request",
-          "Pagination cursor is invalid",
-        );
+        ).rows[0]?.version ?? 1;
+      let after: { timestamp: string; id: string } | undefined;
+      if (cursor !== undefined) {
+        try {
+          if (!/^[A-Za-z0-9_-]+$/.test(cursor) || cursor.length > 2048)
+            throw new Error("Invalid encoding");
+          const bytes = Buffer.from(cursor, "base64url");
+          if (bytes.toString("base64url") !== cursor)
+            throw new Error("Invalid encoding");
+          const value: unknown = JSON.parse(bytes.toString("utf8"));
+          if (
+            !Array.isArray(value) ||
+            value.length !== 5 ||
+            value[0] !== courseId ||
+            value[3] !== access ||
+            value[4] !== catalogVersion ||
+            typeof value[1] !== "string" ||
+            !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value[1]) ||
+            value[1].startsWith("0000-") ||
+            !Number.isFinite(Date.parse(value[1])) ||
+            new Date(value[1]).toISOString() !== value[1].slice(0, 23) + "Z" ||
+            typeof value[2] !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+              value[2],
+            )
+          )
+            throw new Error("Invalid cursor");
+          after = { timestamp: value[1], id: value[2] };
+        } catch {
+          throw new AuthError(
+            400,
+            "invalid_request",
+            "Pagination cursor is invalid",
+          );
+        }
       }
-    }
-    const found = await this.pool.query<Row & { cursor_timestamp: string }>(
-      `SELECT ${select},to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_timestamp
-       FROM course_files WHERE course_id=$1 AND deleted_at IS NULL
+      const found = await client.query<Row & { cursor_timestamp: string }>(
+        `SELECT ${select},to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_timestamp
+       FROM course_files WHERE course_id=$1 AND deleted_at IS NULL AND ${readableCatalogFile("course_files", after ? "$5" : "$3")}
        ${after ? "AND (created_at,id)<($3::timestamptz,$4::uuid)" : ""}
        ORDER BY created_at DESC,id DESC LIMIT $2`,
-      after
-        ? [courseId, limit + 1, after.timestamp, after.id]
-        : [courseId, limit + 1],
-    );
-    const rows = found.rows.slice(0, limit);
-    const hasMore = found.rows.length > limit;
-    const last = rows.at(-1);
-    return {
-      data: rows.map(project),
-      page: {
-        hasMore,
-        nextCursor:
-          hasMore && last
-            ? Buffer.from(
-                JSON.stringify([courseId, last.cursor_timestamp, last.id]),
-              ).toString("base64url")
-            : null,
-      },
-    };
+        after
+          ? [courseId, limit + 1, after.timestamp, after.id, userId]
+          : [courseId, limit + 1, userId],
+      );
+      const rows = found.rows.slice(0, limit);
+      const hasMore = found.rows.length > limit;
+      const last = rows.at(-1);
+      await client.query("COMMIT");
+      return {
+        data: rows.map(project),
+        page: {
+          hasMore,
+          nextCursor:
+            hasMore && last
+              ? Buffer.from(
+                  JSON.stringify([
+                    courseId,
+                    last.cursor_timestamp,
+                    last.id,
+                    access,
+                    catalogVersion,
+                  ]),
+                ).toString("base64url")
+              : null,
+        },
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async authorizeUpload(
     courseId: string,
     userId: string,
     key?: string,
+    scopePrefix = "course-file-create",
   ): Promise<void> {
     if (key !== undefined && (!key.length || key.length > 255))
       throw new AuthError(
@@ -158,9 +189,9 @@ export class CourseFileService {
         "Idempotency-Key is invalid",
       );
     const status = await this.authorize(this.pool, courseId, userId, true);
-    if (status === "active") return;
-    if (status === "archived" && key) {
-      const scope = `course-file-create:${userId}:${courseId}`;
+    if (status.status === "active") return;
+    if (status.status === "archived" && key) {
+      const scope = `${scopePrefix}:${userId}:${courseId}`;
       const previous = await this.pool.query(
         "SELECT 1 FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at>now()",
         [scope, key],
@@ -176,8 +207,9 @@ export class CourseFileService {
     upload: NewUpload,
     key?: string,
     associate?: (client: PoolClient, file: CourseFile) => Promise<void>,
+    context?: { scopePrefix: string; requestContext: unknown },
   ): Promise<CourseFile> {
-    await this.authorizeUpload(courseId, userId, key);
+    await this.authorizeUpload(courseId, userId, key, context?.scopePrefix);
     const name = basename(upload.fileName);
     if (
       !name ||
@@ -199,10 +231,11 @@ export class CourseFileService {
           name,
           declaredType: upload.declaredType.toLowerCase(),
           sha256: checksum.toString("hex"),
+          ...(context ? { context: context.requestContext } : {}),
         }),
       )
       .digest();
-    const scope = `course-file-create:${userId}:${courseId}`;
+    const scope = `${context?.scopePrefix ?? "course-file-create"}:${userId}:${courseId}`;
     const client = await this.pool.connect();
     let storedObject: string | undefined;
     let createdId: string | undefined;
@@ -238,7 +271,10 @@ export class CourseFileService {
             true,
             true,
           );
-          if (lockedStatus !== "active" && lockedStatus !== "archived")
+          if (
+            lockedStatus.status !== "active" &&
+            lockedStatus.status !== "archived"
+          )
             throw new AuthError(409, "course_archived", "Course is archived");
           const visible = await client.query(
             "SELECT 1 FROM course_files WHERE id=$1 AND course_id=$2 AND uploaded_by_user_id=$3 AND deleted_at IS NULL FOR SHARE",
@@ -258,7 +294,7 @@ export class CourseFileService {
           [scope, key],
         );
       }
-      if (courseStatus !== "active")
+      if (courseStatus.status !== "active")
         throw new AuthError(409, "course_archived", "Course is archived");
       const mediaType = await validateUpload(
         name,
@@ -278,7 +314,7 @@ export class CourseFileService {
         }),
       );
       if (
-        (await this.authorize(client, courseId, userId, true, true)) !==
+        (await this.authorize(client, courseId, userId, true, true)).status !==
         "active"
       )
         throw new AuthError(409, "course_archived", "Course is archived");
@@ -342,13 +378,13 @@ export class CourseFileService {
 
   async download(courseId: string, fileId: string, userId: string) {
     const found = await this.pool.query<Row>(
-      `SELECT ${select} FROM course_files WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL`,
-      [fileId, courseId],
+      `SELECT ${select} FROM course_files WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL AND ${readableCatalogFile("course_files", "$3")}`,
+      [fileId, courseId, userId],
     );
     const row = found.rows[0];
     if (!row) throw new AuthError(404, "not_found", "File is not found");
     const status = await this.authorize(this.pool, courseId, userId, false);
-    if (status !== "active" && status !== "archived")
+    if (status.status !== "active" && status.status !== "archived")
       throw new AuthError(404, "not_found", "File is not found");
     try {
       const object = await this.s3.send(
@@ -391,7 +427,7 @@ export class CourseFileService {
           "permission_denied",
           "Only the uploader may delete this file",
         );
-      if (status !== "active")
+      if (status.status !== "active")
         throw new AuthError(409, "course_archived", "Course is archived");
       const reference = await client.query(
         "SELECT 1 FROM course_information WHERE course_id=$1 AND syllabus_file_id=$2",
@@ -402,6 +438,16 @@ export class CourseFileService {
           409,
           "file_in_use",
           "Remove or replace the syllabus before deleting this file",
+        );
+      const referenced = await client.query(
+        "SELECT 1 FROM course_resources r JOIN course_resource_revisions v ON v.id=r.active_revision_id WHERE r.deleted_at IS NULL AND v.file_id=$1",
+        [fileId],
+      );
+      if (referenced.rowCount)
+        throw new AuthError(
+          409,
+          "file_in_use",
+          "Remove the resource before deleting its file",
         );
       await client.query(
         "UPDATE course_files SET deleted_at=clock_timestamp() WHERE id=$1",

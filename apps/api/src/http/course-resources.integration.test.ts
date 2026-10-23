@@ -68,7 +68,7 @@ const post = (
   if (key !== undefined) req = req.set("Idempotency-Key", key);
   return req.send(body);
 };
-integration("flat course resources HTTP/PostgreSQL contract", () => {
+integration("organized course resources HTTP/PostgreSQL contract", () => {
   beforeAll(async () => {
     admin = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
     await admin.query(`CREATE SCHEMA "${schema}"`);
@@ -133,6 +133,10 @@ integration("flat course resources HTTP/PostgreSQL contract", () => {
       title: body.title,
       url: body.url,
       createdAt: expect.any(String),
+      sectionId: null,
+      visibility: "class",
+      position: 0,
+      version: 1,
     });
     const [a, b] = await Promise.all([
       post(body, "link-retry"),
@@ -144,7 +148,7 @@ integration("flat course resources HTTP/PostgreSQL contract", () => {
       (await post({ ...body, title: "Changed" }, "link-retry")).status,
     ).toBe(409);
     expect(
-      (await pool.query("SELECT count(*)::int AS n FROM course_resource_links"))
+      (await pool.query("SELECT count(*)::int AS n FROM course_resources"))
         .rows[0].n,
     ).toBe(1);
     await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
@@ -174,17 +178,31 @@ integration("flat course resources HTTP/PostgreSQL contract", () => {
   });
   it("pages mixed actual files and links using exact microseconds and kind tie-breaks", async () => {
     const same = uuid();
-    for (const [id, date] of [
-      [same, "2090-01-01T00:00:00.123456Z"],
-      [uuid(), "2090-01-01T00:00:00.123455Z"],
-    ])
-      await pool.query(
-        "INSERT INTO course_resource_links(id,course_id,title,url,created_by_user_id,created_at) VALUES($1,$2,'Mixed link','https://example.edu',$3,$4)",
-        [id, ids.course, ids.instructor, date],
-      );
+    const firstLink = await post({
+      kind: "link",
+      title: "Mixed link",
+      url: "https://example.edu/first",
+    });
+    const secondLink = await post({
+      kind: "link",
+      title: "Mixed link",
+      url: "https://example.edu/second",
+    });
+    await pool.query("UPDATE course_resources SET created_at=$2 WHERE id=$1", [
+      firstLink.body.data.id,
+      "2090-01-01T00:00:00.123456Z",
+    ]);
+    await pool.query("UPDATE course_resources SET created_at=$2 WHERE id=$1", [
+      secondLink.body.data.id,
+      "2090-01-01T00:00:00.123455Z",
+    ]);
     await pool.query(
       "INSERT INTO course_files(id,course_id,uploaded_by_user_id,object_key,file_name,media_type,size_bytes,checksum_sha256,created_at) VALUES($1,$2,$3,'test-only-key','Lecture.txt','text/plain',1,$4,'2090-01-01T00:00:00.123456Z')",
       [same, ids.course, ids.instructor, Buffer.alloc(32)],
+    );
+    await pool.query(
+      "WITH r AS (INSERT INTO course_resources(id,course_id,title,visibility,position,active_revision_id,created_at) VALUES($1,$2,'Lecture','class',10,$1,'2090-01-01T00:00:00.123456Z') RETURNING id) INSERT INTO course_resource_revisions(id,resource_id,course_id,kind,file_id) SELECT id,id,$2,'upload',id FROM r",
+      [same, ids.course],
     );
     const seen: string[] = [];
     let cursor: string | null = null;
@@ -192,7 +210,7 @@ integration("flat course resources HTTP/PostgreSQL contract", () => {
     do {
       const page = await list(
         ids.student,
-        `?limit=1${cursor ? `&cursor=${cursor}` : ""}`,
+        `?sort=date&limit=1${cursor ? `&cursor=${cursor}` : ""}`,
       );
       expect(page.status, JSON.stringify(page.body)).toBe(200);
       expect(page.headers["cache-control"]).toBe("private, no-store");
@@ -201,7 +219,9 @@ integration("flat course resources HTTP/PostgreSQL contract", () => {
       cursor = page.body.page.nextCursor;
       if (!firstCursor) firstCursor = cursor ?? "";
     } while (cursor);
-    expect(seen.slice(0, 2)).toEqual([`upload:${same}`, `link:${same}`]);
+    expect(new Set(seen.slice(0, 2))).toEqual(
+      new Set([`upload:${same}`, `link:${firstLink.body.data.id}`]),
+    );
     expect(new Set(seen).size).toBe(seen.length);
     expect(seen).toHaveLength(4);
     expect((await list(ids.ta)).status).toBe(200);
@@ -301,7 +321,7 @@ integration("flat course resources HTTP/PostgreSQL contract", () => {
       const response = await post(body);
       expect(response.status, JSON.stringify(body).slice(0, 100)).toBe(201);
       const stored = await pool.query(
-        "SELECT title,url,length(title) AS title_length,length(url) AS url_length FROM course_resource_links WHERE id=$1",
+        "SELECT r.title,v.url,length(r.title) AS title_length,length(v.url) AS url_length FROM course_resources r JOIN course_resource_revisions v ON v.id=r.active_revision_id WHERE r.id=$1",
         [response.body.data.id],
       );
       expect(stored.rows[0].title).toBe(body.title);
@@ -377,12 +397,13 @@ integration("flat course resources HTTP/PostgreSQL contract", () => {
     const second = await post(body, "expiry");
     expect(second.status).toBe(201);
     expect(second.body.data.id).not.toBe(first.body.data.id);
-    await pool.query("DELETE FROM course_resource_links WHERE id=$1", [
-      second.body.data.id,
-    ]);
+    await pool.query(
+      "UPDATE course_resources SET deleted_at=clock_timestamp() WHERE id=$1",
+      [second.body.data.id],
+    );
     expect((await post(body, "expiry")).status).toBe(409);
     const before = (
-      await pool.query("SELECT count(*)::int AS n FROM course_resource_links")
+      await pool.query("SELECT count(*)::int AS n FROM course_resources")
     ).rows[0].n;
     await pool.query(
       `CREATE FUNCTION fail_resource_idempotency() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.key='force-rollback' THEN RAISE EXCEPTION 'forced response failure'; END IF; RETURN NEW; END $$`,
@@ -393,11 +414,8 @@ integration("flat course resources HTTP/PostgreSQL contract", () => {
     try {
       expect((await post(body, "force-rollback")).status).toBe(500);
       expect(
-        (
-          await pool.query(
-            "SELECT count(*)::int AS n FROM course_resource_links",
-          )
-        ).rows[0].n,
+        (await pool.query("SELECT count(*)::int AS n FROM course_resources"))
+          .rows[0].n,
       ).toBe(before);
       expect(
         (
