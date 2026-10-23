@@ -5401,6 +5401,138 @@ it("lets staff compose a poll with its options", async () => {
   });
 }, 30_000);
 
+it("sends advanced poll configuration from the staff composer", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    if (init?.method === "POST")
+      return json({ data: { ...post("poll-2", "Review"), type: "poll" } }, 201);
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const type = screen.getByRole("combobox", { name: "Post type" });
+  await waitFor(() =>
+    expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
+  );
+  await user.selectOptions(type, "poll");
+  const release = screen.getByRole("combobox", { name: "Results release" });
+  expect((release as HTMLSelectElement).value).toBe("live");
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Selection mode" }),
+    "multiple",
+  );
+  expect((release as HTMLSelectElement).value).toBe("manual");
+  expect(within(release).queryByRole("option", { name: "Live" })).toBeNull();
+  await user.clear(
+    screen.getByRole("spinbutton", { name: "Maximum selections" }),
+  );
+  await user.type(
+    screen.getByRole("spinbutton", { name: "Maximum selections" }),
+    "2",
+  );
+  await user.selectOptions(release, "automatic");
+  await user.type(
+    screen.getByRole("textbox", { name: "Results explanation (optional)" }),
+    "After closing",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Review",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Choose times",
+  );
+  await user.type(screen.getByRole("textbox", { name: "Option 1" }), "Monday");
+  await user.type(screen.getByRole("textbox", { name: "Option 2" }), "Tuesday");
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  expect(JSON.parse(create[1]?.body as string)).toMatchObject({
+    selectionMode: "multiple",
+    maxSelections: 2,
+    releaseMode: "automatic",
+    explanation: "After closing",
+  });
+}, 30_000);
+
+it("retries the same poll create after its deadline with its original key", async () => {
+  let creates = 0;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    if (init?.method === "POST") {
+      creates += 1;
+      return creates === 1
+        ? json(
+            { error: { code: "service_unavailable", message: "Retry" } },
+            503,
+          )
+        : json(
+            { data: { ...post("poll-retry", "Review"), type: "poll" } },
+            201,
+          );
+    }
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  const type = screen.getByRole("combobox", { name: "Post type" });
+  await waitFor(() =>
+    expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
+  );
+  await user.selectOptions(type, "poll");
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Review",
+  );
+  await user.type(screen.getByRole("textbox", { name: "Post body" }), "Choose");
+  await user.type(screen.getByRole("textbox", { name: "Option 1" }), "A");
+  await user.type(screen.getByRole("textbox", { name: "Option 2" }), "B");
+  fireEvent.change(screen.getByLabelText("Close time (optional)"), {
+    target: { value: "2099-01-01T12:00" },
+  });
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await screen.findByRole("alert");
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2100-01-01T00:00:00Z"));
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() => expect(creates).toBe(2));
+  const posts = fetchMock.mock.calls.filter(
+    ([, init]) => init?.method === "POST",
+  );
+  expect(posts[1]![1]?.body).toBe(posts[0]![1]?.body);
+  expect(
+    (posts[1]![1]?.headers as Record<string, string>)["Idempotency-Key"],
+  ).toBe((posts[0]![1]?.headers as Record<string, string>)["Idempotency-Key"]);
+}, 30_000);
+
 it("lets staff post a note as a non-anonymous announcement", async () => {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/members/user-staff"))

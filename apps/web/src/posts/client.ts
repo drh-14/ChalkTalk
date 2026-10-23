@@ -5,11 +5,21 @@ import type { Attachment } from "../attachments/client.js";
 export type PollOption = {
   id: string;
   label: string;
-  voteCount: number;
+  voteCount?: number;
   /** Whether the viewer chose this option. */
   selected: boolean;
 };
-export type PollState = { options: PollOption[]; totalVotes: number };
+export type PollState = {
+  options: PollOption[];
+  totalVotes?: number;
+  selectionMode?: "single" | "multiple";
+  maxSelections?: number;
+  closesAt?: string | null;
+  closed?: boolean;
+  releaseMode?: "live" | "manual" | "automatic";
+  resultsReleased?: boolean;
+  explanation?: string | null;
+};
 export type Post = {
   id: string;
   courseId: string;
@@ -46,6 +56,13 @@ export type Post = {
   /** Present on polls. */
   options?: PollOption[];
   totalVotes?: number;
+  selectionMode?: PollState["selectionMode"];
+  maxSelections?: number;
+  closesAt?: string | null;
+  closed?: boolean;
+  releaseMode?: PollState["releaseMode"];
+  resultsReleased?: boolean;
+  explanation?: string | null;
 };
 export type PostDetail = Post | { id: string; courseId: string; deleted: true };
 export type MergedPost = {
@@ -66,6 +83,11 @@ export type CreatePostInput = {
   anonymous: boolean;
   tags: string[];
   options?: { label: string }[];
+  selectionMode?: PollState["selectionMode"];
+  maxSelections?: number;
+  closesAt?: string | null;
+  releaseMode?: PollState["releaseMode"];
+  explanation?: string;
   announcement?: boolean;
   private?: boolean;
 };
@@ -336,10 +358,10 @@ export async function markCourseRead(
   if (!response.ok) await receive<never>(response);
 }
 
-/** Casts or changes the viewer's single vote on a poll. */
+/** Replaces the viewer's ballot on a poll. */
 export async function votePoll(
   postId: string,
-  optionId: string,
+  optionIds: string | string[],
   csrfToken: string,
 ): Promise<PollState & { postId: string }> {
   const payload = await receive<{ data: PollState & { postId: string } }>(
@@ -351,10 +373,58 @@ export async function votePoll(
         "Content-Type": "application/json",
         "X-CSRF-Token": csrfToken,
       },
-      body: JSON.stringify({ optionId }),
+      body: JSON.stringify(
+        typeof optionIds === "string" ? { optionId: optionIds } : { optionIds },
+      ),
     }),
   );
   return payload.data;
+}
+
+export async function changePollLifecycle(
+  postId: string,
+  action: "close" | "reopen" | "release",
+  version: number,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/${action}`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"v${version}"`,
+      },
+    }),
+  );
+  return payload.data;
+}
+
+export async function clonePoll(
+  postId: string,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/clone`, {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    }),
+  );
+  return payload.data;
+}
+
+export async function exportPollResults(postId: string): Promise<Blob> {
+  const response = await fetch(
+    `/api/v1/posts/${encodeURIComponent(postId)}/poll-results.csv`,
+    {
+      credentials: "include",
+      headers: { Accept: "text/csv" },
+    },
+  );
+  if (!response.ok) await receive<never>(response);
+  return response.blob();
 }
 
 export async function retractVote(

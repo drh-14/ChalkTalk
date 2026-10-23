@@ -1,9 +1,10 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SESSION_COOKIE_NAME } from "../auth/crypto.js";
 import { AuthError } from "../auth/errors.js";
 import { type AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
+import type { PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
 
 const environment = loadEnvironment({
@@ -31,6 +32,35 @@ const authenticatedService = {
   }),
   profile: async () => user,
 } as unknown as AuthService;
+
+it("rejects nonexistent poll deadline dates before creating a post", async () => {
+  const create = vi.fn();
+  const app = createApp({
+    environment,
+    authService: authenticatedService,
+    postService: { create } as unknown as PostService,
+  });
+  for (const closesAt of [
+    "2099-02-30T12:00:00Z",
+    "2099-02-30T12:00:00+02:30",
+  ]) {
+    const response = await request(app)
+      .post("/api/v1/courses/course_123/posts")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("Cookie", `${SESSION_COOKIE_NAME}=opaque-session-credential`)
+      .set("X-CSRF-Token", "csrf-token")
+      .send({
+        type: "poll",
+        title: "Invalid deadline",
+        bodyMarkdown: "Pick one",
+        options: [{ label: "One" }, { label: "Two" }],
+        closesAt,
+      });
+    expect(response.status).toBe(422);
+    expect(response.body.error.code).toBe("validation_failed");
+  }
+  expect(create).not.toHaveBeenCalled();
+});
 
 describe("authenticated read CORS contract", () => {
   it.each(["/api/v1/sessions/current", "/api/v1/users/me"])(
