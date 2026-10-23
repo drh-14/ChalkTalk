@@ -29,3 +29,5 @@ A `Followup` contains `id`, `postId`, `parentId` (null for a root), `author` (`{
 ## Upvotes
 
 `PUT` or `DELETE /api/v1/answers/{answerId}/upvote` and `/api/v1/followups/{followupId}/upvote` add or remove the current member's vote and return the updated resource. PUT and DELETE are idempotent, including retries. A member may upvote their own content. At most one vote per member and target is stored. Votes update `upvoteCount` and `viewerUpvoted` but do not change the content version or ETag. Deleted or hidden content cannot be voted on; archived courses allow reads but reject vote writes.
+
+For the participation rules on locked posts, see [Discussion locks](posts.md#discussionLock).

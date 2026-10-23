@@ -33,6 +33,7 @@ type Props = {
   postId: string;
   role?: Role;
   courseStatus?: "active" | "archived" | "deleting";
+  discussionLocked?: boolean;
   csrfToken: string;
   /**
    * Called after the viewer answers, edits an answer, posts, deletes, or
@@ -46,6 +47,8 @@ const message = (error: unknown) =>
     : "Something went wrong. Please try again.";
 const canWrite = (props: Props) =>
   !!props.role && props.courseStatus === "active";
+const canParticipate = (props: Props) =>
+  canWrite(props) && !props.discussionLocked;
 const staff = (role?: Role) => role === "ta" || role === "instructor";
 const labels = {
   student: "Students' answer",
@@ -648,7 +651,7 @@ function AnswerCard({
           kind="answer"
           count={answer.upvoteCount}
           voted={answer.viewerUpvoted}
-          disabled={!canWrite(props) || pending}
+          disabled={!canParticipate(props) || pending}
           onClick={() => void act("vote")}
         />
         {canWrite(props) && answer.canEdit && !editing && (
@@ -710,7 +713,7 @@ export function AnswerSections(props: Props) {
     return () => controller.abort();
   }, [props.postId, cycle]);
   const canCreate = (kind: Answer["kind"]) =>
-    canWrite(props) &&
+    canParticipate(props) &&
     (kind === "student" ? props.role === "student" : staff(props.role));
   return (
     <section className="answer-sections" aria-label="Answers">
@@ -1056,10 +1059,10 @@ function FollowupItem({
             kind="followup"
             count={item.upvoteCount}
             voted={item.viewerUpvoted}
-            disabled={!canWrite(props) || pending}
+            disabled={!canParticipate(props) || pending}
             onClick={() => void act("vote")}
           />
-          {canWrite(props) && (
+          {canParticipate(props) && (
             <button
               className="text-button"
               type="button"
@@ -1094,7 +1097,7 @@ function FollowupItem({
           {error}
         </p>
       )}
-      {replying && (
+      {replying && canParticipate(props) && (
         <TextComposer
           label="Followup"
           submitLabel="Post reply"
@@ -1378,7 +1381,7 @@ export function FollowupSections(props: Props) {
           Load more discussions
         </button>
       )}
-      {canWrite(props) && !composing && (
+      {canParticipate(props) && !composing && (
         <button
           className="followup-prompt"
           type="button"
@@ -1387,7 +1390,7 @@ export function FollowupSections(props: Props) {
           Compose a new followup discussion
         </button>
       )}
-      {composing && (
+      {composing && canParticipate(props) && (
         <TextComposer
           label="Followup"
           submitLabel="Post followup"

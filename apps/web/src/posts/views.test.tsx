@@ -5837,3 +5837,239 @@ it("offers students no Unresolved filter and shows no badge without unresolved d
   expect(card.textContent).not.toContain("unresolved");
   expect(choiceLabels("Show")).not.toContain("Unresolved");
 });
+
+it.each([
+  ["question", false, true],
+  ["poll", false, true],
+  ["note", false, false],
+  ["note", true, false],
+])(
+  "shows a staff lock control for %s announcement=%s only when eligible",
+  async (type, announcement, canLock) => {
+    const current = {
+      ...post("a", "Post detail"),
+      type,
+      announcement,
+      discussionLocked: false,
+      version: 1,
+      ...(type === "poll" ? { options: [], totalVotes: 0 } : {}),
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/a") return json({ data: current });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([current]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <Discussion
+        courseId={course.id}
+        course={course}
+        csrfToken="csrf"
+        userId="staff"
+        postId="a"
+        onNavigate={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Post detail" });
+    await screen.findByRole("button", { name: "Pin" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Lock discussion" }) !== null,
+      ).toBe(canLock),
+    );
+  },
+);
+
+it.each(["success", "failure"])(
+  "keeps the new post visible when a pending discussion lock finishes with %s",
+  async (outcome) => {
+    let finishLock!: (response: Response) => void;
+    const pendingLock = new Promise<Response>((resolve) => {
+      finishLock = resolve;
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/a/discussion-lock" && init?.method === "PUT")
+        return pendingLock;
+      if (url === "/api/v1/posts/a")
+        return json({ data: { ...post("a", "First post"), version: 1 } });
+      if (url === "/api/v1/posts/b")
+        return json({ data: { ...post("b", "Second post"), version: 1 } });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([
+        { ...post("a", "First post"), version: 1 },
+        { ...post("b", "Second post"), version: 1 },
+      ]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const props = {
+      courseId: course.id,
+      course,
+      csrfToken: "csrf",
+      userId: "staff",
+      onNavigate: vi.fn(),
+    };
+    const user = userEvent.setup();
+    const view = render(<Discussion {...props} postId="a" />);
+    await screen.findByRole("heading", { name: "First post" });
+    await user.click(
+      await screen.findByRole("button", { name: "Lock discussion" }),
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            url === "/api/v1/posts/a/discussion-lock" && init?.method === "PUT",
+        ),
+      ).toBe(true),
+    );
+    view.rerender(<Discussion {...props} postId="b" />);
+    await screen.findByRole("heading", { name: "Second post" });
+    await act(async () => {
+      finishLock(
+        outcome === "success"
+          ? json({
+              data: {
+                ...post("a", "First post"),
+                version: 2,
+                discussionLocked: true,
+              },
+            })
+          : json({ error: { message: "Version conflict" } }, 412),
+      );
+    });
+    expect(screen.getByRole("heading", { name: "Second post" })).toBeTruthy();
+    expect(screen.queryByText("Loading post…")).toBeNull();
+    expect(screen.queryByText("Version conflict")).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => url === "/api/v1/posts/b"),
+    ).toHaveLength(1);
+    const cards = screen
+      .getAllByRole("link")
+      .filter((link) => link.classList.contains("post-card"));
+    expect(
+      cards.map((card) => card.querySelector("strong")?.textContent),
+    ).toEqual(["First post", "Second post"]);
+    expect(!!within(cards[0]).queryByText("Discussion locked")).toBe(
+      outcome === "success",
+    );
+  },
+);
+
+it("preserves following and unread state when a lock response arrives", async () => {
+  let finishLock!: (response: Response) => void;
+  const pendingLock = new Promise<Response>((resolve) => {
+    finishLock = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/a/discussion-lock") return pendingLock;
+      if (url === "/api/v1/posts/a/follow" && init?.method === "PUT")
+        return json({ data: { following: true } });
+      if (url === "/api/v1/posts/a")
+        return json({ data: { ...post("a", "Follow this post"), version: 1 } });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([
+        { ...post("a", "Follow this post"), version: 1, unread: true },
+      ]);
+    }),
+  );
+  const props = {
+    courseId: course.id,
+    course,
+    csrfToken: "csrf",
+    userId: "staff",
+    onNavigate: vi.fn(),
+  };
+  const user = userEvent.setup();
+  const view = render(<Discussion {...props} postId="a" />);
+  await user.click(
+    await screen.findByRole("button", { name: "Lock discussion" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Follow" }));
+  await screen.findByRole("button", { name: "Following" });
+  await act(async () => {
+    finishLock(
+      json({
+        data: {
+          ...post("a", "Follow this post"),
+          version: 2,
+          discussionLocked: true,
+          following: false,
+        },
+      }),
+    );
+  });
+  expect(screen.getByRole("button", { name: "Following" })).toBeTruthy();
+  expect(screen.getByText(/Discussion locked\. Existing content/)).toBeTruthy();
+  view.rerender(<Discussion {...props} />);
+  const card = await screen.findByRole("link", { name: /Follow this post/ });
+  expect(within(card).getByText("Discussion locked")).toBeTruthy();
+  expect(within(card).getByText(/Unread:/)).toBeTruthy();
+});
+
+it("ignores a stale lock response after newer detail and feed versions load", async () => {
+  let finishLock!: (response: Response) => void;
+  const pendingLock = new Promise<Response>((resolve) => {
+    finishLock = resolve;
+  });
+  let detailLoads = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+      if (url === "/api/v1/posts/a/discussion-lock") return pendingLock;
+      if (url === "/api/v1/posts/a") {
+        detailLoads += 1;
+        return json({
+          data:
+            detailLoads === 1
+              ? { ...post("a", "Old title"), version: 1 }
+              : { ...post("a", "New title"), version: 3 },
+        });
+      }
+      if (url === "/api/v1/posts/b")
+        return json({ data: { ...post("b", "Other post"), version: 1 } });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return url.includes("q=new")
+        ? page([{ ...post("a", "New title"), version: 3 }])
+        : page([{ ...post("a", "Old title"), version: 1 }]);
+    }),
+  );
+  const props = {
+    courseId: course.id,
+    course,
+    csrfToken: "csrf",
+    userId: "staff",
+    onNavigate: vi.fn(),
+  };
+  const user = userEvent.setup();
+  const view = render(<Discussion {...props} postId="a" />);
+  await user.click(
+    await screen.findByRole("button", { name: "Lock discussion" }),
+  );
+  view.rerender(<Discussion {...props} postId="b" />);
+  await screen.findByRole("heading", { name: "Other post" });
+  view.rerender(<Discussion {...props} postId="a" query="new" />);
+  await screen.findByRole("heading", { name: "New title" });
+  await screen.findByRole("link", { name: /New title/ });
+  await act(async () => {
+    finishLock(
+      json({
+        data: {
+          ...post("a", "Old title"),
+          version: 2,
+          discussionLocked: true,
+        },
+      }),
+    );
+  });
+  expect(screen.getByRole("heading", { name: "New title" })).toBeTruthy();
+  const card = screen.getByRole("link", { name: /New title/ });
+  expect(within(card).queryByText("Discussion locked")).toBeNull();
+  expect(screen.queryByText(/Discussion locked\. Existing content/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Lock discussion" })).toBeTruthy();
+});

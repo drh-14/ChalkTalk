@@ -34,6 +34,7 @@ import {
   markCourseRead,
   setFollowing,
   setPostPinned,
+  setPostDiscussionLocked,
   unmergePost,
   updatePost,
   type CreatePostInput,
@@ -1266,6 +1267,8 @@ function DiscussionContent({
   const [localSortQuery, setLocalSortQuery] = useState<string>();
   const [pinPending, setPinPending] = useState(false);
   const [pinError, setPinError] = useState("");
+  const [lockPending, setLockPending] = useState(false);
+  const [lockError, setLockError] = useState("");
   const [readError, setReadError] = useState("");
   const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
@@ -1278,6 +1281,8 @@ function DiscussionContent({
   const [composerOpen, setComposerOpen] = useState(false);
   const [detail, setDetail] = useState<PostDetail>();
   const [detailError, setDetailError] = useState("");
+  const currentPostRoute = useRef({ courseId, postId });
+  currentPostRoute.current = { courseId, postId };
   const canEditDetail =
     !!detail &&
     !detail.deleted &&
@@ -1761,6 +1766,52 @@ function DiscussionContent({
       setDetailCycle((value) => value + 1);
     } finally {
       setPinPending(false);
+    }
+  }
+  async function toggleDiscussionLock(post: Post) {
+    if (lockPending) return;
+    setLockPending(true);
+    setLockError("");
+    try {
+      const next = await setPostDiscussionLocked(
+        post,
+        !post.discussionLocked,
+        csrfToken,
+      );
+      setDetail((current) =>
+        currentPostRoute.current.courseId === next.courseId &&
+        currentPostRoute.current.postId === next.id &&
+        current?.id === next.id &&
+        !current.deleted &&
+        current.version <= next.version
+          ? {
+              ...current,
+              discussionLocked: next.discussionLocked,
+              version: next.version,
+            }
+          : current,
+      );
+      setItems((current) =>
+        current.map((item) =>
+          item.id === next.id && item.version <= next.version
+            ? {
+                ...item,
+                discussionLocked: next.discussionLocked,
+                version: next.version,
+              }
+            : item,
+        ),
+      );
+    } catch (caught) {
+      if (
+        currentPostRoute.current.courseId === post.courseId &&
+        currentPostRoute.current.postId === post.id
+      ) {
+        setLockError(message(caught));
+        setDetailCycle((value) => value + 1);
+      }
+    } finally {
+      setLockPending(false);
     }
   }
   async function unmerge(post: MergedPost) {
@@ -2402,6 +2453,12 @@ function DiscussionContent({
                             {postTypeOf(detail.type).label}
                           </p>
                           <h2>{detail.title}</h2>
+                          {detail.discussionLocked && (
+                            <p className="discussion-lock-notice" role="status">
+                              Discussion locked. Existing content remains
+                              available, but new replies and votes are closed.
+                            </p>
+                          )}
                           {detail.private && (
                             <PrivateNotice
                               post={detail}
@@ -2471,6 +2528,7 @@ function DiscussionContent({
                                 options={detail.options}
                                 totalVotes={detail.totalVotes ?? 0}
                                 closed={course?.status !== "active"}
+                                discussionLocked={detail.discussionLocked}
                                 csrfToken={csrfToken}
                                 onChange={(state) => {
                                   setDetail((current) =>
@@ -2548,6 +2606,31 @@ function DiscussionContent({
                                   : "Pin"}
                             </button>
                           )}
+                          {course?.status === "active" &&
+                            detail.type !== "note" && (
+                              <button
+                                type="button"
+                                className="button secondary compact"
+                                disabled={lockPending}
+                                aria-pressed={!!detail.discussionLocked}
+                                onClick={() =>
+                                  void toggleDiscussionLock(detail)
+                                }
+                              >
+                                {lockPending
+                                  ? detail.discussionLocked
+                                    ? "Unlocking…"
+                                    : "Locking…"
+                                  : detail.discussionLocked
+                                    ? "Unlock discussion"
+                                    : "Lock discussion"}
+                              </button>
+                            )}
+                          {lockError && (
+                            <p className="form-message error" role="alert">
+                              {lockError}
+                            </p>
+                          )}
                           {pinError && (
                             <p className="form-message error" role="alert">
                               {pinError}
@@ -2576,6 +2659,7 @@ function DiscussionContent({
                           postId={detail.id}
                           role={role}
                           courseStatus={course?.status}
+                          discussionLocked={detail.discussionLocked}
                           csrfToken={csrfToken}
                           onActivity={() => void refreshFollowing(detail.id)}
                         />

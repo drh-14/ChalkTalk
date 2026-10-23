@@ -4409,6 +4409,81 @@ paths:
         - "$ref": "#/components/parameters/PostId"
         - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
+  "/posts/{postId}/discussion-lock":
+    put:
+      tags:
+        - Posts
+      summary: Lock or unlock discussion on one question or poll
+      operationId: putPostDiscussionLock
+      security:
+        - session_cookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                locked: { type: boolean }
+              required: [locked]
+              additionalProperties: false
+      responses:
+        "200":
+          description: Post lock state updated or already equal to the requested state.
+          headers:
+            ETag:
+              "$ref": "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ActivePostDetailResponse"
+        "401":
+          description: Authentication is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "403":
+          description: Current course staff role is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: Post does not exist or is not accessible.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: Course is archived.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "412":
+          description: Stale post ETag.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "422":
+          description: Invalid JSON body or locked value, or the post is a note or announcement.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "428":
+          description: If-Match is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
   "/posts/{postId}/vote":
     put:
       tags:
@@ -12827,6 +12902,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -12899,6 +12977,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -12966,6 +13045,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -13031,6 +13113,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -13096,6 +13179,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -13172,6 +13258,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -13428,7 +13515,8 @@ components:
         upvoteCount: { type: integer, minimum: 0 }
         viewerUpvoted: { type: boolean }
         replyCount: { type: integer, minimum: 0 }
-        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        attachments:
+          { type: array, items: { $ref: "#/components/schemas/Attachment" } }
         resolved:
           type: boolean
           description: Whether this discussion (root followup) is resolved; always false for replies.
