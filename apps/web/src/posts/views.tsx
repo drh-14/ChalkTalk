@@ -448,6 +448,8 @@ function Composer({
   courseId,
   csrfToken,
   staff = false,
+  allowAnonymousPosting = true,
+  allowPrivatePosting = true,
   onCreated,
   onClose,
   onStateChange,
@@ -457,6 +459,8 @@ function Composer({
   csrfToken: string;
   /** TAs and instructors may post polls and announcements. */
   staff?: boolean;
+  allowAnonymousPosting?: boolean;
+  allowPrivatePosting?: boolean;
   onCreated: (post: Post) => void;
   onClose: () => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
@@ -490,6 +494,9 @@ function Composer({
     undefined,
   );
   const query = relatedQuery(title, body);
+  const privately = type !== "poll" && audience === "staff";
+  const announcing = type === "note" && announcement && !privately;
+  const submittedAnonymous = announcing ? false : anonymous;
 
   useEffect(() => {
     onStateChange(
@@ -569,14 +576,24 @@ function Composer({
       if (complete) onCreated(published);
       return;
     }
-    const privately = type !== "poll" && audience === "staff";
-    const announcing = type === "note" && announcement && !privately;
+    if (submittedAnonymous && !allowAnonymousPosting) {
+      setError(
+        "Anonymous posting is disabled for this course. Choose a named post before publishing.",
+      );
+      return;
+    }
+    if (privately && !allowPrivatePosting) {
+      setError(
+        "Private posting is disabled for this course. Choose the entire class before publishing.",
+      );
+      return;
+    }
     const labels = pollOptions.map((label) => label.trim());
     const input: CreatePostInput = {
       type,
       title: title.trim(),
       bodyMarkdown: body,
-      anonymous: announcing ? false : anonymous,
+      anonymous: submittedAnonymous,
       tags: tags
         .split(",")
         .map((tag) => tag.trim())
@@ -747,7 +764,9 @@ function Composer({
                   }
                 >
                   <option value="course">Entire class</option>
-                  <option value="staff">Instructors and TAs</option>
+                  {allowPrivatePosting && (
+                    <option value="staff">Instructors and TAs</option>
+                  )}
                 </select>
               </label>
             )}
@@ -755,30 +774,51 @@ function Composer({
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={announcement && audience !== "staff"}
-                  disabled={audience === "staff"}
+                  checked={announcing}
+                  disabled={privately}
                   onChange={(event) => setAnnouncement(event.target.checked)}
                 />
                 Post as announcement (pinned; email sent to subscribers)
               </label>
             )}
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={
-                  anonymous &&
-                  !(type === "note" && announcement && audience !== "staff")
-                }
-                disabled={
-                  type === "note" && announcement && audience !== "staff"
-                }
-                onChange={(event) => setAnonymous(event.target.checked)}
-              />
-              Post anonymously
-            </label>
+            {allowAnonymousPosting && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={submittedAnonymous}
+                  disabled={announcing}
+                  onChange={(event) => setAnonymous(event.target.checked)}
+                />
+                Post anonymously
+              </label>
+            )}
           </>
         )}
         <AttachmentSelection queue={attachmentQueue} disabled={pending} />
+        {!allowAnonymousPosting && submittedAnonymous && !published && (
+          <p className="form-message error">
+            Anonymous posting is now disabled. Your draft is unchanged.{" "}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setAnonymous(false)}
+            >
+              Switch to named post
+            </button>
+          </p>
+        )}
+        {!allowPrivatePosting && privately && !published && (
+          <p className="form-message error">
+            Private posting is now disabled. Your draft is unchanged.{" "}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setAudience("course")}
+            >
+              Switch to entire class
+            </button>
+          </p>
+        )}
         {error && (
           <p className="form-message error" role="alert">
             {error}
@@ -2269,6 +2309,8 @@ function DiscussionContent({
                       courseId={courseId}
                       csrfToken={csrfToken}
                       staff={staff}
+                      allowAnonymousPosting={course?.allowAnonymousPosting}
+                      allowPrivatePosting={course?.allowPrivatePosting}
                       onClose={leaveComposer}
                       onStateChange={(dirty, pending) => {
                         composerState.current = { dirty, pending };
@@ -2576,6 +2618,10 @@ function DiscussionContent({
                           postId={detail.id}
                           role={role}
                           courseStatus={course?.status}
+                          allowAnonymousPosting={course?.allowAnonymousPosting}
+                          allowFollowupResolution={
+                            course?.allowFollowupResolution
+                          }
                           csrfToken={csrfToken}
                           onActivity={() => void refreshFollowing(detail.id)}
                         />

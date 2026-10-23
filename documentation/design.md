@@ -46,7 +46,7 @@ Posts, responses, and followups support LaTeX and Markdown formatting, images, a
 
 Posts, responses, and followups each have an author and timestamp; timestamps update on edit. Collaborative responses record every user who has edited them.
 
-Users can mark individual posts, responses, or followups as anonymous. When marked anonymous, the author is displayed as "Anonymous" to other students, while remaining visible to TAs and instructors.
+Users can mark individual posts, responses, or followups as anonymous when the course permits it; see the [course controls](api/courses.md). When marked anonymous, the author is displayed as "Anonymous" to other students, while remaining visible to TAs and instructors.
 
 ### **Channels**
 

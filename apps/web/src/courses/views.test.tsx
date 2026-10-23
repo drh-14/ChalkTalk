@@ -13,6 +13,9 @@ const course = {
   createdAt: "2026-09-26T14:30:00Z",
   updatedAt: "2026-09-26T14:30:00Z",
   version: 1,
+  allowAnonymousPosting: true,
+  allowPrivatePosting: true,
+  allowFollowupResolution: true,
 };
 const instructor = {
   id: "membership_instructor",
@@ -55,6 +58,44 @@ afterEach(() => {
 });
 
 describe("course browser workflows", () => {
+  it("shows instructor policy switches and saves a conditional change", async () => {
+    const changed = { ...course, allowAnonymousPosting: false, version: 2 };
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.endsWith(`/courses/${course.id}/members/${instructor.user.id}`))
+        return Promise.resolve(response({ data: instructor }, 200, '"v1"'));
+      if (url.endsWith(`/courses/${course.id}/members`))
+        return Promise.resolve(page([instructor]));
+      if (init?.method === "PATCH")
+        return Promise.resolve(response({ data: changed }, 200, '"v2"'));
+      return Promise.resolve(response({ data: course }, 200, '"v1"'));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    const anonymity = await screen.findByRole("checkbox", {
+      name: "Allow anonymous posting",
+    });
+    expect((anonymity as HTMLInputElement).checked).toBe(true);
+    await user.click(anonymity);
+    await waitFor(() =>
+      expect((anonymity as HTMLInputElement).checked).toBe(false),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/v1/courses/${course.id}`,
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.objectContaining({ "If-Match": '"v1"' }),
+        body: JSON.stringify({ allowAnonymousPosting: false }),
+      }),
+    );
+  });
   it("shows a recoverable error when the live course list cannot load", async () => {
     const fetchMock = vi
       .fn()

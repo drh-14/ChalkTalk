@@ -8,6 +8,8 @@ Students can ask questions, participate in threaded discussions, contribute to s
 
 Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
 
+Instructors can turn off new anonymous or private contributions and pause follow-up resolution in a course's settings. Existing contributions and resolution markers remain visible to their authorized readers.
+
 Core features include:
 
 - course-based discussion forums,

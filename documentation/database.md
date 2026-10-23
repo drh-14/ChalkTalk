@@ -111,6 +111,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `created_by_user_id`: `uuid_v7`; foreign key to `users.id`.
 - `name`: `varchar(200)`.
 - `status`: `text`; `active`, `archived`, or `deleting`.
+- `allow_anonymous_posting`, `allow_private_posting`, `allow_followup_resolution`: non-null booleans, default `true`; instructor-managed policy for future discussion actions. Existing content is not rewritten when a switch changes.
 - `join_code`: `char(8)`.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
