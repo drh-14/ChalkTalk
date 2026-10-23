@@ -28,11 +28,13 @@ import {
   createPost,
   getDuplicateReview,
   getPost,
+  countNewPosts,
   listMergedPosts,
   listPosts,
   makePostPublic,
   markCourseRead,
   setFollowing,
+  setSaved,
   setPostPinned,
   unmergePost,
   updatePost,
@@ -174,6 +176,51 @@ function PrivateNotice({
         </p>
       )}
     </div>
+  );
+}
+
+/** Saves or removes a post from the viewer's one personal list. */
+function SaveButton({
+  post,
+  csrfToken,
+  onChange,
+}: {
+  post: Post;
+  csrfToken: string;
+  onChange: (saved: boolean) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const saved = post.saved ?? false;
+  async function toggle() {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      onChange(await setSaved(post.id, !saved, csrfToken));
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <button
+        type="button"
+        className="button secondary compact"
+        aria-pressed={saved}
+        disabled={pending}
+        onClick={() => void toggle()}
+      >
+        {saved ? "Remove saved post" : "Save post"}
+      </button>
+      {error && (
+        <p className="form-message error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -1275,6 +1322,8 @@ function DiscussionContent({
   const [pageError, setPageError] = useState("");
   const [pagePending, setPagePending] = useState(false);
   const [feedCycle, setFeedCycle] = useState(0);
+  const [feedSnapshot, setFeedSnapshot] = useState<string | null>(null);
+  const [newPostCount, setNewPostCount] = useState(0);
   const [composerOpen, setComposerOpen] = useState(false);
   const [detail, setDetail] = useState<PostDetail>();
   const [detailError, setDetailError] = useState("");
@@ -1337,6 +1386,8 @@ function DiscussionContent({
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   const currentFeed = useRef(0);
+  const viewerRevision = useRef(0);
+  const readPostIds = useRef(new Set<string>());
 
   useEffect(() => {
     if (!userId) return;
@@ -1394,10 +1445,16 @@ function DiscussionContent({
     else setLocalFilters(next);
   }
   const filterOptions = feedFilters(userId, staff);
-  const activeFilter = filterOptions.find(
-    (item) => item.key === activeFilters.filter,
+  const activeFilter = useMemo(
+    () =>
+      feedFilters(userId, staff).find(
+        (item) => item.key === activeFilters.filter,
+      ),
+    [userId, staff, activeFilters.filter],
   );
   const filter = activeFilter?.key ?? "all";
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
   // Filters may arrive as fresh objects on each render, so tags keep their identity by content.
   const tagKey = JSON.stringify([
     activeFilters.tags ?? [],
@@ -1439,12 +1496,16 @@ function DiscussionContent({
   }
   useEffect(() => {
     const generation = ++currentFeed.current;
+    const revision = viewerRevision.current;
+    readPostIds.current.clear();
     const controller = new AbortController();
     setItems([]);
     setMergedItems([]);
     setCursor(null);
     setFeedError("");
     setPageError("");
+    setFeedSnapshot(null);
+    setNewPostCount(0);
     setLoading(true);
     setPagePending(false);
     pageBusy.current = false;
@@ -1469,19 +1530,33 @@ function DiscussionContent({
         : listPosts(courseId, options)
     )
       .then((page) => {
-        if (currentFeed.current === generation) {
-          if (postView === "duplicates")
-            setMergedItems(page.data as MergedPost[]);
-          else setItems(page.data as Post[]);
-          setCursor(page.page.nextCursor);
-          setLoading(false);
+        if (currentFeed.current !== generation) return;
+        if (revision !== viewerRevision.current) {
+          setFeedCycle((value) => value + 1);
+          return;
         }
+        if (postView === "duplicates")
+          setMergedItems(page.data as MergedPost[]);
+        else {
+          setItems(
+            (page.data as Post[]).filter(
+              (item) =>
+                filter !== "unread" || !readPostIds.current.has(item.id),
+            ),
+          );
+          setFeedSnapshot("snapshot" in page ? (page.snapshot ?? null) : null);
+        }
+        setCursor(page.page.nextCursor);
+        setLoading(false);
       })
       .catch((caught) => {
-        if (currentFeed.current === generation) {
-          setFeedError(message(caught));
-          setLoading(false);
+        if (currentFeed.current !== generation) return;
+        if (revision !== viewerRevision.current) {
+          setFeedCycle((value) => value + 1);
+          return;
         }
+        setFeedError(message(caught));
+        setLoading(false);
       });
     return () => {
       controller.abort();
@@ -1498,6 +1573,43 @@ function DiscussionContent({
     tags,
     tagMatch,
     userId,
+  ]);
+  useEffect(() => {
+    if (!feedSnapshot || postView !== "posts" || loading) return;
+    let active = true;
+    let pending = false;
+    const options = feedOptions(query, activeFilter, sort, tags, tagMatch);
+    const check = () => {
+      if (document.visibilityState === "hidden" || pending) return;
+      pending = true;
+      void countNewPosts(courseId, feedSnapshot, options)
+        .then((count) => {
+          if (active) setNewPostCount(count);
+        })
+        .catch(() => {
+          /* Keep the current feed and last known count on polling failure. */
+        })
+        .finally(() => {
+          pending = false;
+        });
+    };
+    check();
+    const timer = window.setInterval(check, 20_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [
+    courseId,
+    feedSnapshot,
+    postView,
+    loading,
+    query,
+    filter,
+    activeFilter,
+    sort,
+    tags,
+    tagMatch,
   ]);
   useEffect(() => {
     if (!postId) {
@@ -1518,7 +1630,23 @@ function DiscussionContent({
             );
           else if (next.courseId !== courseId)
             setDetailError("This post is unavailable.");
-          else setDetail(next);
+          else {
+            setDetail(next);
+            if (!next.deleted && next.unread === false) {
+              readPostIds.current.add(postId);
+              viewerRevision.current++;
+              setItems((current) =>
+                current
+                  .map((item) =>
+                    item.id === postId ? { ...item, unread: false } : item,
+                  )
+                  .filter(
+                    (item) =>
+                      filterRef.current !== "unread" || item.id !== postId,
+                  ),
+              );
+            }
+          }
         }
       })
       .catch(() => {
@@ -1570,6 +1698,7 @@ function DiscussionContent({
     setPagePending(true);
     setPageError("");
     const generation = currentFeed.current;
+    const revision = viewerRevision.current;
     const options = {
       ...(postView === "duplicates"
         ? query
@@ -1584,7 +1713,11 @@ function DiscussionContent({
         : listPosts(courseId, options)
     )
       .then((page) => {
-        if (generation !== currentFeed.current) return;
+        if (
+          generation !== currentFeed.current ||
+          revision !== viewerRevision.current
+        )
+          return;
         if (postView === "duplicates")
           setMergedItems((prior) => {
             const known = new Set(prior.map((post) => post.id));
@@ -1600,7 +1733,11 @@ function DiscussionContent({
             const known = new Set(prior.map((post) => post.id));
             return [
               ...prior,
-              ...(page.data as Post[]).filter((post) => !known.has(post.id)),
+              ...(page.data as Post[]).filter(
+                (post) =>
+                  !known.has(post.id) &&
+                  (filter !== "unread" || !readPostIds.current.has(post.id)),
+              ),
             ];
           });
         setCursor(page.page.nextCursor);
@@ -1664,13 +1801,18 @@ function DiscussionContent({
     if (leaveComposer()) onNavigate(path);
   }
   function openPost(id: string) {
+    if (!leaveComposer()) return;
+    readPostIds.current.add(id);
+    viewerRevision.current++;
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
     setItems((current) =>
-      current.map((item) =>
-        item.id === id && item.unread ? { ...item, unread: false } : item,
-      ),
+      current
+        .map((item) =>
+          item.id === id && item.unread ? { ...item, unread: false } : item,
+        )
+        .filter((item) => filter !== "unread" || item.unread),
     );
-    navigate(postPath(courseId, id, search));
+    onNavigate(postPath(courseId, id, search));
   }
   function clearQuery() {
     setDraftQuery("");
@@ -1715,13 +1857,16 @@ function DiscussionContent({
         following: next.following,
         unresolvedFollowups: next.unresolvedFollowups,
       };
+      viewerRevision.current++;
       setDetail((current) =>
         current?.id === id && !current.deleted
           ? { ...current, ...state }
           : current,
       );
       setItems((current) =>
-        current.map((item) => (item.id === id ? { ...item, ...state } : item)),
+        current
+          .map((item) => (item.id === id ? { ...item, ...state } : item))
+          .filter((item) => filter !== "following" || item.following),
       );
     } catch {
       // The button and count keep their last known state.
@@ -1739,10 +1884,11 @@ function DiscussionContent({
     setReadError("");
     try {
       await markCourseRead(courseId, csrfToken);
+      viewerRevision.current++;
       setItems((current) =>
-        current.map((item) =>
-          item.unread ? { ...item, unread: false } : item,
-        ),
+        current
+          .map((item) => (item.unread ? { ...item, unread: false } : item))
+          .filter((item) => filter !== "unread" || item.unread),
       );
     } catch (caught) {
       setReadError(message(caught));
@@ -2058,6 +2204,19 @@ function DiscussionContent({
               aria-label="Post listings"
               tabIndex={0}
             >
+              {newPostCount > 0 &&
+                postView === "posts" &&
+                !loading &&
+                !feedError && (
+                  <button
+                    type="button"
+                    className="button secondary new-posts-prompt"
+                    onClick={() => setFeedCycle((value) => value + 1)}
+                  >
+                    {newPostCount} new {newPostCount === 1 ? "post" : "posts"} —
+                    refresh feed
+                  </button>
+                )}
               {loading ? (
                 <p role="status">Loading posts…</p>
               ) : feedError ? (
@@ -2426,21 +2585,52 @@ function DiscussionContent({
                               <PostByline post={detail} />
                               <ActivityTime post={detail} />
                             </p>
+                            <SaveButton
+                              post={detail}
+                              csrfToken={csrfToken}
+                              onChange={(saved) => {
+                                viewerRevision.current++;
+                                setDetail((current) =>
+                                  current?.id === detail.id && !current.deleted
+                                    ? { ...current, saved }
+                                    : current,
+                                );
+                                setItems((current) =>
+                                  current
+                                    .map((item) =>
+                                      item.id === detail.id
+                                        ? { ...item, saved }
+                                        : item,
+                                    )
+                                    .filter(
+                                      (item) =>
+                                        filter !== "saved" || item.saved,
+                                    ),
+                                );
+                              }}
+                            />
                             <FollowButton
                               post={detail}
                               csrfToken={csrfToken}
                               onChange={(following) => {
+                                viewerRevision.current++;
                                 setDetail((current) =>
                                   current?.id === detail.id && !current.deleted
                                     ? { ...current, following }
                                     : current,
                                 );
                                 setItems((current) =>
-                                  current.map((item) =>
-                                    item.id === detail.id
-                                      ? { ...item, following }
-                                      : item,
-                                  ),
+                                  current
+                                    .map((item) =>
+                                      item.id === detail.id
+                                        ? { ...item, following }
+                                        : item,
+                                    )
+                                    .filter(
+                                      (item) =>
+                                        filter !== "following" ||
+                                        item.following,
+                                    ),
                                 );
                               }}
                             />

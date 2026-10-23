@@ -43,6 +43,7 @@ export type Post = {
   following?: boolean;
   /** Whether the post changed since the viewer last opened it. */
   unread?: boolean;
+  saved?: boolean;
   /** Present on polls. */
   options?: PollOption[];
   totalVotes?: number;
@@ -79,6 +80,9 @@ export type PostListOptions = {
   announcement?: true;
   private?: true;
   unresolvedFollowups?: true;
+  unread?: true;
+  following?: true;
+  saved?: true;
   answered?: boolean;
   pinned?: boolean;
   authorId?: string;
@@ -106,10 +110,7 @@ async function receive<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-export async function listPosts(
-  courseId: string,
-  options: PostListOptions = {},
-): Promise<Page<Post>> {
+function postListParams(options: PostListOptions): URLSearchParams {
   const query = new URLSearchParams();
   if (options.q) query.set("q", options.q);
   if (options.semanticQuery) query.set("semanticQuery", options.semanticQuery);
@@ -122,23 +123,36 @@ export async function listPosts(
   if (options.announcement) query.set("announcement", "true");
   if (options.private) query.set("private", "true");
   if (options.unresolvedFollowups) query.set("unresolvedFollowups", "true");
+  if (options.unread) query.set("unread", "true");
+  if (options.following) query.set("following", "true");
+  if (options.saved) query.set("saved", "true");
   if (options.authorId) query.set("authorId", options.authorId);
   if (options.authorRole) query.set("authorRole", options.authorRole);
   const tags = options.tags ?? [];
   for (const tag of tags) query.append("tag", tag);
   if (tags.length > 1) query.set("tagMatch", options.tagMatch ?? "all");
   if (options.limit) query.set("limit", String(options.limit));
+  return query;
+}
+
+export async function listPosts(
+  courseId: string,
+  options: PostListOptions = {},
+): Promise<Page<Post> & { snapshot?: string }> {
+  const query = postListParams(options);
   const suffix = query.size ? `?${query}` : "";
-  return receive<Page<Post>>(
-    await fetch(
-      `/api/v1/courses/${encodeURIComponent(courseId)}/posts${suffix}`,
-      {
-        credentials: "include",
-        headers: { Accept: "application/json" },
-        signal: options.signal,
-      },
-    ),
+  const response = await fetch(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/posts${suffix}`,
+    {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      signal: options.signal,
+    },
   );
+  return {
+    ...(await receive<Page<Post>>(response)),
+    snapshot: response.headers.get("X-Feed-Snapshot") ?? undefined,
+  };
 }
 
 export async function getPost(
@@ -302,6 +316,43 @@ export async function makePostPublic(
     }),
   );
   return payload.data;
+}
+
+/** One personal saved-post list; repeated requests are idempotent. */
+export async function setSaved(
+  postId: string,
+  saved: boolean,
+  csrfToken: string,
+): Promise<boolean> {
+  const payload = await receive<{ data: { saved: boolean } }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/saved`, {
+      method: saved ? "PUT" : "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    }),
+  );
+  return payload.data.saved;
+}
+
+export async function countNewPosts(
+  courseId: string,
+  snapshot: string,
+  options: PostListOptions = {},
+): Promise<number> {
+  const query = new URLSearchParams();
+  query.set("snapshot", snapshot);
+  for (const [key, value] of postListParams(options)) query.append(key, value);
+  const payload = await receive<{ data: { count: number } }>(
+    await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/posts/new-count?${query}`,
+      {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+        signal: options.signal,
+      },
+    ),
+  );
+  return payload.data.count;
 }
 
 /** Follows or unfollows a post for the viewer. */

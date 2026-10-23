@@ -39,6 +39,9 @@ export type Route = {
 const FILTER_KEYS = ["filter", "tag", "tagMatch", "sort"] as const;
 const FILTER_VALUES = new Set([
   "mine",
+  "unread",
+  "following",
+  "saved",
   "instructors",
   "tas",
   "announcements",

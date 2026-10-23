@@ -6,6 +6,8 @@ It is designed to make large course forums easier to search, organize, and maint
 
 Students can ask questions, participate in threaded discussions, contribute to shared answers, search previous posts, view course resources, vote in polls, and optionally post anonymously.
 
+Members can save posts to a private list and use the course feed's Unread, Following, and Saved filters alongside search, tags, and sorting. A new-post notice lets them refresh when ready without interrupting the current post or an unsent draft.
+
 Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
 
 Core features include:
