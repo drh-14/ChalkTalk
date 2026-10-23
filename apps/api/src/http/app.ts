@@ -51,6 +51,11 @@ import {
   type UpdateCollaborationSession,
 } from "../collaboration/service.js";
 import { NotificationService } from "../notifications/service.js";
+import {
+  discussionBody,
+  postBody,
+  postTitle,
+} from "../revisions/text-validation.js";
 
 import {
   resourceEtag,
@@ -343,6 +348,17 @@ function followupListQuery(query: Request["query"]) {
     throw new AuthError(400, "invalid_request", "Pagination is invalid");
   return listQuery(query, undefined, 20);
 }
+function revisionCursor(query: Request["query"]): number {
+  if (Object.keys(query).some((key) => key !== "cursor"))
+    throw new AuthError(400, "invalid_request", "Pagination is invalid");
+  if (query.cursor === undefined) return 0;
+  if (typeof query.cursor !== "string" || !/^[1-9]\d*$/.test(query.cursor))
+    throw new AuthError(400, "invalid_request", "Pagination is invalid");
+  const cursor = Number(query.cursor);
+  if (!Number.isSafeInteger(cursor))
+    throw new AuthError(400, "invalid_request", "Pagination is invalid");
+  return cursor;
+}
 function courseCreateBody(input: unknown): JsonObject {
   const body = strictBody(input, ["name"], ["name"]);
   stringWithin(body.name, "Course name", 1, 200);
@@ -458,8 +474,8 @@ function postCreateBody(value: unknown): CreatePost {
   );
   if (body.type !== "question" && body.type !== "note" && body.type !== "poll")
     throw validationError("Post type is invalid");
-  const title = stringWithin(body.title, "Title", 1, 200);
-  const bodyMarkdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
+  const title = postTitle(body.title);
+  const bodyMarkdown = postBody(body.bodyMarkdown);
   if (body.anonymous !== undefined && typeof body.anonymous !== "boolean")
     throw validationError("Anonymous is invalid");
   if (
@@ -493,8 +509,7 @@ function answerCreateBody(value: unknown): CreateAnswer {
     ["bodyMarkdown", "anonymous"],
     ["bodyMarkdown"],
   );
-  const bodyMarkdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
-  if (!bodyMarkdown.trim()) throw validationError("Body is invalid");
+  const bodyMarkdown = discussionBody(body.bodyMarkdown);
   if (body.anonymous !== undefined && typeof body.anonymous !== "boolean")
     throw validationError("Anonymous is invalid");
   return { bodyMarkdown, anonymous: body.anonymous as boolean | undefined };
@@ -735,9 +750,8 @@ function postUpdateBody(value: unknown): UpdatePost {
   ]);
   if (Object.keys(body).length === 0)
     throw validationError("An update field is required");
-  if (body.title !== undefined) stringWithin(body.title, "Title", 1, 200);
-  if (body.bodyMarkdown !== undefined)
-    stringWithin(body.bodyMarkdown, "Body", 1, 100000);
+  if (body.title !== undefined) postTitle(body.title);
+  if (body.bodyMarkdown !== undefined) postBody(body.bodyMarkdown);
   if (body.anonymous !== undefined && typeof body.anonymous !== "boolean")
     throw validationError("Anonymous is invalid");
   if (body.pinned !== undefined && typeof body.pinned !== "boolean")
@@ -786,6 +800,15 @@ export function createApp(
     next();
   });
   if (observability) app.use(observability.requestMiddleware);
+  for (const path of [
+    "/api/v1/posts/:postId/revisions",
+    "/api/v1/answers/:answerId/revisions",
+    "/api/v1/followups/:followupId/revisions",
+  ])
+    app.use(path, (_request, response, next) => {
+      response.set("Cache-Control", "private, no-store");
+      next();
+    });
   app.use(express.json({ limit: "128kb" }));
   if (observability) app.get("/metrics", observability.metricsHandler);
   app.get("/health", (_request, response) =>
@@ -2213,6 +2236,91 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/posts/:postId/revisions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await posts().history(
+          param(request.params.postId),
+          current.session.user.id,
+          revisionCursor(request.query),
+        );
+        response.set("Cache-Control", "private, no-store").json(value);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/posts/:postId/revisions/compare",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const left =
+          typeof request.query.left === "string"
+            ? param(request.query.left)
+            : param("");
+        const right =
+          typeof request.query.right === "string"
+            ? param(request.query.right)
+            : param("");
+        const value = await posts().compare(
+          param(request.params.postId),
+          current.session.user.id,
+          left,
+          right,
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/posts/:postId/revisions/:revisionId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await posts().revision(
+          param(request.params.postId),
+          current.session.user.id,
+          param(request.params.revisionId),
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/posts/:postId/revisions/:revisionId/restore",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        strictBody(request.body, []);
+        const value = await posts().restore(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          param(request.params.revisionId),
+        );
+        response
+          .set({ ETag: postEtag(value), "Cache-Control": "private, no-store" })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/posts/:postId/duplicate-review",
     optionalReadOrigin,
     async (request, response, next) => {
@@ -2431,6 +2539,94 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/answers/:answerId/revisions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await answers().history(
+          param(request.params.answerId),
+          current.session.user.id,
+          revisionCursor(request.query),
+        );
+        response.set("Cache-Control", "private, no-store").json(value);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/answers/:answerId/revisions/compare",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const left =
+          typeof request.query.left === "string"
+            ? param(request.query.left)
+            : param("");
+        const right =
+          typeof request.query.right === "string"
+            ? param(request.query.right)
+            : param("");
+        const value = await answers().compare(
+          param(request.params.answerId),
+          current.session.user.id,
+          left,
+          right,
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/answers/:answerId/revisions/:revisionId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await answers().revision(
+          param(request.params.answerId),
+          current.session.user.id,
+          param(request.params.revisionId),
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/answers/:answerId/revisions/:revisionId/restore",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        strictBody(request.body, []);
+        const value = await answers().restore(
+          param(request.params.answerId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          param(request.params.revisionId),
+        );
+        response
+          .set({
+            ETag: answerEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/answers/:answerId",
     optionalReadOrigin,
     async (request, response, next) => {
@@ -2457,8 +2653,7 @@ export function createApp(
           ["bodyMarkdown"],
           ["bodyMarkdown"],
         );
-        const bodyMarkdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
-        if (!bodyMarkdown.trim()) throw validationError("Body is invalid");
+        const bodyMarkdown = discussionBody(body.bodyMarkdown);
         const value = await answers().edit(
           param(request.params.answerId),
           auth(response).session.user.id,
@@ -2528,6 +2723,94 @@ export function createApp(
           .set({
             Location: `/api/v1/followups/${value.id}`,
             ETag: followupEtag(value),
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/followups/:followupId/revisions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await followups().history(
+          param(request.params.followupId),
+          current.session.user.id,
+          revisionCursor(request.query),
+        );
+        response.set("Cache-Control", "private, no-store").json(value);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/followups/:followupId/revisions/compare",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const left =
+          typeof request.query.left === "string"
+            ? param(request.query.left)
+            : param("");
+        const right =
+          typeof request.query.right === "string"
+            ? param(request.query.right)
+            : param("");
+        const value = await followups().compare(
+          param(request.params.followupId),
+          current.session.user.id,
+          left,
+          right,
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/followups/:followupId/revisions/:revisionId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await followups().revision(
+          param(request.params.followupId),
+          current.session.user.id,
+          param(request.params.revisionId),
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/followups/:followupId/revisions/:revisionId/restore",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        strictBody(request.body, []);
+        const value = await followups().restore(
+          param(request.params.followupId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          param(request.params.revisionId),
+        );
+        response
+          .set({
+            ETag: followupEtag(value),
+            "Cache-Control": "private, no-store",
           })
           .json({ data: value });
       } catch (error) {
@@ -2616,8 +2899,7 @@ export function createApp(
           ["bodyMarkdown"],
           ["bodyMarkdown"],
         );
-        const markdown = stringWithin(body.bodyMarkdown, "Body", 1, 100000);
-        if (!markdown.trim()) throw validationError("Body is invalid");
+        const markdown = discussionBody(body.bodyMarkdown);
         const value = await followups().edit(
           param(request.params.followupId),
           auth(response).session.user.id,

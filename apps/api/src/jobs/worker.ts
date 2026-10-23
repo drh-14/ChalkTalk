@@ -355,6 +355,10 @@ export class JobWorker {
         );
       const answers = "SELECT id FROM answers WHERE course_id=$1";
       await client.query(
+        "DELETE FROM content_text_revisions WHERE course_id=$1",
+        [courseId],
+      );
+      await client.query(
         "DELETE FROM question_creation_daily_counts WHERE course_id=$1",
         [courseId],
       );

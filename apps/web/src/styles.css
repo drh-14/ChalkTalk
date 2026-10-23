@@ -3656,3 +3656,55 @@ a:focus-visible {
   font-style: normal;
   margin-left: 0.6rem;
 }
+.revision-history {
+  margin-block: 0.75rem;
+}
+.revision-history-panel {
+  margin-top: 0.5rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border, #d4d9df);
+  border-radius: 0.5rem;
+  background: var(--surface, #fff);
+}
+.revision-history-panel ol {
+  padding-left: 1.5rem;
+}
+.revision-history-panel li {
+  margin-block: 0.5rem;
+}
+.revision-history-panel li button {
+  margin-left: 0.5rem;
+}
+.revision-history-panel details {
+  margin-top: 0.4rem;
+}
+.revision-history-panel details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.revision-compare-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+}
+.revision-compare-controls label {
+  display: grid;
+  gap: 0.25rem;
+}
+.revision-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.revision-compare section {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border, #d4d9df);
+  border-radius: 0.35rem;
+}
+.revision-compare pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

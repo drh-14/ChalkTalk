@@ -13,6 +13,7 @@ import { ActiveSessionLink, SessionsPanel } from "../sessions/SessionsPanel.js";
 import { CourseLiveSessions } from "../sessions/LiveSessionLists.js";
 import { sessionRoute, type CodeSession } from "../sessions/client.js";
 import { PostBody } from "./PostBody.js";
+import { RevisionHistory } from "../revisions/History.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { MentionContext, mentionSuggestions } from "./mentions.js";
 import { QuestionResponses } from "../answers/views.js";
@@ -2512,6 +2513,27 @@ function DiscussionContent({
                                     : current,
                                 );
                               }}
+                            />
+                            <RevisionHistory
+                              key={detail.id}
+                              kind="post"
+                              resourceId={detail.id}
+                              version={detail.version}
+                              canRestore={staff && course?.status === "active"}
+                              csrfToken={csrfToken}
+                              onRefresh={async () => {
+                                const latest = await getPost(detail.id);
+                                if (
+                                  "redirectToPostId" in latest ||
+                                  latest.deleted
+                                )
+                                  throw new Error("This post is unavailable.");
+                                setDetail(latest);
+                                return latest.version;
+                              }}
+                              onRestored={() =>
+                                setDetailCycle((value) => value + 1)
+                              }
                             />
                           </div>
                           {canEditDetail && (

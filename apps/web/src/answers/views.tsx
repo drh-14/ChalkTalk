@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "../auth/client.js";
 import { MarkdownEditorField } from "../posts/MarkdownEditorField.js";
 import { PostBody } from "../posts/PostBody.js";
+import { RevisionHistory } from "../revisions/History.js";
 import {
   AttachmentManager,
   AttachmentSelection,
@@ -684,6 +685,20 @@ function AnswerCard({
             </>
           )}
       </div>
+      <RevisionHistory
+        key={answer.id}
+        kind="answer"
+        resourceId={answer.id}
+        version={answer.version}
+        canRestore={canWrite(props) && staff(props.role)}
+        csrfToken={props.csrfToken}
+        onRefresh={async () => {
+          const latest = await getAnswer(answer.id);
+          onReplace(latest);
+          return latest.version;
+        }}
+        onRestored={() => reconcile.refresh()}
+      />
       {error && (
         <p role="alert" className="form-message error">
           {error}
@@ -1088,6 +1103,22 @@ function FollowupItem({
             </>
           )}
         </div>
+      )}
+      {!item.deleted && (
+        <RevisionHistory
+          key={item.id}
+          kind="followup"
+          resourceId={item.id}
+          version={item.version}
+          canRestore={canWrite(props) && staff(props.role)}
+          csrfToken={props.csrfToken}
+          onRefresh={async () => {
+            const latest = await getFollowup(item.id);
+            onReplace(latest);
+            return latest.version;
+          }}
+          onRestored={() => reconcile.refresh()}
+        />
       )}
       {error && (
         <p role="alert" className="form-message error">
