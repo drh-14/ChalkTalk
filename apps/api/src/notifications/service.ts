@@ -42,7 +42,7 @@ const VISIBLE = `FROM notifications n
   JOIN courses c ON c.id=n.course_id
   JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
   LEFT JOIN users a ON a.id=n.actor_user_id
-  WHERE n.user_id=$1 AND ${readablePost("p", "n.user_id", "m.role")}`;
+  WHERE n.user_id=$1 AND ${readablePost("p", "n.user_id")}`;
 
 export class NotificationService {
   constructor(private readonly pool: Pool) {}

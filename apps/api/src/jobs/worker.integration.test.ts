@@ -967,10 +967,67 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         {
           to: `ta-${sequence}@jobs.example.edu`,
           subject: "Sam Student invited you to a live session",
-          text: `Sam Student invited you to the live session "Why does my loop never stop?" in CS ${sequence}.\n\nhttps://app.example.edu/courses/${courseId}/sessions/${sessionId}\n\nOnly invited participants and course staff can open it.`,
+          text: `Sam Student invited you to the live session "Why does my loop never stop?" in CS ${sequence}.\n\nhttps://app.example.edu/courses/${courseId}/sessions/${sessionId}\n\nTo open it, you need access to the post and either an invitation or a course staff role.`,
         },
       ]);
       expect(await status(jobId)).toBe("succeeded");
+    });
+
+    it("holds group access until an invitation email is sent", async () => {
+      await fresh();
+      const seeded = await seedInvitation();
+      const post = await pool.query<{ post_id: string }>(
+        "SELECT post_id FROM collaboration_sessions WHERE id=$1",
+        [seeded.sessionId],
+      );
+      const groupId = uuidv7();
+      await pool.query(
+        "INSERT INTO private_post_groups(id,course_id,name) VALUES ($1,$2,'Invitation group')",
+        [groupId, seeded.courseId],
+      );
+      for (const userId of [seeded.studentId, seeded.taId])
+        await pool.query(
+          "INSERT INTO private_post_group_members(group_id,course_id,user_id) VALUES ($1,$2,$3)",
+          [groupId, seeded.courseId, userId],
+        );
+      await pool.query(
+        "UPDATE posts SET audience='group',audience_group_id=$2,private=true WHERE id=$1",
+        [post.rows[0]!.post_id, groupId],
+      );
+      let sending!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => (sending = resolve));
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const slowWorker = new JobWorker(
+        pool,
+        "held-invitation-audience",
+        {
+          send: async (message) => {
+            sending();
+            await held;
+            delivered.push(message);
+          },
+        },
+        "https://app.example.edu",
+      );
+      const delivery = slowWorker.runOnce();
+      await started;
+      let revoked = false;
+      const revocation = pool
+        .query(
+          "DELETE FROM private_post_group_members WHERE group_id=$1 AND user_id=$2",
+          [groupId, seeded.taId],
+        )
+        .then(() => (revoked = true));
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(revoked).toBe(false);
+      } finally {
+        release();
+        await delivery;
+        await revocation;
+      }
+      expect(delivered).toHaveLength(1);
     });
 
     it("sends nothing once the invitation no longer stands", async () => {
@@ -1198,6 +1255,59 @@ https://app.example.edu/courses/${courseId}/posts/${postId}
 To stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
         },
       ]);
+    });
+
+    it("holds group access until a notification email is sent", async () => {
+      await fresh();
+      const seeded = await seedAnswered();
+      const groupId = uuidv7();
+      await pool.query(
+        "INSERT INTO private_post_groups(id,course_id,name) VALUES ($1,$2,'Notification group')",
+        [groupId, seeded.courseId],
+      );
+      for (const userId of [seeded.studentId, seeded.taId])
+        await pool.query(
+          "INSERT INTO private_post_group_members(group_id,course_id,user_id) VALUES ($1,$2,$3)",
+          [groupId, seeded.courseId, userId],
+        );
+      await pool.query(
+        "UPDATE posts SET audience='group',audience_group_id=$2,private=true WHERE id=$1",
+        [seeded.postId, groupId],
+      );
+      let sending!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => (sending = resolve));
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const slowWorker = new JobWorker(
+        pool,
+        "held-notification-audience",
+        {
+          send: async (message) => {
+            sending();
+            await held;
+            delivered.push(message);
+          },
+        },
+        "https://app.example.edu",
+      );
+      const delivery = slowWorker.runOnce();
+      await started;
+      let revoked = false;
+      const revocation = pool
+        .query(
+          "DELETE FROM private_post_group_members WHERE group_id=$1 AND user_id=$2",
+          [groupId, seeded.studentId],
+        )
+        .then(() => (revoked = true));
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(revoked).toBe(false);
+      } finally {
+        release();
+        await delivery;
+        await revocation;
+      }
+      expect(delivered).toHaveLength(1);
     });
 
     it("does not block activity opt-out during SMTP delivery", async () => {

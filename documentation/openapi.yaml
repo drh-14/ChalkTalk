@@ -42,6 +42,8 @@ tags:
     description: Course Memberships operations.
   - name: Posts
     description: Posts operations.
+  - name: Private Groups
+    description: Staff-managed, current-membership private post audiences.
   - name: Answers
     description: Answers operations.
   - name: Statistics
@@ -3616,7 +3618,7 @@ paths:
                       requestId: req_listCoursePosts
                       details: []
         "409":
-          description: A semantic relevance cursor cannot continue after indexing or the query provider becomes unhealthy. Restart without a cursor, preserving search filters.
+          description: Search ranking or post eligibility changed while assembling the page. Restart without a cursor, preserving search filters.
           content:
             application/json:
               schema:
@@ -10285,6 +10287,20 @@ paths:
                       message: Authentication is missing or invalid.
                       requestId: req_listCourseCollaborationSessions
                       details: []
+        "409":
+          description: Session visibility changed while assembling the page; restart without the cursor.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                search_restart_required:
+                  value:
+                    error:
+                      code: search_restart_required
+                      message: Session visibility changed. Restart without the cursor.
+                      requestId: req_listCourseCollaborationSessions
+                      details: []
         "404":
           description: Not Found
           content:
@@ -10848,6 +10864,20 @@ paths:
                       message: Authentication is missing or invalid.
                       requestId: req_listMyCollaborationSessions
                       details: []
+        "409":
+          description: Session visibility changed while assembling the page; restart without the cursor.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                search_restart_required:
+                  value:
+                    error:
+                      code: search_restart_required
+                      message: Session visibility changed. Restart without the cursor.
+                      requestId: req_listMyCollaborationSessions
+                      details: []
         "500":
           description: Internal Server Error
           content:
@@ -11274,11 +11304,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 invitee_cannot_read_post:
-                  summary: The session is on a private post, and the user is neither its author nor course staff.
+                  summary: The invitee cannot currently read the anchor post.
                   value:
                     error:
                       code: invitee_cannot_read_post
-                      message: The session is on a private post, and the user is neither its author nor course staff.
+                      message: The invitee cannot currently read the anchor post.
                       requestId: req_inviteCollaborationParticipant
                       details: []
                 not_course_member:
@@ -11959,6 +11989,250 @@ paths:
         "403": { description: Parent edit permission denied. }
         "404": { description: File or visible parent not found. }
         "409": { description: Course archived. }
+  "/courses/{courseId}/private-groups":
+    get:
+      tags: [Private Groups]
+      summary: List visible private groups
+      operationId: listPrivateGroups
+      description: Staff see all groups and memberIds; students see only groups they belong to and no memberIds.
+      security: [{ session_cookie: [] }]
+      parameters: [{ "$ref": "#/components/parameters/CourseId" }]
+      responses:
+        "200":
+          description: Alphabetical group list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    {
+                      type: array,
+                      items: { "$ref": "#/components/schemas/PrivateGroup" },
+                    }
+                required: [data]
+        "401":
+          {
+            description: Authentication required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Course not found or viewer is not a member,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+    post:
+      tags: [Private Groups]
+      summary: Create a private group
+      operationId: createPrivateGroup
+      description: Course staff only. Name is trimmed, 1–64 characters, unique ignoring case; member IDs must be distinct current course members.
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          { "$ref": "#/components/parameters/CourseId" },
+          { "$ref": "#/components/parameters/Origin" },
+          { "$ref": "#/components/parameters/CsrfToken" },
+        ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64 }
+                memberIds:
+                  {
+                    type: array,
+                    uniqueItems: true,
+                    items: { type: string, format: uuid },
+                  }
+              required: [name, memberIds]
+              additionalProperties: false
+      responses:
+        "201":
+          description: Created private group.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                {
+                  type: object,
+                  properties:
+                    { data: { "$ref": "#/components/schemas/PrivateGroup" } },
+                  required: [data],
+                }
+        "401":
+          {
+            description: Authentication required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "403":
+          {
+            description: Staff role or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Name exists or course archived,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "422":
+          {
+            description: Invalid name or members,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/courses/{courseId}/private-groups/{groupId}":
+    patch:
+      tags: [Private Groups]
+      summary: Rename a private group
+      operationId: renamePrivateGroup
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          { "$ref": "#/components/parameters/CourseId" },
+          {
+            name: groupId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          { "$ref": "#/components/parameters/Origin" },
+          { "$ref": "#/components/parameters/CsrfToken" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties:
+                        { name: { type: string, minLength: 1, maxLength: 64 } },
+                      required: [name],
+                      additionalProperties: false,
+                    },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Renamed,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      {
+                        type: object,
+                        properties:
+                          {
+                            data:
+                              { "$ref": "#/components/schemas/PrivateGroup" },
+                          },
+                        required: [data],
+                      },
+                  },
+              },
+          }
+        "401": { description: Authentication required }
+        "403": { description: Staff role or CSRF required }
+        "404": { description: Course or group not found }
+        "409": { description: Name exists or course archived }
+        "422": { description: Invalid name }
+    delete:
+      tags: [Private Groups]
+      summary: Delete an unused private group
+      operationId: deletePrivateGroup
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          { "$ref": "#/components/parameters/CourseId" },
+          {
+            name: groupId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          { "$ref": "#/components/parameters/Origin" },
+          { "$ref": "#/components/parameters/CsrfToken" },
+        ]
+      responses:
+        "204": { description: Deleted }
+        "401": { description: Authentication required }
+        "403": { description: Staff role or CSRF required }
+        "404": { description: Course or group not found }
+        "409": { description: Active posts reference group, or course archived }
+  "/courses/{courseId}/private-groups/{groupId}/members/{userId}":
+    parameters:
+      [
+        { "$ref": "#/components/parameters/CourseId" },
+        {
+          name: groupId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        },
+        {
+          name: userId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        },
+        { "$ref": "#/components/parameters/Origin" },
+        { "$ref": "#/components/parameters/CsrfToken" },
+      ]
+    put:
+      tags: [Private Groups]
+      summary: Add a current course member to a private group
+      operationId: addPrivateGroupMember
+      security: [{ session_cookie: [] }]
+      responses:
+        "204": { description: Member added or already present }
+        "401": { description: Authentication required }
+        "403": { description: Staff role or CSRF required }
+        "404": { description: Course, group, or member not found }
+        "409": { description: Course archived }
+    delete:
+      tags: [Private Groups]
+      summary: Remove a member from a private group
+      operationId: removePrivateGroupMember
+      security: [{ session_cookie: [] }]
+      responses:
+        "204": { description: Member removed or already absent }
+        "401": { description: Authentication required }
+        "403": { description: Staff role or CSRF required }
+        "404": { description: Course or group not found }
+        "409": { description: Course archived }
 components:
   securitySchemes:
     metrics_bearer:
@@ -12176,6 +12450,20 @@ components:
         minLength: 1
       example: "3600"
   schemas:
+    PrivateGroup:
+      type: object
+      additionalProperties: false
+      required: [id, name, joined]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        joined: { type: boolean }
+        memberIds:
+          {
+            type: array,
+            items: { type: string, format: uuid },
+            description: Staff-only current member IDs.,
+          }
     CourseResourceLink:
       type: object
       additionalProperties: false
@@ -12832,7 +13120,18 @@ components:
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
         private:
           type: boolean
-          description: Whether only the author and course staff can read the post.
+          description: Compatibility projection; true for every audience other than class.
+        audience:
+          type: string
+          enum: [class, staff, selected_staff, group]
+          description: Current audience of an active post.
+        groupId:
+          type: string
+          format: uuid
+          description: Present on an active group post.
+        groupName:
+          type: string
+          description: Current name of the post's group, when addressed to one.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -12971,7 +13270,18 @@ components:
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
         private:
           type: boolean
-          description: Whether only the author and course staff can read the post.
+          description: Compatibility projection; true for every audience other than class.
+        audience:
+          type: string
+          enum: [class, staff, selected_staff, group]
+          description: Current audience of an active post.
+        groupId:
+          type: string
+          format: uuid
+          description: Present on an active group post.
+        groupName:
+          type: string
+          description: Current name of the post's group, when addressed to one.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -13101,7 +13411,7 @@ components:
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
         private:
           type: boolean
-          description: Whether only the author and course staff can read the post.
+          description: Compatibility projection; true for every audience other than class.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -13428,7 +13738,8 @@ components:
         upvoteCount: { type: integer, minimum: 0 }
         viewerUpvoted: { type: boolean }
         replyCount: { type: integer, minimum: 0 }
-        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        attachments:
+          { type: array, items: { $ref: "#/components/schemas/Attachment" } }
         resolved:
           type: boolean
           description: Whether this discussion (root followup) is resolved; always false for replies.
@@ -15508,8 +15819,20 @@ components:
           uniqueItems: true
         private:
           type: boolean
-          description: Readable only by the author and course TAs and instructors. Cannot be combined with announcement.
+          description: Legacy alias; true without audience means staff. If audience is supplied, the values must agree.
           default: false
+        audience:
+          type: string
+          enum: [class, staff, selected_staff, group]
+          description: Exclusive audience. Selected staff requires staffRecipientIds; group requires groupId; polls and announcements are class-only.
+        staffRecipientIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        groupId:
+          type: string
+          format: uuid
       additionalProperties: false
       required:
         - type
@@ -15551,8 +15874,20 @@ components:
           default: false
         private:
           type: boolean
-          description: Readable only by the author and course TAs and instructors. Cannot be combined with announcement.
+          description: Legacy alias; true without audience means staff. If audience is supplied, the values must agree.
           default: false
+        audience:
+          type: string
+          enum: [class, staff, selected_staff, group]
+          description: Exclusive audience. Selected staff requires staffRecipientIds; group requires groupId; polls and announcements are class-only.
+        staffRecipientIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        groupId:
+          type: string
+          format: uuid
       additionalProperties: false
       required:
         - type

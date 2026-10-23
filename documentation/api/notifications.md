@@ -15,7 +15,7 @@ When a TA or instructor makes someone's private post public, its author receives
 
 An announcement creates an `announcement` notification for every other current course member. The actor is never notified of their own activity.
 
-Notifications are listed only while the caller is still a member of the course who can read the post, and the post is neither deleted nor a confirmed duplicate. Followers who can no longer read a private post, for example a TA who became a student, are not notified. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
+Notifications are listed only while the caller is still a member of the course who can read the post, and the post is neither deleted nor a confirmed duplicate. Followers who lose access to a private post under the [current-audience rules](posts.md#private-audiences) are not notified. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
 
 **Email:** Members who enable `activityEmails` in their [per-course email preferences](courses.md#courseEmailPreferences) are emailed about each notification other than announcements. `announcementEmails` and `digestEmails` independently control those course emails. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. An anonymous actor appears as "Someone".
 

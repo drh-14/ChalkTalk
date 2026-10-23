@@ -18,7 +18,7 @@ Anonymous messages remain supported. Shared-answer drafts are local until explic
 
 ## Private posts
 
-A private post is readable only by its author and the course's current TAs and instructors; see [Posts](posts.md). For anyone else it is indistinguishable from a post that does not exist, and so are its answers, followups, replies, attachments, upvotes, and live sessions. Lists, search, related questions, notifications, and digests remove private posts the viewer cannot read before ranking, pagination, `hasMore`, and counts. Visibility follows the viewer's current role, so a TA who becomes a student stops seeing other students' private posts at once. Making a post public keeps its anonymity setting, so the author projection rules above still apply.
+See [Posts](posts.md) for the current-audience access rules. Identity projections never grant access to content the viewer cannot read. Making a post public keeps its anonymity setting, so the author projection rules above still apply.
 
 ## Answer contributors
 

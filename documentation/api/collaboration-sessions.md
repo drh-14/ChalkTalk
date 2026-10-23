@@ -1,6 +1,6 @@
 ## Collaboration Sessions
 
-Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. A session on a [private post](posts.md) is also hidden from, and cannot be joined by, any member who cannot read that post. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
+Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it, provided they can currently read the [anchor post](posts.md); anyone else receives `404 not_found`, exactly as for an absent session. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
 
 <a id="createCollaborationSession"></a>
 
@@ -187,11 +187,11 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
 
 ### **`GET /api/v1/courses/{courseId}/collaboration-sessions`**
 
-Lists the course's collaboration sessions visible to the caller, newest first. Hidden sessions are excluded before pagination and hasMore are calculated. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Lists the course's collaboration sessions visible to the caller, newest first. Hidden sessions are excluded before pagination and hasMore are calculated. The caller must both qualify as creator, current course staff, or invitee and be able to read the [anchor post](posts.md); anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Course member. Results include only sessions the caller created, was invited to, or can open as current course staff.
+**Access:** Course member. Results include only sessions the caller created, was invited to, or can open as current course staff, when the anchor post is also readable.
 
 **Request media:** None.
 
@@ -337,6 +337,10 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=act
 
 `authentication_required`: Authentication is missing or invalid.
 
+##### `409 Conflict`
+
+`search_restart_required`: Session visibility changed while assembling the page. Restart without the cursor.
+
 ##### `404 Not Found`
 
 `not_found`: The course, collaboration session, or participant is absent or hidden.
@@ -351,7 +355,7 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=act
 
 ### **`GET /api/v1/users/me/collaboration-sessions`**
 
-Lists the sessions the caller created or was invited to, newest first, across courses that are active and of which the caller is still a member. Sessions whose post is deleted or a confirmed duplicate are excluded before pagination and hasMore are calculated. Staff see only their own sessions here; the [course list](#listCourseCollaborationSessions) shows every session in a course.
+Lists the sessions the caller created or was invited to, newest first, across courses that are active and of which the caller is still a member. Sessions whose anchor post is deleted, a confirmed duplicate, or no longer readable by the caller are excluded before pagination and hasMore are calculated. Staff see only their own sessions here; the [course list](#listCourseCollaborationSessions) shows every session in a course.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -500,6 +504,10 @@ curl --request GET '/api/v1/users/me/collaboration-sessions?status=active' \
 
 `authentication_required`: Authentication is missing or invalid.
 
+##### `409 Conflict`
+
+`search_restart_required`: Session visibility changed while assembling the page. Restart without the cursor.
+
 ##### `500 Internal Server Error`
 
 `internal_error`: The server could not complete the request.
@@ -510,7 +518,7 @@ curl --request GET '/api/v1/users/me/collaboration-sessions?status=active' \
 
 ### **`GET /api/v1/collaboration-sessions/{collaborationSessionId}`**
 
-Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session, while they can read the anchor post; anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -835,7 +843,7 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/participants`**
 
-Invites a current course member to an active session as an editor or, with `permission: "view"`, as a viewer whose connection is read-only. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication and leaves their permission unchanged; to change it, remove and re-invite them. Course staff always edit, whatever permission they were invited with. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only if the session and course are still active and the invitee is still a participant and member when it runs. Inviting an existing participant sends no email.
+Invites a current course member who can read the anchor post to an active session as an editor or, with `permission: "view"`, as a viewer whose connection is read-only. Only the session creator or current course staff may invite, subject to the anchor post's audience. Inviting an existing participant succeeds without duplication and leaves their permission unchanged; to change it, remove and re-invite them. Course staff always edit, whatever permission they were invited with, while they can read the anchor post. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only if the session and course are still active and the invitee is still a participant and member who can read the anchor post when it runs. Inviting an existing participant sends no email.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -995,7 +1003,7 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
 
 `not_course_member`: The user is not a current member of the course.
 
-`invitee_cannot_read_post`: The session is on a private post, and the user is neither its author nor course staff.
+`invitee_cannot_read_post`: The invitee cannot currently read the anchor post; see [Posts](posts.md).
 
 `validation_failed`: The request body is invalid.
 
@@ -1098,7 +1106,7 @@ curl --request DELETE '/api/v1/collaboration-sessions/collab_123/participants/us
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/connection-tickets`**
 
-Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with `read` permission for a viewer and `write` otherwise, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with `read` permission for a viewer and `write` otherwise, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session, while they can read the anchor post; anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -1216,7 +1224,7 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-ticket
 
 ### **`GET /api/v1/collaboration-sessions/{collaborationSessionId}/snapshot`**
 
-Retrieves the most recently persisted plain text of an active or ended session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Retrieves the most recently persisted plain text of an active or ended session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session, while they can read the anchor post; anyone else receives 404 not_found.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

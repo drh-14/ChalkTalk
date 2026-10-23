@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { postVisible, readablePost } from "../posts/visibility.js";
 import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import type { EmailSender } from "../auth/service.js";
 import type { Observability } from "../observability/index.js";
@@ -160,49 +161,64 @@ export class JobWorker {
   }
 
   private async sendCollaborationInvitationEmail(job: Job): Promise<void> {
-    if (!this.emailSender || !this.frontendBaseUrl)
+    const emailSender = this.emailSender;
+    if (!emailSender || !this.frontendBaseUrl)
       throw new Error("Invitation email delivery is not configured");
     const { sessionId, inviteeUserId, inviterUserId } = job.payload;
     if (!sessionId || !inviteeUserId || !inviterUserId)
       throw new Error("Invitation email job payload is invalid");
-    // Sends only while the invitation that queued this job still stands.
-    const invitation = await this.pool.query<{
-      title: string;
-      course_id: string;
-      course_name: string;
-      email: string;
-      inviter_name: string;
-      invited_at_ms: string;
-    }>(
-      `SELECT s.title,s.course_id,c.name AS course_name,invitee.email,
+    await this.transaction(async (client) => {
+      const claimed = await client.query(
+        "SELECT id FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
+        [job.id, this.workerId, job.attempts],
+      );
+      if (!claimed.rows[0]) return;
+      const invitation = await client.query<{
+        title: string;
+        post_id: string;
+        course_id: string;
+        course_name: string;
+        email: string;
+        inviter_name: string;
+        invited_at_ms: string;
+      }>(
+        `SELECT s.title,s.post_id,s.course_id,c.name AS course_name,invitee.email,
               inviter.display_name AS inviter_name,
               floor(extract(epoch FROM cp.created_at)*1000)::bigint AS invited_at_ms
        FROM collaboration_sessions s
        JOIN courses c ON c.id=s.course_id AND c.status='active'
        JOIN collaboration_participants cp ON cp.collaboration_session_id=s.id AND cp.user_id=$2
        JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$2
+       JOIN posts p ON p.id=s.post_id AND p.deleted_at IS NULL AND ${readablePost("p", "$2")}
        JOIN users invitee ON invitee.id=$2 AND invitee.deleted_at IS NULL
        JOIN users inviter ON inviter.id=$3 AND inviter.deleted_at IS NULL
-       WHERE s.id=$1 AND s.lifecycle_state='active'`,
-      [sessionId, inviteeUserId, inviterUserId],
-    );
-    const row = invitation.rows[0];
-    if (
-      !row ||
-      job.deduplicationKey !==
-        `${sessionId}:${inviteeUserId}:${row.invited_at_ms}`
-    )
-      return;
-    const clean = (value: string) => value.replace(/\s+/g, " ").trim();
-    const inviter = clean(row.inviter_name);
-    const url = new URL(
-      `/courses/${encodeURIComponent(row.course_id)}/sessions/${encodeURIComponent(sessionId)}`,
-      this.frontendBaseUrl,
-    ).toString();
-    await this.emailSender.send({
-      to: row.email,
-      subject: `${inviter} invited you to a live session`,
-      text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly invited participants and course staff can open it.`,
+       WHERE s.id=$1 AND s.lifecycle_state='active'
+       FOR SHARE OF s,c,cp,m,p,invitee,inviter`,
+        [sessionId, inviteeUserId, inviterUserId],
+      );
+      const row = invitation.rows[0];
+      if (
+        !row ||
+        job.deduplicationKey !==
+          `${sessionId}:${inviteeUserId}:${row.invited_at_ms}` ||
+        !(await postVisible(client, row.post_id, inviteeUserId))
+      )
+        return;
+      const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+      const inviter = clean(row.inviter_name);
+      const url = new URL(
+        `/courses/${encodeURIComponent(row.course_id)}/sessions/${encodeURIComponent(sessionId)}`,
+        this.frontendBaseUrl,
+      ).toString();
+      await emailSender.send({
+        to: row.email,
+        subject: `${inviter} invited you to a live session`,
+        text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nTo open it, you need access to the post and either an invitation or a course staff role.`,
+      });
+      await client.query(
+        "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1",
+        [job.id],
+      );
     });
   }
 
@@ -280,6 +296,8 @@ export class JobWorker {
       const found = await client.query<{
         kind: string;
         post_id: string;
+        user_id: string;
+        audience: string;
         course_id: string;
         course_name: string;
         title: string;
@@ -287,20 +305,28 @@ export class JobWorker {
         actor_name: string | null;
         actor_anonymous: boolean;
       }>(
-        `SELECT n.kind,n.post_id,n.course_id,c.name AS course_name,p.title,recipient.email,
+        `SELECT n.kind,n.post_id,n.user_id,p.audience,n.course_id,c.name AS course_name,p.title,recipient.email,
               CASE WHEN actor.deleted_at IS NULL THEN actor.display_name END AS actor_name,n.actor_anonymous
        FROM notifications n
        JOIN users recipient ON recipient.id=n.user_id AND recipient.deleted_at IS NULL
        JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id AND m.activity_emails
        JOIN courses c ON c.id=n.course_id
        JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
-         AND (NOT p.private OR p.author_user_id=n.user_id OR m.role IN ('ta','instructor'))
+         AND ${readablePost("p", "n.user_id")}
        LEFT JOIN users actor ON actor.id=n.actor_user_id
-       WHERE n.id=$1 AND n.read_at IS NULL`,
+       WHERE n.id=$1 AND n.read_at IS NULL
+       FOR SHARE OF p FOR KEY SHARE OF m`,
         [notificationId],
       );
       const row = found.rows[0];
       if (!row) return;
+      if (row.audience === "staff" || row.audience === "selected_staff") {
+        await client.query(
+          "SELECT role FROM course_memberships WHERE course_id=$1 AND user_id=$2 FOR SHARE",
+          [row.course_id, row.user_id],
+        );
+      }
+      if (!(await postVisible(client, row.post_id, row.user_id))) return;
       const clean = (value: string) => value.replace(/\s+/g, " ").trim();
       const wording: Record<string, [string, string]> = {
         answer_created: ["New answer on", "answered"],

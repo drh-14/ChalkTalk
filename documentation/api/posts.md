@@ -6,7 +6,9 @@
 
 **Following and unread:** Every active post projection includes `following` and `unread` for the viewer. Members follow a post automatically when they create it, answer it, edit an answer on it, or post a followup or reply on it, unless they unfollowed it; see [Notifications](notifications.md). A post is `unread` when its last activity is later than both the viewer's last opening of it and their course read mark, or neither exists. Retrieving a post records it, and the caller's notifications for it, as read, so its own response reports `unread: false`.
 
-**Private posts:** Any member may create a question or note with `private: true`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
+**Private audiences:** Every question or ordinary note has exactly one `audience`: `class` (default), `staff`, `selected_staff`, or `group`. Legacy `private: true` without `audience` means `staff`; existing private rows are migrated to `staff`. A selected-staff post requires `staffRecipientIds`, a nonempty, distinct list of current course TAs/instructors. A group post requires `groupId`, identifying one staff-managed group in the course of which the creator is a current member. `private` and `audience` must agree if both are supplied; recipients or a group ID with another audience return `422 validation_failed`. Polls and announcements remain class-only. Active responses include `audience`, `private`, and `groupId`/`groupName` for group posts. These choices cannot be changed after creation except by the existing one-way `PATCH private:false` publish operation.
+
+Access always requires current course membership. A `staff` post is readable by its author and current course staff; `selected_staff` by its author and the named current staff members only; `group` by current group members only—including the author, who loses access upon removal. Staff management rights confer no override. An unauthorized post or descendant behaves as absent (`404 not_found`) and is omitted from lists, search, related questions, notifications, and live-session content. Private posts remain out of every daily digest. Staff may manage groups through [private-group endpoints](private-groups.md); a referenced group can be renamed but not deleted. List with `private=true` to see only private posts you can currently read. Any private post remains ineligible as a duplicate target.
 
 **Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member with announcement emails enabled, which the job worker sends only while the announcement, the course, the membership, and that preference still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
 
@@ -98,7 +100,13 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 
 `announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to members who enable announcement emails; cannot be combined with `anonymous`.
 
-`private` (boolean, optional; default false): Questions and notes only. Makes the post readable only by its author and course staff.
+`private` (boolean, optional; default false): Legacy alias for `audience`; `true` without an audience selects `staff`. See the private-audience rules above.
+
+`audience` (enum: class, staff, selected_staff, group, optional): Exclusive audience for a question or ordinary note; defaults to `class`.
+
+`staffRecipientIds` (list of UUIDs, conditional): Required only for `selected_staff`; distinct current course TAs/instructors.
+
+`groupId` (UUID, conditional): Required only for `group`; identifies a group the creator currently belongs to.
 
 ###### `CreatePollPostRequest` fields
 
@@ -204,7 +212,7 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
-`data.private` (boolean, required): Whether only the author and course staff can read the post.
+`data.private` (boolean, required): Compatibility projection; true for every audience except `class`.
 
 `data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
@@ -331,7 +339,7 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 ### **`GET /api/v1/courses/{courseId}/posts`**
 
-Lists or searches the posts in a course. Ordinary search text combines English full-text matches with word-level fuzzy matches in titles and bodies. Fuzzy matching requires at least one query term of three or more searchable characters, ignores shorter terms and English stopwords, and requires every remaining term to match in either field. Queries with no eligible fuzzy terms use full-text matching and ranking alone. Under relevance sorting, exact full-text matches precede fuzzy-only matches within each pinned group; title similarity contributes more than body similarity within the groups. With deployment-configured embeddings and the optional pgvector schema, semantic-only matches follow both groups within each pinned group, ordered by cosine similarity without an initial cutoff. Semantic indexing and expansion apply only to questions and notes; polls retain the lexical/fuzzy path, and a poll-only query does not call the embedding provider. Private question and note candidates follow the same current author/staff visibility rules before ranking and pagination. Pinned results still precede unpinned results. A missing key, vector schema, working embedding provider, or unhealthy current-generation index leaves only the established full-text and fuzzy search path available. The current generation remains unhealthy until its initial bounded backfill finishes and current-revision work drains; pending current-generation catch-up work or a queued, running, or failed current-revision indexing job also keeps it unhealthy until successful revision-checked indexing. Post writes still succeed during enqueue and indexing failures. Quoted phrases, `OR`, and excluded-term queries retain their existing full-text-only meaning unless an explicit `semanticQuery` accompanies `q`. Confirmed duplicates are excluded from ordinary lists and searches, including Related questions, before ranking and pagination. Related questions keeps its existing `OR` expression in `q` and sends the draft text separately as `semanticQuery`; this adds semantic candidates only when configured, without changing the `OR` expression. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+Lists or searches the posts in a course. Ordinary search text combines English full-text matches with word-level fuzzy matches in titles and bodies. Fuzzy matching requires at least one query term of three or more searchable characters, ignores shorter terms and English stopwords, and requires every remaining term to match in either field. Queries with no eligible fuzzy terms use full-text matching and ranking alone. Under relevance sorting, exact full-text matches precede fuzzy-only matches within each pinned group; title similarity contributes more than body similarity within the groups. With deployment-configured embeddings and the optional pgvector schema, semantic-only matches follow both groups within each pinned group, ordered by cosine similarity without an initial cutoff. Semantic indexing and expansion apply only to questions and notes; polls retain the lexical/fuzzy path, and a poll-only query does not call the embedding provider. Private question and note candidates follow the [current-audience access rules](#private-audiences) before ranking and pagination. Pinned results still precede unpinned results. A missing key, vector schema, working embedding provider, or unhealthy current-generation index leaves only the established full-text and fuzzy search path available. The current generation remains unhealthy until its initial bounded backfill finishes and current-revision work drains; pending current-generation catch-up work or a queued, running, or failed current-revision indexing job also keeps it unhealthy until successful revision-checked indexing. Post writes still succeed during enqueue and indexing failures. Quoted phrases, `OR`, and excluded-term queries retain their existing full-text-only meaning unless an explicit `semanticQuery` accompanies `q`. Confirmed duplicates are excluded from ordinary lists and searches, including Related questions, before ranking and pagination. Related questions keeps its existing `OR` expression in `q` and sends the draft text separately as `semanticQuery`; this adds semantic candidates only when configured, without changing the `OR` expression. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -375,7 +383,7 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `announcement` (literal true, optional): List announcements only. Any other value returns `400 invalid_request`.
 
-`private` (literal true, optional): List only the private posts the caller can read: their own for a student, every private post for staff. Any other value returns `400 invalid_request`.
+`private` (literal true, optional): List only private posts the caller can currently read. Any other value returns `400 invalid_request`.
 
 `authorRole` (enum: instructor, ta, optional; values instructor, ta): Filter by the author's current role in the course. A post matches only while its author holds that role; posts by deleted accounts never match. For a student, anonymous posts other than the student's own are removed before ranking, pagination, `hasMore`, and counts, so the filter cannot reveal an anonymous author's role. Instructors and TAs match anonymous posts by that role.
 
@@ -385,7 +393,7 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `cursor` (string, optional; minimum length 1, maximum length 2048): Opaque cursor returned by the previous page.
 
-If semantic ranking becomes unhealthy between relevance pages, a semantic cursor returns `409 search_restart_required`. Restart the search without a cursor, retaining `q`, sort, and filters; the fresh response uses the established full-text and fuzzy path. Invalid or mismatched cursors still return `400 invalid_request`.
+If semantic ranking becomes unhealthy between relevance pages, or post eligibility changes while a page is assembled, the list returns `409 search_restart_required`. Restart the search without a cursor, retaining `q`, sort, and filters; an unavailable semantic ranking uses the established full-text and fuzzy path. Invalid or mismatched cursors still return `400 invalid_request`.
 
 `limit` (integer, optional; default 25, minimum 1, maximum 100): Page size; defaults to 25.
 
@@ -435,7 +443,7 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data[].announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
-`data[].private` (boolean, required): Whether only the author and course staff can read the post.
+`data[].private` (boolean, required): Compatibility projection; true for every audience except `class`.
 
 `data[].following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
@@ -537,7 +545,7 @@ curl --request GET '/api/v1/courses/course_123/posts' \
 
 ##### `409 Conflict`
 
-`search_restart_required`: Semantic ranking became unavailable after the cursor was issued. Restart from page one without the cursor.
+`search_restart_required`: Semantic ranking became unavailable or post eligibility changed while assembling a page. Restart from page one without the cursor.
 
 ##### `500 Internal Server Error`
 
@@ -629,7 +637,7 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
-`data.private` (boolean, required): Whether only the author and course staff can read the post.
+`data.private` (boolean, required): Compatibility projection; true for every audience except `class`.
 
 `data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
@@ -797,7 +805,7 @@ None.
 
 `pinned` (boolean, optional): Staff-controlled pinned state.
 
-`private` (boolean, optional): `false` makes a private post public; the author or staff only, and it cannot be undone. `true` on a public post returns `422 post_already_public`, and is ignored on a private post.
+`private` (boolean, optional): `false` makes a readable private post public; its author or authorized current staff only, and it cannot be undone. `true` on a public post returns `422 post_already_public`, and is ignored on a private post.
 
 `duplicateOfPostId` (string or null, optional): Original post ID, or null to clear the relationship.
 
@@ -865,7 +873,7 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.announcement` (boolean, required): Whether staff posted this note as an announcement; always false for questions and polls.
 
-`data.private` (boolean, required): Whether only the author and course staff can read the post.
+`data.private` (boolean, required): Compatibility projection; true for every audience except `class`.
 
 `data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 

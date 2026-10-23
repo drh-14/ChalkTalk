@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
-import { canReadPost } from "../posts/visibility.js";
+import { assertPostVisible } from "../posts/visibility.js";
 import { recordActivity } from "../notifications/activity.js";
 import { newMentions, parseMentions } from "../notifications/mentions.js";
 import {
@@ -112,13 +112,9 @@ export class FollowupService {
       [postId, userId],
     );
     const row = result.rows[0];
-    if (
-      !row ||
-      row.deleted_at ||
-      row.duplicate_status === "confirmed" ||
-      !canReadPost(row, userId, row.role)
-    )
+    if (!row || row.deleted_at || row.duplicate_status === "confirmed")
       throw notFound();
+    await assertPostVisible(db, row.id, userId);
     if (row.type !== "question")
       throw new AuthError(
         noteStatus,

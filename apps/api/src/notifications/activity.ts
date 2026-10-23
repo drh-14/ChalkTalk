@@ -62,7 +62,7 @@ export async function recordActivity(
         : `SELECT f.user_id FROM post_follows f
            JOIN course_memberships m ON m.course_id=f.course_id AND m.user_id=f.user_id
            JOIN posts p ON p.id=f.post_id
-           WHERE f.post_id=$2 AND f.following AND ${readablePost("p", "f.user_id", "m.role")}`;
+           WHERE f.post_id=$2 AND f.following AND ${readablePost("p", "f.user_id")}`;
   const insert = `INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous)
        SELECT gen_random_uuid(),r.user_id,$1,$2,$4,$3,$5
        FROM recipients r JOIN users u ON u.id=r.user_id AND u.deleted_at IS NULL
@@ -109,7 +109,7 @@ async function recordMentions(
        JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
        WHERE m.course_id=$1 AND m.user_id<>$3
          AND (m.user_id = ANY($5::uuid[]) OR ($6 AND m.role IN ('ta','instructor')))
-         AND ${readablePost("p", "m.user_id", "m.role")}
+         AND ${readablePost("p", "m.user_id")}
      ), created AS (
        INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous)
        SELECT gen_random_uuid(),r.user_id,$1,$2,'mentioned',$3,$4 FROM recipients r

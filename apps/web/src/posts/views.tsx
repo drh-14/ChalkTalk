@@ -22,26 +22,38 @@ import {
 } from "../attachments/views.js";
 import { deleteAttachment } from "../attachments/client.js";
 import { useAttachmentQueue } from "../attachments/queue.js";
-import { getCourse, getMembership, type Course } from "../courses/client.js";
+import {
+  getCourse,
+  getMembership,
+  listMembers,
+  type Course,
+  type Membership,
+} from "../courses/client.js";
 import {
   confirmMergePost,
+  createPrivateGroup,
   createPost,
+  deletePrivateGroup,
   getDuplicateReview,
   getPost,
   listMergedPosts,
   listPosts,
+  listPrivateGroups,
   makePostPublic,
   markCourseRead,
   setFollowing,
+  setPrivateGroupMember,
   setPostPinned,
   unmergePost,
   updatePost,
+  renamePrivateGroup,
   type CreatePostInput,
   type MergedPost,
   type Post,
   type PostDetail,
   type PostListOptions,
   type PostSort,
+  type PrivateGroup,
 } from "./client.js";
 import {
   feedSearch,
@@ -154,9 +166,15 @@ function PrivateNotice({
   return (
     <div className="private-notice" role="note">
       <span>
-        {own
-          ? "Only you and course staff can see this."
-          : "Only the author and course staff can see this."}
+        {post.audience === "selected_staff"
+          ? own
+            ? "Only you and selected current staff can see this."
+            : "Only the author and selected current staff can see this."
+          : post.audience === "group"
+            ? `Only current members of ${post.groupName ?? "this group"} can see this.`
+            : own
+              ? "Only you and course staff can see this."
+              : "Only the author and course staff can see this."}
       </span>
       {canPublish && (
         <button
@@ -444,6 +462,241 @@ function relatedSemanticQuery(title: string, body: string): string {
 }
 const MAX_POLL_OPTIONS = 10;
 
+function PrivateGroupManager({
+  courseId,
+  csrfToken,
+}: {
+  courseId: string;
+  csrfToken: string;
+}) {
+  const [groups, setGroups] = useState<PrivateGroup[]>([]);
+  const [members, setMembers] = useState<Membership[]>([]);
+  const [name, setName] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [rename, setRename] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  async function refresh() {
+    setGroups(await listPrivateGroups(courseId));
+  }
+  async function load() {
+    setError("");
+    try {
+      const all: Membership[] = [];
+      let cursor: string | undefined;
+      const seen = new Set<string>();
+      do {
+        const page = await listMembers(courseId, cursor);
+        all.push(...page.data);
+        cursor = page.page.hasMore
+          ? (page.page.nextCursor ?? undefined)
+          : undefined;
+        if (cursor && seen.has(cursor))
+          throw new Error("Member pagination repeated");
+        if (cursor) seen.add(cursor);
+      } while (cursor);
+      setMembers(all);
+      await refresh();
+      setLoaded(true);
+    } catch (caught) {
+      setError(message(caught));
+    }
+  }
+  async function mutate(action: () => Promise<void>) {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      await action();
+      await refresh();
+    } catch (caught) {
+      setError(message(caught));
+      await refresh().catch(() => undefined);
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <details
+      className="private-group-manager"
+      onToggle={(event) => {
+        if (event.currentTarget.open && !loaded) void load();
+      }}
+    >
+      <summary>Manage private groups</summary>
+      {error && (
+        <p role="alert" className="form-message error">
+          {error}
+        </p>
+      )}
+      {!loaded && (
+        <button type="button" onClick={() => void load()}>
+          Load groups
+        </button>
+      )}
+      {loaded && (
+        <>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void mutate(async () => {
+                await createPrivateGroup(
+                  courseId,
+                  name.trim(),
+                  selected,
+                  csrfToken,
+                );
+                setName("");
+                setSelected([]);
+              });
+            }}
+          >
+            <label>
+              New group name{" "}
+              <input
+                value={name}
+                maxLength={64}
+                required
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <fieldset>
+              <legend>Initial members</legend>
+              {members.map((member) => (
+                <label key={member.user.id} className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(member.user.id)}
+                    onChange={(event) =>
+                      setSelected((current) =>
+                        event.target.checked
+                          ? [...current, member.user.id]
+                          : current.filter((id) => id !== member.user.id),
+                      )
+                    }
+                  />
+                  {member.user.displayName}
+                </label>
+              ))}
+            </fieldset>
+            <button type="submit" disabled={pending || !name.trim()}>
+              Create group
+            </button>
+          </form>
+          {groups.map((group) => (
+            <section key={group.id} aria-label={`Group ${group.name}`}>
+              <h3>{group.name}</h3>
+              {renaming === group.id ? (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void mutate(async () => {
+                      await renamePrivateGroup(
+                        courseId,
+                        group.id,
+                        rename.trim(),
+                        csrfToken,
+                      );
+                      setRenaming(null);
+                    });
+                  }}
+                >
+                  <label>
+                    Rename group{" "}
+                    <input
+                      value={rename}
+                      maxLength={64}
+                      onChange={(event) => setRename(event.target.value)}
+                    />
+                  </label>
+                  <button type="submit" disabled={pending || !rename.trim()}>
+                    Save name
+                  </button>
+                  <button type="button" onClick={() => setRenaming(null)}>
+                    Cancel
+                  </button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRenaming(group.id);
+                    setRename(group.name);
+                  }}
+                >
+                  Rename
+                </button>
+              )}
+              <fieldset>
+                <legend>Members of {group.name}</legend>
+                {members.map((member) => (
+                  <label key={member.user.id} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={
+                        group.memberIds?.includes(member.user.id) ?? false
+                      }
+                      disabled={pending}
+                      onChange={(event) => {
+                        const included = event.target.checked;
+                        setGroups((current) =>
+                          current.map((item) =>
+                            item.id === group.id
+                              ? {
+                                  ...item,
+                                  memberIds: included
+                                    ? [
+                                        ...(item.memberIds ?? []),
+                                        member.user.id,
+                                      ]
+                                    : (item.memberIds ?? []).filter(
+                                        (id) => id !== member.user.id,
+                                      ),
+                                }
+                              : item,
+                          ),
+                        );
+                        void mutate(() =>
+                          setPrivateGroupMember(
+                            courseId,
+                            group.id,
+                            member.user.id,
+                            included,
+                            csrfToken,
+                          ),
+                        );
+                      }}
+                    />
+                    {member.user.displayName}
+                  </label>
+                ))}
+              </fieldset>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Delete ${group.name}? Posts using it prevent deletion.`,
+                    )
+                  )
+                    void mutate(() =>
+                      deletePrivateGroup(courseId, group.id, csrfToken),
+                    );
+                }}
+              >
+                Delete group
+              </button>
+            </section>
+          ))}
+        </>
+      )}
+    </details>
+  );
+}
+
 function Composer({
   courseId,
   csrfToken,
@@ -466,7 +719,73 @@ function Composer({
   const [type, setType] = useState<"question" | "note" | "poll">("question");
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [announcement, setAnnouncement] = useState(false);
-  const [audience, setAudience] = useState<"course" | "staff">("course");
+  const [audience, setAudience] = useState<
+    "course" | "staff" | "selected_staff" | "group"
+  >("course");
+  const [staffRecipients, setStaffRecipients] = useState<string[]>([]);
+  const [eligibleStaff, setEligibleStaff] = useState<Membership[]>([]);
+  const [staffLoad, setStaffLoad] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [staffRetry, setStaffRetry] = useState(0);
+  const [groups, setGroups] = useState<PrivateGroup[]>([]);
+  const [groupId, setGroupId] = useState("");
+  const [groupLoad, setGroupLoad] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [groupRetry, setGroupRetry] = useState(0);
+  useEffect(() => {
+    if (audience !== "selected_staff") return;
+    let active = true;
+    setStaffLoad("loading");
+    void (async () => {
+      const members: Membership[] = [];
+      let cursor: string | undefined;
+      const seen = new Set<string>();
+      do {
+        const page = await listMembers(courseId, cursor);
+        if (!active) return;
+        members.push(
+          ...page.data.filter(
+            (member) => member.role === "ta" || member.role === "instructor",
+          ),
+        );
+        cursor = page.page.hasMore
+          ? (page.page.nextCursor ?? undefined)
+          : undefined;
+        if (cursor && seen.has(cursor))
+          throw new Error("Member pagination repeated");
+        if (cursor) seen.add(cursor);
+      } while (cursor);
+      if (active) {
+        setEligibleStaff(members);
+        setStaffLoad("ready");
+      }
+    })().catch(() => {
+      if (active) setStaffLoad("error");
+    });
+    return () => {
+      active = false;
+    };
+  }, [audience, courseId, staffRetry]);
+  useEffect(() => {
+    if (audience !== "group") return;
+    let active = true;
+    setGroupLoad("loading");
+    void listPrivateGroups(courseId)
+      .then((loaded) => {
+        if (active) {
+          setGroups(loaded.filter((group) => group.joined));
+          setGroupLoad("ready");
+        }
+      })
+      .catch(() => {
+        if (active) setGroupLoad("error");
+      });
+    return () => {
+      active = false;
+    };
+  }, [audience, courseId, groupRetry]);
   const [title, setTitle] = useState(initialTitle);
   const bodyField = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -569,7 +888,7 @@ function Composer({
       if (complete) onCreated(published);
       return;
     }
-    const privately = type !== "poll" && audience === "staff";
+    const privately = type !== "poll" && audience !== "course";
     const announcing = type === "note" && announcement && !privately;
     const labels = pollOptions.map((label) => label.trim());
     const input: CreatePostInput = {
@@ -586,7 +905,30 @@ function Composer({
         : {}),
       ...(announcing ? { announcement: true } : {}),
       ...(privately ? { private: true } : {}),
+      ...(privately ? { audience } : {}),
+      ...(privately && audience === "selected_staff"
+        ? { staffRecipientIds: staffRecipients }
+        : {}),
+      ...(privately && audience === "group" ? { groupId } : {}),
     };
+    if (
+      privately &&
+      audience === "selected_staff" &&
+      (staffLoad !== "ready" || !staffRecipients.length)
+    ) {
+      setError("Select at least one current staff member before publishing.");
+      return;
+    }
+    if (
+      privately &&
+      audience === "group" &&
+      (groupLoad !== "ready" ||
+        !groupId ||
+        !groups.some((group) => group.id === groupId))
+    ) {
+      setError("Choose a group you currently belong to before publishing.");
+      return;
+    }
     if (type === "poll") {
       const filled = labels.filter(Boolean);
       if (filled.length < 2) {
@@ -742,21 +1084,97 @@ function Composer({
                 Post to
                 <select
                   value={audience}
-                  onChange={(event) =>
-                    setAudience(event.target.value as "course" | "staff")
-                  }
+                  onChange={(event) => {
+                    setAudience(event.target.value as typeof audience);
+                    setError("");
+                  }}
                 >
                   <option value="course">Entire class</option>
                   <option value="staff">Instructors and TAs</option>
+                  <option value="selected_staff">Selected staff only</option>
+                  <option value="group">One private group</option>
                 </select>
               </label>
+            )}
+            {type !== "poll" && audience === "selected_staff" && (
+              <fieldset>
+                <legend>Choose staff</legend>
+                {staffLoad === "loading" && <p role="status">Loading staff…</p>}
+                {staffLoad === "error" && (
+                  <>
+                    <p role="alert">
+                      Staff could not be loaded. Your draft is preserved.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setStaffRetry((value) => value + 1)}
+                    >
+                      Retry staff list
+                    </button>
+                  </>
+                )}
+                {staffLoad === "ready" &&
+                  eligibleStaff.map((member) => (
+                    <label key={member.user.id} className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={staffRecipients.includes(member.user.id)}
+                        onChange={(event) =>
+                          setStaffRecipients((current) =>
+                            event.target.checked
+                              ? [...current, member.user.id]
+                              : current.filter((id) => id !== member.user.id),
+                          )
+                        }
+                      />
+                      {member.user.displayName}
+                    </label>
+                  ))}
+              </fieldset>
+            )}
+            {type !== "poll" && audience === "group" && (
+              <label>
+                Private group
+                <select
+                  value={groupId}
+                  onChange={(event) => setGroupId(event.target.value)}
+                  disabled={groupLoad !== "ready"}
+                >
+                  <option value="">Choose a group</option>
+                  {groups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name}
+                    </option>
+                  ))}
+                </select>
+                {groupLoad === "loading" && (
+                  <span role="status">Loading groups…</span>
+                )}
+                {groupLoad === "error" && (
+                  <button
+                    type="button"
+                    onClick={() => setGroupRetry((value) => value + 1)}
+                  >
+                    Retry groups
+                  </button>
+                )}
+              </label>
+            )}
+            {type !== "poll" && audience !== "course" && (
+              <p role="note">
+                {audience === "staff"
+                  ? "Only you and current course staff can read this post."
+                  : audience === "selected_staff"
+                    ? "Only you and the selected current staff can read this post."
+                    : "Only current members of this group can read this post, including the author."}
+              </p>
             )}
             {staff && type === "note" && (
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={announcement && audience !== "staff"}
-                  disabled={audience === "staff"}
+                  checked={announcement && audience === "course"}
+                  disabled={audience !== "course"}
                   onChange={(event) => setAnnouncement(event.target.checked)}
                 />
                 Post as announcement (pinned; email sent to subscribers)
@@ -767,10 +1185,10 @@ function Composer({
                 type="checkbox"
                 checked={
                   anonymous &&
-                  !(type === "note" && announcement && audience !== "staff")
+                  !(type === "note" && announcement && audience === "course")
                 }
                 disabled={
-                  type === "note" && announcement && audience !== "staff"
+                  type === "note" && announcement && audience === "course"
                 }
                 onChange={(event) => setAnonymous(event.target.checked)}
               />
@@ -2004,6 +2422,9 @@ function DiscussionContent({
                   ))}
                 </div>
               </div>
+            )}
+            {staff && (
+              <PrivateGroupManager courseId={courseId} csrfToken={csrfToken} />
             )}
             <div className="discussion-toolbar">
               <div role="search" className="search-field">

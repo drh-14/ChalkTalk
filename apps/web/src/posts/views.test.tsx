@@ -5632,6 +5632,135 @@ it("posts privately to staff and turns off the announcement option meanwhile", a
   expect(body).not.toHaveProperty("announcement");
 }, 30_000);
 
+it("composes for one selected staff recipient without including other staff", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/members?") || url.endsWith("/members"))
+      return json({
+        data: [
+          { user: { id: "ta-1", displayName: "First TA" }, role: "ta" },
+          {
+            user: { id: "instructor-1", displayName: "Instructor" },
+            role: "instructor",
+          },
+        ],
+        page: { hasMore: false, nextCursor: null },
+      });
+    if (url.endsWith("/private-groups")) return json({ data: [] });
+    if (init?.method === "POST")
+      return json(
+        {
+          data: {
+            ...post("selected-1", "Private topic"),
+            audience: "selected_staff",
+            private: true,
+          },
+        },
+        201,
+      );
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post to" }),
+    "selected_staff",
+  );
+  await user.click(await screen.findByRole("checkbox", { name: "First TA" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Private topic",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Only for a TA",
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  const call = fetchMock.mock.calls.find(
+    ([url, init]) => url.endsWith("/posts") && init?.method === "POST",
+  )!;
+  expect(JSON.parse(call[1]?.body as string)).toMatchObject({
+    audience: "selected_staff",
+    staffRecipientIds: ["ta-1"],
+  });
+});
+
+it("offers only joined private groups in the composer and preserves a rejected draft", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/private-groups"))
+      return json({
+        data: [
+          { id: "group-1", name: "Lab mentors", joined: true },
+          { id: "group-2", name: "Other group", joined: false },
+        ],
+      });
+    if (url.endsWith("/posts") && init?.method === "POST")
+      return json(
+        {
+          error: {
+            code: "validation_failed",
+            message: "Group membership changed",
+          },
+        },
+        422,
+      );
+    return page([]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post to" }),
+    "group",
+  );
+  const selector = await screen.findByRole("combobox", {
+    name: "Private group",
+  });
+  expect(
+    within(selector).queryByRole("option", { name: "Other group" }),
+  ).toBeNull();
+  await user.selectOptions(selector, "group-1");
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Lab question",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "For my mentors",
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "Group membership changed",
+  );
+  expect(
+    (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
+      .value,
+  ).toBe("Lab question");
+  const call = fetchMock.mock.calls.find(
+    ([url, init]) => url.endsWith("/posts") && init?.method === "POST",
+  )!;
+  expect(JSON.parse(call[1]?.body as string)).toMatchObject({
+    audience: "group",
+    groupId: "group-1",
+  });
+});
+
 it("offers no audience choice for polls", async () => {
   vi.stubGlobal(
     "fetch",
