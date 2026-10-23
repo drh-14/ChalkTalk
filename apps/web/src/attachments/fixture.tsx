@@ -5,7 +5,9 @@ import "../styles.css";
 
 export function Fixture() {
   const [postId, setPostId] = useState(
-    new URLSearchParams(location.search).get("post") ?? "p1",
+    new URLSearchParams(location.search).get("post") === "none"
+      ? undefined
+      : (new URLSearchParams(location.search).get("post") ?? "p1"),
   );
   return (
     <main className="course-page discussion">

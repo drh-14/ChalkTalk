@@ -2279,4 +2279,374 @@ integration("text posts HTTP contract", () => {
       });
     });
   });
+  describe("durable post drafts", () => {
+    const path = `/api/v1/courses/${ids.course}/post-drafts`;
+    const draftContent = {
+      type: "question",
+      title: "Unfinished",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: ["physics"],
+      private: true,
+    };
+    const create = (userId = ids.author, content = draftContent) =>
+      unsafe(request(app(userId)).post(path)).send({ content });
+
+    it("keeps multiple incomplete private drafts with ETags, conditional updates and owner isolation", async () => {
+      const first = await create();
+      expect(first.status).toBe(201);
+      expect(first.headers.etag).toBe('"v1"');
+      expect(first.headers.location).toMatch(/post-drafts\/[0-9a-f-]+$/);
+      expect(first.body.data).toMatchObject({
+        courseId: ids.course,
+        content: draftContent,
+        version: 1,
+      });
+      const second = await create(ids.author, {
+        ...draftContent,
+        title: "Another draft",
+      });
+      expect(second.status).toBe(201);
+      expect(second.body.data.id).not.toBe(first.body.data.id);
+      const listed = await request(app()).get(path).set("Cookie", cookie);
+      expect(listed.status).toBe(200);
+      expect(listed.headers["cache-control"]).toBe("private, no-store");
+      expect(listed.body.data.map((draft: { id: string }) => draft.id)).toEqual(
+        [second.body.data.id, first.body.data.id],
+      );
+      const detailPath = `${path}/${first.body.data.id}`;
+      const read = await request(app()).get(detailPath).set("Cookie", cookie);
+      expect(read.status).toBe(200);
+      expect(read.headers.etag).toBe('"v1"');
+      expect(read.body.data.content.bodyMarkdown).toBe("");
+      const foreign = await request(app(ids.student))
+        .get(detailPath)
+        .set("Cookie", cookie);
+      expect(foreign.status).toBe(404);
+      expect(foreign.body.error.code).toBe("not_found");
+      const staffList = await request(app(ids.staff))
+        .get(path)
+        .set("Cookie", cookie);
+      expect(staffList.status).toBe(200);
+      expect(staffList.body.data).toEqual([]);
+      expect(
+        (
+          await unsafe(request(app()).put(detailPath)).send({
+            content: { ...draftContent, bodyMarkdown: "Changed" },
+          })
+        ).status,
+      ).toBe(428);
+      const saved = await unsafe(request(app()).put(detailPath))
+        .set("If-Match", '"v1"')
+        .send({ content: { ...draftContent, bodyMarkdown: "Changed" } });
+      expect(saved.status).toBe(200);
+      expect(saved.headers.etag).toBe('"v2"');
+      expect(saved.body.data.content.bodyMarkdown).toBe("Changed");
+      const stale = await unsafe(request(app()).put(detailPath))
+        .set("If-Match", '"v1"')
+        .send({ content: { ...draftContent, bodyMarkdown: "Stale" } });
+      expect(stale.status).toBe(412);
+      expect(stale.body.error.code).toBe("version_conflict");
+      expect(
+        (await request(app()).get(detailPath).set("Cookie", cookie)).body.data
+          .content.bodyMarkdown,
+      ).toBe("Changed");
+      expect(
+        (
+          await unsafe(request(app()).delete(detailPath)).set(
+            "If-Match",
+            '"v1"',
+          )
+        ).status,
+      ).toBe(412);
+      expect(
+        (
+          await unsafe(request(app()).delete(detailPath)).set(
+            "If-Match",
+            '"v2"',
+          )
+        ).status,
+      ).toBe(204);
+      expect(
+        (await request(app()).get(detailPath).set("Cookie", cookie)).status,
+      ).toBe(404);
+    });
+
+    it("rejects invalid draft fields, attachments, and unauthenticated or nonmember access", async () => {
+      const bad = await unsafe(request(app()).post(path)).send({
+        content: { ...draftContent, attachments: [] },
+      });
+      expect(bad.status).toBe(422);
+      expect(bad.body.error.code).toBe("validation_failed");
+      const nonJson = await unsafe(request(app()).post(path))
+        .set("Content-Type", "text/plain")
+        .send(JSON.stringify({ content: draftContent }));
+      expect(nonJson.status).toBe(422);
+      expect((await create(ids.outsider)).status).toBe(404);
+      const missingSession = await request(
+        createApp({ environment, postService: new PostService(pool) }),
+      ).get(path);
+      expect(missingSession.status).toBe(401);
+      const poll = await create(ids.staff, {
+        type: "poll",
+        title: "Partial poll",
+        bodyMarkdown: "",
+        anonymous: false,
+        tags: [],
+        options: ["One", ""],
+      } as typeof draftContent);
+      expect(poll.status).toBe(201);
+      expect(poll.body.data.content.options).toEqual(["One", ""]);
+    });
+
+    it("rejects PostgreSQL-incompatible draft text before create or replacement", async () => {
+      const saved = await create();
+      expect(saved.status).toBe(201);
+      const detailPath = `${path}/${saved.body.data.id}`;
+      const before = await pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM post_drafts WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.author],
+      );
+      for (const invalid of ["a\u0000b", "a\ud800b", "a\udc00b"]) {
+        for (const field of [
+          "title",
+          "bodyMarkdown",
+          "tags",
+          "options",
+        ] as const) {
+          const content = {
+            ...draftContent,
+            ...(field === "tags"
+              ? { tags: [invalid] }
+              : field === "options"
+                ? { options: [invalid] }
+                : { [field]: invalid }),
+          };
+          const created = await unsafe(request(app()).post(path)).send({
+            content,
+          });
+          expect(
+            created.status,
+            `${field} create ${JSON.stringify(invalid)}`,
+          ).toBe(422);
+          expect(created.body.error.code).toBe("validation_failed");
+          const replaced = await unsafe(request(app()).put(detailPath))
+            .set("If-Match", '"v1"')
+            .send({ content });
+          expect(
+            replaced.status,
+            `${field} replace ${JSON.stringify(invalid)}`,
+          ).toBe(422);
+          expect(replaced.body.error.code).toBe("validation_failed");
+        }
+      }
+      const after = await pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM post_drafts WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.author],
+      );
+      expect(after.rows[0]?.count).toBe(before.rows[0]?.count);
+      const unchanged = await request(app())
+        .get(detailPath)
+        .set("Cookie", cookie);
+      expect(unchanged.body.data).toMatchObject({
+        version: 1,
+        content: draftContent,
+      });
+      const valid = await unsafe(request(app()).put(detailPath))
+        .set("If-Match", '"v1"')
+        .send({ content: { ...draftContent, title: "Pair \ud83d\ude00" } });
+      expect(valid.status).toBe(200);
+      expect(valid.body.data.content.title).toBe("Pair \ud83d\ude00");
+    });
+
+    it("retains old drafts without expiry and removes drafts when membership ends", async () => {
+      const draft = await create();
+      expect(draft.status).toBe(201);
+      await pool.query(
+        "UPDATE post_drafts SET created_at=now()-interval '3 years',updated_at=now()-interval '3 years' WHERE id=$1",
+        [draft.body.data.id],
+      );
+      const old = await request(app()).get(path).set("Cookie", cookie);
+      expect(old.status).toBe(200);
+      expect(old.body.data).toContainEqual(
+        expect.objectContaining({ id: draft.body.data.id }),
+      );
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.author],
+      );
+      const retained = await pool.query(
+        "SELECT id FROM post_drafts WHERE id=$1",
+        [draft.body.data.id],
+      );
+      expect(retained.rowCount).toBe(0);
+      await pool.query(
+        "INSERT INTO course_memberships(course_id,user_id,role) VALUES ($1,$2,'student')",
+        [ids.course, ids.author],
+      );
+    });
+
+    it("allows read/discard but blocks create/update and publish in an archived course", async () => {
+      const draft = await create();
+      expect(draft.status).toBe(201);
+      const detailPath = `${path}/${draft.body.data.id}`;
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        ids.course,
+      ]);
+      try {
+        expect(
+          (await request(app()).get(detailPath).set("Cookie", cookie)).status,
+        ).toBe(200);
+        expect((await create()).status).toBe(409);
+        const update = await unsafe(request(app()).put(detailPath))
+          .set("If-Match", '"v1"')
+          .send({ content: draftContent });
+        expect(update.status).toBe(409);
+        const publish = await unsafe(
+          request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+        ).send({
+          type: "question",
+          title: "Publish?",
+          bodyMarkdown: "Body",
+          draftId: draft.body.data.id,
+          draftVersion: 1,
+        });
+        expect(publish.status).toBe(409);
+        expect(
+          (
+            await unsafe(request(app()).delete(detailPath)).set(
+              "If-Match",
+              '"v1"',
+            )
+          ).status,
+        ).toBe(204);
+      } finally {
+        await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+          ids.course,
+        ]);
+      }
+    });
+
+    it("publishes and consumes only the matching owner/course revision atomically, with idempotent replay", async () => {
+      const draft = await create();
+      const draftId = draft.body.data.id;
+      const createPost = (
+        userId: string,
+        version: number,
+        key: string,
+        courseId = ids.course,
+      ) =>
+        unsafe(request(app(userId)).post(`/api/v1/courses/${courseId}/posts`))
+          .set("Idempotency-Key", key)
+          .send({
+            type: "question",
+            title: "Published draft",
+            bodyMarkdown: "Final text",
+            draftId,
+            draftVersion: version,
+          });
+      const stale = await createPost(ids.author, 2, uuidv7());
+      expect(stale.status).toBe(412);
+      expect(stale.body.error.code).toBe("version_conflict");
+      expect((await createPost(ids.student, 1, uuidv7())).status).toBe(404);
+      expect(
+        (await createPost(ids.author, 1, uuidv7(), ids.otherCourse)).status,
+      ).toBe(404);
+      const invalid = await unsafe(
+        request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+      ).send({
+        type: "question",
+        title: "",
+        bodyMarkdown: "Final",
+        draftId,
+        draftVersion: 1,
+      });
+      expect(invalid.status).toBe(422);
+      expect(
+        (await request(app()).get(`${path}/${draftId}`).set("Cookie", cookie))
+          .status,
+      ).toBe(200);
+      const key = uuidv7();
+      const published = await createPost(ids.author, 1, key);
+      expect(published.status).toBe(201);
+      expect(published.headers.location).toBe(
+        `/api/v1/posts/${published.body.data.id}`,
+      );
+      expect(
+        (await request(app()).get(`${path}/${draftId}`).set("Cookie", cookie))
+          .status,
+      ).toBe(404);
+      const replay = await createPost(ids.author, 1, key);
+      expect(replay.status).toBe(201);
+      expect(replay.body.data.id).toBe(published.body.data.id);
+      const posts = await pool.query(
+        "SELECT count(*)::int AS count FROM posts WHERE id=$1",
+        [published.body.data.id],
+      );
+      expect(posts.rows[0].count).toBe(1);
+    });
+
+    it("rejects draft-only tags on publish without consuming the draft", async () => {
+      const content = { ...draftContent, tags: ["", " foo "] };
+      const draft = await create(ids.author, content);
+      expect(draft.status).toBe(201);
+      const draftId = draft.body.data.id;
+      const response = await unsafe(
+        request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+      ).send({
+        type: "question",
+        title: "Published draft",
+        bodyMarkdown: "Final text",
+        tags: content.tags,
+        draftId,
+        draftVersion: 1,
+      });
+      expect(response.status).toBe(422);
+      expect(response.body.error.code).toBe("validation_failed");
+      const retained = await request(app())
+        .get(`${path}/${draftId}`)
+        .set("Cookie", cookie);
+      expect(retained.status).toBe(200);
+      expect(retained.body.data.content.tags).toEqual(content.tags);
+      expect(retained.headers.etag).toBe('"v1"');
+    });
+
+    it("rolls back both post creation and draft consumption when a downstream insert fails", async () => {
+      const draft = await create();
+      expect(draft.status).toBe(201);
+      await pool.query(`CREATE FUNCTION reject_draft_publish_tag() RETURNS trigger AS $$
+        BEGIN RAISE EXCEPTION 'simulated tag failure'; END;
+        $$ LANGUAGE plpgsql`);
+      await pool.query(`CREATE TRIGGER reject_draft_publish_tag BEFORE INSERT ON post_tags
+        FOR EACH ROW EXECUTE FUNCTION reject_draft_publish_tag()`);
+      try {
+        const failed = await unsafe(
+          request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+        ).send({
+          type: "question",
+          title: "Failed atomic publish",
+          bodyMarkdown: "Final text",
+          tags: ["rollback-check"],
+          draftId: draft.body.data.id,
+          draftVersion: 1,
+        });
+        expect(failed.status).toBe(500);
+        expect(
+          (
+            await request(app())
+              .get(`${path}/${draft.body.data.id}`)
+              .set("Cookie", cookie)
+          ).status,
+        ).toBe(200);
+        const posts = await pool.query(
+          "SELECT id FROM posts WHERE course_id=$1 AND title='Failed atomic publish'",
+          [ids.course],
+        );
+        expect(posts.rowCount).toBe(0);
+      } finally {
+        await pool.query("DROP TRIGGER reject_draft_publish_tag ON post_tags");
+        await pool.query("DROP FUNCTION reject_draft_publish_tag()");
+      }
+    });
+  });
 });

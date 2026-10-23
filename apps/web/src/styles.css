@@ -1111,7 +1111,7 @@ h2[tabindex="-1"]:focus {
   display: flex;
   gap: var(--space-2);
 }
-.poll-option-row input {
+.poll-option-row textarea {
   flex: 1;
 }
 .post-type-badge.other {
@@ -1407,6 +1407,32 @@ h2[tabindex="-1"]:focus {
 .post-composer {
   margin: 0;
 }
+.post-drafts-panel {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  border: 1px solid #d5e2d8;
+  border-radius: 0.6rem;
+  background: #f8faf7;
+}
+.post-drafts-panel h3 {
+  margin: 0 0 0.45rem;
+}
+.post-drafts-panel p {
+  margin: 0;
+}
+.post-drafts-list {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.post-drafts-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+}
 .post-composer form {
   display: grid;
   gap: 0.7rem;
@@ -1429,6 +1455,10 @@ h2[tabindex="-1"]:focus {
 .post-composer textarea {
   min-height: 10rem;
   resize: vertical;
+}
+.post-composer .post-title-input,
+.post-composer .poll-option-row textarea {
+  min-height: 2.6rem;
 }
 .post-body-field {
   display: grid;

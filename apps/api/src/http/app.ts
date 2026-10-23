@@ -30,8 +30,10 @@ import type { Environment } from "../config/environment.js";
 import { CourseService, courseEtag } from "../courses/service.js";
 import {
   PostService,
+  draftEtag,
   postEtag,
   type CreatePost,
+  type DraftContent,
   type ListPosts,
   type UpdatePost,
 } from "../posts/service.js";
@@ -453,6 +455,8 @@ function postCreateBody(value: unknown): CreatePost {
       "options",
       "announcement",
       "private",
+      "draftId",
+      "draftVersion",
     ],
     ["type", "title", "bodyMarkdown"],
   );
@@ -476,6 +480,20 @@ function postCreateBody(value: unknown): CreatePost {
     throw validationError("Announcements cannot be anonymous");
   if (body.private !== undefined && typeof body.private !== "boolean")
     throw validationError("Private is invalid");
+  if ((body.draftId === undefined) !== (body.draftVersion === undefined))
+    throw validationError("Draft ID and version must be supplied together");
+  if (
+    body.draftId !== undefined &&
+    (typeof body.draftId !== "string" || !UUID_PATTERN.test(body.draftId))
+  )
+    throw validationError("Draft ID is invalid");
+  if (
+    body.draftVersion !== undefined &&
+    (typeof body.draftVersion !== "number" ||
+      !Number.isSafeInteger(body.draftVersion) ||
+      body.draftVersion < 1)
+  )
+    throw validationError("Draft version is invalid");
   return {
     type: body.type,
     title,
@@ -485,7 +503,114 @@ function postCreateBody(value: unknown): CreatePost {
     ...(body.type === "poll" ? { options: pollOptions(body.options) } : {}),
     ...(body.announcement ? { announcement: true } : {}),
     ...(body.private ? { private: true } : {}),
+    ...(body.draftId !== undefined
+      ? {
+          draftId: body.draftId as string,
+          draftVersion: body.draftVersion as number,
+        }
+      : {}),
   };
+}
+function validDraftJsonbText(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code === 0) return false;
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(++index);
+      if (next < 0xdc00 || next > 0xdfff || Number.isNaN(next)) return false;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function draftContentBody(value: unknown): DraftContent {
+  const wrapper = strictBody(value, ["content"], ["content"]);
+  const content = strictBody(
+    wrapper.content,
+    [
+      "type",
+      "title",
+      "bodyMarkdown",
+      "anonymous",
+      "tags",
+      "options",
+      "announcement",
+      "private",
+    ],
+    ["type"],
+  );
+  if (
+    content.type !== "question" &&
+    content.type !== "note" &&
+    content.type !== "poll"
+  )
+    throw validationError("Draft post type is invalid");
+  if (
+    content.title !== undefined &&
+    (typeof content.title !== "string" || content.title.length > 200)
+  )
+    throw validationError("Draft title is invalid");
+  if (
+    content.bodyMarkdown !== undefined &&
+    (typeof content.bodyMarkdown !== "string" ||
+      content.bodyMarkdown.length > 100000)
+  )
+    throw validationError("Draft body is invalid");
+  if (content.anonymous !== undefined && typeof content.anonymous !== "boolean")
+    throw validationError("Draft anonymity is invalid");
+  if (
+    content.announcement !== undefined &&
+    typeof content.announcement !== "boolean"
+  )
+    throw validationError("Draft announcement is invalid");
+  if (content.private !== undefined && typeof content.private !== "boolean")
+    throw validationError("Draft privacy is invalid");
+  if (
+    content.tags !== undefined &&
+    (!Array.isArray(content.tags) ||
+      content.tags.length > 10 ||
+      content.tags.some(
+        (tag: unknown) => typeof tag !== "string" || tag.length > 40,
+      ))
+  )
+    throw validationError("Draft tags are invalid");
+  if (
+    content.options !== undefined &&
+    (!Array.isArray(content.options) ||
+      content.options.length > 10 ||
+      content.options.some(
+        (option: unknown) => typeof option !== "string" || option.length > 200,
+      ))
+  )
+    throw validationError("Draft poll options are invalid");
+  const draft: DraftContent = {
+    type: content.type,
+    title: (content.title as string | undefined) ?? "",
+    bodyMarkdown: (content.bodyMarkdown as string | undefined) ?? "",
+    anonymous: (content.anonymous as boolean | undefined) ?? false,
+    tags: (content.tags as string[] | undefined) ?? [],
+    ...(content.options !== undefined
+      ? { options: content.options as string[] }
+      : {}),
+    ...(content.announcement !== undefined
+      ? { announcement: content.announcement as boolean }
+      : {}),
+    ...(content.private !== undefined
+      ? { private: content.private as boolean }
+      : {}),
+  };
+  if (
+    [
+      draft.title,
+      draft.bodyMarkdown,
+      ...draft.tags,
+      ...(draft.options ?? []),
+    ].some((text) => !validDraftJsonbText(text))
+  )
+    throw validationError("Draft text contains unsupported Unicode");
+  return draft;
 }
 function answerCreateBody(value: unknown): CreateAnswer {
   const body = strictBody(
@@ -2163,6 +2288,109 @@ export function createApp(
           auth(response).session.user.id,
         );
         response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/post-drafts",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await posts().listDrafts(
+          param(request.params.courseId),
+          current.session.user.id,
+        );
+        response.set("Cache-Control", "private, no-store").json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/post-drafts",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const data = await posts().createDraft(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          draftContentBody(request.body),
+        );
+        response
+          .status(201)
+          .set({
+            Location: `/api/v1/courses/${data.courseId}/post-drafts/${data.id}`,
+            ETag: draftEtag(data),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/post-drafts/:draftId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await posts().getDraft(
+          param(request.params.courseId),
+          current.session.user.id,
+          param(request.params.draftId),
+        );
+        response
+          .set({
+            ETag: draftEtag(data),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/courses/:courseId/post-drafts/:draftId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const data = await posts().updateDraft(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.draftId),
+          request.header("if-match"),
+          draftContentBody(request.body),
+        );
+        response
+          .set({
+            ETag: draftEtag(data),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/post-drafts/:draftId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await posts().deleteDraft(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          param(request.params.draftId),
+          request.header("if-match"),
+        );
+        response.status(204).set("Cache-Control", "private, no-store").end();
       } catch (error) {
         next(error);
       }
