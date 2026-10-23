@@ -29,6 +29,7 @@ export async function recordActivity(
     postId: string;
     actorId: string;
     kind?: NotificationKind;
+    response?: { kind: "answer" | "followup"; id: string };
     anonymous?: boolean;
     /** Followers by default; the post's author alone for post_published. */
     recipients?: "followers" | "author";
@@ -51,6 +52,16 @@ export async function recordActivity(
   );
   const mentioned = await recordMentions(db, activity);
   if (!activity.kind) return;
+  const values: unknown[] = [
+    courseId,
+    postId,
+    actorId,
+    activity.kind,
+    activity.anonymous ?? false,
+    mentioned,
+  ];
+  if (activity.kind !== "announcement")
+    values.push(activity.response?.kind ?? null, activity.response?.id ?? null);
   // Recipients must still be able to read the post, which may be private.
   const recipients =
     activity.kind === "announcement"
@@ -73,16 +84,9 @@ export async function recordActivity(
       : `WITH recipients AS (${recipients}),
      created AS (${insert} RETURNING id,user_id)
      INSERT INTO jobs (id,kind,payload,deduplication_key)
-     SELECT gen_random_uuid(),'send_notification_email',jsonb_build_object('notificationId',c.id),c.id::text
+     SELECT gen_random_uuid(),'send_notification_email',jsonb_strip_nulls(jsonb_build_object('notificationId',c.id,'responseKind',$7::text,'responseId',$8::text)),c.id::text
      FROM created c JOIN course_memberships m ON m.course_id=$1 AND m.user_id=c.user_id AND m.activity_emails`,
-    [
-      courseId,
-      postId,
-      actorId,
-      activity.kind,
-      activity.anonymous ?? false,
-      mentioned,
-    ],
+    values,
   );
 }
 
@@ -98,6 +102,7 @@ async function recordMentions(
     actorId: string;
     anonymous?: boolean;
     mentions?: Mentions;
+    response?: { kind: "answer" | "followup"; id: string };
   },
 ): Promise<string[]> {
   const mentions = activity.mentions;
@@ -116,7 +121,7 @@ async function recordMentions(
        RETURNING id,user_id
      ), emails AS (
        INSERT INTO jobs (id,kind,payload,deduplication_key)
-       SELECT gen_random_uuid(),'send_notification_email',jsonb_build_object('notificationId',c.id),c.id::text
+       SELECT gen_random_uuid(),'send_notification_email',jsonb_strip_nulls(jsonb_build_object('notificationId',c.id,'responseKind',$7::text,'responseId',$8::text)),c.id::text
        FROM created c JOIN course_memberships m ON m.course_id=$1 AND m.user_id=c.user_id AND m.activity_emails
      )
      SELECT user_id FROM created`,
@@ -127,6 +132,8 @@ async function recordMentions(
       activity.anonymous ?? false,
       mentions.userIds,
       mentions.staff,
+      activity.response?.kind ?? null,
+      activity.response?.id ?? null,
     ],
   );
   return result.rows.map((row) => row.user_id);

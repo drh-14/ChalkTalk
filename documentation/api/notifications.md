@@ -17,7 +17,9 @@ An announcement creates an `announcement` notification for every other current c
 
 Notifications are listed only while the caller is still a member of the course who can read the post, and the post is neither deleted nor a confirmed duplicate. Followers who can no longer read a private post, for example a TA who became a student, are not notified. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
 
-**Email:** Members who enable `activityEmails` in their [per-course email preferences](courses.md#courseEmailPreferences) are emailed about each notification other than announcements. `announcementEmails` and `digestEmails` independently control those course emails. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. An anonymous actor appears as "Someone".
+**Email:** Members who enable `activityEmails` in their [per-course email preferences](courses.md#courseEmailPreferences) are emailed about each notification other than announcements. `announcementEmails` and `digestEmails` independently control those course emails. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. Follower-activity mail also requires the recipient to still follow the post; a direct mention remains deliverable after unfollowing. An anonymous actor appears as "Someone".
+
+For newly created answers, root followups, and nested replies, the email includes up to three nonempty lines of the current response text (at most 360 characters) and a link to that exact response. A recipient who can no longer read the response, or whose response was deleted before delivery, receives no excerpt or email. The browser reveals and focuses a linked answer or followup, including an off-page nested reply. An unavailable linked response does not reveal its content. Older queued jobs without a response reference continue to use the post link.
 
 <a id="listNotifications"></a>
 
