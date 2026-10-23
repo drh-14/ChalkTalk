@@ -136,3 +136,19 @@ it("keeps the choices and shows the error when voting fails", async () => {
   );
   expect(screen.getByRole("radio", { name: "Monday" })).toBeTruthy();
 });
+
+it("shows locked poll totals without voting or retraction controls", () => {
+  render(
+    <PollCard
+      postId="poll"
+      options={[{ id: "one", label: "One", voteCount: 1, selected: true }]}
+      totalVotes={1}
+      closed={false}
+      discussionLocked
+      csrfToken="csrf"
+    />,
+  );
+  expect(screen.getByText(/locked/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Change vote" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retract vote" })).toBeNull();
+});

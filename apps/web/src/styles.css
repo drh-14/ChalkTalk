@@ -3567,6 +3567,15 @@ a:focus-visible {
   flex-basis: 100%;
   margin: 0;
 }
+.discussion-lock-notice {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+  margin: 0.75rem 0;
+  padding: 0.65rem 0.8rem;
+}
 
 /* Followup discussion status */
 .followup-head {

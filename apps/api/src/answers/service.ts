@@ -37,6 +37,7 @@ type PostRow = {
   deleted_at: Date | null;
   duplicate_status: string;
   private: boolean;
+  discussion_locked: boolean;
   author_user_id: string | null;
 };
 export type Contributor = { id: string; displayName: string };
@@ -107,7 +108,7 @@ export class AnswerService {
   private async post(db: Db, postId: string, userId: string, lock = false) {
     if (!UUID_PATTERN.test(postId)) throw notFound();
     const result = await db.query<PostRow>(
-      `SELECT id,course_id,type,deleted_at,duplicate_status,private,author_user_id FROM posts WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
+      `SELECT id,course_id,type,deleted_at,duplicate_status,private,discussion_locked,author_user_id FROM posts WHERE id=$1${lock ? " FOR UPDATE" : ""}`,
       [postId],
     );
     const post = result.rows[0];
@@ -242,6 +243,8 @@ export class AnswerService {
           );
         }
         this.writable(member.status);
+        if (post.discussion_locked)
+          throw new AuthError(409, "discussion_locked", "Discussion is locked");
         if (post.type !== "question")
           throw new AuthError(409, "not_a_question", "Post is not a question");
         const kind: Kind = STAFF.has(member.role) ? "staff" : "student";
@@ -482,8 +485,10 @@ export class AnswerService {
     return this.tx(async (db) => {
       const row = await this.row(db, answerId, true);
       if (!row || row.deleted_at) throw notFound();
-      const { member } = await this.post(db, row.post_id, userId, true);
+      const { post, member } = await this.post(db, row.post_id, userId, true);
       this.writable(member.status);
+      if (post.discussion_locked)
+        throw new AuthError(409, "discussion_locked", "Discussion is locked");
       if (enabled)
         await db.query(
           "INSERT INTO answer_upvotes (answer_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",

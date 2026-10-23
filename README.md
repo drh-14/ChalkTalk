@@ -8,6 +8,8 @@ Students can ask questions, participate in threaded discussions, contribute to s
 
 Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
 
+Staff can pause new discussion and voting on an individual question or poll without hiding its existing content.
+
 Core features include:
 
 - course-based discussion forums,
