@@ -3,6 +3,7 @@ import argon2 from "argon2";
 import { Pool, type PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { isValidPassword } from "../auth/crypto.js";
+import { appendTextRevision } from "../revisions/store.js";
 
 export const AMS161_DEMO = {
   organizationId: "01a0e5c5-1266-727a-8d9a-fbb5da4cd0d1",
@@ -401,6 +402,24 @@ export const AMS161_FIXTURE = {
   notes: posts.filter((post) => post.type === "note").length,
 } as const;
 
+async function ensureFixtureBaselines(client: PoolClient): Promise<void> {
+  await client.query(
+    `INSERT INTO content_text_revisions(course_id,kind,resource_id,ordinal,resource_version,title,body_markdown,anonymous,baseline)
+     SELECT p.course_id,'post',p.id,1,p.version,p.title,p.body_markdown,p.anonymous,true
+     FROM posts p WHERE p.course_id=$1 AND p.deleted_at IS NULL
+     AND NOT EXISTS (SELECT 1 FROM content_text_revisions r WHERE r.kind='post' AND r.resource_id=p.id)`,
+    [AMS161_DEMO.courseId],
+  );
+  await client.query(
+    `INSERT INTO content_text_revisions(course_id,kind,resource_id,ordinal,resource_version,body_markdown,anonymous,baseline)
+     SELECT a.course_id,'answer',a.id,1,a.version,a.body_markdown,a.anonymous,true
+     FROM answers a JOIN posts p ON p.id=a.post_id
+     WHERE a.course_id=$1 AND a.deleted_at IS NULL AND p.deleted_at IS NULL
+     AND NOT EXISTS (SELECT 1 FROM content_text_revisions r WHERE r.kind='answer' AND r.resource_id=a.id)`,
+    [AMS161_DEMO.courseId],
+  );
+}
+
 async function repairFixtureMath(client: PoolClient): Promise<void> {
   let changedPosts = 0;
   let changedAnswers = 0;
@@ -427,7 +446,8 @@ async function repairFixtureMath(client: PoolClient): Promise<void> {
          AND a.kind=$6 AND a.body_markdown=$7 AND a.deleted_at IS NULL AND p.deleted_at IS NULL
          AND a.created_by_user_id=contributor.id AND contributor.email=$8
          AND contributor.organization_id=author.organization_id
-         AND EXISTS (SELECT 1 FROM answer_contributors c WHERE c.answer_id=a.id AND c.user_id=contributor.id)`,
+         AND EXISTS (SELECT 1 FROM answer_contributors c WHERE c.answer_id=a.id AND c.user_id=contributor.id)
+         RETURNING a.id`,
         [
           answer.body,
           AMS161_DEMO.courseId,
@@ -440,6 +460,8 @@ async function repairFixtureMath(client: PoolClient): Promise<void> {
         ],
       );
       changedAnswers += changed.rowCount ?? 0;
+      for (const row of changed.rows)
+        await appendTextRevision(client, "answer", row.id, null);
     }
     if (post.legacyBody !== undefined) {
       candidates++;
@@ -447,7 +469,8 @@ async function repairFixtureMath(client: PoolClient): Promise<void> {
         `UPDATE posts p SET body_markdown=$1,version=p.version+1
          FROM users u WHERE p.course_id=$2 AND p.title=$3 AND p.type=$4
          AND p.author_user_id=u.id AND u.email=$5 AND u.organization_id=(SELECT organization_id FROM courses WHERE id=$2)
-         AND p.body_markdown=$6 AND p.deleted_at IS NULL`,
+         AND p.body_markdown=$6 AND p.deleted_at IS NULL
+         RETURNING p.id`,
         [
           post.body,
           AMS161_DEMO.courseId,
@@ -458,6 +481,8 @@ async function repairFixtureMath(client: PoolClient): Promise<void> {
         ],
       );
       changedPosts += changed.rowCount ?? 0;
+      for (const row of changed.rows)
+        await appendTextRevision(client, "post", row.id, null);
     }
   }
   console.info(
@@ -626,6 +651,7 @@ export async function seedAms161(
           return "already-seeded";
         }
         await ensureDemoStudent(client, marker.rows[0]!.id, studentPassword);
+        await ensureFixtureBaselines(client);
         await repairFixtureMath(client);
         await repairFixtureStatistics(client);
         await client.query("COMMIT");
@@ -766,6 +792,7 @@ export async function seedAms161(
             );
         }
       }
+      await ensureFixtureBaselines(client);
       await recordFixtureStatistics(client);
       await client.query("COMMIT");
       return "created";

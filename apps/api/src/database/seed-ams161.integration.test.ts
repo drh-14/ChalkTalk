@@ -171,6 +171,33 @@ integration("AMS161 local prototype seed", () => {
         contributed: true,
       },
     ]);
+    const revisions = await pool.query(
+      `SELECT r.kind,count(*)::int AS count,
+         bool_and(r.baseline AND r.ordinal=1 AND r.editor_user_id IS NULL) AS unattributed,
+         bool_and(r.body_markdown=CASE WHEN r.kind='post' THEN p.body_markdown ELSE a.body_markdown END) AS current_text,
+         bool_and(r.title IS NOT DISTINCT FROM p.title) FILTER (WHERE r.kind='post') AS post_titles
+       FROM content_text_revisions r
+       LEFT JOIN posts p ON r.kind='post' AND p.id=r.resource_id
+       LEFT JOIN answers a ON r.kind='answer' AND a.id=r.resource_id
+       WHERE r.course_id=$1 GROUP BY r.kind ORDER BY r.kind`,
+      [AMS161_DEMO.courseId],
+    );
+    expect(revisions.rows).toEqual([
+      {
+        kind: "answer",
+        count: 12,
+        unattributed: true,
+        current_text: true,
+        post_titles: null,
+      },
+      {
+        kind: "post",
+        count: AMS161_FIXTURE.posts,
+        unattributed: true,
+        current_text: true,
+        post_titles: true,
+      },
+    ]);
   });
 
   it("authenticates the dedicated demo student and grants student AMS161 access", async () => {
@@ -1183,6 +1210,10 @@ integration("AMS161 local prototype seed", () => {
         [question.id],
       )
     ).rows[0];
+    await pool.query(
+      "DELETE FROM content_text_revisions WHERE (kind='post' AND resource_id=$1) OR (kind='answer' AND resource_id=$2)",
+      [question.id, answer.id],
+    );
     const before = await snapshot();
     await seedAms161(pool, {
       MOCK_DATA: "true",
@@ -1210,6 +1241,31 @@ integration("AMS161 local prototype seed", () => {
         "Pick $u = \\ln(x)$ because its derivative $1/x$ is simpler, and $dv = x^2\\,dx$ because it is easy to integrate.",
       version: answer.version + 1,
     });
+    for (const [kind, id, legacyBody, current] of [
+      ["post", question.id, oldQuestion, repairedQuestion],
+      ["answer", answer.id, oldAnswer, repairedAnswer],
+    ] as const) {
+      const history = await pool.query(
+        "SELECT ordinal::int AS ordinal,resource_version::int AS resource_version,body_markdown,baseline,editor_user_id FROM content_text_revisions WHERE kind=$1 AND resource_id=$2 ORDER BY ordinal",
+        [kind, id],
+      );
+      expect(history.rows).toEqual([
+        {
+          ordinal: 1,
+          resource_version: current.version - 1,
+          body_markdown: legacyBody,
+          baseline: true,
+          editor_user_id: null,
+        },
+        {
+          ordinal: 2,
+          resource_version: current.version,
+          body_markdown: current.body_markdown,
+          baseline: false,
+          editor_user_id: null,
+        },
+      ]);
+    }
     expect(
       (
         await pool.query(
@@ -1258,6 +1314,14 @@ integration("AMS161 local prototype seed", () => {
         )
       ).rows[0],
     ).toEqual(editedAnswer);
+    const repeatHistory = await pool.query(
+      "SELECT kind,resource_id,count(*)::int AS count FROM content_text_revisions WHERE (kind='post' AND resource_id=$1) OR (kind='answer' AND resource_id=$2) GROUP BY kind,resource_id ORDER BY kind",
+      [question.id, answer.id],
+    );
+    expect(repeatHistory.rows).toEqual([
+      { kind: "answer", resource_id: answer.id, count: 2 },
+      { kind: "post", resource_id: question.id, count: 2 },
+    ]);
     expect(await snapshot()).toEqual(before);
   });
 });

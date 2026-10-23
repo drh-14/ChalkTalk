@@ -823,7 +823,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     ]);
     expect(job.rows[0].status).toBe("succeeded");
     const left = await pool.query(
-      "SELECT (SELECT count(*) FROM answers WHERE course_id=$1)::int AS answers,(SELECT count(*) FROM answer_contributors WHERE answer_id IN ($2,$3))::int AS contributors,(SELECT count(*) FROM post_view_events WHERE course_id=$1)::int AS views,(SELECT count(*) FROM answer_contribution_events WHERE course_id=$1)::int AS events,(SELECT count(*) FROM question_creation_daily_counts WHERE course_id=$1)::int AS question_counts,(SELECT count(*) FROM courses WHERE id=$1)::int AS courses",
+      "SELECT (SELECT count(*) FROM answers WHERE course_id=$1)::int AS answers,(SELECT count(*) FROM answer_contributors WHERE answer_id IN ($2,$3))::int AS contributors,(SELECT count(*) FROM post_view_events WHERE course_id=$1)::int AS views,(SELECT count(*) FROM answer_contribution_events WHERE course_id=$1)::int AS events,(SELECT count(*) FROM question_creation_daily_counts WHERE course_id=$1)::int AS question_counts,(SELECT count(*) FROM content_text_revisions WHERE course_id=$1)::int AS revisions,(SELECT count(*) FROM courses WHERE id=$1)::int AS courses",
       [courseId, kept.value.id, removed.value.id],
     );
     expect(left.rows[0]).toEqual({
@@ -832,6 +832,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       views: 0,
       events: 0,
       question_counts: 0,
+      revisions: 0,
       courses: 0,
     });
   });

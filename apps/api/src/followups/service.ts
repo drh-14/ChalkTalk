@@ -1,4 +1,11 @@
 import { createHash } from "node:crypto";
+import {
+  appendTextRevision,
+  getTextRevisions,
+  listTextRevisions,
+  purgeTextRevisions,
+} from "../revisions/store.js";
+import { discussionBody } from "../revisions/text-validation.js";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
@@ -336,6 +343,7 @@ export class FollowupService {
           input.anonymous ?? false,
         ],
       );
+      await appendTextRevision(db, "followup", id, userId);
       if (parentId)
         // A new reply anywhere in a discussion reopens it.
         await db.query(
@@ -478,8 +486,70 @@ export class FollowupService {
     await this.ensureVisible(this.pool, row);
     return this.project(this.pool, row, userId, question.role, question.status);
   }
+  async history(id: string, userId: string, cursor = 0) {
+    return this.tx(async (db) => {
+      const initial = await this.row(db, id);
+      const question = await this.question(db, initial.post_id, userId, true);
+      const row = await this.row(db, id, true);
+      if (row.deleted_at) throw notFound();
+      return listTextRevisions(
+        db,
+        "followup",
+        id,
+        rank[question.role] > 0,
+        cursor,
+      );
+    });
+  }
+  async revision(id: string, userId: string, revisionId: string) {
+    if (!uuid.test(revisionId)) throw notFound();
+    return this.tx(async (db) => {
+      const initial = await this.row(db, id);
+      const question = await this.question(db, initial.post_id, userId, true);
+      const row = await this.row(db, id, true);
+      if (row.deleted_at) throw notFound();
+      const [value] = await getTextRevisions(
+        db,
+        "followup",
+        id,
+        [revisionId],
+        rank[question.role] > 0,
+      );
+      if (!value) throw notFound();
+      return value;
+    });
+  }
+  async compare(id: string, userId: string, leftId: string, rightId: string) {
+    if (!uuid.test(leftId) || !uuid.test(rightId)) throw notFound();
+    return this.tx(async (db) => {
+      const initial = await this.row(db, id);
+      const question = await this.question(db, initial.post_id, userId, true);
+      const row = await this.row(db, id, true);
+      if (row.deleted_at) throw notFound();
+      const revisions = await getTextRevisions(
+        db,
+        "followup",
+        id,
+        [leftId, rightId],
+        rank[question.role] > 0,
+      );
+      const left = revisions.find((item) => item.id === leftId.toLowerCase());
+      const right = revisions.find((item) => item.id === rightId.toLowerCase());
+      if (!left || !right) throw notFound();
+      return { left, right };
+    });
+  }
+  async restore(
+    id: string,
+    userId: string,
+    etag: string | undefined,
+    revisionId: string,
+  ) {
+    if (!uuid.test(revisionId)) throw notFound();
+    return this.edit(id, userId, etag, "", revisionId);
+  }
 
-  private revision(row: Row, etag?: string) {
+  private checkRevision(row: Row, etag?: string) {
     if (!etag)
       throw new AuthError(428, "precondition_required", "If-Match is required");
     if (etag !== followupEtag({ version: Number(row.version) }))
@@ -495,6 +565,7 @@ export class FollowupService {
     userId: string,
     etag: string | undefined,
     bodyMarkdown: string,
+    restoreRevisionId?: string,
   ): Promise<Followup> {
     return this.tx(async (db) => {
       const postId = (await this.row(db, id)).post_id;
@@ -508,12 +579,28 @@ export class FollowupService {
           "permission_denied",
           "Author or staff role is required",
         );
-      this.revision(row, etag);
+      if (restoreRevisionId && rank[question.role] === 0)
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "A staff role is required",
+        );
+      this.checkRevision(row, etag);
+      if (restoreRevisionId) {
+        const target = await db.query<{ body_markdown: string }>(
+          "SELECT body_markdown FROM content_text_revisions WHERE kind='followup' AND resource_id=$1 AND id=$2",
+          [id, restoreRevisionId],
+        );
+        if (!target.rows[0]) throw notFound();
+        bodyMarkdown = discussionBody(target.rows[0].body_markdown);
+      }
       const mentions = newMentions(row.body_markdown, bodyMarkdown);
       await db.query(
         "UPDATE followups SET body_markdown=$2,updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [id, bodyMarkdown],
       );
+      if (restoreRevisionId || bodyMarkdown !== row.body_markdown)
+        await appendTextRevision(db, "followup", id, userId, restoreRevisionId);
       await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
@@ -555,11 +642,12 @@ export class FollowupService {
           "permission_denied",
           "Author or staff role is required",
         );
-      this.revision(row, etag);
+      this.checkRevision(row, etag);
       await db.query(
         "UPDATE followups SET body_markdown=NULL,deleted_at=statement_timestamp(),updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [id],
       );
+      await purgeTextRevisions(db, "followup", id);
       await hideAttachmentsForParent(db, "followup", id);
       await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",

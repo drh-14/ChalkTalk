@@ -1,4 +1,10 @@
 import { createHash } from "node:crypto";
+import {
+  appendTextRevision,
+  getTextRevisions,
+  listTextRevisions,
+} from "../revisions/store.js";
+import { postBody, postTitle } from "../revisions/text-validation.js";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
@@ -470,6 +476,7 @@ export class PostService {
         follow: true,
       });
       const row = await this.row(db, id);
+      await appendTextRevision(db, "post", id, userId);
       const value = await this.project(db, row!, userId, member.role);
       if (key !== undefined)
         await db.query(
@@ -508,6 +515,80 @@ export class PostService {
       }
     }
     return value;
+  }
+  async history(id: string, userId: string, cursor = 0) {
+    if (!UUID_PATTERN.test(id)) throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, id, true);
+      if (!row || row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      return listTextRevisions(db, "post", id, STAFF.has(member.role), cursor);
+    });
+  }
+  async revision(id: string, userId: string, revisionId: string) {
+    if (!UUID_PATTERN.test(id) || !UUID_PATTERN.test(revisionId))
+      throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, id, true);
+      if (!row || row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      const [value] = await getTextRevisions(
+        db,
+        "post",
+        id,
+        [revisionId],
+        STAFF.has(member.role),
+      );
+      if (!value) throw notFound();
+      return value;
+    });
+  }
+  async compare(id: string, userId: string, leftId: string, rightId: string) {
+    if (
+      !UUID_PATTERN.test(id) ||
+      !UUID_PATTERN.test(leftId) ||
+      !UUID_PATTERN.test(rightId)
+    )
+      throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, id, true);
+      if (!row || row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      const revisions = await getTextRevisions(
+        db,
+        "post",
+        id,
+        [leftId, rightId],
+        STAFF.has(member.role),
+      );
+      const left = revisions.find((item) => item.id === leftId.toLowerCase());
+      const right = revisions.find((item) => item.id === rightId.toLowerCase());
+      if (!left || !right) throw notFound();
+      return { left, right };
+    });
+  }
+  async restore(
+    id: string,
+    userId: string,
+    etag: string | undefined,
+    revisionId: string,
+  ) {
+    if (!UUID_PATTERN.test(id) || !UUID_PATTERN.test(revisionId))
+      throw notFound();
+    const row = await this.row(this.pool, id);
+    if (!row || row.deleted_at || row.duplicate_status === "confirmed")
+      throw notFound();
+    const member = await this.membership(this.pool, row.course_id, userId);
+    readable(row, userId, member.role);
+    if (!STAFF.has(member.role))
+      throw new AuthError(403, "permission_denied", "A staff role is required");
+    return this.update(id, userId, etag, {}, revisionId);
   }
   async getDuplicateReview(id: string, userId: string): Promise<Post> {
     const row = await this.row(this.pool, id);
@@ -868,6 +949,7 @@ export class PostService {
     userId: string,
     etag: string | undefined,
     body: UpdatePost,
+    restoreRevisionId?: string,
   ): Promise<Post | MergedReference> {
     return this.tx(async (db) => {
       const initial = await this.row(db, id);
@@ -883,6 +965,23 @@ export class PostService {
       this.writable(member.status);
       this.checkRevision(row, etag);
       const staff = STAFF.has(member.role);
+      if (restoreRevisionId) {
+        const target = await db.query<{ title: string; body_markdown: string }>(
+          "SELECT title,body_markdown FROM content_text_revisions WHERE kind='post' AND resource_id=$1 AND id=$2",
+          [id, restoreRevisionId],
+        );
+        if (!target.rows[0]) throw notFound();
+        if (!staff)
+          throw new AuthError(
+            403,
+            "permission_denied",
+            "A staff role is required",
+          );
+        body = {
+          title: postTitle(target.rows[0].title),
+          bodyMarkdown: postBody(target.rows[0].body_markdown),
+        };
+      }
       const author = row.author_user_id === userId;
       const ordinary =
         body.title !== undefined ||
@@ -992,6 +1091,13 @@ export class PostService {
           publishing ? false : row.private,
         ],
       );
+      if (
+        restoreRevisionId ||
+        (body.title !== undefined && body.title !== row.title) ||
+        (body.bodyMarkdown !== undefined &&
+          body.bodyMarkdown !== row.body_markdown)
+      )
+        await appendTextRevision(db, "post", id, userId, restoreRevisionId);
       if (mentions.userIds.length || mentions.staff)
         await recordActivity(db, {
           courseId: row.course_id,
@@ -1215,6 +1321,10 @@ export class PostService {
         );
       await db.query("DELETE FROM post_tags WHERE post_id=$1", [id]);
       await this.removeEmbeddings(db, id);
+      await db.query(
+        "DELETE FROM content_text_revisions WHERE course_id=$1 AND ((kind='post' AND resource_id=$2) OR (kind='answer' AND resource_id IN (SELECT id FROM answers WHERE post_id=$2)) OR (kind='followup' AND resource_id IN (SELECT id FROM followups WHERE post_id=$2)))",
+        [row.course_id, id],
+      );
       await hideAttachmentsForPostTree(db, id);
       await db.query(
         "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",

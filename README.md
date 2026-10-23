@@ -16,6 +16,7 @@ Core features include:
 - similar-question suggestions,
 - collaborative student and staff answers,
 - threaded follow-up discussions,
+- privacy-aware text revision history with staff restore,
 - endorsed answers,
 - anonymous posting,
 - Markdown and LaTeX support,

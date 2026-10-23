@@ -130,6 +130,17 @@ Account deletion locks each affected `courses` row before testing instructor car
 
 ## Posts, answers, and polls
 
+### `content_text_revisions`
+
+- `id`: UUID primary key. `(kind, resource_id, ordinal)` is unique; `kind` is `post`, `answer`, or `followup` (including replies).
+- `course_id`: course foreign key with `ON DELETE CASCADE`; `resource_id` identifies the typed content row. The service rejects cross-resource revision IDs after checking current visibility.
+- `resource_version`: content ETag version when captured; `ordinal` is an independent, gapless text-revision sequence for that resource. Metadata changes may advance `resource_version` without a text snapshot.
+- `title`: post title, `NULL` for answers/followups; `body_markdown`: saved Markdown. No attachments, audience, poll ballots/options, or moderation state are stored.
+- `anonymous`: content anonymity at capture time; reader-facing editor identity is filtered per revision rather than from the current resource flag.
+- `editor_user_id`: nullable user foreign key; `NULL` for migration baselines and after hard account removal. API projection also redacts soft-deleted users and anonymous editors for student readers.
+- `created_at`, `restored_from_revision_id`, `baseline`: capture timestamp, optional source revision identifier, and baseline marker.
+- Migration `047_content_text_revisions.sql` records one current-text baseline for each active post (including retained merged sources) and its live answers/followups without inferring an earlier editor. Mock seeding also records unattributed baselines for directly inserted posts and answers, then appends revisions for fixture-text repairs. New content and text-changing saves append in the content transaction. Soft deletion purges revisions in that same transaction; post deletion also purges nested histories. The course-deletion worker deletes remaining history before removing the course; the course foreign key also has `ON DELETE CASCADE`.
+
 ### `posts`
 
 - `id`: `uuid_v7`; primary key.

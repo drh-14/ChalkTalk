@@ -11959,6 +11959,447 @@ paths:
         "403": { description: Parent edit permission denied. }
         "404": { description: File or visible parent not found. }
         "409": { description: Course archived. }
+  "/posts/{postId}/revisions":
+    get:
+      tags: [Posts]
+      summary: List post text revisions
+      operationId: listPostTextRevisions
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: postId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          { name: cursor, in: query, schema: { type: integer, minimum: 1 } },
+        ]
+      responses:
+        "200":
+          description: Up to 50 oldest-to-newest revision metadata records for a current reader.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TextRevisionListResponse" }
+        "400": { description: Invalid cursor or query parameter. }
+        "404":
+          description: Resource is absent or not currently readable.
+  "/posts/{postId}/revisions/compare":
+    get:
+      tags: [Posts]
+      summary: Compare two post text revisions
+      operationId: comparePostTextRevisions
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: postId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: left,
+            in: query,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: right,
+            in: query,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+        ]
+      responses:
+        "200":
+          description: Two full text states for comparison.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/TextRevisionCompareResponse" }
+        "404":
+          description: Resource hidden or either revision does not belong to it.
+  "/posts/{postId}/revisions/{revisionId}":
+    get:
+      tags: [Posts]
+      summary: Read one post text revision
+      operationId: getPostTextRevision
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: postId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: revisionId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+        ]
+      responses:
+        "200":
+          description: Authorized text snapshot.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TextRevisionResponse" }
+        "404":
+          description: Resource hidden or revision foreign or missing.
+  "/posts/{postId}/revisions/{revisionId}/restore":
+    post:
+      tags: [Posts]
+      summary: Restore post text without changing nontext state
+      operationId: restorePostTextRevision
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: postId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: revisionId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          { $ref: "#/components/parameters/IfMatch" },
+          { $ref: "#/components/parameters/Origin" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200":
+          description: Restored content with a new ETag and audit revision.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/PostActive" }
+        "403": { description: Staff role required. }
+        "404": { description: Resource hidden or revision foreign or missing. }
+        "409": { description: Course archived. }
+        "412": { description: Stale If-Match. }
+        "428": { description: If-Match required. }
+  "/answers/{answerId}/revisions":
+    get:
+      tags: [Answers]
+      summary: List answer text revisions
+      operationId: listAnswerTextRevisions
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: answerId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          { name: cursor, in: query, schema: { type: integer, minimum: 1 } },
+        ]
+      responses:
+        "200":
+          description: Up to 50 oldest-to-newest revision metadata records for a current reader.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TextRevisionListResponse" }
+        "400": { description: Invalid cursor or query parameter. }
+        "404":
+          description: Resource is absent or not currently readable.
+  "/answers/{answerId}/revisions/compare":
+    get:
+      tags: [Answers]
+      summary: Compare two answer text revisions
+      operationId: compareAnswerTextRevisions
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: answerId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: left,
+            in: query,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: right,
+            in: query,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+        ]
+      responses:
+        "200":
+          description: Two full text states for comparison.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/TextRevisionCompareResponse" }
+        "404":
+          description: Resource hidden or either revision does not belong to it.
+  "/answers/{answerId}/revisions/{revisionId}":
+    get:
+      tags: [Answers]
+      summary: Read one answer text revision
+      operationId: getAnswerTextRevision
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: answerId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: revisionId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+        ]
+      responses:
+        "200":
+          description: Authorized text snapshot.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TextRevisionResponse" }
+        "404":
+          description: Resource hidden or revision foreign or missing.
+  "/answers/{answerId}/revisions/{revisionId}/restore":
+    post:
+      tags: [Answers]
+      summary: Restore answer text without changing nontext state
+      operationId: restoreAnswerTextRevision
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: answerId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: revisionId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          { $ref: "#/components/parameters/IfMatch" },
+          { $ref: "#/components/parameters/Origin" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200":
+          description: Restored content with a new ETag and audit revision.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/Answer" }
+        "403": { description: Staff role required. }
+        "404": { description: Resource hidden or revision foreign or missing. }
+        "409": { description: Course archived. }
+        "412": { description: Stale If-Match. }
+        "428": { description: If-Match required. }
+  "/followups/{followupId}/revisions":
+    get:
+      tags: [Answers]
+      summary: List followup text revisions
+      operationId: listFollowupTextRevisions
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: followupId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          { name: cursor, in: query, schema: { type: integer, minimum: 1 } },
+        ]
+      responses:
+        "200":
+          description: Up to 50 oldest-to-newest revision metadata records for a current reader.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TextRevisionListResponse" }
+        "400": { description: Invalid cursor or query parameter. }
+        "404":
+          description: Resource is absent or not currently readable.
+  "/followups/{followupId}/revisions/compare":
+    get:
+      tags: [Answers]
+      summary: Compare two followup text revisions
+      operationId: compareFollowupTextRevisions
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: followupId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: left,
+            in: query,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: right,
+            in: query,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+        ]
+      responses:
+        "200":
+          description: Two full text states for comparison.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/TextRevisionCompareResponse" }
+        "404":
+          description: Resource hidden or either revision does not belong to it.
+  "/followups/{followupId}/revisions/{revisionId}":
+    get:
+      tags: [Answers]
+      summary: Read one followup text revision
+      operationId: getFollowupTextRevision
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: followupId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: revisionId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+        ]
+      responses:
+        "200":
+          description: Authorized text snapshot.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TextRevisionResponse" }
+        "404":
+          description: Resource hidden or revision foreign or missing.
+  "/followups/{followupId}/revisions/{revisionId}/restore":
+    post:
+      tags: [Answers]
+      summary: Restore followup text without changing nontext state
+      operationId: restoreFollowupTextRevision
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          {
+            name: followupId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          {
+            name: revisionId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+          { $ref: "#/components/parameters/IfMatch" },
+          { $ref: "#/components/parameters/Origin" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200":
+          description: Restored content with a new ETag and audit revision.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: "#/components/schemas/Followup" }
+        "403": { description: Staff role required. }
+        "404": { description: Resource hidden or revision foreign or missing. }
+        "409": { description: Course archived. }
+        "412": { description: Stale If-Match. }
+        "428": { description: If-Match required. }
 components:
   securitySchemes:
     metrics_bearer:
@@ -12176,6 +12617,101 @@ components:
         minLength: 1
       example: "3600"
   schemas:
+    TextRevision:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          ordinal,
+          resourceVersion,
+          createdAt,
+          title,
+          bodyMarkdown,
+          baseline,
+          restoredFromRevisionId,
+          editor,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        ordinal: { type: integer, minimum: 1 }
+        resourceVersion: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        title:
+          {
+            type: [string, "null"],
+            description: "Null for answers and followups.",
+          }
+        bodyMarkdown: { type: string }
+        baseline:
+          {
+            type: boolean,
+            description: "Current text captured as a baseline without an inferred editor.",
+          }
+        restoredFromRevisionId: { type: [string, "null"], format: uuid }
+        editor:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [id, displayName]
+              properties:
+                {
+                  id: { type: string, format: uuid },
+                  displayName: { type: string },
+                }
+          description: Null for unknown/deleted editors and for revisions captured while anonymous when read by students, regardless of current anonymity.
+    TextRevisionResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties: { data: { $ref: "#/components/schemas/TextRevision" } }
+    TextRevisionMetadata:
+      type: object
+      additionalProperties: false
+      required: [id, ordinal, resourceVersion, createdAt, baseline, restoredFromRevisionId, editor]
+      properties:
+        id: { type: string, format: uuid }
+        ordinal: { type: integer, minimum: 1 }
+        resourceVersion: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        baseline: { type: boolean }
+        restoredFromRevisionId: { type: [string, "null"], format: uuid }
+        editor:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [id, displayName]
+              properties:
+                { id: { type: string, format: uuid }, displayName: { type: string } }
+    TextRevisionListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page]
+      properties:
+        data:
+          { type: array, maxItems: 50, items: { $ref: "#/components/schemas/TextRevisionMetadata" } }
+        page:
+          type: object
+          additionalProperties: false
+          required: [nextCursor]
+          properties:
+            nextCursor: { type: [string, "null"] }
+    TextRevisionCompareResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [left, right]
+          properties:
+            {
+              left: { $ref: "#/components/schemas/TextRevision" },
+              right: { $ref: "#/components/schemas/TextRevision" },
+            }
     CourseResourceLink:
       type: object
       additionalProperties: false
@@ -13428,7 +13964,8 @@ components:
         upvoteCount: { type: integer, minimum: 0 }
         viewerUpvoted: { type: boolean }
         replyCount: { type: integer, minimum: 0 }
-        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        attachments:
+          { type: array, items: { $ref: "#/components/schemas/Attachment" } }
         resolved:
           type: boolean
           description: Whether this discussion (root followup) is resolved; always false for replies.

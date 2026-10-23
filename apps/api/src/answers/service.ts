@@ -1,4 +1,11 @@
 import { createHash } from "node:crypto";
+import {
+  appendTextRevision,
+  getTextRevisions,
+  listTextRevisions,
+  purgeTextRevisions,
+} from "../revisions/store.js";
+import { discussionBody } from "../revisions/text-validation.js";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
@@ -271,6 +278,7 @@ export class AnswerService {
           "INSERT INTO answer_contributors (answer_id,user_id) VALUES ($1,$2)",
           [id, userId],
         );
+        await appendTextRevision(db, "answer", id, userId);
         await db.query(
           "INSERT INTO answer_contribution_events (course_id,answer_id,user_id) VALUES ($1,$2,$3)",
           [post.course_id, id, userId],
@@ -405,6 +413,7 @@ export class AnswerService {
         "UPDATE answers SET body_markdown=NULL,deleted_at=statement_timestamp(),updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
         [answerId],
       );
+      await purgeTextRevisions(db, "answer", answerId);
       await hideAttachmentsForParent(db, "answer", answerId);
       await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
@@ -418,40 +427,134 @@ export class AnswerService {
     const { member } = await this.post(this.pool, row.post_id, userId);
     return this.project(this.pool, row, member.role, userId);
   }
+  async history(answerId: string, userId: string, cursor = 0) {
+    return this.tx(async (db) => {
+      const row = await this.row(db, answerId, true);
+      if (!row || row.deleted_at) throw notFound();
+      const { member } = await this.post(db, row.post_id, userId, true);
+      return listTextRevisions(
+        db,
+        "answer",
+        answerId,
+        STAFF.has(member.role),
+        cursor,
+      );
+    });
+  }
+  async revision(answerId: string, userId: string, revisionId: string) {
+    if (!UUID_PATTERN.test(revisionId)) throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, answerId, true);
+      if (!row || row.deleted_at) throw notFound();
+      const { member } = await this.post(db, row.post_id, userId, true);
+      const [value] = await getTextRevisions(
+        db,
+        "answer",
+        answerId,
+        [revisionId],
+        STAFF.has(member.role),
+      );
+      if (!value) throw notFound();
+      return value;
+    });
+  }
+  async compare(
+    answerId: string,
+    userId: string,
+    leftId: string,
+    rightId: string,
+  ) {
+    if (!UUID_PATTERN.test(leftId) || !UUID_PATTERN.test(rightId))
+      throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, answerId, true);
+      if (!row || row.deleted_at) throw notFound();
+      const { member } = await this.post(db, row.post_id, userId, true);
+      const revisions = await getTextRevisions(
+        db,
+        "answer",
+        answerId,
+        [leftId, rightId],
+        STAFF.has(member.role),
+      );
+      const left = revisions.find((item) => item.id === leftId.toLowerCase());
+      const right = revisions.find((item) => item.id === rightId.toLowerCase());
+      if (!left || !right) throw notFound();
+      return { left, right };
+    });
+  }
+  async restore(
+    answerId: string,
+    userId: string,
+    etag: string | undefined,
+    revisionId: string,
+  ) {
+    if (!UUID_PATTERN.test(revisionId)) throw notFound();
+    return this.edit(answerId, userId, etag, "", revisionId);
+  }
 
   async edit(
     answerId: string,
     userId: string,
     etag: string | undefined,
     bodyMarkdown: string,
+    restoreRevisionId?: string,
   ): Promise<Answer> {
     return this.tx(async (db) => {
       const row = await this.row(db, answerId, true);
       if (!row || row.deleted_at) throw notFound();
       const { member } = await this.post(db, row.post_id, userId, true);
       this.writable(member.status);
-      if (ROLE_RANK[member.role] < ROLE_RANK[row.edit_role_floor])
+      if (
+        !restoreRevisionId &&
+        ROLE_RANK[member.role] < ROLE_RANK[row.edit_role_floor]
+      )
         throw new AuthError(
           403,
           "permission_denied",
           "Role cannot edit this answer",
         );
+      if (restoreRevisionId) {
+        if (!STAFF.has(member.role))
+          throw new AuthError(
+            403,
+            "permission_denied",
+            "A staff role is required",
+          );
+      }
       this.checkRevision(row, etag);
-      if (bodyMarkdown === row.body_markdown)
+      if (restoreRevisionId) {
+        const target = await db.query<{ body_markdown: string }>(
+          "SELECT body_markdown FROM content_text_revisions WHERE kind='answer' AND resource_id=$1 AND id=$2",
+          [answerId, restoreRevisionId],
+        );
+        if (!target.rows[0]) throw notFound();
+        bodyMarkdown = discussionBody(target.rows[0].body_markdown);
+      }
+      if (!restoreRevisionId && bodyMarkdown === row.body_markdown)
         return this.project(db, row, member.role, userId);
       const mentions = newMentions(row.body_markdown, bodyMarkdown);
       await db.query(
-        "UPDATE answers SET body_markdown=$2,endorsed_at=NULL,endorsed_by_user_id=NULL,version=version+1,updated_at=statement_timestamp() WHERE id=$1",
+        "UPDATE answers SET body_markdown=$2,endorsed_at=CASE WHEN body_markdown IS DISTINCT FROM $2 THEN NULL ELSE endorsed_at END,endorsed_by_user_id=CASE WHEN body_markdown IS DISTINCT FROM $2 THEN NULL ELSE endorsed_by_user_id END,version=version+1,updated_at=statement_timestamp() WHERE id=$1",
         [answerId, bodyMarkdown],
       );
-      await db.query(
-        "INSERT INTO answer_contributors (answer_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-        [answerId, userId],
+      await appendTextRevision(
+        db,
+        "answer",
+        answerId,
+        userId,
+        restoreRevisionId,
       );
-      await db.query(
-        "INSERT INTO answer_contribution_events (course_id,answer_id,user_id,contributed_at) VALUES ($1,$2,$3,statement_timestamp())",
-        [row.course_id, answerId, userId],
-      );
+      if (!restoreRevisionId) {
+        await db.query(
+          "INSERT INTO answer_contributors (answer_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+          [answerId, userId],
+        );
+        await db.query(
+          "INSERT INTO answer_contribution_events (course_id,answer_id,user_id,contributed_at) VALUES ($1,$2,$3,statement_timestamp())",
+          [row.course_id, answerId, userId],
+        );
+      }
       await db.query(
         "UPDATE posts SET last_activity_at=statement_timestamp() WHERE id=$1",
         [row.post_id],
