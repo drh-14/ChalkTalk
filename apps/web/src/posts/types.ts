@@ -67,7 +67,19 @@ export const postTypeOf = (type: string): PostTypeConfig =>
 /** A post's own type statuses followed by statuses every type shares. */
 export function postStatuses(post: Post): PostStatus[] {
   return [
-    ...(post.private ? [{ label: "Private", tone: "private" as const }] : []),
+    ...(post.private
+      ? [
+          {
+            label:
+              post.audience === "selected_staff"
+                ? "Selected staff"
+                : post.audience === "group"
+                  ? `Group: ${post.groupName ?? "private group"}`
+                  : "Private",
+            tone: "private" as const,
+          },
+        ]
+      : []),
     ...(post.announcement
       ? [{ label: "Announcement", tone: "attention" as const }]
       : []),

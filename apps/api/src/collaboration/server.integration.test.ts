@@ -654,6 +654,46 @@ integration("collaboration server", () => {
       }
     });
 
+    it("stops outbound updates when a connected group member is removed", async () => {
+      const groupId = uuidv7();
+      await pool.query(
+        "INSERT INTO private_post_groups(id,course_id,name) VALUES ($1,$2,'Live group')",
+        [groupId, fixture.courseId],
+      );
+      for (const userId of [fixture.users.alice!, fixture.users.bob!])
+        await pool.query(
+          "INSERT INTO private_post_group_members(group_id,course_id,user_id) VALUES ($1,$2,$3)",
+          [groupId, fixture.courseId, userId],
+        );
+      await pool.query(
+        "UPDATE posts SET audience='group',audience_group_id=$2,private=true WHERE id=$1",
+        [fixture.postId, groupId],
+      );
+      try {
+        const sessionId = await newSession("alice", ["bob"]);
+        const alice = join("alice", sessionId);
+        const bob = join("bob", sessionId);
+        await until(() => alice.provider.isSynced && bob.provider.isSynced);
+        alice.text.insert(0, "Before revocation");
+        await until(() => bob.text.toString() === "Before revocation");
+        await pool.query(
+          "DELETE FROM private_post_group_members WHERE group_id=$1 AND user_id=$2",
+          [groupId, fixture.users.bob],
+        );
+        alice.text.insert(alice.text.length, " after revocation");
+        await until(() => bob.state.closeReason === CLOSE_REASONS.removed);
+        expect(bob.text.toString()).toBe("Before revocation");
+      } finally {
+        await pool.query(
+          "UPDATE posts SET audience='class',audience_group_id=NULL,private=false WHERE id=$1",
+          [fixture.postId],
+        );
+        await pool.query("DELETE FROM private_post_groups WHERE id=$1", [
+          groupId,
+        ]);
+      }
+    });
+
     it("sweeps after the listener reconnects to catch a missed change", async () => {
       const sessionId = await newSession();
       const bob = join("bob", sessionId);

@@ -4,8 +4,11 @@ import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import { recordActivity } from "../notifications/activity.js";
 import { newMentions, parseMentions } from "../notifications/mentions.js";
-import { canReadPost, readablePost } from "./visibility.js";
-import { endCollaborationSessions } from "../collaboration/lifecycle.js";
+import { assertPostVisible, postVisible, readablePost } from "./visibility.js";
+import {
+  collaborationAccessChanged,
+  endCollaborationSessions,
+} from "../collaboration/lifecycle.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
 import { POST_REVISION_SQL, type SemanticIndex } from "../semantic/index.js";
 import {
@@ -26,6 +29,8 @@ type Row = {
   pinned: boolean;
   announcement: boolean;
   private: boolean;
+  audience: "class" | "staff" | "selected_staff" | "group";
+  audience_group_id: string | null;
   duplicate_of_post_id: string | null;
   duplicate_status: "none" | "suggested" | "confirmed";
   last_activity_at: Date;
@@ -50,6 +55,9 @@ export type CreatePost = {
   announcement?: boolean;
   /** Questions and notes only: readable by the author and course staff. */
   private?: boolean;
+  audience?: "class" | "staff" | "selected_staff" | "group";
+  staffRecipientIds?: string[];
+  groupId?: string;
 };
 export type UpdatePost = Partial<
   Omit<CreatePost, "type" | "options" | "announcement">
@@ -96,10 +104,6 @@ export type ListPosts = {
 };
 export const postEtag = (post: { version: number }) => `"v${post.version}"`;
 const notFound = () => new AuthError(404, "not_found", "Post is not found");
-/** Private posts the viewer cannot read look exactly like missing ones. */
-const readable = (row: Row, viewerId: string, role: Role) => {
-  if (!canReadPost(row, viewerId, role)) throw notFound();
-};
 const validation = (message: string) =>
   new AuthError(422, "validation_failed", message);
 const STAFF = new Set<Role>(["ta", "instructor"]);
@@ -214,6 +218,188 @@ export class PostService {
     if (status !== "active")
       throw new AuthError(409, "course_archived", "Course is not active");
   }
+
+  private requireStaff(role: Role) {
+    if (!STAFF.has(role))
+      throw new AuthError(
+        403,
+        "permission_denied",
+        "Only course staff manage private groups",
+      );
+  }
+  async listPrivateGroups(courseId: string, userId: string) {
+    return this.tx(async (db) => {
+      await this.membership(db, courseId, userId, true);
+      const result = await db.query<{
+        id: string;
+        name: string;
+        member_ids: string[] | null;
+        joined: boolean;
+        staff: boolean;
+      }>(
+        `SELECT g.id,g.name,
+        CASE WHEN m.role IN ('ta','instructor')
+          THEN array_agg(gm.user_id::text ORDER BY gm.user_id) FILTER (WHERE gm.user_id IS NOT NULL)
+          ELSE NULL::text[] END AS member_ids,
+        COALESCE(bool_or(gm.user_id=$2),false) AS joined,
+        m.role IN ('ta','instructor') AS staff
+       FROM private_post_groups g
+       JOIN course_memberships m ON m.course_id=g.course_id AND m.user_id=$2
+       LEFT JOIN private_post_group_members gm ON gm.group_id=g.id
+       WHERE g.course_id=$1 GROUP BY g.id,g.name,m.role
+       HAVING m.role IN ('ta','instructor') OR bool_or(gm.user_id=$2)
+       ORDER BY lower(g.name),g.id`,
+        [courseId, userId],
+      );
+      return result.rows.map((group) => ({
+        id: group.id,
+        name: group.name,
+        joined: group.joined,
+        ...(group.staff ? { memberIds: group.member_ids ?? [] } : {}),
+      }));
+    });
+  }
+  async createPrivateGroup(
+    courseId: string,
+    userId: string,
+    name: string,
+    memberIds: string[],
+  ) {
+    return this.tx(async (db) => {
+      const member = await this.membership(db, courseId, userId, true);
+      this.requireStaff(member.role);
+      this.writable(member.status);
+      if (new Set(memberIds).size !== memberIds.length)
+        throw validation("Group members must be distinct");
+      const eligible = await db.query(
+        "SELECT user_id FROM course_memberships WHERE course_id=$1 AND user_id=ANY($2::uuid[]) FOR SHARE",
+        [courseId, memberIds],
+      );
+      if (eligible.rowCount !== memberIds.length)
+        throw validation("Group members must belong to the course");
+      const id = uuidv7();
+      try {
+        await db.query(
+          "INSERT INTO private_post_groups(id,course_id,name) VALUES ($1,$2,$3)",
+          [id, courseId, name],
+        );
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505")
+          throw new AuthError(
+            409,
+            "group_name_exists",
+            "Group name already exists",
+          );
+        throw error;
+      }
+      for (const memberId of memberIds)
+        await db.query(
+          "INSERT INTO private_post_group_members(group_id,course_id,user_id) VALUES ($1,$2,$3)",
+          [id, courseId, memberId],
+        );
+      return { id, name, joined: memberIds.includes(userId), memberIds };
+    });
+  }
+  async renamePrivateGroup(
+    courseId: string,
+    groupId: string,
+    userId: string,
+    name: string,
+  ) {
+    return this.tx(async (db) => {
+      const member = await this.membership(db, courseId, userId, true);
+      this.requireStaff(member.role);
+      this.writable(member.status);
+      try {
+        const result = await db.query<{
+          id: string;
+          name: string;
+          joined: boolean;
+          member_ids: string[];
+        }>(
+          `UPDATE private_post_groups SET name=$3,updated_at=now()
+           WHERE course_id=$1 AND id=$2
+           RETURNING id,name,
+             EXISTS (SELECT 1 FROM private_post_group_members WHERE group_id=id AND user_id=$4) AS joined,
+             ARRAY (SELECT user_id::text FROM private_post_group_members WHERE group_id=id ORDER BY user_id) AS member_ids`,
+          [courseId, groupId, name, userId],
+        );
+        if (!result.rows[0]) throw notFound();
+        const group = result.rows[0];
+        return {
+          id: group.id,
+          name: group.name,
+          joined: group.joined,
+          memberIds: group.member_ids,
+        };
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505")
+          throw new AuthError(
+            409,
+            "group_name_exists",
+            "Group name already exists",
+          );
+        throw error;
+      }
+    });
+  }
+  async deletePrivateGroup(courseId: string, groupId: string, userId: string) {
+    await this.tx(async (db) => {
+      const member = await this.membership(db, courseId, userId, true);
+      this.requireStaff(member.role);
+      this.writable(member.status);
+      const group = await db.query(
+        "SELECT 1 FROM private_post_groups WHERE course_id=$1 AND id=$2 FOR UPDATE",
+        [courseId, groupId],
+      );
+      if (!group.rowCount) throw notFound();
+      const referenced = await db.query(
+        "SELECT 1 FROM posts WHERE audience_group_id=$1 AND deleted_at IS NULL LIMIT 1",
+        [groupId],
+      );
+      if (referenced.rowCount)
+        throw new AuthError(
+          409,
+          "group_in_use",
+          "Group is referenced by a post",
+        );
+      await db.query(
+        "DELETE FROM private_post_groups WHERE course_id=$1 AND id=$2",
+        [courseId, groupId],
+      );
+    });
+  }
+  async setPrivateGroupMember(
+    courseId: string,
+    groupId: string,
+    userId: string,
+    targetId: string,
+    included: boolean,
+  ) {
+    await this.tx(async (db) => {
+      const member = await this.membership(db, courseId, userId, true);
+      this.requireStaff(member.role);
+      this.writable(member.status);
+      const group = await db.query(
+        "SELECT 1 FROM private_post_groups WHERE course_id=$1 AND id=$2 FOR UPDATE",
+        [courseId, groupId],
+      );
+      if (!group.rowCount) throw notFound();
+      if (included) {
+        await this.membership(db, courseId, targetId, true);
+        await db.query(
+          "INSERT INTO private_post_group_members(group_id,course_id,user_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+          [groupId, courseId, targetId],
+        );
+      } else {
+        await db.query(
+          "DELETE FROM private_post_group_members WHERE group_id=$1 AND course_id=$2 AND user_id=$3",
+          [groupId, courseId, targetId],
+        );
+      }
+      await collaborationAccessChanged(db, [targetId], courseId);
+    });
+  }
   private async row(
     db: Db,
     id: string,
@@ -238,6 +424,14 @@ export class PostService {
     viewerId: string,
     role: Role,
   ): Promise<Post> {
+    const groupName = row.audience_group_id
+      ? (
+          await db.query<{ name: string }>(
+            "SELECT name FROM private_post_groups WHERE id=$1",
+            [row.audience_group_id],
+          )
+        ).rows[0]?.name
+      : undefined;
     const common = {
       id: row.id,
       courseId: row.course_id,
@@ -274,6 +468,10 @@ export class PostService {
       pinned: row.pinned,
       announcement: row.announcement,
       private: row.private,
+      audience: row.audience,
+      ...(row.audience === "group"
+        ? { groupId: row.audience_group_id, groupName }
+        : {}),
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
       lastActivityAt: row.last_activity_at.toISOString(),
@@ -382,6 +580,7 @@ export class PostService {
               "idempotency_key_reused",
               "Idempotency key was reused",
             );
+          await assertPostVisible(db, old.rows[0].response_body.id, userId);
           return {
             value: old.rows[0].response_body,
             status: old.rows[0].response_status,
@@ -406,22 +605,53 @@ export class PostService {
           "permission_denied",
           "Only staff may post announcements",
         );
-      if (body.private && body.announcement)
+      const audience = body.audience ?? (body.private ? "staff" : "class");
+      if (body.private !== undefined && body.private !== (audience !== "class"))
+        throw validation("Private and audience selections disagree");
+      if (audience !== "class" && body.announcement)
         throw new AuthError(
           422,
           "private_announcement",
           "Announcements are for the whole course and cannot be private",
         );
-      if (body.private && body.type === "poll")
+      if (audience !== "class" && body.type === "poll")
         throw new AuthError(422, "private_poll", "Polls cannot be private");
+      if (audience === "selected_staff") {
+        const recipients = body.staffRecipientIds ?? [];
+        if (
+          !recipients.length ||
+          new Set(recipients).size !== recipients.length
+        )
+          throw validation("Selected staff recipients are invalid");
+        const eligible = await db.query(
+          "SELECT user_id FROM course_memberships WHERE course_id=$1 AND user_id=ANY($2::uuid[]) AND role IN ('ta','instructor') FOR SHARE",
+          [courseId, recipients],
+        );
+        if (eligible.rowCount !== recipients.length)
+          throw validation("Selected staff recipients are invalid");
+      } else if (body.staffRecipientIds !== undefined) {
+        throw validation("Recipients require selected staff audience");
+      }
+      if (audience === "group") {
+        const group = await db.query(
+          `SELECT 1 FROM private_post_groups g
+           JOIN private_post_group_members gm ON gm.group_id=g.id AND gm.course_id=g.course_id
+           WHERE g.id=$1 AND g.course_id=$2 AND gm.user_id=$3 FOR SHARE OF g,gm`,
+          [body.groupId ?? null, courseId, userId],
+        );
+        if (!group.rowCount)
+          throw validation("Group is invalid or membership has changed");
+      } else if (body.groupId !== undefined) {
+        throw validation("Group requires group audience");
+      }
       const id = uuidv7();
       await db.query(
         "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
       );
       const created = await db.query<{ created_on: string }>(
         `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
-         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,created_at,updated_at,last_activity_at)
-         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,stamp.at,stamp.at,stamp.at FROM stamp
+         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,audience,audience_group_id,created_at,updated_at,last_activity_at)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,stamp.at,stamp.at,stamp.at FROM stamp
          RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on`,
         [
           id,
@@ -432,9 +662,16 @@ export class PostService {
           body.bodyMarkdown,
           body.anonymous ?? false,
           body.announcement ?? false,
-          body.private ?? false,
+          audience !== "class",
+          audience,
+          body.groupId ?? null,
         ],
       );
+      for (const recipientId of body.staffRecipientIds ?? [])
+        await db.query(
+          "INSERT INTO post_staff_recipients(post_id,user_id) VALUES ($1,$2)",
+          [id, recipientId],
+        );
       for (const [position, label] of (body.options ?? []).entries())
         await db.query(
           "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES ($1,$2,$3,$4,$5)",
@@ -480,12 +717,20 @@ export class PostService {
     });
   }
   async get(id: string, userId: string): Promise<Post | MergedReference> {
-    const row = await this.row(this.pool, id);
-    if (!row) throw notFound();
-    const member = await this.membership(this.pool, row.course_id, userId);
-    readable(row, userId, member.role);
-    if (row.duplicate_status === "confirmed") return this.mergedReference(row);
-    const value = await this.project(this.pool, row, userId, member.role);
+    const { row, value } = await this.tx(async (db) => {
+      const row = await this.row(db, id, true);
+      if (!row) throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      await assertPostVisible(db, row.id, userId);
+      return {
+        row,
+        value:
+          row.duplicate_status === "confirmed"
+            ? undefined
+            : await this.project(db, row, userId, member.role),
+      };
+    });
+    if (!value) return this.mergedReference(row);
     if (!row.deleted_at) {
       try {
         await this.pool.query(
@@ -510,18 +755,21 @@ export class PostService {
     return value;
   }
   async getDuplicateReview(id: string, userId: string): Promise<Post> {
-    const row = await this.row(this.pool, id);
-    if (!row) throw notFound();
-    const member = await this.membership(this.pool, row.course_id, userId);
-    if (row.deleted_at || row.duplicate_status !== "confirmed")
-      throw notFound();
-    if (!STAFF.has(member.role))
-      throw new AuthError(
-        403,
-        "permission_denied",
-        "Duplicate review is staff-only",
-      );
-    return this.project(this.pool, row, userId, member.role);
+    return this.tx(async (db) => {
+      const row = await this.row(db, id, true);
+      if (!row) throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      if (row.deleted_at || row.duplicate_status !== "confirmed")
+        throw notFound();
+      if (!STAFF.has(member.role))
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Duplicate review is staff-only",
+        );
+      await assertPostVisible(db, row.id, userId);
+      return this.project(db, row, userId, member.role);
+    });
   }
   private mergedReference(row: Row): MergedReference {
     return {
@@ -628,7 +876,7 @@ export class PostService {
     const clauses = [
       "p.course_id=$1",
       "p.deleted_at IS NULL",
-      readablePost("p", add(userId), add(member.role)),
+      readablePost("p", add(userId)),
     ];
     if (options.private) clauses.push("p.private");
     if (options.unresolvedFollowups)
@@ -824,19 +1072,81 @@ export class PostService {
     const result = await this.pool.query<
       Row & { rank_value: number | Date; match_tier?: number }
     >(query, values);
+    const data = await this.tx(async (db) => {
+      const current = new Map<string, { row: Row; role: Role }>();
+      for (const listed of [...result.rows].sort((a, b) =>
+        a.id.localeCompare(b.id),
+      )) {
+        const row = await this.row(db, listed.id, true);
+        if (
+          !row ||
+          row.deleted_at ||
+          Number(row.version) !== Number(listed.version) ||
+          row.audience !== listed.audience ||
+          row.private !== listed.private ||
+          (options.private && !row.private)
+        )
+          throw new AuthError(
+            409,
+            "search_restart_required",
+            "Post list eligibility changed. Restart without the cursor",
+          );
+        const currentMember = await this.membership(
+          db,
+          row.course_id,
+          userId,
+          true,
+        );
+        const activeAuthor =
+          options.authorId && !STAFF.has(currentMember.role)
+            ? await db.query(
+                "SELECT 1 FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE",
+                [row.author_user_id],
+              )
+            : undefined;
+        const hiddenByAuthorFilter =
+          !STAFF.has(currentMember.role) &&
+          (options.authorId || options.authorRole) &&
+          ((row.anonymous && row.author_user_id !== userId) ||
+            Boolean(activeAuthor && !activeAuthor.rowCount));
+        const authorRole = options.authorRole
+          ? await db.query<{ role: Role }>(
+              "SELECT m.role FROM course_memberships m JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL WHERE m.course_id=$1 AND m.user_id=$2 FOR SHARE OF m,u",
+              [row.course_id, row.author_user_id],
+            )
+          : undefined;
+        if (
+          hiddenByAuthorFilter ||
+          (options.authorRole &&
+            authorRole?.rows[0]?.role !== options.authorRole) ||
+          (options.duplicateStatus === "confirmed" &&
+            !STAFF.has(currentMember.role)) ||
+          !(await postVisible(db, row.id, userId))
+        )
+          throw new AuthError(
+            409,
+            "search_restart_required",
+            "Post list eligibility changed. Restart without the cursor",
+          );
+        current.set(listed.id, { row, role: currentMember.role });
+      }
+      const visible = [];
+      for (const listed of result.rows.slice(0, limit)) {
+        const { row, role } = current.get(listed.id)!;
+        visible.push(
+          options.duplicateStatus === "confirmed"
+            ? {
+                ...this.mergedReference(row),
+                title: row.title,
+                canonicalTitle: listed.canonical_title,
+                type: row.type,
+              }
+            : await this.project(db, row, userId, role),
+        );
+      }
+      return visible;
+    });
     const pageRows = result.rows.slice(0, limit);
-    const data = await Promise.all(
-      pageRows.map((row) =>
-        options.duplicateStatus === "confirmed"
-          ? Promise.resolve({
-              ...this.mergedReference(row),
-              title: row.title,
-              canonicalTitle: row.canonical_title,
-              type: row.type,
-            })
-          : this.project(this.pool, row, userId, member.role),
-      ),
-    );
     const tail = pageRows.at(-1);
     const nextCursor =
       result.rows.length > limit && tail
@@ -879,7 +1189,7 @@ export class PostService {
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
       if (row.deleted_at) throw notFound();
-      readable(row, userId, member.role);
+      await assertPostVisible(db, row.id, userId);
       this.writable(member.status);
       this.checkRevision(row, etag);
       const staff = STAFF.has(member.role);
@@ -980,7 +1290,7 @@ export class PostService {
           );
       }
       await db.query(
-        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,private=$8,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
+        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,private=$8,audience=$9,audience_group_id=$10,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [
           id,
           body.title ?? row.title,
@@ -990,6 +1300,8 @@ export class PostService {
           targetId,
           status,
           publishing ? false : row.private,
+          publishing ? "class" : row.audience,
+          publishing ? null : row.audience_group_id,
         ],
       );
       if (mentions.userIds.length || mentions.staff)
@@ -1052,18 +1364,20 @@ export class PostService {
   /** Follows or unfollows a readable post; an unfollow stops automatic follows. */
   async setFollowing(postId: string, userId: string, following: boolean) {
     if (!UUID_PATTERN.test(postId)) throw notFound();
-    const row = await this.row(this.pool, postId);
-    if (!row) throw notFound();
-    const member = await this.membership(this.pool, row.course_id, userId);
-    readable(row, userId, member.role);
-    if (row.deleted_at || row.duplicate_status === "confirmed")
-      throw notFound();
-    await this.pool.query(
-      `INSERT INTO post_follows (post_id,course_id,user_id,following) VALUES ($1,$2,$3,$4)
+    return this.tx(async (db) => {
+      const row = await this.row(db, postId, true);
+      if (!row) throw notFound();
+      await this.membership(db, row.course_id, userId, true);
+      await assertPostVisible(db, row.id, userId);
+      if (row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      await db.query(
+        `INSERT INTO post_follows (post_id,course_id,user_id,following) VALUES ($1,$2,$3,$4)
        ON CONFLICT (post_id,user_id) DO UPDATE SET following=excluded.following,updated_at=now()`,
-      [postId, row.course_id, userId, following],
-    );
-    return { following };
+        [postId, row.course_id, userId, following],
+      );
+      return { following };
+    });
   }
 
   /**
@@ -1077,14 +1391,14 @@ export class PostService {
     postId?: string,
   ) {
     if (!UUID_PATTERN.test(courseId)) throw notFound();
-    const member = await this.membership(this.pool, courseId, userId);
+    await this.membership(this.pool, courseId, userId);
     let post: Row | undefined;
     if (postId !== undefined) {
       if (!UUID_PATTERN.test(postId)) throw notFound();
       post = await this.row(this.pool, postId);
       if (!post || post.course_id !== courseId || post.deleted_at)
         throw notFound();
-      readable(post, userId, member.role);
+      await assertPostVisible(this.pool, post.id, userId);
     }
     // LIKE treats %, _, and the escape character itself as special.
     const literal = query.replace(/[\\%_]/g, (match) => `\\${match}`);
@@ -1098,7 +1412,7 @@ export class PostService {
        JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
        LEFT JOIN posts p ON p.id=$4
        WHERE m.course_id=$1 AND m.user_id<>$2 AND u.display_name ILIKE $3
-         AND (p.id IS NULL OR ${readablePost("p", "m.user_id", "m.role")})
+         AND (p.id IS NULL OR (${readablePost("p", "$2")} AND ${readablePost("p", "m.user_id")}))
        ORDER BY (u.display_name ILIKE $5) DESC, lower(u.display_name), m.user_id
        LIMIT 8`,
       [courseId, userId, `%${literal}%`, post?.id ?? null, `${literal}%`],
@@ -1128,7 +1442,7 @@ export class PostService {
       const row = await this.row(db, postId, true);
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
-      readable(row, userId, member.role);
+      await assertPostVisible(db, row.id, userId);
       if (row.deleted_at || row.duplicate_status === "confirmed")
         throw notFound();
       if (row.type !== "poll")
@@ -1161,8 +1475,8 @@ export class PostService {
     if (!UUID_PATTERN.test(postId)) throw notFound();
     const row = await this.row(this.pool, postId);
     if (!row) throw notFound();
-    const member = await this.membership(this.pool, row.course_id, userId);
-    readable(row, userId, member.role);
+    await this.membership(this.pool, row.course_id, userId);
+    await assertPostVisible(this.pool, row.id, userId);
     if (row.deleted_at || row.duplicate_status === "confirmed")
       throw notFound();
     if (row.type !== "poll")
@@ -1188,7 +1502,7 @@ export class PostService {
       if (!row) throw notFound();
       const member = await this.membership(db, row.course_id, userId, true);
       if (row.deleted_at) throw notFound();
-      readable(row, userId, member.role);
+      await assertPostVisible(db, row.id, userId);
       this.writable(member.status);
       this.checkRevision(row, etag);
       if (row.duplicate_status === "confirmed")
@@ -1217,7 +1531,7 @@ export class PostService {
       await this.removeEmbeddings(db, id);
       await hideAttachmentsForPostTree(db, id);
       await db.query(
-        "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
+        "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,audience_group_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [id],
       );
       await endCollaborationSessions(db, { postId: id });

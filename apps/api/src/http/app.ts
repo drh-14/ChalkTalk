@@ -453,6 +453,9 @@ function postCreateBody(value: unknown): CreatePost {
       "options",
       "announcement",
       "private",
+      "audience",
+      "staffRecipientIds",
+      "groupId",
     ],
     ["type", "title", "bodyMarkdown"],
   );
@@ -476,6 +479,26 @@ function postCreateBody(value: unknown): CreatePost {
     throw validationError("Announcements cannot be anonymous");
   if (body.private !== undefined && typeof body.private !== "boolean")
     throw validationError("Private is invalid");
+  if (
+    body.audience !== undefined &&
+    !["class", "staff", "selected_staff", "group"].includes(
+      body.audience as string,
+    )
+  )
+    throw validationError("Audience is invalid");
+  if (
+    body.staffRecipientIds !== undefined &&
+    (!Array.isArray(body.staffRecipientIds) ||
+      !body.staffRecipientIds.every(
+        (id: unknown) => typeof id === "string" && UUID_PATTERN.test(id),
+      ))
+  )
+    throw validationError("Staff recipients are invalid");
+  if (
+    body.groupId !== undefined &&
+    (typeof body.groupId !== "string" || !UUID_PATTERN.test(body.groupId))
+  )
+    throw validationError("Group is invalid");
   return {
     type: body.type,
     title,
@@ -484,8 +507,29 @@ function postCreateBody(value: unknown): CreatePost {
     tags: postTags(body.tags),
     ...(body.type === "poll" ? { options: pollOptions(body.options) } : {}),
     ...(body.announcement ? { announcement: true } : {}),
-    ...(body.private ? { private: true } : {}),
+    ...(body.private !== undefined ? { private: body.private as boolean } : {}),
+    ...(body.audience
+      ? { audience: body.audience as CreatePost["audience"] }
+      : {}),
+    ...(body.staffRecipientIds
+      ? { staffRecipientIds: body.staffRecipientIds as string[] }
+      : {}),
+    ...(body.groupId ? { groupId: body.groupId as string } : {}),
   };
+}
+function privateGroupName(value: unknown): string {
+  if (typeof value !== "string") throw validationError("Group name is invalid");
+  const name = value.trim();
+  if (!name || name.length > 64) throw validationError("Group name is invalid");
+  return name;
+}
+function privateGroupMembers(value: unknown): string[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every((id) => typeof id === "string" && UUID_PATTERN.test(id))
+  )
+    throw validationError("Group members are invalid");
+  return value;
 }
 function answerCreateBody(value: unknown): CreateAnswer {
   const body = strictBody(
@@ -2168,6 +2212,110 @@ export function createApp(
       }
     },
   );
+  app.get(
+    "/api/v1/courses/:courseId/private-groups",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response.json({
+          data: await posts().listPrivateGroups(
+            param(request.params.courseId),
+            current.session.user.id,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/private-groups",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["name", "memberIds"],
+          ["name", "memberIds"],
+        );
+        const value = await posts().createPrivateGroup(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          privateGroupName(body.name),
+          privateGroupMembers(body.memberIds),
+        );
+        response
+          .status(201)
+          .set(
+            "Location",
+            `/api/v1/courses/${param(request.params.courseId)}/private-groups/${value.id}`,
+          )
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/private-groups/:groupId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["name"], ["name"]);
+        response.json({
+          data: await posts().renamePrivateGroup(
+            param(request.params.courseId),
+            param(request.params.groupId),
+            auth(response).session.user.id,
+            privateGroupName(body.name),
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/private-groups/:groupId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await posts().deletePrivateGroup(
+          param(request.params.courseId),
+          param(request.params.groupId),
+          auth(response).session.user.id,
+        );
+        response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const [method, included] of [
+    ["put", true],
+    ["delete", false],
+  ] as const)
+    app[method](
+      "/api/v1/courses/:courseId/private-groups/:groupId/members/:userId",
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          await posts().setPrivateGroupMember(
+            param(request.params.courseId),
+            param(request.params.groupId),
+            auth(response).session.user.id,
+            param(request.params.userId),
+            included,
+          );
+          response.status(204).end();
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
   app.post(
     "/api/v1/courses/:courseId/posts",
     ...authenticatedUnsafe,

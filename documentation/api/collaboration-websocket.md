@@ -8,7 +8,7 @@ Live sessions are edited over a WebSocket served by the collaboration server, a 
 2. Open `webSocketUrl`. It contains no credentials. The browser's `Origin` must exactly match a configured HTTPS frontend origin.
 3. Join the document named `documentId` (`collaboration-session:{collaborationSessionId}`), sending `ticket` as the Hocuspocus authentication token.
 
-The server consumes the ticket in the same database transaction that accepts the connection. A ticket is accepted only once, only before `expiresAt`, only for its own document, and only while its login session is valid, the course and session are active, and the user is still the creator, a current course TA or instructor, or a current invitee. Identity comes only from the ticket; the server never accepts a client-supplied user ID, role, or name.
+The server consumes the ticket in the same database transaction that accepts the connection. A ticket is accepted only once, only before `expiresAt`, only for its own document, and only while its login session is valid, the course and session are active, the user is still the creator, a current course TA or instructor, or a current invitee, **and the user currently belongs to the anchor post's audience**. Group removal revokes even the creator; selected-staff role loss revokes a named recipient, but the post's author retains access while a course member. Staff have no audience override. Identity comes only from the ticket; the server never accepts a client-supplied user ID, role, or name. Every incoming message and outgoing frame, including awareness, replay, buffered updates, and end notices, rechecks current access before processing or sending it.
 
 ## Document
 
@@ -56,11 +56,12 @@ Stateless messages are JSON strings:
 
 Hocuspocus reports a document-level close to the client with code `1000`; the reason string carries its meaning.
 
-| Reason           | Meaning                                                                                       | Client action                                                                  |
-| ---------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `session-ended`  | The session ended, went idle, or its course was archived or its post removed.                 | Show the final text read-only from the snapshot route. Do not reconnect.       |
-| `access-removed` | The user was removed from the session, left or lost the course, or their login session ended. | Show an access-removed state. Do not reconnect.                                |
-| `invalid-update` | The client sent an oversized message or an update outside the allowed document shape.         | Keep the local text visible as unsaved; reconnect with a new ticket to resync. |
+| Reason                      | Meaning                                                                                       | Client action                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `session-ended`             | The session ended, went idle, or its course was archived or its post removed.                 | Show the final text read-only from the snapshot route. Do not reconnect.                 |
+| `access-removed`            | The user was removed from the session, left or lost the course, or their login session ended. | Show an access-removed state. Do not reconnect.                                          |
+| `invalid-update`            | The client sent an oversized message or an update outside the allowed document shape.         | Keep the local text visible as unsaved; reconnect with a new ticket to resync.           |
+| `authorization-unavailable` | The current-audience check failed, timed out, or outgoing frames exceeded the bounded queue.  | Stop sending and request a fresh session ticket only after the session is visible again. |
 
 An authentication failure is reported through the provider's authentication-failed event. Request a new ticket and try again only if the session is still visible and active.
 

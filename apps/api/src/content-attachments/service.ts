@@ -10,7 +10,7 @@ import {
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
-import { readablePost } from "../posts/visibility.js";
+import { assertPostVisible, readablePost } from "../posts/visibility.js";
 import type { NewUpload } from "../course-files/service.js";
 import { validateUpload } from "../course-files/validate.js";
 
@@ -140,7 +140,7 @@ export class ContentAttachmentService {
     const postDeleted = kind === "post" ? "t.deleted_at" : "p.deleted_at";
     const duplicate =
       kind === "post" ? "t.duplicate_status" : "p.duplicate_status";
-    const readable = readablePost(kind === "post" ? "t" : "p", "$2", "m.role");
+    const readable = readablePost(kind === "post" ? "t" : "p", "$2");
     const lockClause = lock
       ? ` FOR UPDATE OF t FOR SHARE OF c,m${kind === "post" ? "" : " FOR NO KEY UPDATE OF p"}`
       : "";
@@ -176,6 +176,7 @@ export class ContentAttachmentService {
       !row.readable
     )
       throw notFound();
+    if (lock) await assertPostVisible(db, row.post_id!, userId);
     if (row.status !== "active") {
       if (!write && row.status === "archived")
         return { courseId: row.course_id, postId: row.post_id };

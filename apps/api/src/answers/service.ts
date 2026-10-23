@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
-import { canReadPost } from "../posts/visibility.js";
+import { assertPostVisible } from "../posts/visibility.js";
 import { recordActivity } from "../notifications/activity.js";
 import { newMentions, parseMentions } from "../notifications/mentions.js";
 import {
@@ -113,12 +113,9 @@ export class AnswerService {
     const post = result.rows[0];
     if (!post) throw notFound();
     const member = await this.membership(db, post.course_id, userId, lock);
-    if (
-      post.deleted_at ||
-      post.duplicate_status === "confirmed" ||
-      !canReadPost(post, userId, member.role)
-    )
+    if (post.deleted_at || post.duplicate_status === "confirmed")
       throw notFound();
+    await assertPostVisible(db, post.id, userId);
     return { post, member };
   }
   private async row(db: Db, answerId: string, lock = false) {

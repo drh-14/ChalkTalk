@@ -36,6 +36,9 @@ export type Post = {
   announcement?: boolean;
   /** Readable only by the author and course staff. */
   private?: boolean;
+  audience?: "class" | "staff" | "selected_staff" | "group";
+  groupId?: string | null;
+  groupName?: string;
   answered?: boolean;
   /** Questions only: active followup discussions still unresolved. */
   unresolvedFollowups?: number;
@@ -68,7 +71,109 @@ export type CreatePostInput = {
   options?: { label: string }[];
   announcement?: boolean;
   private?: boolean;
+  audience?: "class" | "staff" | "selected_staff" | "group";
+  staffRecipientIds?: string[];
+  groupId?: string;
 };
+export type PrivateGroup = {
+  id: string;
+  name: string;
+  joined: boolean;
+  memberIds?: string[];
+};
+
+export async function listPrivateGroups(
+  courseId: string,
+): Promise<PrivateGroup[]> {
+  const payload = await receive<{ data: PrivateGroup[] }>(
+    await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/private-groups`,
+      {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      },
+    ),
+  );
+  return payload.data;
+}
+export async function createPrivateGroup(
+  courseId: string,
+  name: string,
+  memberIds: string[],
+  csrfToken: string,
+): Promise<PrivateGroup> {
+  const payload = await receive<{ data: PrivateGroup }>(
+    await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/private-groups`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+        },
+        body: JSON.stringify({ name, memberIds }),
+      },
+    ),
+  );
+  return payload.data;
+}
+export async function renamePrivateGroup(
+  courseId: string,
+  groupId: string,
+  name: string,
+  csrfToken: string,
+): Promise<PrivateGroup> {
+  const payload = await receive<{ data: PrivateGroup }>(
+    await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/private-groups/${encodeURIComponent(groupId)}`,
+      {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+        },
+        body: JSON.stringify({ name }),
+      },
+    ),
+  );
+  return payload.data;
+}
+export async function deletePrivateGroup(
+  courseId: string,
+  groupId: string,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/private-groups/${encodeURIComponent(groupId)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    },
+  );
+  if (!response.ok) await receive<{ data: unknown }>(response);
+}
+export async function setPrivateGroupMember(
+  courseId: string,
+  groupId: string,
+  userId: string,
+  included: boolean,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/private-groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`,
+    {
+      method: included ? "PUT" : "DELETE",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    },
+  );
+  if (!response.ok) await receive<{ data: unknown }>(response);
+}
 export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
   q?: string;

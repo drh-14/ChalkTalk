@@ -211,6 +211,42 @@ integration("collaboration session HTTP contract", () => {
       expect(reused.body.error.code).toBe("idempotency_key_reused");
     });
 
+    it("does not replay a group session after its creator leaves the audience", async () => {
+      const groupId = uuidv7();
+      await pool.query(
+        "INSERT INTO private_post_groups(id,course_id,name) VALUES ($1,$2,'Replay group')",
+        [groupId, course.courseId],
+      );
+      await pool.query(
+        "INSERT INTO private_post_group_members(group_id,course_id,user_id) VALUES ($1,$2,$3)",
+        [groupId, course.courseId, as("alice")],
+      );
+      await pool.query(
+        "UPDATE posts SET audience='group',audience_group_id=$2,private=true WHERE id=$1",
+        [course.postId, groupId],
+      );
+      try {
+        const key = uuidv7();
+        const first = await create("alice").set("Idempotency-Key", key);
+        expect(first.status).toBe(201);
+        await pool.query(
+          "DELETE FROM private_post_group_members WHERE group_id=$1 AND user_id=$2",
+          [groupId, as("alice")],
+        );
+        const replay = await create("alice").set("Idempotency-Key", key);
+        expect(replay.status).toBe(404);
+        expect(replay.body.data).toBeUndefined();
+      } finally {
+        await pool.query(
+          "UPDATE posts SET audience='class',audience_group_id=NULL,private=false WHERE id=$1",
+          [course.postId],
+        );
+        await pool.query("DELETE FROM private_post_groups WHERE id=$1", [
+          groupId,
+        ]);
+      }
+    });
+
     it("requires authentication and CSRF", async () => {
       const unauthenticated = await request(app(as("alice")))
         .post(`/api/v1/courses/${course.courseId}/collaboration-sessions`)
@@ -436,6 +472,57 @@ integration("collaboration session HTTP contract", () => {
         (await get("bob", `/api/v1/collaboration-sessions/${session.id}`))
           .status,
       ).toBe(200);
+    });
+
+    it("does not return an ended group session after audience removal", async () => {
+      const groupId = uuidv7();
+      await pool.query(
+        "INSERT INTO private_post_groups(id,course_id,name) VALUES ($1,$2,'Ending group')",
+        [groupId, course.courseId],
+      );
+      await pool.query(
+        "INSERT INTO private_post_group_members(group_id,course_id,user_id) VALUES ($1,$2,$3)",
+        [groupId, course.courseId, as("alice")],
+      );
+      await pool.query(
+        "UPDATE posts SET audience='group',audience_group_id=$2,private=true WHERE id=$1",
+        [course.postId, groupId],
+      );
+      try {
+        const session = await started();
+        const ending = service
+          .update(session.id, as("alice"), '"v1"', { status: "ended" })
+          .then(
+            () => ({ status: 200 }),
+            (error: { status?: number }) => ({ status: error.status }),
+          );
+        let endingStarted = false;
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const state = await pool.query<{ lifecycle_state: string }>(
+            "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1",
+            [session.id],
+          );
+          if (state.rows[0]?.lifecycle_state === "ending") {
+            endingStarted = true;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        expect(endingStarted).toBe(true);
+        await pool.query(
+          "DELETE FROM private_post_group_members WHERE group_id=$1 AND user_id=$2",
+          [groupId, as("alice")],
+        );
+        expect(await ending).toEqual({ status: 404 });
+      } finally {
+        await pool.query(
+          "UPDATE posts SET audience='class',audience_group_id=NULL,private=false WHERE id=$1",
+          [course.postId],
+        );
+        await pool.query("DELETE FROM private_post_groups WHERE id=$1", [
+          groupId,
+        ]);
+      }
     });
 
     it("notifies the collaboration server of updates, removals, and endings", async () => {
@@ -730,6 +817,39 @@ integration("collaboration session HTTP contract", () => {
         [other.postId],
       );
       expect(await visible()).not.toContain(elsewhere.id);
+    });
+
+    it("restarts a personal session page when its course is archived", async () => {
+      const session = await started("bob");
+      await invite("bob", session.id, as("tim"));
+      let queries = 0;
+      const racedPool = {
+        query: async (statement: string, values?: unknown[]) => {
+          const result = await pool.query(statement, values);
+          if (++queries === 1)
+            await pool.query(
+              "UPDATE courses SET status='archived' WHERE id=$1",
+              [course.courseId],
+            );
+          return result;
+        },
+        connect: () => pool.connect(),
+      } as unknown as Pool;
+      const racedService = new CollaborationSessionService(racedPool, {
+        webSocketUrl: "wss://app.example.edu/collaboration",
+      });
+      try {
+        await expect(
+          racedService.listForUser(as("tim"), { limit: 25 }),
+        ).rejects.toMatchObject({
+          status: 409,
+          code: "search_restart_required",
+        });
+      } finally {
+        await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+          course.courseId,
+        ]);
+      }
     });
 
     it("requires a signed-in user", async () => {

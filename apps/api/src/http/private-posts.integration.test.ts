@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -9,7 +10,11 @@ import { AnswerService } from "../answers/service.js";
 import { FollowupService } from "../followups/service.js";
 import { NotificationService } from "../notifications/service.js";
 import { PostService } from "../posts/service.js";
-import { CollaborationSessionService } from "../collaboration/service.js";
+import { assertPostVisible } from "../posts/visibility.js";
+import {
+  CollaborationSessionService,
+  COLLABORATION_EVENTS_CHANNEL,
+} from "../collaboration/service.js";
 import { ContentAttachmentService } from "../content-attachments/service.js";
 import { createApp } from "./app.js";
 
@@ -135,9 +140,27 @@ integration("private posts HTTP contract", () => {
     expect(row.rows[0].private).toBe(true);
     await expect(
       pool.query("UPDATE posts SET type='poll' WHERE id=$1", [postId]),
-    ).rejects.toThrow(/posts_private_check/);
+    ).rejects.toThrow(/posts_(private|audience)_check/);
     const open = await create(ids.asker, { private: undefined });
     expect(open.body.data.private).toBe(false);
+  });
+
+  it("keeps legacy private-only inserts restricted", async () => {
+    const postId = randomUUID();
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,private) VALUES($1,$2,$3,'question','Legacy private post','Restricted body',true)",
+      [postId, ids.course, ids.asker],
+    );
+    const stored = await pool.query<{ audience: string; private: boolean }>(
+      "SELECT audience,private FROM posts WHERE id=$1",
+      [postId],
+    );
+    expect(stored.rows[0]).toEqual({ audience: "staff", private: true });
+    expect((await get(ids.classmate, `/api/v1/posts/${postId}`)).status).toBe(
+      404,
+    );
+    expect((await get(ids.ta, `/api/v1/posts/${postId}`)).status).toBe(200);
+    expect((await get(ids.asker, `/api/v1/posts/${postId}`)).status).toBe(200);
   });
 
   it("shows a private post to its author and staff only", async () => {
@@ -150,6 +173,432 @@ integration("private posts HTTP contract", () => {
     const hidden = await get(ids.classmate, `/api/v1/posts/${postId}`);
     expect(hidden.status).toBe(404);
     expect(hidden.body.error.code).toBe("not_found");
+  });
+
+  it("limits a selected-staff post to its author and named current staff", async () => {
+    const created = await create(ids.asker, {
+      private: undefined,
+      audience: "selected_staff",
+      staffRecipientIds: [ids.ta],
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.data.audience).toBe("selected_staff");
+    const postId = created.body.data.id as string;
+    expect((await get(ids.asker, `/api/v1/posts/${postId}`)).status).toBe(200);
+    expect((await get(ids.ta, `/api/v1/posts/${postId}`)).status).toBe(200);
+    expect((await get(ids.instructor, `/api/v1/posts/${postId}`)).status).toBe(
+      404,
+    );
+    expect(await feed(ids.instructor)).not.toContain(postId);
+    await pool.query(
+      "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+      [ids.course, ids.ta],
+    );
+    try {
+      expect((await get(ids.ta, `/api/v1/posts/${postId}`)).status).toBe(404);
+      expect(await feed(ids.ta)).not.toContain(postId);
+    } finally {
+      await pool.query(
+        "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.ta],
+      );
+    }
+  });
+
+  it("applies group membership immediately, even to a post's author", async () => {
+    const group = await unsafe(
+      request(app(ids.instructor)).post(
+        `/api/v1/courses/${ids.course}/private-groups`,
+      ),
+    ).send({ name: "Project mentors", memberIds: [ids.asker, ids.ta] });
+    expect(group.status).toBe(201);
+    const groupId = group.body.data.id as string;
+    const created = await create(ids.asker, {
+      private: undefined,
+      audience: "group",
+      groupId,
+    });
+    expect(created.status).toBe(201);
+    const postId = created.body.data.id as string;
+    expect((await get(ids.ta, `/api/v1/posts/${postId}`)).status).toBe(200);
+    expect((await get(ids.instructor, `/api/v1/posts/${postId}`)).status).toBe(
+      404,
+    );
+    const answered = await unsafe(
+      request(app(ids.ta)).post(`/api/v1/posts/${postId}/answers`),
+    ).send({ bodyMarkdown: "For the group only" });
+    expect(answered.status).toBe(201);
+    const listener = await pool.connect();
+    await listener.query(`LISTEN ${COLLABORATION_EVENTS_CHANNEL}`);
+    const changed = new Promise<unknown>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Access event not delivered")),
+        3000,
+      );
+      listener.once("notification", (message) => {
+        clearTimeout(timeout);
+        resolve(JSON.parse(message.payload!));
+      });
+    });
+    try {
+      await unsafe(
+        request(app(ids.instructor)).delete(
+          `/api/v1/courses/${ids.course}/private-groups/${groupId}/members/${ids.asker}`,
+        ),
+      ).expect(204);
+      expect(await changed).toMatchObject({
+        type: "access_changed",
+        courseId: ids.course,
+        userIds: [ids.asker],
+      });
+    } finally {
+      await listener.query(`UNLISTEN ${COLLABORATION_EVENTS_CHANNEL}`);
+      listener.release();
+    }
+    expect((await get(ids.asker, `/api/v1/posts/${postId}`)).status).toBe(404);
+    await unsafe(
+      request(app(ids.asker)).put(`/api/v1/posts/${postId}/follow`),
+    ).expect(404);
+    expect((await get(ids.asker, answered.headers.location)).status).toBe(404);
+    expect(
+      (await get(ids.asker, `/api/v1/posts/${postId}/answers`)).status,
+    ).toBe(404);
+    const notifications = await get(
+      ids.asker,
+      "/api/v1/users/me/notifications",
+    );
+    expect(notifications.status).toBe(200);
+    expect(
+      notifications.body.data.map((item: { postId: string }) => item.postId),
+    ).not.toContain(postId);
+    expect((await get(ids.ta, `/api/v1/posts/${postId}`)).status).toBe(200);
+    await unsafe(
+      request(app(ids.instructor)).delete(
+        `/api/v1/courses/${ids.course}/private-groups/${groupId}`,
+      ),
+    ).expect(409);
+  });
+
+  it("holds audience grants through a visibility-checked write transaction", async () => {
+    const group = await unsafe(
+      request(app(ids.instructor)).post(
+        `/api/v1/courses/${ids.course}/private-groups`,
+      ),
+    ).send({ name: "Write race group", memberIds: [ids.asker] });
+    expect(group.status).toBe(201);
+    const groupId = group.body.data.id as string;
+    const groupPost = await create(ids.asker, {
+      private: undefined,
+      audience: "group",
+      groupId,
+    });
+    expect(groupPost.status).toBe(201);
+    const staffPost = await create(ids.asker, {
+      private: undefined,
+      audience: "selected_staff",
+      staffRecipientIds: [ids.ta],
+    });
+    expect(staffPost.status).toBe(201);
+
+    for (const scenario of [
+      {
+        postId: groupPost.body.data.id as string,
+        viewerId: ids.asker,
+        revoke:
+          "DELETE FROM private_post_group_members WHERE group_id=$1 AND user_id=$2",
+        params: [groupId, ids.asker],
+      },
+      {
+        postId: staffPost.body.data.id as string,
+        viewerId: ids.ta,
+        revoke:
+          "DELETE FROM post_staff_recipients WHERE post_id=$1 AND user_id=$2",
+        params: [staffPost.body.data.id as string, ids.ta],
+      },
+    ]) {
+      const writer = await pool.connect();
+      const revoker = await pool.connect();
+      try {
+        await writer.query("BEGIN");
+        await assertPostVisible(writer, scenario.postId, scenario.viewerId);
+        await revoker.query("BEGIN");
+        await revoker.query("SET LOCAL lock_timeout = '100ms'");
+        await expect(
+          revoker.query(scenario.revoke, scenario.params),
+        ).rejects.toMatchObject({ code: "55P03" });
+        await revoker.query("ROLLBACK");
+        await writer.query("UPDATE posts SET updated_at=now() WHERE id=$1", [
+          scenario.postId,
+        ]);
+        await writer.query("COMMIT");
+        await pool.query(scenario.revoke, scenario.params);
+        expect(
+          (await get(scenario.viewerId, `/api/v1/posts/${scenario.postId}`))
+            .status,
+        ).toBe(404);
+      } finally {
+        await writer.query("ROLLBACK");
+        await revoker.query("ROLLBACK");
+        writer.release();
+        revoker.release();
+      }
+    }
+  });
+
+  it("restricts group administration and validates exclusive audiences", async () => {
+    const groupPath = `/api/v1/courses/${ids.course}/private-groups`;
+    const denied = await unsafe(request(app(ids.asker)).post(groupPath)).send({
+      name: "Student made",
+      memberIds: [ids.asker],
+    });
+    expect(denied.status).toBe(403);
+    const group = await unsafe(
+      request(app(ids.instructor)).post(groupPath),
+    ).send({ name: "  Graders  ", memberIds: [ids.ta] });
+    expect(group.status).toBe(201);
+    expect(group.body.data).toEqual({
+      id: expect.any(String),
+      name: "Graders",
+      joined: false,
+      memberIds: [ids.ta],
+    });
+    const listed = await get(ids.instructor, groupPath);
+    expect(listed.status).toBe(200);
+    expect(listed.body.data).toContainEqual(group.body.data);
+    const duplicate = await unsafe(request(app(ids.ta)).post(groupPath)).send({
+      name: "graders",
+      memberIds: [],
+    });
+    expect(duplicate.status).toBe(409);
+    const groupId = group.body.data.id as string;
+    expect(
+      (
+        await create(ids.asker, {
+          private: undefined,
+          audience: "group",
+          groupId,
+        })
+      ).status,
+    ).toBe(422);
+    expect(
+      (await create(ids.asker, { private: true, audience: "class" })).status,
+    ).toBe(422);
+    expect(
+      (
+        await create(ids.asker, {
+          private: undefined,
+          audience: "selected_staff",
+          staffRecipientIds: [ids.classmate],
+        })
+      ).status,
+    ).toBe(422);
+    const renamed = await unsafe(
+      request(app(ids.ta)).patch(`${groupPath}/${groupId}`),
+    ).send({ name: "Reviewers" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.data).toEqual({
+      id: groupId,
+      name: "Reviewers",
+      joined: true,
+      memberIds: [ids.ta],
+    });
+    const empty = await unsafe(
+      request(app(ids.instructor)).post(groupPath),
+    ).send({ name: "Empty group", memberIds: [] });
+    expect(empty.status).toBe(201);
+    expect(empty.body.data).toEqual({
+      id: expect.any(String),
+      name: "Empty group",
+      joined: false,
+      memberIds: [],
+    });
+    expect((await get(ids.instructor, groupPath)).body.data).toContainEqual(
+      empty.body.data,
+    );
+    expect((await get(ids.asker, groupPath)).body.data).toEqual([]);
+  });
+
+  it("serializes role changes with private group listing", async () => {
+    const groupPath = `/api/v1/courses/${ids.course}/private-groups`;
+    const joined = await unsafe(
+      request(app(ids.instructor)).post(groupPath),
+    ).send({ name: "Role change joined", memberIds: [ids.ta] });
+    expect(joined.status).toBe(201);
+    const unjoined = await unsafe(
+      request(app(ids.instructor)).post(groupPath),
+    ).send({ name: "Role change unjoined", memberIds: [ids.asker] });
+    expect(unjoined.status).toBe(201);
+
+    let queries = 0;
+    let demotion: Promise<unknown> | undefined;
+    const racedPool = {
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (statement: string, values?: unknown[]) => {
+            const result = await client.query(statement, values);
+            if (++queries === 2)
+              demotion = pool.query(
+                "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+                [ids.course, ids.ta],
+              );
+            return result;
+          },
+          release: () => client.release(),
+        };
+      },
+    } as unknown as Pool;
+    try {
+      const groups = await new PostService(racedPool).listPrivateGroups(
+        ids.course,
+        ids.ta,
+      );
+      expect(groups).toContainEqual({
+        id: joined.body.data.id,
+        name: "Role change joined",
+        joined: true,
+        memberIds: [ids.ta],
+      });
+      expect(groups.map((group) => group.id)).toContain(unjoined.body.data.id);
+      await demotion;
+      const after = await new PostService(pool).listPrivateGroups(
+        ids.course,
+        ids.ta,
+      );
+      expect(after).toContainEqual({
+        id: joined.body.data.id,
+        name: "Role change joined",
+        joined: true,
+      });
+      expect(after.map((group) => group.id)).not.toContain(
+        unjoined.body.data.id,
+      );
+      expect(after.every((group) => !("memberIds" in group))).toBe(true);
+    } finally {
+      await demotion;
+      await pool.query(
+        "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.ta],
+      );
+    }
+  });
+
+  it("does not return anonymous author-filter results after staff demotion", async () => {
+    const created = await create(ids.instructor, {
+      private: undefined,
+      anonymous: true,
+      title: "Anonymous author filter race",
+    });
+    expect(created.status).toBe(201);
+    for (const filter of [
+      { authorId: ids.instructor },
+      { authorRole: "instructor" as const },
+    ]) {
+      let queries = 0;
+      const racedPool = {
+        query: async (statement: string, values?: unknown[]) => {
+          const result = await pool.query(statement, values);
+          if (++queries === 2)
+            await pool.query(
+              "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+              [ids.course, ids.ta],
+            );
+          return result;
+        },
+        connect: () => pool.connect(),
+      } as unknown as Pool;
+      try {
+        await expect(
+          new PostService(racedPool).list(ids.course, ids.ta, {
+            sort: "newest",
+            limit: 25,
+            ...filter,
+          }),
+        ).rejects.toMatchObject({
+          status: 409,
+          code: "search_restart_required",
+        });
+      } finally {
+        await pool.query(
+          "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+          [ids.course, ids.ta],
+        );
+      }
+    }
+  });
+
+  it("rejects deletion when a concurrent group post commits", async () => {
+    const groupPath = `/api/v1/courses/${ids.course}/private-groups`;
+    const group = await unsafe(request(app(ids.instructor)).post(groupPath))
+      .send({ name: "Concurrent group", memberIds: [ids.asker] })
+      .expect(201);
+    const groupId = group.body.data.id as string;
+    const client = await pool.connect();
+    let committed = false;
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT 1 FROM private_post_groups WHERE id=$1 FOR SHARE",
+        [groupId],
+      );
+      await client.query(
+        `INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,audience,audience_group_id)
+         VALUES ($1,$2,$3,'question','Concurrent post','Body','group',$4)`,
+        [
+          "01a0e5cc-58ae-7009-9f43-aaaaaaaaaaaa",
+          ids.course,
+          ids.asker,
+          groupId,
+        ],
+      );
+      const deleting = unsafe(
+        request(app(ids.instructor)).delete(`${groupPath}/${groupId}`),
+      ).then((response) => response);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await client.query("COMMIT");
+      committed = true;
+      const response = await deleting;
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe("group_in_use");
+    } finally {
+      if (!committed) await client.query("ROLLBACK");
+      client.release();
+    }
+  });
+
+  it("does not replay a group creation response after its author loses membership", async () => {
+    const group = await unsafe(
+      request(app(ids.instructor)).post(
+        `/api/v1/courses/${ids.course}/private-groups`,
+      ),
+    )
+      .send({ name: "Replay group", memberIds: [ids.asker] })
+      .expect(201);
+    const body = {
+      type: "question",
+      title: "Private replay",
+      bodyMarkdown: "Only for this group",
+      audience: "group",
+      groupId: group.body.data.id,
+    };
+    const first = await unsafe(
+      request(app(ids.asker)).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .set("Idempotency-Key", "group-replay-key")
+      .send(body);
+    expect(first.status).toBe(201);
+    await unsafe(
+      request(app(ids.instructor)).delete(
+        `/api/v1/courses/${ids.course}/private-groups/${group.body.data.id}/members/${ids.asker}`,
+      ),
+    ).expect(204);
+    const replay = await unsafe(
+      request(app(ids.asker)).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .set("Idempotency-Key", "group-replay-key")
+      .send(body);
+    expect(replay.status).toBe(404);
+    expect(replay.body.error.code).toBe("not_found");
   });
 
   it("rejects private announcements, private polls, and non-boolean values", async () => {
@@ -283,6 +732,57 @@ integration("private posts HTTP contract", () => {
       await expect(attachments.download(id, ids.ta)).resolves.toMatchObject({
         name: "notes.txt",
       });
+    }
+  });
+
+  it("rejects attachment deletion when its audience grant is revoked", async () => {
+    const group = await unsafe(
+      request(app(ids.instructor)).post(
+        `/api/v1/courses/${ids.course}/private-groups`,
+      ),
+    ).send({ name: "Attachment race group", memberIds: [ids.asker] });
+    expect(group.status).toBe(201);
+    const groupId = group.body.data.id as string;
+    const created = await create(ids.asker, {
+      private: undefined,
+      audience: "group",
+      groupId,
+    });
+    expect(created.status).toBe(201);
+    const postId = created.body.data.id as string;
+    const attachmentId = randomUUID();
+    await pool.query(
+      `INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256)
+       VALUES ($1,$2,$3,$4,'group.txt','text/plain',4,decode(repeat('00',32),'hex'))`,
+      [attachmentId, ids.course, postId, randomUUID()],
+    );
+    const attachments = new ContentAttachmentService(
+      pool,
+      { send: async () => undefined } as unknown as S3Client,
+      "bucket",
+    );
+    const revoker = await pool.connect();
+    try {
+      await revoker.query("BEGIN");
+      await revoker.query(
+        "DELETE FROM private_post_group_members WHERE group_id=$1 AND user_id=$2",
+        [groupId, ids.asker],
+      );
+      const deletion = attachments.delete(attachmentId, ids.asker).then(
+        () => ({ status: 204 }),
+        (error: unknown) => error,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await revoker.query("COMMIT");
+      expect(await deletion).toMatchObject({ status: 404 });
+      const stored = await pool.query(
+        "SELECT deleted_at FROM content_attachments WHERE id=$1",
+        [attachmentId],
+      );
+      expect(stored.rows[0].deleted_at).toBeNull();
+    } finally {
+      await revoker.query("ROLLBACK");
+      revoker.release();
     }
   });
 
