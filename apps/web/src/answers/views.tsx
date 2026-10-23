@@ -33,6 +33,8 @@ type Props = {
   postId: string;
   role?: Role;
   courseStatus?: "active" | "archived" | "deleting";
+  allowAnonymousPosting?: boolean;
+  allowFollowupResolution?: boolean;
   csrfToken: string;
   /**
    * Called after the viewer answers, edits an answer, posts, deletes, or
@@ -211,6 +213,12 @@ function TextComposer({
       setError("Write 1 to 100,000 characters before posting.");
       return;
     }
+    if (!createdId && anonymous && !anonymousAllowed) {
+      setError(
+        "Anonymous posting is disabled for this course. Switch to a named response before posting.",
+      );
+      return;
+    }
     const payload = JSON.stringify({ body, anonymous });
     if (attempt.current?.payload !== payload)
       attempt.current = { payload, key: crypto.randomUUID() };
@@ -273,6 +281,18 @@ function TextComposer({
           />
           Post anonymously
         </label>
+      )}
+      {!anonymousAllowed && anonymous && !createdId && (
+        <p className="form-message error">
+          Anonymous posting is now disabled. Your draft is unchanged.{" "}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setAnonymous(false)}
+          >
+            Switch to named response
+          </button>
+        </p>
       )}
       {error && (
         <p role="alert" className="form-message error">
@@ -786,7 +806,7 @@ export function AnswerSections(props: Props) {
                 key={kind}
                 label="Your answer"
                 submitLabel="Post answer"
-                anonymousAllowed
+                anonymousAllowed={props.allowAnonymousPosting !== false}
                 attachmentKind="answer"
                 csrfToken={props.csrfToken}
                 onComplete={() => {
@@ -999,7 +1019,11 @@ function FollowupItem({
         <p className="response-byline">{name}</p>
         {item.parentId === null && !item.deleted && (
           <DiscussionStatus
-            item={item}
+            item={{
+              ...item,
+              canResolve:
+                item.canResolve && props.allowFollowupResolution !== false,
+            }}
             disabled={pending || !canWrite(props)}
             onChange={(resolved) => void resolve(resolved)}
           />
@@ -1098,7 +1122,7 @@ function FollowupItem({
         <TextComposer
           label="Followup"
           submitLabel="Post reply"
-          anonymousAllowed
+          anonymousAllowed={props.allowAnonymousPosting !== false}
           attachmentKind="followup"
           csrfToken={props.csrfToken}
           onComplete={() => setReplying(false)}
@@ -1391,7 +1415,7 @@ export function FollowupSections(props: Props) {
         <TextComposer
           label="Followup"
           submitLabel="Post followup"
-          anonymousAllowed
+          anonymousAllowed={props.allowAnonymousPosting !== false}
           attachmentKind="followup"
           csrfToken={props.csrfToken}
           onComplete={() => setComposing(false)}

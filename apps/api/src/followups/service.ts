@@ -103,9 +103,11 @@ export class FollowupService {
       private: boolean;
       author_user_id: string | null;
       status: string;
+      allow_anonymous_posting: boolean;
+      allow_followup_resolution: boolean;
       role: Role;
     }>(
-      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.author_user_id,c.status,m.role
+      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.author_user_id,c.status,c.allow_anonymous_posting,c.allow_followup_resolution,m.role
        FROM posts p JOIN courses c ON c.id=p.course_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
        WHERE p.id=$1${lock ? " FOR NO KEY UPDATE OF p FOR SHARE OF c,m" : ""}`,
@@ -158,6 +160,7 @@ export class FollowupService {
     userId: string,
     role: Role,
     status: string,
+    allowResolution: boolean,
     replyCount?: number,
   ): Promise<Followup> {
     const person = await db.query<{ id: string; displayName: string }>(
@@ -181,7 +184,12 @@ export class FollowupService {
     }
     // Staff and the question's author may resolve an active discussion.
     let canResolve = false;
-    if (!row.parent_followup_id && !row.deleted_at && status === "active") {
+    if (
+      !row.parent_followup_id &&
+      !row.deleted_at &&
+      status === "active" &&
+      allowResolution
+    ) {
       if (rank[role] > 0) canResolve = true;
       else {
         const asker = await db.query<{ author_user_id: string | null }>(
@@ -242,6 +250,12 @@ export class FollowupService {
           "permission_denied",
           "Only staff and the question's author can resolve discussions",
         );
+      if (!question.allow_followup_resolution)
+        throw new AuthError(
+          409,
+          "followup_resolution_disabled",
+          "Followup resolution is disabled for this course",
+        );
       await db.query(
         `UPDATE followups SET
            resolved_at = CASE WHEN $2 THEN coalesce(resolved_at, now()) END,
@@ -255,6 +269,7 @@ export class FollowupService {
         userId,
         question.role,
         question.status,
+        question.allow_followup_resolution,
       );
     });
   }
@@ -303,11 +318,13 @@ export class FollowupService {
             userId,
             question.role,
             question.status,
+            question.allow_followup_resolution,
           );
           return {
             ...old.rows[0].response_body,
             author: current.author,
             canEdit: current.canEdit,
+            canResolve: current.canResolve,
           };
         }
         await db.query(
@@ -320,6 +337,12 @@ export class FollowupService {
         const parent = await this.row(db, parentId, true);
         if (parent.post_id !== postId || parent.deleted_at) throw notFound();
       }
+      if (input.anonymous && !question.allow_anonymous_posting)
+        throw new AuthError(
+          409,
+          "anonymous_posting_disabled",
+          "Anonymous posting is disabled for this course",
+        );
       const id = uuidv7();
       await db.query(
         "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
@@ -336,7 +359,7 @@ export class FollowupService {
           input.anonymous ?? false,
         ],
       );
-      if (parentId)
+      if (parentId && question.allow_followup_resolution)
         // A new reply anywhere in a discussion reopens it.
         await db.query(
           `WITH RECURSIVE chain AS (
@@ -367,6 +390,7 @@ export class FollowupService {
         userId,
         question.role,
         question.status,
+        question.allow_followup_resolution,
       );
       if (key)
         await db.query(
@@ -453,6 +477,7 @@ export class FollowupService {
             userId,
             question.role,
             question.status,
+            question.allow_followup_resolution,
             counts.get(row.id) ?? 0,
           ),
         ),
@@ -476,7 +501,14 @@ export class FollowupService {
     const row = await this.row(this.pool, id);
     const question = await this.question(this.pool, row.post_id, userId);
     await this.ensureVisible(this.pool, row);
-    return this.project(this.pool, row, userId, question.role, question.status);
+    return this.project(
+      this.pool,
+      row,
+      userId,
+      question.role,
+      question.status,
+      question.allow_followup_resolution,
+    );
   }
 
   private revision(row: Row, etag?: string) {
@@ -534,6 +566,7 @@ export class FollowupService {
         userId,
         question.role,
         question.status,
+        question.allow_followup_resolution,
       );
     });
   }
@@ -589,7 +622,14 @@ export class FollowupService {
           "DELETE FROM followup_upvotes WHERE followup_id=$1 AND user_id=$2",
           [id, userId],
         );
-      return this.project(db, row, userId, question.role, question.status);
+      return this.project(
+        db,
+        row,
+        userId,
+        question.role,
+        question.status,
+        question.allow_followup_resolution,
+      );
     });
   }
 }

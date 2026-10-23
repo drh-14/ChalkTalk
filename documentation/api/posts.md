@@ -6,9 +6,11 @@
 
 **Following and unread:** Every active post projection includes `following` and `unread` for the viewer. Members follow a post automatically when they create it, answer it, edit an answer on it, or post a followup or reply on it, unless they unfollowed it; see [Notifications](notifications.md). A post is `unread` when its last activity is later than both the viewer's last opening of it and their course read mark, or neither exists. Retrieving a post records it, and the caller's notifications for it, as read, so its own response reports `unread: false`.
 
-**Private posts:** Any member may create a question or note with `private: true`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
+**Private posts:** Any member may create a question or note with `private: true` while the course permits private posting; otherwise new private posts return `409 private_posting_disabled`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
 
 **Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member with announcement emails enabled, which the job worker sends only while the announcement, the course, the membership, and that preference still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
+
+New posts requesting `anonymous: true` return `409 anonymous_posting_disabled` if the course disallows anonymity. Existing anonymous or private posts remain available to authorized readers and editable after a policy change; changing a named existing post to anonymous returns the same `409` while anonymity is disabled. Matching successful idempotent creation retries still replay.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md). Post bodies may [mention](notifications.md) course members; creating or editing a body that mentions more than 20 people returns `422 too_many_mentions`.
 
@@ -300,6 +302,10 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 `idempotency_key_reused`: The idempotency key was already used with a different request body.
 
 `course_archived`: The course is archived.
+
+`anonymous_posting_disabled`: New anonymous posts are disabled for this course.
+
+`private_posting_disabled`: New private posts are disabled for this course.
 
 ##### `413 Content Too Large`
 
@@ -963,6 +969,8 @@ curl --request PATCH '/api/v1/posts/post_123' \
 ##### `409 Conflict`
 
 `course_archived`: The course is archived.
+
+`anonymous_posting_disabled`: A named post cannot become anonymous while the course disallows it.
 
 `post_merged`: The confirmed source must be unmerged before it can be edited.
 
