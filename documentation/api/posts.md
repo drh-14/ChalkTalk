@@ -4,7 +4,7 @@
 
 **Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 options of 1–200 characters, trimmed and distinct ignoring case, fixed after creation. Every member sees each option's `voteCount` and whether they `selected` it; who voted for what is never exposed. Each member has one vote, which `PUT /posts/{postId}/vote` sets or changes and `DELETE` retracts. Votes do not change the post's `version` or activity time. Polls take no answers or followups.
 
-**Following and unread:** Every active post projection includes `following` and `unread` for the viewer. Members follow a post automatically when they create it, answer it, edit an answer on it, or post a followup or reply on it, unless they unfollowed it; see [Notifications](notifications.md). A post is `unread` when its last activity is later than both the viewer's last opening of it and their course read mark, or neither exists. Retrieving a post records it, and the caller's notifications for it, as read, so its own response reports `unread: false`.
+**Following, unread, and saved:** Every active post projection includes `following`, `unread`, and `saved` for the viewer. Members follow a post automatically when they create it, answer it, edit an answer on it, or post a followup or reply on it, unless they unfollowed it; see [Notifications](notifications.md). A post is `unread` when its last activity is later than both the viewer's last opening of it and their course read mark, or neither exists. Retrieving a post records it, and the caller's notifications for it, as read, so its own response reports `unread: false`. `saved` is the caller's private saved-list membership and never changes follow or read state.
 
 **Private posts:** Any member may create a question or note with `private: true`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
 
@@ -210,6 +210,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
 
+`data.saved` (boolean, required): Whether this viewer saved the post in their private list.
+
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
 `data.duplicateStatus` (enum: none, suggested, confirmed, required): Duplicate-review state.
@@ -371,6 +373,8 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `unresolvedFollowups` (literal true, optional): List only questions with at least one unresolved followup discussion. Any other value returns `400 invalid_request`.
 
+`unread`, `following`, `saved` (literal true, optional): Filter to posts with that viewer-specific state. These filters combine with search, tags, sort, and each other before pagination. Values other than `true` return `400 invalid_request`.
+
 `pinned` (boolean, optional): Filter by pinned state. Combine with `type` to list pinned posts of one type.
 
 `announcement` (literal true, optional): List announcements only. Any other value returns `400 invalid_request`.
@@ -403,7 +407,9 @@ None.
 
 #### Response headers
 
-None specific to this operation.
+`X-Feed-Snapshot` (string): Opaque course- and viewer-bound timestamp/ID watermark for the newly created post count. The client must not derive a watermark from its clock or the first result page. The notice is best-effort: a creation transaction that began before the watermark but committed afterward can be missed; manually refreshing the feed still shows it.
+
+`Cache-Control`: `private, no-store`.
 
 #### Response body
 
@@ -440,6 +446,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data[].following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
 `data[].unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
+
+`data[].saved` (boolean, required): Whether this viewer saved the post in their private list.
 
 `data[].duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -634,6 +642,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
 `data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
+
+`data.saved` (boolean, required): Whether this viewer saved the post in their private list.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -870,6 +880,8 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 `data.following` (boolean, required): Whether the viewer follows the post and is notified of its activity.
 
 `data.unread` (boolean, required): Whether the post has activity since the viewer last opened it or marked the course read.
+
+`data.saved` (boolean, required): Whether this viewer saved the post in their private list.
 
 `data.duplicateOfPostId` (string or null, required): Canonical post identifier for a suggested or confirmed duplicate; otherwise `null`.
 
@@ -1588,3 +1600,9 @@ curl --request POST '/api/v1/courses/course_123/read-marks' \
 ##### `503 Service Unavailable`
 
 `service_unavailable`: A required service is temporarily unavailable.
+
+### Feed organization endpoints
+
+**`PUT /api/v1/posts/{postId}/saved`** saves a readable, active, unmerged post to the caller's one private list. **`DELETE /api/v1/posts/{postId}/saved`** removes it. Both are idempotent and require the session cookie, matching `Origin`, and `X-CSRF-Token`; each returns `200 OK` with `{ "data": { "saved": true | false } }`, `Cache-Control: private, no-store`. A deleted, merged, absent, or unreadable post returns `404 not_found` without revealing its identity. A nonmember also receives `404`; unauthenticated callers receive `401`.
+
+**`GET /api/v1/courses/{courseId}/posts/new-count?snapshot=<token>`** returns `{ "data": { "count": number } }` and `Cache-Control: private, no-store`. It accepts the same list filters except `cursor` and `duplicateStatus=confirmed`, and counts active, unmerged, currently readable posts created after the list response's `X-Feed-Snapshot` watermark and matching the supplied filters. Edits and new activity on old posts do not count. The token is bound to its course and viewer; missing, malformed, or cross-course/viewer tokens return `400 invalid_request`. A nonmember receives `404 not_found`; an unauthenticated caller receives `401`. This check never marks posts read or moves an existing feed. The count is best-effort for a creation transaction that began before the original list snapshot but committed afterward.

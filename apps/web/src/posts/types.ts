@@ -93,9 +93,17 @@ export type FeedFilter = {
   options: PostListOptions;
   nested: boolean;
 };
-/** Sidebar filters: all posts, author filters, then each supported post type. */
+/** Sidebar filters: personal state, authorship, special views, then post types. */
 export const feedFilters = (userId?: string, staff = false): FeedFilter[] => [
   { key: "all", label: "All posts", options: {}, nested: false },
+  { key: "unread", label: "Unread", options: { unread: true }, nested: false },
+  {
+    key: "following",
+    label: "Following",
+    options: { following: true },
+    nested: false,
+  },
+  { key: "saved", label: "Saved", options: { saved: true }, nested: false },
   ...(userId
     ? [
         {

@@ -93,6 +93,10 @@ export type ListPosts = {
   sort: "relevance" | "newest" | "oldest" | "recent_activity";
   limit: number;
   cursor?: string;
+  unread?: true;
+  following?: true;
+  saved?: true;
+  newSince?: string;
 };
 export const postEtag = (post: { version: number }) => `"v${post.version}"`;
 const notFound = () => new AuthError(404, "not_found", "Post is not found");
@@ -320,10 +324,15 @@ export class PostService {
       totalVotes: list.reduce((total, option) => total + option.voteCount, 0),
     };
   }
-  /** Whether the viewer follows the post and has unread activity on it. */
+  /** Viewer-specific follow, saved, and unread state for an active post. */
   private async viewerState(db: Db, row: Row, viewerId: string) {
-    const state = await db.query<{ following: boolean; unread: boolean }>(
+    const state = await db.query<{
+      following: boolean;
+      unread: boolean;
+      saved: boolean;
+    }>(
       `SELECT coalesce((SELECT following FROM post_follows WHERE post_id=$1 AND user_id=$2),false) AS following,
+              EXISTS (SELECT 1 FROM saved_posts WHERE post_id=$1 AND user_id=$2) AS saved,
               $3::timestamptz > greatest(
                 coalesce((SELECT read_at FROM post_reads WHERE post_id=$1 AND user_id=$2),'-infinity'),
                 coalesce((SELECT read_before FROM course_read_marks WHERE course_id=$4 AND user_id=$2),'-infinity')
@@ -540,7 +549,7 @@ export class PostService {
         "permission_denied",
         "Duplicate review is staff-only",
       );
-    const { cursor, limit, ...filters } = options;
+    const { cursor, limit, newSince, ...filters } = options;
     const ordinarySearch =
       options.duplicateStatus !== "confirmed" &&
       !/["\u201c\u201d]|\bOR\b|(^|\s)-\S/i.test(options.q ?? "");
@@ -556,6 +565,30 @@ export class PostService {
         ? await this.semantic!.embedQuery(semanticInput!)
         : undefined;
     let semanticReady = Boolean(semanticEmbedding);
+    let watermark: { at: string; id: string } | undefined;
+    if (newSince) {
+      try {
+        const token = JSON.parse(
+          Buffer.from(newSince, "base64url").toString("utf8"),
+        );
+        if (
+          token.courseId !== courseId ||
+          token.userId !== userId ||
+          typeof token.at !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(token.at) ||
+          Number.isNaN(Date.parse(token.at)) ||
+          typeof token.id !== "string" ||
+          !(
+            UUID_PATTERN.test(token.id) ||
+            token.id === "00000000-0000-0000-0000-000000000000"
+          )
+        )
+          throw Error();
+        watermark = token;
+      } catch {
+        throw new AuthError(400, "invalid_request", "Feed snapshot is invalid");
+      }
+    }
     const binding = createHash("sha256")
       .update(
         JSON.stringify({
@@ -631,6 +664,22 @@ export class PostService {
       readablePost("p", add(userId), add(member.role)),
     ];
     if (options.private) clauses.push("p.private");
+    if (options.following)
+      clauses.push(
+        `EXISTS (SELECT 1 FROM post_follows pf WHERE pf.post_id=p.id AND pf.user_id=${add(userId)} AND pf.following)`,
+      );
+    if (options.saved)
+      clauses.push(
+        `EXISTS (SELECT 1 FROM saved_posts sp WHERE sp.post_id=p.id AND sp.user_id=${add(userId)})`,
+      );
+    if (options.unread)
+      clauses.push(
+        `p.last_activity_at > greatest(coalesce((SELECT read_at FROM post_reads pr WHERE pr.post_id=p.id AND pr.user_id=${add(userId)}),'-infinity'),coalesce((SELECT read_before FROM course_read_marks crm WHERE crm.course_id=p.course_id AND crm.user_id=${add(userId)}),'-infinity'))`,
+      );
+    if (watermark)
+      clauses.push(
+        `(p.created_at,p.id)>(${add(watermark.at)}::timestamptz,${add(watermark.id)}::uuid)`,
+      );
     if (options.unresolvedFollowups)
       clauses.push(`p.type='question' AND EXISTS (SELECT 1 ${UNRESOLVED})`);
     const possibleFuzzyTerms = (
@@ -736,7 +785,7 @@ export class PostService {
                HAVING MAX(CASE WHEN public.vector_dims(e.embedding)=${dimensions}::integer
                  THEN 1-(e.embedding OPERATOR(public.<=>) ${vector}::public.vector) END) IS NOT NULL`
             : "SELECT NULL::uuid AS post_id,NULL::double precision AS similarity WHERE false";
-          return `WITH search_terms AS (
+          return `search_terms AS (
             SELECT unnest(${terms}::text[]) AS term
           ), fuzzy_ids AS (
             SELECT p.id FROM posts p JOIN search_terms t
@@ -782,7 +831,7 @@ export class PostService {
       : fuzzySearch
         ? (() => {
             const terms = add(searchTerms);
-            return `WITH search_terms AS (
+            return `search_terms AS (
             SELECT unnest(${terms}::text[]) AS term
           ), fuzzy_ids AS (
             SELECT p.id FROM posts p JOIN search_terms t
@@ -819,12 +868,50 @@ export class PostService {
           )`
           }`;
           })()
-        : `WITH listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
-    const query = `${listed} SELECT listed.* FROM listed WHERE true ${cursorClause} ORDER BY listed.pinned DESC,${semanticReady && options.sort === "relevance" ? "listed.match_tier DESC," : ""}listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}`;
+        : `listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
+    if (watermark) {
+      const count = await this.pool.query<{ count: number }>(
+        `WITH ${listed} SELECT count(*)::int AS count FROM listed`,
+        values,
+      );
+      return {
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+        newCount: count.rows[0]!.count,
+      };
+    }
+    const query = `WITH watermark AS (
+      SELECT COALESCE(to_char(latest.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+                      to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) AS at,
+             COALESCE(latest.id,'00000000-0000-0000-0000-000000000000'::uuid) AS id
+      FROM (SELECT 1) anchor LEFT JOIN LATERAL (
+        SELECT created_at,id FROM posts WHERE course_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1
+      ) latest ON true
+    ), ${listed}
+    SELECT page.*,watermark.at AS snapshot_at,watermark.id AS snapshot_id
+    FROM watermark LEFT JOIN LATERAL (
+      SELECT listed.* FROM listed WHERE true ${cursorClause}
+      ORDER BY listed.pinned DESC,${semanticReady && options.sort === "relevance" ? "listed.match_tier DESC," : ""}listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}
+    ) page ON true`;
     const result = await this.pool.query<
-      Row & { rank_value: number | Date; match_tier?: number }
+      Row & {
+        rank_value: number | Date;
+        match_tier?: number;
+        snapshot_at: string;
+        snapshot_id: string;
+      }
     >(query, values);
-    const pageRows = result.rows.slice(0, limit);
+    const pageRows = result.rows
+      .filter((row) => row.id !== null)
+      .slice(0, limit);
+    const snapshot = Buffer.from(
+      JSON.stringify({
+        courseId,
+        userId,
+        at: result.rows[0]!.snapshot_at,
+        id: result.rows[0]!.snapshot_id,
+      }),
+    ).toString("base64url");
     const data = await Promise.all(
       pageRows.map((row) =>
         options.duplicateStatus === "confirmed"
@@ -855,7 +942,11 @@ export class PostService {
             }),
           ).toString("base64url")
         : null;
-    return { data, page: { nextCursor, hasMore: result.rows.length > limit } };
+    return {
+      data,
+      page: { nextCursor, hasMore: result.rows.length > limit },
+      snapshot,
+    };
   }
   private checkRevision(row: Row, etag: string | undefined) {
     if (!etag)
@@ -1049,6 +1140,28 @@ export class PostService {
         : this.project(db, updated, userId, member.role);
     });
   }
+  /** Saves or unsaves a readable active post for the current member only. */
+  async setSaved(postId: string, userId: string, saved: boolean) {
+    if (!UUID_PATTERN.test(postId)) throw notFound();
+    const row = await this.row(this.pool, postId);
+    if (!row) throw notFound();
+    const member = await this.membership(this.pool, row.course_id, userId);
+    readable(row, userId, member.role);
+    if (row.deleted_at || row.duplicate_status === "confirmed")
+      throw notFound();
+    if (saved)
+      await this.pool.query(
+        `INSERT INTO saved_posts (post_id,course_id,user_id) VALUES ($1,$2,$3) ON CONFLICT (post_id,user_id) DO NOTHING`,
+        [postId, row.course_id, userId],
+      );
+    else
+      await this.pool.query(
+        "DELETE FROM saved_posts WHERE post_id=$1 AND user_id=$2",
+        [postId, userId],
+      );
+    return { saved };
+  }
+
   /** Follows or unfollows a readable post; an unfollow stops automatic follows. */
   async setFollowing(postId: string, userId: string, following: boolean) {
     if (!UUID_PATTERN.test(postId)) throw notFound();
@@ -1215,6 +1328,7 @@ export class PostService {
         );
       await db.query("DELETE FROM post_tags WHERE post_id=$1", [id]);
       await this.removeEmbeddings(db, id);
+      await db.query("DELETE FROM saved_posts WHERE post_id=$1", [id]);
       await hideAttachmentsForPostTree(db, id);
       await db.query(
         "UPDATE posts SET title=NULL,body_markdown=NULL,author_user_id=NULL,deleted_at=now(),updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",

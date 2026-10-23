@@ -169,6 +169,12 @@ The ordinary migrations and PostgreSQL startup do not require pgvector. An opera
 - `following`: `boolean`. `false` records an explicit unfollow, which automatic follows never overwrite.
 - `created_at`, `updated_at`: `timestamptz`.
 
+### `saved_posts`
+
+- `post_id`, `course_id`, `user_id`: `uuid_v7`; primary key `(post_id, user_id)`. `(course_id, post_id)` references the post and `(course_id, user_id)` the course membership, both cascading. Each member has one personal saved-post set rather than named lists.
+- `created_at`: `timestamptz`. Index `(user_id, course_id)` supports the owner's list.
+- Post creation watermark counting uses the `(course_id, created_at DESC, id DESC)` index on `posts`; a rare in-flight creation may not trigger a best-effort notice, but ordinary list refresh still includes it.
+
 ### `notifications`
 
 - `id`: `uuid_v7`; primary key.

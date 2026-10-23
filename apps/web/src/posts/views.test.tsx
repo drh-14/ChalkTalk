@@ -3283,6 +3283,9 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
   expect(within(sidebar).getByRole("group", { name: "Show" })).toBeTruthy();
   expect(choiceLabels("Show")).toEqual([
     "All posts",
+    "Unread",
+    "Following",
+    "Saved",
     "My posts",
     "Instructor posts",
     "TA posts",
@@ -5837,3 +5840,431 @@ it("offers students no Unresolved filter and shows no badge without unresolved d
   expect(card.textContent).not.toContain("unresolved");
   expect(choiceLabels("Show")).not.toContain("Unresolved");
 });
+
+it("offers personal-state filters and non-disruptive matching new-post refresh", async () => {
+  let feedLoads = 0;
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url.endsWith("/posts/snapshot"))
+        return json({ data: { snapshot: "snap" } });
+      if (url.includes("/posts/new-count?"))
+        return json({ data: { count: 1 } });
+      if (url.includes("/courses/course-1/posts")) {
+        feedLoads++;
+        return new Response(
+          JSON.stringify({
+            data:
+              feedLoads === 1
+                ? [post("p1", "Old post")]
+                : [post("p2", "New post"), post("p1", "Old post")],
+            page: { nextCursor: null, hasMore: false },
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "X-Feed-Snapshot": "snap",
+            },
+          },
+        );
+      }
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Old post");
+  expect(
+    within(screen.getByRole("group", { name: "Show" })).getByText("Saved"),
+  ).toBeTruthy();
+  expect(
+    within(screen.getByRole("group", { name: "Show" })).getByText("Unread"),
+  ).toBeTruthy();
+  expect(
+    within(screen.getByRole("group", { name: "Show" })).getByText("Following"),
+  ).toBeTruthy();
+  const prompt = await screen.findByRole("button", { name: /1 new post/i });
+  expect(screen.queryByText("New post")).toBeNull();
+  expect(feedLoads).toBe(1);
+  await user.click(prompt);
+  await screen.findByText("New post");
+  expect(calls.some((url) => url.includes("/posts/new-count?"))).toBe(true);
+});
+
+it("saves and unsaves a post without changing follow state", async () => {
+  let saved = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/posts/snapshot"))
+        return json({ data: { snapshot: "snap" } });
+      if (url.includes("/posts/new-count?"))
+        return json({ data: { count: 0 } });
+      if (url === "/api/v1/posts/p1/saved") {
+        saved = init?.method === "PUT";
+        return json({ data: { saved } });
+      }
+      if (url === "/api/v1/posts/p1")
+        return json({
+          data: { ...post("p1", "Save me"), saved, following: true },
+        });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([{ ...post("p1", "Save me"), saved, following: true }]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      postId="p1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const save = await screen.findByRole("button", { name: "Save post" });
+  await user.click(save);
+  const unsave = await screen.findByRole("button", {
+    name: "Remove saved post",
+  });
+  expect(unsave.getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByRole("button", { name: "Following" })).toBeTruthy();
+  await user.click(unsave);
+  expect(await screen.findByRole("button", { name: "Save post" })).toBeTruthy();
+});
+
+it("removes read and unfollowed cards from their active Show filters", async () => {
+  let following = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/read-marks"))
+        return new Response(null, { status: 204 });
+      if (url === "/api/v1/posts/p1/follow") {
+        following = init?.method === "PUT";
+        return json({ data: { following } });
+      }
+      if (url === "/api/v1/posts/p1")
+        return json({
+          data: { ...post("p1", "First unread"), unread: true, following },
+        });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      return page([
+        { ...post("p1", "First unread"), unread: true, following },
+        { ...post("p2", "Second unread"), unread: true, following: false },
+      ]);
+    }),
+  );
+  const user = userEvent.setup();
+  const view = render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      postId="p1"
+      userId="user-me"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("link", { name: /First unread/ });
+  await user.click(filterChoice("Show", "following"));
+  await screen.findByRole("button", { name: "Following" });
+  await user.click(screen.getByRole("button", { name: "Following" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("link", { name: /First unread/ })).toBeNull(),
+  );
+  view.rerender(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-me"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(filterChoice("Show", "unread"));
+  await screen.findByRole("link", { name: /First unread/ });
+  await user.click(screen.getByRole("link", { name: /First unread/ }));
+  expect(screen.queryByRole("link", { name: /First unread/ })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Mark all read" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("link", { name: /Second unread/ })).toBeNull(),
+  );
+});
+
+it("does not replace a newer new-post count with a stalled poll", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  let resolveFirst: ((response: Response) => void) | undefined;
+  let countRequests = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.includes("/posts/new-count?")) {
+        countRequests++;
+        if (countRequests === 1)
+          return new Promise<Response>((resolve) => {
+            resolveFirst = resolve;
+          });
+        return json({ data: { count: 2 } });
+      }
+      if (url.includes("/courses/course-1/posts"))
+        return new Response(
+          JSON.stringify({
+            data: [post("p1", "Old post")],
+            page: { nextCursor: null, hasMore: false },
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "X-Feed-Snapshot": "snap",
+            },
+          },
+        );
+      return page([]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Old post");
+  await waitFor(() => expect(countRequests).toBe(1));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(40_000);
+  });
+  expect(countRequests).toBe(1);
+  await act(async () => {
+    resolveFirst!(json({ data: { count: 1 } }));
+  });
+  expect(screen.getByRole("button", { name: /1 new post/i })).toBeTruthy();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(20_000);
+  });
+  expect(countRequests).toBe(2);
+  expect(screen.getByRole("button", { name: /2 new posts/i })).toBeTruthy();
+});
+
+it("removes the selected direct-URL post from Unread even when its list arrives later", async () => {
+  let resolveList: ((response: Response) => void) | undefined;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/v1/posts/p1")
+        return json({
+          data: { ...post("p1", "Opened directly"), unread: false },
+        });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      if (url.includes("/courses/course-1/posts"))
+        return new Promise<Response>((resolve) => {
+          resolveList = resolve;
+        });
+      return page([]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-me"
+      postId="p1"
+      filters={{ filter: "unread" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("heading", { name: "Opened directly" });
+  await act(async () => {
+    resolveList!(page([{ ...post("p1", "Opened directly"), unread: true }]));
+  });
+  expect(screen.queryByRole("link", { name: /Opened directly/ })).toBeNull();
+});
+
+it("discards an in-flight Unread page after Mark all read", async () => {
+  let resolveMore: ((response: Response) => void) | undefined;
+  let pages = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/read-marks"))
+        return new Response(null, { status: 204 });
+      if (url.includes("/courses/course-1/posts")) {
+        pages++;
+        if (pages === 2)
+          return new Promise<Response>((resolve) => {
+            resolveMore = resolve;
+          });
+        return page(
+          pages === 1 ? [{ ...post("p1", "First unread"), unread: true }] : [],
+          pages === 1 ? "next" : null,
+        );
+      }
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-me"
+      filters={{ filter: "unread" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("link", { name: /First unread/ });
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await waitFor(() => expect(pages).toBe(2));
+  await user.click(screen.getByRole("button", { name: "Mark all read" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("link", { name: /First unread/ })).toBeNull(),
+  );
+  await act(async () => {
+    resolveMore!(page([{ ...post("p2", "Stale unread"), unread: true }]));
+  });
+  expect(screen.queryByRole("link", { name: /Stale unread/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "Load more posts" })).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await waitFor(() => expect(pages).toBe(3));
+  expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
+});
+
+it("discards an in-flight Following page after unfollowing", async () => {
+  let resolveMore: ((response: Response) => void) | undefined;
+  let pages = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/posts/p1/follow")
+        return json({ data: { following: init?.method === "PUT" } });
+      if (url === "/api/v1/posts/p1")
+        return json({
+          data: { ...post("p1", "First followed"), following: true },
+        });
+      if (url.endsWith("/answers")) return json({ data: [] });
+      if (url.includes("/courses/course-1/posts")) {
+        pages++;
+        if (pages === 2)
+          return new Promise<Response>((resolve) => {
+            resolveMore = resolve;
+          });
+        return page(
+          pages === 1
+            ? [{ ...post("p1", "First followed"), following: true }]
+            : [],
+          pages === 1 ? "next" : null,
+        );
+      }
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-me"
+      postId="p1"
+      filters={{ filter: "following" }}
+      onFiltersChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByRole("link", { name: /First followed/ });
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await waitFor(() => expect(pages).toBe(2));
+  await user.click(screen.getByRole("button", { name: "Following" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("link", { name: /First followed/ })).toBeNull(),
+  );
+  await act(async () => {
+    resolveMore!(page([{ ...post("p1", "First followed"), following: true }]));
+  });
+  expect(screen.queryByRole("link", { name: /First followed/ })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await waitFor(() => expect(pages).toBe(3));
+  expect(screen.queryByRole("button", { name: "Load more posts" })).toBeNull();
+});
+
+it.each([
+  ["saved", "/saved", "Remove saved post", "Save post"],
+  ["following", "/follow", "Following", "Follow"],
+] as const)(
+  "reloads a stale initial %s list after its detail state changes",
+  async (filter, endpoint, toggleBefore, toggleAfter) => {
+    let resolveInitial: ((response: Response) => void) | undefined;
+    let listRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === `/api/v1/posts/p1${endpoint}`)
+          return json({ data: { [filter]: false } });
+        if (url === "/api/v1/posts/p1")
+          return json({
+            data: {
+              ...post("p1", "Changed viewer state"),
+              saved: true,
+              following: true,
+            },
+          });
+        if (url.endsWith("/answers")) return json({ data: [] });
+        if (url.includes("/courses/course-1/posts")) {
+          listRequests++;
+          if (listRequests === 1)
+            return new Promise<Response>((resolve) => {
+              resolveInitial = resolve;
+            });
+          return page([]);
+        }
+        return page([]);
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <Discussion
+        courseId={course.id}
+        course={course}
+        csrfToken="csrf"
+        userId="user-me"
+        postId="p1"
+        filters={{ filter }}
+        onFiltersChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: toggleBefore }));
+    await screen.findByRole("button", { name: toggleAfter });
+    await act(async () => {
+      resolveInitial!(
+        page([
+          {
+            ...post("p1", "Changed viewer state"),
+            saved: true,
+            following: true,
+          },
+        ]),
+      );
+    });
+    await waitFor(() => expect(listRequests).toBe(2));
+    await screen.findByText("No posts found.");
+    expect(
+      screen.queryByRole("link", { name: /Changed viewer state/ }),
+    ).toBeNull();
+  },
+);

@@ -236,3 +236,40 @@ it("filters private posts and makes one public with its revision", async () => {
     headers: { "If-Match": '"v4"', "X-CSRF-Token": "csrf" },
   });
 });
+
+it("sends viewer-state filters and fetches feed snapshot/new count without changing list options", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json({ data: [], page: { nextCursor: null, hasMore: false } }),
+    )
+    .mockResolvedValueOnce(json({ data: { count: 2 } }));
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", { unread: true, following: true, saved: true });
+  const { countNewPosts } = await import("./client.js");
+  expect(await countNewPosts("course-1", "opaque", { saved: true })).toBe(2);
+  expect(fetchMock.mock.calls[0]![0]).toContain(
+    "unread=true&following=true&saved=true",
+  );
+  expect(fetchMock.mock.calls[1]![0]).toContain("snapshot=opaque&saved=true");
+});
+
+it("saves and unsaves a post with CSRF and credentials", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(json({ data: { saved: true } }))
+    .mockResolvedValueOnce(json({ data: { saved: false } }));
+  vi.stubGlobal("fetch", fetchMock);
+  const { setSaved } = await import("./client.js");
+  expect(await setSaved("post-1", true, "csrf")).toBe(true);
+  expect(await setSaved("post-1", false, "csrf")).toBe(false);
+  expect(
+    fetchMock.mock.calls.map((call) => (call[1] as RequestInit).method),
+  ).toEqual(["PUT", "DELETE"]);
+  expect(fetchMock.mock.calls[0]![1]).toEqual(
+    expect.objectContaining({
+      credentials: "include",
+      headers: expect.objectContaining({ "X-CSRF-Token": "csrf" }),
+    }),
+  );
+});
