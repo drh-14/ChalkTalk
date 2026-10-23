@@ -2622,6 +2622,11 @@ a:focus-visible {
   display: grid;
   gap: 0.65rem;
 }
+.answer-card:focus,
+.followup-item:focus {
+  outline: 2px solid #276f4d;
+  outline-offset: 3px;
+}
 .answer-card-header,
 .response-actions {
   display: flex;

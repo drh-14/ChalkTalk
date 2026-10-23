@@ -284,6 +284,7 @@ export class AnswerService {
           postId,
           actorId: userId,
           kind: "answer_created",
+          response: { kind: "answer", id },
           anonymous: body.anonymous ?? false,
           mentions: parseMentions(body.bodyMarkdown),
           follow: true,
