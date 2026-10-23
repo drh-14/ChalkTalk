@@ -142,6 +142,20 @@ describe("routes", () => {
     expect(feedSearch()).toBe("");
   });
 
+  it("round-trips a folder filter independently of tags", () => {
+    const folder = "01a0e5cc-58ae-7009-9f43-edde38b21440";
+    const filters = filtersFromSearch(
+      new URLSearchParams(`folder=${folder}&tag=midterm`),
+    );
+    expect(filters).toEqual({ folder, tags: ["midterm"] });
+    expect(feedSearch(undefined, filters)).toBe(
+      `?tag=midterm&folder=${folder}`,
+    );
+    expect(filtersFromSearch(new URLSearchParams("folder=unfiled"))).toEqual({
+      folder: "unfiled",
+    });
+  });
+
   it("ignores unknown or invalid filter values", () => {
     expect(
       filtersFromSearch(

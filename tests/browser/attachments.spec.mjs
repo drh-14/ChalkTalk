@@ -138,6 +138,8 @@ test.describe("rendered discussion attachments", () => {
           updatedAt: "2026-10-01T00:00:00Z",
           version: 1,
         });
+      if (path === "/api/v1/courses/course-1/post-folders" && method === "GET")
+        return json([]);
       if (path === "/api/v1/courses/course-1/posts" && method === "GET")
         return route.fulfill({
           json: {

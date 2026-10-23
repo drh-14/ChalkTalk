@@ -2133,6 +2133,7 @@ it("offers retry after an initial feed error", async () => {
     "fetch",
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.endsWith("/post-folders")) return json({ data: [] });
       return ++attempts === 1
         ? json({ error: { message: "Feed unavailable" } }, 503)
         : page([post("p1", "Recovered")]);

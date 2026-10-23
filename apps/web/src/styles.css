@@ -694,6 +694,57 @@ h2[tabindex="-1"]:focus {
 .filter-section-panel {
   margin-top: 0.35rem;
 }
+.folder-filter-label {
+  color: var(--ink-muted);
+  display: grid;
+  font-size: 0.9rem;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+}
+.folder-filter-label select,
+.folder-manager input {
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.45rem;
+  color: var(--ink);
+  font: inherit;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  width: 100%;
+}
+.folder-manager {
+  border-top: 1px solid var(--line);
+  margin: 0.7rem 0.5rem 0;
+  padding-top: 0.6rem;
+}
+.folder-manager summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.folder-manager form {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+.folder-manager label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+.folder-manager ul {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+}
+.folder-manager li {
+  border-top: 1px solid var(--line);
+  padding: 0.45rem 0;
+  overflow-wrap: anywhere;
+}
+.folder-manager li > .text-button {
+  margin-left: 0.35rem;
+}
 .filter-choices {
   display: grid;
   gap: 0.1rem;

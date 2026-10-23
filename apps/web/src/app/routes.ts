@@ -18,6 +18,7 @@ export type FeedSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type FeedFilters = {
   filter?: string;
   tags?: string[];
+  folder?: string;
   /** Only the non-default choice is kept; several tags otherwise match all. */
   tagMatch?: "any";
   sort?: FeedSort;
@@ -36,7 +37,9 @@ export type Route = {
   filters?: FeedFilters;
 };
 
-const FILTER_KEYS = ["filter", "tag", "tagMatch", "sort"] as const;
+const FILTER_KEYS = ["filter", "tag", "tagMatch", "sort", "folder"] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FILTER_VALUES = new Set([
   "mine",
   "instructors",
@@ -65,6 +68,9 @@ export function filtersFromSearch(params: URLSearchParams): FeedFilters {
       tags.push(tag);
   }
   if (tags.length) filters.tags = tags;
+  const folder = params.get("folder");
+  if (folder === "unfiled" || (folder && UUID_PATTERN.test(folder)))
+    filters.folder = folder;
   if (tags.length > 1 && params.get("tagMatch") === "any")
     filters.tagMatch = "any";
   const sort = params.get("sort");
@@ -81,7 +87,8 @@ export function hasTag(tags: readonly string[] | undefined, tag: string) {
 
 export function hasFilters(filters: FeedFilters | undefined): boolean {
   return Boolean(
-    filters && (filters.filter || filters.tags?.length || filters.sort),
+    filters &&
+    (filters.filter || filters.tags?.length || filters.folder || filters.sort),
   );
 }
 
@@ -91,6 +98,7 @@ export function feedSearch(query?: string, filters?: FeedFilters): string {
   if (query) params.set("q", query);
   if (filters?.filter) params.set("filter", filters.filter);
   for (const tag of filters?.tags ?? []) params.append("tag", tag);
+  if (filters?.folder) params.set("folder", filters.folder);
   if (filters?.tagMatch === "any" && (filters.tags?.length ?? 0) > 1)
     params.set("tagMatch", "any");
   if (filters?.sort) params.set("sort", filters.sort);

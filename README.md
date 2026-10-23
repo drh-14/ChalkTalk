@@ -6,7 +6,7 @@ It is designed to make large course forums easier to search, organize, and maint
 
 Students can ask questions, participate in threaded discussions, contribute to shared answers, search previous posts, view course resources, vote in polls, and optionally post anonymously.
 
-Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
+Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags and managed folders, manage course resources, and identify unanswered questions. Each post can have one optional folder, distinct from tags and course-resource sections; members can file their own posts, while staff manage folder names and can organize any post.
 
 Core features include:
 
