@@ -437,6 +437,11 @@ function relatedQuery(title: string, body: string): string {
   return selected.join(" OR ");
 }
 
+function relatedSemanticQuery(title: string, body: string): string {
+  const heading = title.trim().slice(0, 200);
+  const sample = body.trim().slice(0, 500 - heading.length - 1);
+  return [heading, sample].filter(Boolean).join(" ");
+}
 const MAX_POLL_OPTIONS = 10;
 
 function Composer({
@@ -527,6 +532,7 @@ function Composer({
     const timer = window.setTimeout(() => {
       void listPosts(courseId, {
         q: query,
+        semanticQuery: relatedSemanticQuery(title, body),
         sort: "relevance",
         type: "question",
         limit: 10,
@@ -547,7 +553,7 @@ function Composer({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [courseId, query, type]);
+  }, [courseId, query, title, body, type]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1600,7 +1606,14 @@ function DiscussionContent({
         setCursor(page.page.nextCursor);
       })
       .catch((caught) => {
-        if (generation === currentFeed.current) setPageError(message(caught));
+        if (generation !== currentFeed.current) return;
+        if (
+          caught instanceof ApiError &&
+          caught.status === 409 &&
+          caught.code === "search_restart_required"
+        )
+          setFeedCycle((current) => current + 1);
+        else setPageError(message(caught));
       })
       .finally(() => {
         if (generation === currentFeed.current) {

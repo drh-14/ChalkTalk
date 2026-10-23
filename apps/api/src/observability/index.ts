@@ -15,12 +15,14 @@ type SystemEvent =
   | "worker_started"
   | "worker_stopped"
   | "database_pool_error"
-  | "post_view_write_failed";
+  | "post_view_write_failed"
+  | "semantic_index_write_failed";
 type JobKind =
   | "delete_course"
   | "delete_course_file"
   | "delete_content_attachment"
   | "send_question_duplicate_email"
+  | "index_post"
   | "send_collaboration_invitation_email"
   | "send_announcement_email"
   | "send_notification_email"

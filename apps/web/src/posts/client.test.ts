@@ -42,6 +42,23 @@ it("sends course-scoped relevance search and opaque cursor with credentials", as
   );
 });
 
+it("sends semanticQuery separately from the lexical expression", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(
+      json({ data: [], page: { nextCursor: null, hasMore: false } }),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  await listPosts("course-1", {
+    q: "waves OR interference",
+    semanticQuery: "How do waves interfere?",
+    sort: "relevance",
+  });
+  expect(fetchMock.mock.calls[0]![0]).toBe(
+    "/api/v1/courses/course-1/posts?q=waves+OR+interference&semanticQuery=How+do+waves+interfere%3F&sort=relevance",
+  );
+});
+
 it("gets a post and creates JSON with CSRF and idempotency", async () => {
   const fetchMock = vi
     .fn()

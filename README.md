@@ -2,7 +2,7 @@
 
 ChalkTalk is a course discussion platform for students, teaching assistants, and instructors.
 
-It is designed to make large course forums easier to search, organize, and maintain throughout a semester. Course post search combines full-text and fuzzy matching to help students find existing answers, including when a word is misspelled.
+It is designed to make large course forums easier to search, organize, and maintain throughout a semester. Course post search combines full-text and fuzzy matching to help students find existing answers, including when a word is misspelled. Deployments can optionally add semantic matching to surface related questions and notes with different wording.
 
 Students can ask questions, participate in threaded discussions, contribute to shared answers, search previous posts, view course resources, vote in polls, and optionally post anonymously.
 
@@ -12,7 +12,7 @@ Core features include:
 
 - course-based discussion forums,
 - student, TA, and instructor roles,
-- full-text and fuzzy post search,
+- full-text and fuzzy post search with optional semantic matching,
 - similar-question suggestions,
 - collaborative student and staff answers,
 - threaded follow-up discussions,
@@ -91,6 +91,8 @@ docker compose --profile app up --build
 ```
 
 The browser application is available at `https://localhost:5173`; its `/api` requests are proxied to the API inside the Compose network. The API intentionally has no host port. The `migrate` service waits for PostgreSQL health and completes before the API and worker start; rerunning it is safe because migrations are tracked. The worker processes queued PostgreSQL jobs and [daily course emails](documentation/api/daily-course-email-digest.md) separately from the API, so the API can serve requests if the worker stops; pending work resumes when it restarts. Compose automatically refreshes each container's named dependency volume when `package-lock.json` or the Node runtime changes; it never removes the PostgreSQL data volume.
+
+Optional semantic post search uses a deployment key in the ignored `.env`: set `EMBEDDING_API_KEY` for an OpenAI-compatible embeddings endpoint, and optionally override `EMBEDDING_BASE_URL` and `EMBEDDING_MODEL`, then start with `docker compose -f docker-compose.yml -f docker-compose.semantic.yml --profile app up --build`. This explicit override uses pgvector and runs its optional migration; the ordinary stack needs neither pgvector nor an embedding key. A hosted provider receives private course post text and search queries, so choose a provider appropriate for your course data. Never expose the key in browser configuration. Search remains full-text/fuzzy-only if the key, optional vector schema, or provider is unavailable.
 
 For an optional, local-only Calculus II prototype, set `MOCK_DATA=true` and `AMS161_DEMO_INSTRUCTOR_PASSWORD` (12–128 characters) in your ignored `.env` before starting the full-stack profile. The one-shot `seed-mock` service runs after migrations and before the API. On a fresh database, it creates AMS161 with instructor Maya Chen, TA Sam Okafor, and four student authors, plus a mix of questions and notes dated from minutes to about four months ago. Posts include tags, pinned and anonymous examples, and questions with student or staff answers for the feed filters. Three questions have similar counterparts you can find and merge manually. No posts start merged, so all of them appear in the normal feed and search; the Duplicate posts view starts empty. Sign in as `maya.chen@ams161.mock.chalktalk.invalid` using your local password; the course ID is `01a0e5a4-2985-7445-b435-1927a9a02715` and join code is `AMS16101`. Riley Nguyen is a dedicated fifth student at `riley.nguyen@ams161.mock.chalktalk.invalid`; optionally set `AMS161_DEMO_STUDENT_PASSWORD` (12–128 characters) in ignored `.env` before Riley is first created to enable that student login. Without it, Riley and the other mock students/TA receive discarded random passwords, not the instructor credential. Existing complete demos can gain a missing reserved Riley account/student membership; repeated runs never reset account credentials or edited names, and conflicting reserved identities fail rather than overwrite. The password is never printed or committed. The course and posts are created only once per PostgreSQL data volume; later starts may add Riley, repair missing statistics, or reformat exact original fixture math, but do not change user-edited text, existing merges or unmerges, deleting/deleted courses, or existing credentials. Fresh and exact original existing fixture bodies use Markdown/LaTeX formatting. Formatting-only repairs increment each changed row version once while preserving timestamps, contributors, current endorsements and their history, views and activity; already formatted/custom bodies are skipped and repair counts are reported. `MOCK_DATA=false` (the tracked default, including CI) exits without writing fixture data and does not need a demo password. Direct `docker compose up` does not run the seed.
 

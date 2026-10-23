@@ -3561,6 +3561,20 @@ paths:
                       message: The query, filters, date range, sort, or pagination are invalid.
                       requestId: req_listCoursePosts
                       details: []
+        "409":
+          description: A semantic relevance cursor cannot continue after indexing or the query provider becomes unhealthy. Restart without a cursor, preserving search filters.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                search_restart_required:
+                  value:
+                    error:
+                      code: search_restart_required
+                      message: Search ranking changed. Restart without the cursor.
+                      requestId: req_listCoursePosts
+                      details: []
         "404":
           description: Not Found
           content:
@@ -3627,6 +3641,14 @@ paths:
           in: query
           required: false
           description: Trimmed non-empty search text; see the [course posts API reference](api/posts.md) for matching rules. Omit to list without search.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+        - name: semanticQuery
+          in: query
+          required: false
+          description: Separate natural-language semantic query requiring q; see the [course posts API reference](api/posts.md) for matching, eligibility, and readiness rules.
           schema:
             type: string
             minLength: 1
@@ -6555,7 +6577,13 @@ paths:
               properties:
                 kind: { type: string, const: link }
                 title: { type: string, minLength: 1, maxLength: 200 }
-                url: { type: string, format: uri, maxLength: 2048, pattern: '^[Hh][Tt][Tt][Pp][Ss]?://' }
+                url:
+                  {
+                    type: string,
+                    format: uri,
+                    maxLength: 2048,
+                    pattern: "^[Hh][Tt][Tt][Pp][Ss]?://",
+                  }
       responses:
         "201":
           description: Persisted named link or exact authorized replay.
@@ -11588,22 +11616,70 @@ paths:
       description: Requires current parent edit permission and an active course. Matching-byte Idempotency-Key retries return the original 201 for 24 hours, including after archive while the caller remains authorized. Conflicting reuse returns 409. At most five live files per parent; each validated file is at most 100 MiB. Text is saved separately through JSON REST requests.
       security: [{ session_cookie: [] }]
       parameters:
-        - { name: postId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - {
+            name: postId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            name: Idempotency-Key,
+            in: header,
+            required: false,
+            schema: { type: string, minLength: 1, maxLength: 255 },
+          }
         - { name: Origin, in: header, required: true, schema: { type: string } }
-        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+        - {
+            name: X-CSRF-Token,
+            in: header,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
           multipart/form-data:
-            schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false }
+            schema:
+              {
+                type: object,
+                properties: { file: { type: string, format: binary } },
+                required: [file],
+                additionalProperties: false,
+              }
       responses:
-        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "201":
+          {
+            description: Created or exact-byte replay; Location is the authenticated download path.,
+            headers: { Location: { schema: { type: string } } },
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      {
+                        type: object,
+                        properties:
+                          { data: { $ref: "#/components/schemas/Attachment" } },
+                        required: [data],
+                      },
+                  },
+              },
+          }
         "403": { description: Parent edit permission denied. }
         "404": { description: Parent not found or not visible. }
-        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
-        "413": { description: File exceeds 100 MiB or parent already has five live files. }
-        "415": { description: Multipart required or file format or structure unsupported. }
+        "409":
+          {
+            description: Course archived for new upload,
+            or idempotency key reused with different request.,
+          }
+        "413":
+          {
+            description: File exceeds 100 MiB or parent already has five live files.,
+          }
+        "415":
+          {
+            description: Multipart required or file format or structure unsupported.,
+          }
         "422": { description: Invalid key, filename, or multipart parts. }
         "503": { description: Attachment storage unavailable. }
   /answers/{answerId}/attachments:
@@ -11613,18 +11689,76 @@ paths:
       description: Same upload contract as POST /posts/{postId}/attachments. Current edit permissions enforce the answer creator-role floor; attachment changes increment the answer version and contributor history, clear current endorsement, and preserve Markdown and historical endorsement events.
       security: [{ session_cookie: [] }]
       parameters:
-        - { name: answerId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - {
+            name: answerId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            name: Idempotency-Key,
+            in: header,
+            required: false,
+            schema: { type: string, minLength: 1, maxLength: 255 },
+          }
         - { name: Origin, in: header, required: true, schema: { type: string } }
-        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
-      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false } } } }
+        - {
+            name: X-CSRF-Token,
+            in: header,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              multipart/form-data:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { file: { type: string, format: binary } },
+                      required: [file],
+                      additionalProperties: false,
+                    },
+                },
+            },
+        }
       responses:
-        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "201":
+          {
+            description: Created or exact-byte replay; Location is the authenticated download path.,
+            headers: { Location: { schema: { type: string } } },
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      {
+                        type: object,
+                        properties:
+                          { data: { $ref: "#/components/schemas/Attachment" } },
+                        required: [data],
+                      },
+                  },
+              },
+          }
         "403": { description: Parent edit permission denied. }
         "404": { description: Parent not found or not visible. }
-        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
-        "413": { description: File exceeds 100 MiB or parent already has five live files. }
-        "415": { description: Multipart required or file format or structure unsupported. }
+        "409":
+          {
+            description: Course archived for new upload,
+            or idempotency key reused with different request.,
+          }
+        "413":
+          {
+            description: File exceeds 100 MiB or parent already has five live files.,
+          }
+        "415":
+          {
+            description: Multipart required or file format or structure unsupported.,
+          }
         "422": { description: Invalid key, filename, or multipart parts. }
         "503": { description: Attachment storage unavailable. }
   /followups/{followupId}/attachments:
@@ -11634,18 +11768,76 @@ paths:
       description: Same upload contract as POST /posts/{postId}/attachments. Only the original author or current staff may edit the parent. Attachment changes increment its version while preserving Markdown.
       security: [{ session_cookie: [] }]
       parameters:
-        - { name: followupId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: Idempotency-Key, in: header, required: false, schema: { type: string, minLength: 1, maxLength: 255 } }
+        - {
+            name: followupId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            name: Idempotency-Key,
+            in: header,
+            required: false,
+            schema: { type: string, minLength: 1, maxLength: 255 },
+          }
         - { name: Origin, in: header, required: true, schema: { type: string } }
-        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
-      requestBody: { required: true, content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } }, required: [file], additionalProperties: false } } } }
+        - {
+            name: X-CSRF-Token,
+            in: header,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              multipart/form-data:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { file: { type: string, format: binary } },
+                      required: [file],
+                      additionalProperties: false,
+                    },
+                },
+            },
+        }
       responses:
-        "201": { description: Created or exact-byte replay; Location is the authenticated download path., headers: { Location: { schema: { type: string } } }, content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/Attachment" } }, required: [data] } } } }
+        "201":
+          {
+            description: Created or exact-byte replay; Location is the authenticated download path.,
+            headers: { Location: { schema: { type: string } } },
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      {
+                        type: object,
+                        properties:
+                          { data: { $ref: "#/components/schemas/Attachment" } },
+                        required: [data],
+                      },
+                  },
+              },
+          }
         "403": { description: Parent edit permission denied. }
         "404": { description: Parent not found or not visible. }
-        "409": { description: Course archived for new upload, or idempotency key reused with different request. }
-        "413": { description: File exceeds 100 MiB or parent already has five live files. }
-        "415": { description: Multipart required or file format or structure unsupported. }
+        "409":
+          {
+            description: Course archived for new upload,
+            or idempotency key reused with different request.,
+          }
+        "413":
+          {
+            description: File exceeds 100 MiB or parent already has five live files.,
+          }
+        "415":
+          {
+            description: Multipart required or file format or structure unsupported.,
+          }
         "422": { description: Invalid key, filename, or multipart parts. }
         "503": { description: Attachment storage unavailable. }
   /attachments/{attachmentId}/download:
@@ -11654,10 +11846,39 @@ paths:
       summary: Stream an attached file
       description: Requires current course membership and a visible, live parent. Archived courses remain download-only. Confirmed duplicate sources and deleted parents hide their files without moving bytes.
       security: [{ session_cookie: [] }]
-      parameters: [{ name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }]
+      parameters:
+        [
+          {
+            name: attachmentId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          },
+        ]
       responses:
-        "200": { description: Validated file stream; images are inline and documents are downloads., headers: { Content-Disposition: { schema: { type: string } }, Content-Length: { schema: { type: integer } }, X-Content-Type-Options: { schema: { type: string, enum: [nosniff] } }, Cache-Control: { schema: { type: string, enum: ["private, no-store"] } } }, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
-        "404": { description: File or visible parent not found, or caller is not a course member. }
+        "200":
+          {
+            description: Validated file stream; images are inline and documents are downloads.,
+            headers:
+              {
+                Content-Disposition: { schema: { type: string } },
+                Content-Length: { schema: { type: integer } },
+                X-Content-Type-Options:
+                  { schema: { type: string, enum: [nosniff] } },
+                Cache-Control:
+                  { schema: { type: string, enum: ["private, no-store"] } },
+              },
+            content:
+              {
+                application/octet-stream:
+                  { schema: { type: string, format: binary } },
+              },
+          }
+        "404":
+          {
+            description: File or visible parent not found,
+            or caller is not a course member.,
+          }
         "503": { description: Attachment storage unavailable. }
   /attachments/{attachmentId}:
     delete:
@@ -11666,9 +11887,19 @@ paths:
       description: Requires current parent edit permission and an active course. Immediately hides the file, increments the parent version, and queues durable physical deletion for the separate worker. Answer removals also update contributor history and clear current endorsement while preserving Markdown and historical events.
       security: [{ session_cookie: [] }]
       parameters:
-        - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - {
+            name: attachmentId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
         - { name: Origin, in: header, required: true, schema: { type: string } }
-        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+        - {
+            name: X-CSRF-Token,
+            in: header,
+            required: true,
+            schema: { type: string },
+          }
       responses:
         "204": { description: Removed. }
         "403": { description: Parent edit permission denied. }
@@ -11907,7 +12138,8 @@ components:
         - "$ref": "#/components/schemas/CourseResourceLink"
         - type: object
           additionalProperties: false
-          required: [kind, id, courseId, fileName, mediaType, sizeBytes, createdAt]
+          required:
+            [kind, id, courseId, fileName, mediaType, sizeBytes, createdAt]
           properties:
             kind: { type: string, const: upload }
             id: { type: string, format: uuid }
@@ -12422,10 +12654,25 @@ components:
         fileName: { type: string, minLength: 1, maxLength: 255 }
         mediaType:
           type: string
-          enum: [application/pdf, text/plain, text/markdown, image/png, image/jpeg, image/webp, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.presentationml.presentation]
+          enum:
+            [
+              application/pdf,
+              text/plain,
+              text/markdown,
+              image/png,
+              image/jpeg,
+              image/webp,
+              application/vnd.openxmlformats-officedocument.wordprocessingml.document,
+              application/vnd.openxmlformats-officedocument.presentationml.presentation,
+            ]
         sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
         createdAt: { type: string, format: date-time }
-        downloadUrl: { type: string, description: Authenticated same-origin download path, not a presigned URL. }
+        downloadUrl:
+          {
+            type: string,
+            description: Authenticated same-origin download path,
+            not a presigned URL.,
+          }
       additionalProperties: false
       required: [id, fileName, mediaType, sizeBytes, createdAt, downloadUrl]
     PollOptionInput:
@@ -13071,7 +13318,8 @@ components:
           type: [array, "null"]
           items: { $ref: "#/components/schemas/Contributor" }
         anonymous: { type: boolean }
-        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        attachments:
+          { type: array, items: { $ref: "#/components/schemas/Attachment" } }
         endorsedAt: { type: [string, "null"], format: date-time }
         endorsedBy: { type: [string, "null"] }
         createdAt: { type: string, format: date-time }

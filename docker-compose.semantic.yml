@@ -1,0 +1,7 @@
+# Use explicitly with docker-compose.yml when semantic post search is enabled.
+# The default Compose stack continues to use ordinary PostgreSQL.
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+  migrate:
+    command: sh -c "npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api"
