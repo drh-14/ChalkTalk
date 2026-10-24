@@ -64,3 +64,35 @@ export function getStudents(
     `/courses/${encodeURIComponent(courseId)}/statistics/students?${query}`,
   );
 }
+
+export async function downloadStatisticsCsv(
+  courseId: string,
+  period: Period,
+  kind: "daily" | "students",
+  isCurrent: () => boolean,
+): Promise<void> {
+  const response = await fetch(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/statistics/export/${kind}?period=${period}`,
+    { credentials: "include", headers: { Accept: "text/csv" } },
+  );
+  if (!response.ok) {
+    const body = (await response.json()) as {
+      error?: { code?: string; message?: string };
+    };
+    throw new ApiError(
+      response.status,
+      body.error?.code ?? "request_failed",
+      body.error?.message ?? "Export unavailable.",
+    );
+  }
+  const blob = await response.blob();
+  if (!isCurrent()) return;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `chalktalk-${courseId}-${period}-${kind}.csv`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}

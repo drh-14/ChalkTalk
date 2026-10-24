@@ -6054,6 +6054,154 @@ paths:
               - 30d
               - course_to_date
             default: 30d
+  "/courses/{courseId}/statistics/export/daily":
+    get:
+      tags:
+        - Statistics
+      summary: Download zero-filled UTC daily statistics as CSV.
+      operationId: exportDailyStatistics
+      security:
+        - session_cookie: []
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, course_to_date]
+            default: 30d
+      responses:
+        "200":
+          description: Server-generated CSV; current instructors and TAs only.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: Attachment filename including course, period, and report kind.
+            Cache-Control:
+              schema:
+                type: string
+                enum: ["private, no-store"]
+          content:
+            text/csv:
+              schema:
+                type: string
+              example: "date,questions_created,answers_created,posts_viewed\r\n"
+        "400":
+          description: Invalid period.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Staff role required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Course not found or hidden.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Statistics service unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  "/courses/{courseId}/statistics/export/students":
+    get:
+      tags:
+        - Statistics
+      summary: Download the complete current-student roster and statistics as CSV.
+      operationId: exportStudentStatistics
+      security:
+        - session_cookie: []
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [7d, 30d, course_to_date]
+            default: 30d
+      responses:
+        "200":
+          description: Server-generated CSV; current instructors and TAs only.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: Attachment filename including course, period, and report kind.
+            Cache-Control:
+              schema:
+                type: string
+                enum: ["private, no-store"]
+          content:
+            text/csv:
+              schema:
+                type: string
+              example: "user_id,display_name,questions_created,answers_contributed,posts_viewed\r\n"
+        "400":
+          description: Invalid period.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Staff role required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Course not found or hidden.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Statistics service unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   "/courses/{courseId}/statistics/students":
     get:
       tags:

@@ -17,6 +17,7 @@ const ids = {
   org: uuidv7(),
   course: uuidv7(),
   otherCourse: uuidv7(),
+  exportCourse: uuidv7(),
   student: uuidv7(),
   quiet: uuidv7(),
   staff: uuidv7(),
@@ -82,12 +83,19 @@ integration("course statistics API", () => {
         [id, ids.org, `${name.toLowerCase()}@example.edu`, name],
       );
     await pool.query(
-      "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,'Physics','ABCDEFGH'),($4,$2,$3,'Chemistry','BCDEFGHI')",
-      [ids.course, ids.org, ids.staff, ids.otherCourse],
+      "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,'Physics','ABCDEFGH'),($4,$2,$3,'Chemistry','BCDEFGHI'),($5,$2,$3,'Exports','CDEFGHIJ')",
+      [ids.course, ids.org, ids.staff, ids.otherCourse, ids.exportCourse],
     );
     await pool.query(
-      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'student'),($1,$4,'ta'),($5,$4,'ta')",
-      [ids.course, ids.student, ids.quiet, ids.staff, ids.otherCourse],
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'student'),($1,$4,'ta'),($5,$4,'ta'),($6,$4,'ta')",
+      [
+        ids.course,
+        ids.student,
+        ids.quiet,
+        ids.staff,
+        ids.otherCourse,
+        ids.exportCourse,
+      ],
     );
   });
   afterAll(async () => {
@@ -221,6 +229,136 @@ integration("course statistics API", () => {
       answersContributed: 0,
       postsViewed: 0,
     });
+  });
+
+  it("exports selected-period CSVs through PostgreSQL with the full current roster", async () => {
+    const courseId = ids.exportCourse;
+    const base = `/api/v1/courses/${courseId}/statistics`;
+    await pool.query(
+      "UPDATE courses SET created_at=now()-interval '20 days' WHERE id=$1",
+      [courseId],
+    );
+    await pool.query(
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'student')",
+      [courseId, ids.student, ids.quiet],
+    );
+    const extraStudents = Array.from({ length: 25 }, () => uuidv7());
+    for (const [index, id] of extraStudents.entries()) {
+      await pool.query(
+        "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,$4,'x')",
+        [
+          id,
+          ids.org,
+          `export-${index}@example.edu`,
+          index === 0 ? "=SUM(1,1)" : `Export ${index}`,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student')",
+        [courseId, id],
+      );
+    }
+    const deletedId = uuidv7();
+    await pool.query(
+      "INSERT INTO users (id,organization_id,email,display_name,password_hash,deleted_at) VALUES ($1,$2,'deleted-export@example.edu','Deleted','x',now())",
+      [deletedId, ids.org],
+    );
+    await pool.query(
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student')",
+      [courseId, deletedId],
+    );
+    const recentAt = new Date(Date.now() - 120000);
+    const oldAt = new Date(Date.now() - 10 * 86400000);
+    const recentDate = recentAt.toISOString().slice(0, 10);
+    const oldDate = oldAt.toISOString().slice(0, 10);
+    const recentPost = uuidv7();
+    const oldPost = uuidv7();
+    await pool.query(
+      "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES ($1,$3,$4,'question','Recent','Body',$5),($2,$3,$4,'question','Old','Body',$6)",
+      [recentPost, oldPost, courseId, ids.student, recentAt, oldAt],
+    );
+    await pool.query(
+      "INSERT INTO question_creation_daily_counts (course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1),($1,$2,$4,1)",
+      [courseId, ids.student, recentDate, oldDate],
+    );
+    const answerId = uuidv7();
+    await pool.query(
+      "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,created_at,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,'student','Answer',$4,$5,'student')",
+      [answerId, courseId, recentPost, recentAt, ids.student],
+    );
+    await pool.query(
+      "INSERT INTO answer_contribution_events (course_id,answer_id,user_id,contributed_at) VALUES ($1,$2,$3,$4)",
+      [courseId, answerId, ids.student, recentAt],
+    );
+    await pool.query(
+      "INSERT INTO post_view_events (id,course_id,post_id,user_id,viewed_at,viewed_on) VALUES ($1,$2,$3,$4,$5,$6)",
+      [uuidv7(), courseId, recentPost, ids.student, recentAt, recentDate],
+    );
+
+    const page = await read(ids.staff, `${base}/students?period=7d`);
+    expect(page.status).toBe(200);
+    expect(page.body.data).toHaveLength(25);
+    expect(page.body.page.hasMore).toBe(true);
+
+    const daily = await read(ids.staff, `${base}/export/daily?period=7d`);
+    expect(daily.status).toBe(200);
+    expect(daily.headers["content-type"]).toMatch(/^text\/csv; charset=utf-8/);
+    expect(daily.headers["content-disposition"]).toBe(
+      `attachment; filename="chalktalk-${courseId}-7d-daily.csv"`,
+    );
+    expect(daily.headers["cache-control"]).toBe("private, no-store");
+    const dailyRows = daily.text.trimEnd().split("\r\n");
+    expect(dailyRows[0]).toBe(
+      "date,questions_created,answers_created,posts_viewed",
+    );
+    expect(dailyRows).toHaveLength(8);
+    expect(dailyRows).toContain(`${recentDate},1,1,1`);
+    expect(dailyRows.filter((row) => row.endsWith(",0,0,0"))).toHaveLength(6);
+    expect(dailyRows.some((row) => row.startsWith(`${oldDate},`))).toBe(false);
+    const longerDaily = await read(
+      ids.staff,
+      `${base}/export/daily?period=30d`,
+    );
+    expect(longerDaily.status).toBe(200);
+    expect(longerDaily.text).toContain(`${oldDate},1,0,0\r\n`);
+
+    const roster = await read(ids.staff, `${base}/export/students?period=7d`);
+    expect(roster.status).toBe(200);
+    expect(roster.headers["content-type"]).toMatch(/^text\/csv; charset=utf-8/);
+    expect(roster.headers["content-disposition"]).toBe(
+      `attachment; filename="chalktalk-${courseId}-7d-students.csv"`,
+    );
+    expect(roster.headers["cache-control"]).toBe("private, no-store");
+    const rosterRows = roster.text.trimEnd().split("\r\n");
+    expect(rosterRows[0]).toBe(
+      "user_id,display_name,questions_created,answers_contributed,posts_viewed",
+    );
+    expect(rosterRows).toHaveLength(28);
+    expect(rosterRows).toContain(`${ids.student},Student,1,1,1`);
+    expect(rosterRows).toContain(`${ids.quiet},Quiet,0,0,0`);
+    expect(rosterRows.some((row) => row.startsWith(`${deletedId},`))).toBe(
+      false,
+    );
+    expect(rosterRows).toContain(`${extraStudents[0]},"'=SUM(1,1)",0,0,0`);
+    const longerRoster = await read(
+      ids.staff,
+      `${base}/export/students?period=30d`,
+    );
+    expect(longerRoster.status).toBe(200);
+    expect(longerRoster.text).toContain(`${ids.student},Student,2,1,1\r\n`);
+
+    for (const kind of ["daily", "students"] as const) {
+      const endpoint = `${base}/export/${kind}`;
+      const invalid = await read(ids.staff, `${endpoint}?period=bad`);
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.error.code).toBe("invalid_request");
+      const anonymous = await request(app(ids.staff)).get(endpoint);
+      expect(anonymous.status).toBe(401);
+      expect(anonymous.body.error.code).toBe("authentication_required");
+      const student = await read(ids.student, endpoint);
+      expect(student.status).toBe(403);
+      expect(student.body.error.code).toBe("permission_denied");
+    }
   });
 
   it("keeps first endorsement response time after an answer is edited", async () => {

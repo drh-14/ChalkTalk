@@ -955,6 +955,42 @@ export function createApp(
       }
     },
   );
+  for (const kind of ["daily", "students"] as const) {
+    app.get(
+      `/api/v1/courses/:courseId/statistics/export/${kind}`,
+      optionalReadOrigin,
+      async (request, response, next) => {
+        try {
+          const current = await requireSession(request);
+          const period = StatisticsService.period(request.query.period);
+          const courseId = param(request.params.courseId);
+          const body =
+            kind === "daily"
+              ? await statistics().exportDaily(
+                  courseId,
+                  current.session.user.id,
+                  period,
+                )
+              : await statistics().exportStudents(
+                  courseId,
+                  current.session.user.id,
+                  period,
+                );
+          response
+            .set("Cache-Control", "private, no-store")
+            .set("X-Content-Type-Options", "nosniff")
+            .set(
+              "Content-Disposition",
+              `attachment; filename="chalktalk-${courseId}-${period}-${kind}.csv"`,
+            )
+            .type("text/csv; charset=utf-8")
+            .send(body);
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  }
   app.post(
     "/api/v1/account-verification-requests",
     publicOrigin,

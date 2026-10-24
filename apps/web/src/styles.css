@@ -332,6 +332,12 @@ h2[tabindex="-1"]:focus {
   background: #fff;
   color: inherit;
 }
+.statistics-exports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
 .statistics-note {
   margin: 1.25rem 0;
   padding: 0.75rem 1rem;
