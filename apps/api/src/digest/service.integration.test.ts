@@ -1,3 +1,15 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import sharp from "sharp";
+import {
+  S3Client,
+  CreateBucketCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  DeleteBucketCommand,
+} from "@aws-sdk/client-s3";
+import { s3DigestImageReader } from "./images.js";
 import { Pool } from "pg";
 import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
@@ -5,7 +17,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AuthService, type EmailSender } from "../auth/service.js";
 import { createEmailSender } from "../auth/email.js";
 import { hashOpaqueToken } from "../auth/crypto.js";
-import { loadEnvironment } from "../config/environment.js";
+import {
+  loadEnvironment,
+  loadObjectStorageConfig,
+} from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { createApp } from "../http/app.js";
 import {
@@ -26,9 +41,9 @@ const environment = loadEnvironment({
 });
 
 class RecordingSender implements EmailSender {
-  messages: Array<{ to: string; subject: string; text: string }> = [];
+  messages: Array<Parameters<EmailSender["send"]>[0]> = [];
   fail = false;
-  async send(message: { to: string; subject: string; text: string }) {
+  async send(message: Parameters<EmailSender["send"]>[0]) {
     if (this.fail) throw new Error("SMTP down");
     this.messages.push(message);
   }
@@ -173,6 +188,124 @@ integration("daily course email digest", () => {
         hashOpaqueToken(csrf, secret),
       ],
     );
+  });
+
+  it("renders each activity's own formatted preview and local equation images", async () => {
+    const question = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-15T12:00:00Z",
+      "Rendered question",
+    );
+    const answer = await addAnswer(
+      question,
+      ids.physics,
+      ids.bob,
+      "2026-10-15T13:00:00Z",
+    );
+    const followup = await addFollowup(
+      question,
+      ids.physics,
+      ids.bob,
+      "2026-10-15T14:00:00Z",
+    );
+    await pool.query("UPDATE posts SET body_markdown=$1 WHERE id=$2", [
+      "Question **bold**",
+      question,
+    ]);
+    await pool.query("UPDATE answers SET body_markdown=$1 WHERE id=$2", [
+      "Answer $x^2$",
+      answer,
+    ]);
+    await pool.query("UPDATE followups SET body_markdown=$1 WHERE id=$2", [
+      "Followup *italic*",
+      followup,
+    ]);
+    await digest.schedule(new Date("2026-10-16T00:00:00Z"));
+    await digest.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+    expect(sender.messages).toHaveLength(1);
+    expect(sender.messages[0].html).toContain("Question <strong>bold</strong>");
+    expect(sender.messages[0].html).toContain("Followup <em>italic</em>");
+    expect(sender.messages[0].html).toContain('src="cid:');
+    expect(sender.messages[0].attachments).toHaveLength(1);
+    expect(sender.messages[0].text).toContain("Answer x^2");
+    expect(sender.messages[0].text).not.toContain("post:");
+  });
+
+  it("links byte-clipped source for posts, answers, and followups", async () => {
+    const question = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-15T12:00:00Z",
+      "Source-bound question",
+    );
+    const answer = await addAnswer(
+      question,
+      ids.physics,
+      ids.bob,
+      "2026-10-15T13:00:00Z",
+    );
+    const followup = await addFollowup(
+      question,
+      ids.physics,
+      ids.bob,
+      "2026-10-15T14:00:00Z",
+    );
+    const complete = await addNote(
+      ids.physics,
+      ids.bob,
+      "2026-10-15T15:00:00Z",
+      "Complete boundary note",
+    );
+    const prefix = "Visible\n\n<!--" + "😀".repeat(32760) + "-->";
+    const body =
+      prefix +
+      " ".repeat(131072 - Buffer.byteLength(prefix)) +
+      "Omitted suffix";
+    for (const [table, id] of [
+      ["posts", question],
+      ["answers", answer],
+      ["followups", followup],
+    ] as const)
+      await pool.query(`UPDATE ${table} SET body_markdown=$1 WHERE id=$2`, [
+        body,
+        id,
+      ]);
+    await pool.query("UPDATE posts SET body_markdown=$1 WHERE id=$2", [
+      "Visible" + " ".repeat(100000 - "Visible".length),
+      complete,
+    ]);
+
+    await digest.schedule(new Date("2026-10-16T00:00:00Z"));
+    await digest.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+    expect(sender.messages).toHaveLength(1);
+    const articles = sender.messages[0].html!.match(
+      /<article\b[^>]*>[\s\S]*?<\/article>/g,
+    )!;
+    expect(articles).toHaveLength(4);
+    for (const article of articles.slice(0, 3)) {
+      expect(article).toContain("Visible");
+      expect(article).not.toContain("Omitted suffix");
+      expect(article).toContain("Read more</a>");
+    }
+    expect(articles[3]).toContain("Complete boundary note");
+    expect(articles[3]).not.toContain("Read more");
+  });
+
+  it("preserves complete course-day counts when only fifty entries are included", async () => {
+    const postIds = Array.from({ length: 55 }, () => uuidv7());
+    await pool.query(
+      `INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at)
+      SELECT id,$1,$2,'note','Note ' || ordinality,'Body','2026-10-15T12:00:00Z'::timestamptz
+      FROM unnest($3::uuid[]) WITH ORDINALITY AS fixture(id,ordinality)`,
+      [ids.physics, ids.bob, postIds],
+    );
+    await digest.schedule(new Date("2026-10-16T00:00:00Z"));
+    await digest.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+    expect(sender.messages).toHaveLength(1);
+    expect(sender.messages[0].text).toContain("55 posts");
+    expect(sender.messages[0].html!.match(/<article/g)).toHaveLength(50);
+    expect(sender.messages[0].html).toContain("View remaining activity");
   });
 
   beforeEach(async () => {
@@ -330,7 +463,7 @@ integration("daily course email digest", () => {
       "1 post · 0 answers · 0 followups",
     );
     expect(sender.messages[0]?.text).toContain(
-      `post: Lab notes\nhttps://app.example.edu/courses/${ids.physics}/posts/${note}`,
+      `Lab notes\nBody\nhttps://app.example.edu/courses/${ids.physics}/posts/${note}`,
     );
   });
 
@@ -1034,6 +1167,411 @@ integration("daily course email digest", () => {
     );
   });
 
+  (process.env.MAILPIT_SMOKE && process.env.S3_ENDPOINT ? it : it.skip)(
+    "sends a real MIME digest with equation and course-image CID copies while omitting private/deleted attachments",
+    async () => {
+      const storage = loadObjectStorageConfig();
+      const s3 = new S3Client(storage.client);
+      const bucket = `digest-rich-${process.pid}-${Date.now()}`;
+      const key = "approved-image.png";
+      const unique = `How does integration by parts work? (${process.pid})`;
+      let mailId: string | undefined;
+      try {
+        await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+        const image = await sharp(
+          Buffer.from(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="320"><rect width="800" height="320" fill="#f3faf5"/><path d="M60 270H750M60 270V30" fill="none" stroke="#59675d" stroke-width="3"/><path d="M60 265C220 262 400 240 520 190S670 80 740 35" fill="none" stroke="#17814c" stroke-width="7"/><text x="560" y="90" font-family="sans-serif" font-size="25" fill="#17814c">y = x exp(x)</text></svg>',
+          ),
+        )
+          .png()
+          .toBuffer();
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: image,
+            ContentType: "image/png",
+          }),
+        );
+        const post = await addQuestion(
+          ids.physics,
+          ids.bob,
+          "2026-10-15T12:00:00Z",
+          unique,
+        );
+        await pool.query("UPDATE posts SET body_markdown=$1 WHERE id=$2", [
+          "I tried **integration by parts** on $x e^x$.\n\n- Choose the two factors.\n- Compare with the curve below.\n\n$$\\int x e^x \\,dx = x e^x - \\int e^x \\,dx$$",
+          post,
+        ]);
+        await pool.query(
+          "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$4,'diagram.png','image/png',$5,$6)",
+          [
+            uuidv7(),
+            ids.physics,
+            post,
+            key,
+            image.length,
+            createHash("sha256").update(image).digest(),
+          ],
+        );
+        const hidden = await addQuestion(
+          ids.physics,
+          ids.bob,
+          "2026-10-15T13:00:00Z",
+          "Private image title",
+        );
+        await pool.query("UPDATE posts SET private=true WHERE id=$1", [hidden]);
+        await pool.query(
+          "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,'denied.png','secret-image-name.png','image/png',$4,$5)",
+          [
+            uuidv7(),
+            ids.physics,
+            hidden,
+            image.length,
+            createHash("sha256").update(image).digest(),
+          ],
+        );
+        await pool.query(
+          "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256,deleted_at) VALUES ($1,$2,$3,'deleted.png','deleted-image-name.png','image/png',$4,$5,now())",
+          [
+            uuidv7(),
+            ids.physics,
+            post,
+            image.length,
+            createHash("sha256").update(image).digest(),
+          ],
+        );
+        const live = new DigestService(
+          pool,
+          createEmailSender(environment),
+          environment.frontendBaseUrl,
+          "rich-mailpit",
+          undefined,
+          s3DigestImageReader(s3, bucket),
+        );
+        await live.schedule(new Date("2026-10-16T00:00:00Z"));
+        await live.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+        const listing = (await fetch(
+          "http://localhost:8025/api/v1/messages",
+        ).then((r) => r.json())) as { messages: Array<{ ID: string }> };
+        let message:
+          | {
+              HTML: string;
+              Text: string;
+              Inline: Array<{
+                ContentID: string;
+                ContentType: string;
+                PartID: string;
+                Size: number;
+              }>;
+            }
+          | undefined;
+        for (const item of listing.messages) {
+          const found = await fetch(
+            `http://localhost:8025/api/v1/message/${item.ID}`,
+          ).then((r) => r.json());
+          if (found.Text?.includes(unique)) {
+            mailId = item.ID;
+            message = found;
+            break;
+          }
+        }
+        expect(message).toBeDefined();
+        expect(message!.HTML).toContain(
+          "<strong>integration by parts</strong>",
+        );
+        expect(message!.HTML).not.toContain("Read more");
+        expect(message!.HTML).toContain('src="cid:equation-');
+        expect(message!.HTML).toContain('src="cid:attachment-');
+        expect(message!.HTML).not.toMatch(
+          /secret-image-name|deleted-image-name|Private image title/,
+        );
+        expect(message!.Inline).toHaveLength(3);
+        if (process.env.TEST_EVIDENCE_DIR) {
+          const { chromium } = await import("@playwright/test");
+          const browser = await chromium.launch({ headless: true });
+          try {
+            await mkdir(process.env.TEST_EVIDENCE_DIR, { recursive: true });
+            for (const [name, viewport] of [
+              ["desktop", { width: 1280, height: 1000 }],
+              ["mobile", { width: 390, height: 844 }],
+            ] as const) {
+              const page = await browser.newPage({ viewport });
+              await page.goto(`http://localhost:8025/view/${mailId}`);
+              const frame = page.frameLocator("#preview-html");
+              await frame.getByRole("heading", { name: unique }).waitFor();
+              const images = frame.locator("img");
+              expect(await images.count()).toBe(3);
+              await images.evaluateAll((nodes) =>
+                Promise.all(
+                  nodes.map((node) => (node as HTMLImageElement).decode()),
+                ),
+              );
+              expect(
+                await images.evaluateAll((nodes) =>
+                  nodes.every(
+                    (node) => (node as HTMLImageElement).naturalWidth > 0,
+                  ),
+                ),
+              ).toBe(true);
+              expect(await frame.locator("strong").textContent()).toBe(
+                "integration by parts",
+              );
+              await page.locator("#preview-html").screenshot({
+                path: join(
+                  process.env.TEST_EVIDENCE_DIR,
+                  `rich-digest-${name}.png`,
+                ),
+              });
+              await page.close();
+            }
+          } finally {
+            await browser.close();
+          }
+        }
+
+        for (const inline of message!.Inline) {
+          expect(inline.ContentType).toBe("image/png");
+          expect(inline.Size).toBeGreaterThan(100);
+          const bytes = Buffer.from(
+            await fetch(
+              `http://localhost:8025/api/v1/message/${mailId}/part/${inline.PartID}`,
+            ).then((r) => r.arrayBuffer()),
+          );
+          expect((await sharp(bytes).metadata()).format).toBe("png");
+        }
+      } finally {
+        if (mailId)
+          await fetch(`http://localhost:8025/api/v1/messages`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ IDs: [mailId] }),
+          });
+        await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+        await s3.send(new DeleteBucketCommand({ Bucket: bucket }));
+        s3.destroy();
+      }
+    },
+    30_000,
+  );
+
+  (process.env.MAILPIT_SMOKE ? it : it.skip)(
+    "delivers separated plain-text block boundaries in the real MIME digest",
+    async () => {
+      const title = `Block boundary email ${process.pid}`;
+      const post = await addQuestion(
+        ids.physics,
+        ids.bob,
+        "2026-10-15T12:00:00Z",
+        title,
+      );
+      await pool.query("UPDATE posts SET body_markdown=$1 WHERE id=$2", [
+        "Before<p>After</p><h4>Step</h4><p>Apply the rule</p>",
+        post,
+      ]);
+      const live = new DigestService(
+        pool,
+        createEmailSender(environment),
+        environment.frontendBaseUrl,
+        "mailpit-block-boundaries",
+      );
+      let mailId: string | undefined;
+      try {
+        await live.schedule(new Date("2026-10-16T00:00:00Z"));
+        await live.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+        const listing = (await fetch(
+          "http://localhost:8025/api/v1/messages",
+        ).then((response) => response.json())) as {
+          messages: Array<{ ID: string }>;
+        };
+        for (const item of listing.messages) {
+          const message = (await fetch(
+            `http://localhost:8025/api/v1/message/${item.ID}`,
+          ).then((response) => response.json())) as {
+            Text: string;
+            HTML: string;
+          };
+          if (!message.Text?.includes(title)) continue;
+          mailId = item.ID;
+          expect(message.Text).toMatch(
+            /Before\s+After\s+Step\s+Apply the rule/,
+          );
+          expect(message.Text).not.toContain("BeforeAfter");
+          expect(message.Text).not.toContain("StepApply");
+          expect(message.HTML).toContain("<h4>Step</h4><p>Apply the rule</p>");
+          if (process.env.TEST_EVIDENCE_DIR) {
+            await mkdir(process.env.TEST_EVIDENCE_DIR, { recursive: true });
+            await writeFile(
+              join(
+                process.env.TEST_EVIDENCE_DIR,
+                "rich-digest-plain-blocks.txt",
+              ),
+              message.Text,
+            );
+          }
+          return;
+        }
+        throw new Error("Block-boundary digest was not delivered to Mailpit");
+      } finally {
+        if (mailId)
+          await fetch("http://localhost:8025/api/v1/messages", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ IDs: [mailId] }),
+          });
+      }
+    },
+  );
+
+  (process.env.MAILPIT_SMOKE ? it : it.skip)(
+    "delivers a capped and sanitized real MIME digest with full-day counts",
+    async () => {
+      const title = `Boundary digest ${process.pid}`;
+      const post = await addNote(
+        ids.physics,
+        ids.bob,
+        "2026-10-15T11:00:00Z",
+        title,
+      );
+      await pool.query("UPDATE posts SET body_markdown=$1 WHERE id=$2", [
+        `Visible <script>secretScript()</script><img src="https://remote.invalid/secret.png"><a href="javascript:secretLink()">Unsafe</a> ${"A".repeat(620)}`,
+        post,
+      ]);
+      await pool.query(
+        `INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown,created_at)
+         SELECT id,$1,$2,'note','Additional note ' || ordinality,'Body','2026-10-15T12:00:00Z'::timestamptz
+           FROM unnest($3::uuid[]) WITH ORDINALITY AS fixture(id,ordinality)`,
+        [ids.physics, ids.bob, Array.from({ length: 54 }, () => uuidv7())],
+      );
+      const live = new DigestService(
+        pool,
+        createEmailSender(environment),
+        environment.frontendBaseUrl,
+        "mailpit-boundary",
+      );
+      let mailId: string | undefined;
+      try {
+        await live.schedule(new Date("2026-10-16T00:00:00Z"));
+        await live.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+        const listing = (await fetch(
+          "http://localhost:8025/api/v1/messages",
+        ).then((response) => response.json())) as {
+          messages: Array<{ ID: string }>;
+        };
+        for (const item of listing.messages) {
+          const message = (await fetch(
+            `http://localhost:8025/api/v1/message/${item.ID}`,
+          ).then((response) => response.json())) as {
+            Text: string;
+            HTML: string;
+          };
+          if (!message.Text?.includes(title)) continue;
+          mailId = item.ID;
+          expect(message.Text).toContain("55 posts · 0 answers · 0 followups");
+          expect(message.HTML.match(/<article\b/g)).toHaveLength(50);
+          expect(message.HTML).toContain("Read more</a>");
+          expect(message.HTML).toContain("View remaining activity");
+          expect(message.HTML).not.toMatch(
+            /secretScript|secretLink|remote\.invalid|<script|<img/,
+          );
+          expect(message.Text).not.toMatch(
+            /secretScript|secretLink|remote\.invalid/,
+          );
+          if (process.env.TEST_EVIDENCE_DIR) {
+            await mkdir(process.env.TEST_EVIDENCE_DIR, { recursive: true });
+            await writeFile(
+              join(process.env.TEST_EVIDENCE_DIR, "rich-digest-capped.html"),
+              message.HTML,
+            );
+          }
+          return;
+        }
+        throw new Error("Capped digest was not delivered to Mailpit");
+      } finally {
+        if (mailId)
+          await fetch("http://localhost:8025/api/v1/messages", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ IDs: [mailId] }),
+          });
+      }
+    },
+  );
+
+  (process.env.MAILPIT_SMOKE && process.env.S3_ENDPOINT ? it : it.skip)(
+    "links unreadable images and failed equations in the real MIME digest",
+    async () => {
+      const title = `Fallback digest ${process.pid}`;
+      const post = await addQuestion(
+        ids.physics,
+        ids.bob,
+        "2026-10-15T12:00:00Z",
+        title,
+      );
+      await pool.query("UPDATE posts SET body_markdown=$1 WHERE id=$2", [
+        "Try $\\notacommand$ safely",
+        post,
+      ]);
+      await pool.query(
+        "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,'unreadable.png','oversize.png','image/png',$4,$5)",
+        [uuidv7(), ids.physics, post, 6 * 1024 * 1024, Buffer.alloc(32)],
+      );
+      const s3 = new S3Client(loadObjectStorageConfig().client);
+      const live = new DigestService(
+        pool,
+        createEmailSender(environment),
+        environment.frontendBaseUrl,
+        "mailpit-fallback",
+        undefined,
+        s3DigestImageReader(s3, "unused-digest-fallback-bucket"),
+      );
+      let mailId: string | undefined;
+      try {
+        await live.schedule(new Date("2026-10-16T00:00:00Z"));
+        await live.deliverOnce(new Date("2026-10-16T00:00:01Z"));
+        const listing = (await fetch(
+          "http://localhost:8025/api/v1/messages",
+        ).then((response) => response.json())) as {
+          messages: Array<{ ID: string }>;
+        };
+        for (const item of listing.messages) {
+          const message = (await fetch(
+            `http://localhost:8025/api/v1/message/${item.ID}`,
+          ).then((response) => response.json())) as {
+            Text: string;
+            HTML: string;
+            Inline: Array<unknown>;
+          };
+          if (!message.Text?.includes(title)) continue;
+          mailId = item.ID;
+          expect(message.HTML).toContain("View equation</a>");
+          expect(message.HTML).toContain("View image: oversize.png</a>");
+          expect(message.HTML).not.toContain("\\notacommand");
+          expect(message.HTML).not.toContain("cid:");
+          expect(message.Text).toContain("\\notacommand");
+          expect(message.Inline).toHaveLength(0);
+          if (process.env.TEST_EVIDENCE_DIR) {
+            await mkdir(process.env.TEST_EVIDENCE_DIR, { recursive: true });
+            await writeFile(
+              join(process.env.TEST_EVIDENCE_DIR, "rich-digest-fallback.html"),
+              message.HTML,
+            );
+          }
+          return;
+        }
+        throw new Error("Fallback digest was not delivered to Mailpit");
+      } finally {
+        if (mailId)
+          await fetch("http://localhost:8025/api/v1/messages", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ IDs: [mailId] }),
+          });
+        s3.destroy();
+      }
+    },
+  );
+
   (process.env.MAILPIT_SMOKE ? it : it.skip)(
     "captures note-only and mixed UTC digests in Mailpit without sending empty mail",
     async () => {
@@ -1058,8 +1596,26 @@ integration("daily course email digest", () => {
         "2026-10-15T12:00:00Z",
         "Mailpit mixed note",
       );
-      await addAnswer(question, ids.physics, ids.bob, "2026-10-15T13:00:00Z");
-      await addFollowup(question, ids.physics, ids.bob, "2026-10-15T14:00:00Z");
+      const answer = await addAnswer(
+        question,
+        ids.physics,
+        ids.bob,
+        "2026-10-15T13:00:00Z",
+      );
+      const followup = await addFollowup(
+        question,
+        ids.physics,
+        ids.bob,
+        "2026-10-15T14:00:00Z",
+      );
+      await pool.query("UPDATE answers SET body_markdown=$1 WHERE id=$2", [
+        "Answer **worked**",
+        answer,
+      ]);
+      await pool.query("UPDATE followups SET body_markdown=$1 WHERE id=$2", [
+        "Followup *question*",
+        followup,
+      ]);
       await addNote(ids.physics, ids.alice, "2026-10-15T15:00:00Z", "Own note");
       const duplicate = await addQuestion(
         ids.physics,
@@ -1115,6 +1671,7 @@ integration("daily course email digest", () => {
             )) as {
               Subject: string;
               Text: string;
+              HTML: string;
               To: Array<{ Address: string }>;
             },
         ),
@@ -1135,6 +1692,11 @@ integration("daily course email digest", () => {
       expect(mixed?.Text).toContain("2 posts · 1 answer · 1 followup");
       expect(mixed?.Text).toContain(`/posts/${question}`);
       expect(mixed?.Text).toContain(`/posts/${mixedNote}`);
+      expect(mixed?.HTML).toContain("Answer <strong>worked</strong>");
+      expect(mixed?.HTML).toContain("Followup <em>question</em>");
+      expect(mixed?.Text).toContain("Answer worked");
+      expect(mixed?.Text).toContain("Followup question");
+      expect(mixed?.Text).not.toContain("post:");
       expect(mixed?.Text).not.toContain("Own note");
       expect(mixed?.Text).not.toContain("Deleted note");
       expect(mixed?.Text).not.toContain("Confirmed duplicate");
@@ -1227,7 +1789,7 @@ integration("daily course email digest", () => {
         const delivered = (await fetch(
           `http://localhost:8025/api/v1/message/${after.messages[0]!.ID}`,
         ).then((response) => response.json())) as { Text: string };
-        expect(delivered.Text).toContain(`post: Late midnight note`);
+        expect(delivered.Text).toContain(`Late midnight note`);
         expect(delivered.Text).toContain(`/posts/${note.rows[0]!.id}`);
         await addNote(
           ids.physics,
