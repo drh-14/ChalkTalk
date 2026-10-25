@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
 import type { AuthService } from "../auth/service.js";
-import { PostService } from "../posts/service.js";
+import { PostService, postEtag } from "../posts/service.js";
 import { createApp } from "./app.js";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -67,6 +67,20 @@ function unsafe(agent: request.SuperTest<request.Test>) {
     .set("Origin", environment.frontendBaseUrl)
     .set("X-CSRF-Token", "csrf");
 }
+
+describe("post folder name request validation", () => {
+  it("rejects NUL on both create and rename before database access", async () => {
+    const base = `/api/v1/courses/${ids.course}/post-folders`;
+    for (const agent of [
+      request(app(ids.staff)).post(base),
+      request(app(ids.staff)).patch(`${base}/${ids.course}`),
+    ]) {
+      const response = await unsafe(agent).send({ name: "A\0B" });
+      expect(response.status).toBe(422);
+      expect(response.body.error.code).toBe("validation_failed");
+    }
+  });
+});
 
 integration("text posts HTTP contract", () => {
   it("rejects semanticQuery without q or above its bound", async () => {
@@ -135,6 +149,375 @@ integration("text posts HTTP contract", () => {
     await pool?.end();
     await admin?.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await admin?.end();
+  });
+  it("manages flat folders, files posts, filters before pagination, and unfiles on deletion", async () => {
+    const base = `/api/v1/courses/${ids.course}/post-folders`;
+    const denied = await unsafe(request(app()).post(base)).send({
+      name: "Week 1",
+    });
+    expect(denied.status).toBe(403);
+    const created = await unsafe(request(app(ids.staff)).post(base))
+      .send({ name: "  Week 1  " })
+      .expect(201);
+    const folderId = created.body.data.id as string;
+    expect(created.body.data.name).toBe("Week 1");
+    await unsafe(request(app(ids.staff)).post(base))
+      .send({ name: "week 1" })
+      .expect(409);
+    const listed = await request(app())
+      .get(base)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(listed.body.data).toEqual([{ id: folderId, name: "Week 1" }]);
+    await request(app(ids.outsider))
+      .get(base)
+      .set("Cookie", cookie)
+      .expect(404);
+
+    const privatePost = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Folder private",
+        bodyMarkdown: "Body",
+        folderId,
+        private: true,
+      })
+      .expect(201);
+    const publicPost = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Folder public",
+        bodyMarkdown: "Body",
+        folderId,
+        tags: ["folder-test"],
+      })
+      .expect(201);
+    const secondPost = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Folder second",
+        bodyMarkdown: "Body",
+        folderId,
+        tags: ["folder-test"],
+      })
+      .expect(201);
+    expect(publicPost.body.data.folder).toEqual({
+      id: folderId,
+      name: "Week 1",
+    });
+    const feed = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts?folder=${folderId}&limit=1&sort=oldest`,
+      )
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(feed.body.data.map((post: { id: string }) => post.id)).toEqual([
+      publicPost.body.data.id,
+    ]);
+    expect(feed.body.page.hasMore).toBe(true);
+    const next = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts?folder=${folderId}&limit=1&sort=oldest&cursor=${encodeURIComponent(feed.body.page.nextCursor)}`,
+      )
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(next.body.data.map((post: { id: string }) => post.id)).toEqual([
+      secondPost.body.data.id,
+    ]);
+    expect(next.body.page.hasMore).toBe(false);
+    const otherFolder = await unsafe(request(app(ids.staff)).post(base))
+      .send({ name: "Week 2" })
+      .expect(201);
+    const otherPost = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "question",
+        title: "Other folder",
+        bodyMarkdown: "Body",
+        folderId: otherFolder.body.data.id,
+      })
+      .expect(201);
+    const withoutFolder = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({ type: "question", title: "Unfiled test", bodyMarkdown: "Body" })
+      .expect(201);
+    const selected = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts?folder=${folderId}&folder=${otherFolder.body.data.id}&folder=unfiled&sort=oldest`,
+      )
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(selected.body.data.map((post: { id: string }) => post.id)).toEqual([
+      publicPost.body.data.id,
+      secondPost.body.data.id,
+      otherPost.body.data.id,
+      withoutFolder.body.data.id,
+    ]);
+    const firstSelected = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts?folder=${folderId}&folder=${otherFolder.body.data.id}&folder=unfiled&sort=oldest&limit=1`,
+      )
+      .set("Cookie", cookie)
+      .expect(200);
+    const reorderedSelection = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts?folder=unfiled&folder=${otherFolder.body.data.id}&folder=${folderId}&sort=oldest&limit=1&cursor=${encodeURIComponent(firstSelected.body.page.nextCursor)}`,
+      )
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(
+      reorderedSelection.body.data.map((post: { id: string }) => post.id),
+    ).toEqual([secondPost.body.data.id]);
+    await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts?folder=${folderId}&folder=unfiled&sort=oldest&limit=1&cursor=${encodeURIComponent(firstSelected.body.page.nextCursor)}`,
+      )
+      .set("Cookie", cookie)
+      .expect(400);
+    await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts?folder=${folderId}&folder=bad`)
+      .set("Cookie", cookie)
+      .expect(400);
+    await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts?folder=unfiled&limit=1&sort=oldest&cursor=${encodeURIComponent(feed.body.page.nextCursor)}`,
+      )
+      .set("Cookie", cookie)
+      .expect(400);
+    expect(privatePost.body.data.folder.id).toBe(folderId);
+    await unsafe(request(app(ids.staff)).delete(`${base}/${folderId}`)).expect(
+      204,
+    );
+    const unfiled = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts?folder=unfiled&tag=folder-test`)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(unfiled.body.data.map((post: { id: string }) => post.id)).toContain(
+      publicPost.body.data.id,
+    );
+    expect(unfiled.body.data[0].folder).toBeNull();
+    await unsafe(
+      request(app()).patch(`/api/v1/posts/${publicPost.body.data.id}`),
+    )
+      .set("If-Match", publicPost.headers.etag)
+      .send({ title: "Stale remote edit", folderId })
+      .expect(412);
+    const revised = await request(app())
+      .get(`/api/v1/posts/${publicPost.body.data.id}`)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(revised.body.data.folder).toBeNull();
+    expect(revised.body.data.version).toBe(publicPost.body.data.version + 1);
+    const revisedPrivate = await request(app())
+      .get(`/api/v1/posts/${privatePost.body.data.id}`)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(revisedPrivate.body.data.version).toBe(
+      privatePost.body.data.version + 1,
+    );
+    const savedDraft = await unsafe(
+      request(app()).patch(`/api/v1/posts/${publicPost.body.data.id}`),
+    )
+      .set("If-Match", revised.headers.etag)
+      .send({ title: "Saved after folder deletion", folderId: null })
+      .expect(200);
+    expect(savedDraft.body.data.title).toBe("Saved after folder deletion");
+    expect(savedDraft.body.data.folder).toBeNull();
+    expect(savedDraft.body.data.version).toBe(publicPost.body.data.version + 2);
+    await unsafe(
+      request(app(ids.staff)).delete(`${base}/${otherFolder.body.data.id}`),
+    ).expect(204);
+  });
+  it("projects folder and version from the same detail or feed snapshot", async () => {
+    const modes = [
+      { name: "Alpha", detail: true },
+      { name: "Beta", sort: "newest" },
+      { name: "Gamma", sort: "newest", q: "Snapshot" },
+      { name: "Delta", sort: "relevance", q: "Snapshot" },
+    ] as const;
+    for (const mode of modes) {
+      const folder = await unsafe(
+        request(app(ids.staff)).post(
+          `/api/v1/courses/${ids.course}/post-folders`,
+        ),
+      )
+        .send({ name: `Snapshot ${mode.name}` })
+        .expect(201);
+      const folderId = folder.body.data.id as string;
+      const created = await unsafe(
+        request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+      )
+        .send({
+          type: "note",
+          title: `Snapshot ${mode.name}`,
+          bodyMarkdown: "Projection boundary",
+          folderId,
+        })
+        .expect(201);
+      const postId = created.body.data.id as string;
+      let deleted = false;
+      const interleaved = {
+        query: async (sql: string, values?: unknown[]) => {
+          const result = await pool.query(sql, values);
+          if (
+            !deleted &&
+            result.rows.some(
+              (row) => row.id === postId && row.folder_id === folderId,
+            )
+          ) {
+            deleted = true;
+            await new PostService(pool).deleteFolder(
+              ids.course,
+              folderId,
+              ids.staff,
+            );
+          }
+          return result;
+        },
+      } as unknown as Pool;
+      const service = new PostService(interleaved);
+      const projected = (
+        "detail" in mode
+          ? await service.get(postId, ids.author)
+          : (
+              await service.list(ids.course, ids.author, {
+                sort: mode.sort,
+                q: "q" in mode ? mode.q : undefined,
+                folders: [folderId],
+                limit: 50,
+              })
+            ).data.find((post) => post.id === postId)
+      )!;
+      expect(deleted).toBe(true);
+      expect(projected).toMatchObject({
+        version: created.body.data.version,
+        folder: { id: folderId, name: `Snapshot ${mode.name}` },
+      });
+      expect(postEtag(projected)).toBe(created.headers.etag);
+      const current = await new PostService(pool).get(postId, ids.author);
+      expect(current).toMatchObject({
+        version: created.body.data.version + 1,
+        folder: null,
+      });
+      expect(postEtag(current)).not.toBe(created.headers.etag);
+    }
+  });
+  it("validates folder names and same-course assignment on create and conditional edit", async () => {
+    const base = `/api/v1/courses/${ids.course}/post-folders`;
+    const other = await unsafe(
+      request(app(ids.staff)).post(
+        `/api/v1/courses/${ids.otherCourse}/post-folders`,
+      ),
+    )
+      .send({ name: "Other course" })
+      .expect(201);
+    const invalid = await unsafe(request(app(ids.staff)).post(base)).send({
+      name: "  ",
+    });
+    expect(invalid.status).toBe(422);
+    await unsafe(request(app(ids.staff)).post(base))
+      .send({ name: "A\0B" })
+      .expect(422);
+    await unsafe(request(app(ids.staff)).delete(`${base}/not-a-uuid`)).expect(
+      404,
+    );
+    const first = await unsafe(request(app(ids.staff)).post(base))
+      .send({ name: "Alpha" })
+      .expect(201);
+    await unsafe(request(app(ids.staff)).patch(`${base}/${first.body.data.id}`))
+      .send({ name: "A\0B" })
+      .expect(422);
+    const second = await unsafe(request(app(ids.staff)).post(base))
+      .send({ name: "Beta" })
+      .expect(201);
+    await unsafe(
+      request(app(ids.staff)).patch(`${base}/${second.body.data.id}`),
+    )
+      .send({ name: "ALPHA" })
+      .expect(409);
+    const post = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    ).send({
+      type: "note",
+      title: "Assignment validation",
+      bodyMarkdown: "Body",
+      folderId: other.body.data.id,
+    });
+    expect(post.status).toBe(422);
+    const created = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    )
+      .send({
+        type: "note",
+        title: "Assignment validation",
+        bodyMarkdown: "Body",
+      })
+      .expect(201);
+    const invalidEdit = await unsafe(
+      request(app()).patch(`/api/v1/posts/${created.body.data.id}`),
+    )
+      .set("If-Match", created.headers.etag)
+      .send({ folderId: other.body.data.id });
+    expect(invalidEdit.status).toBe(422);
+    const studentEdit = await unsafe(
+      request(app(ids.student)).patch(`/api/v1/posts/${created.body.data.id}`),
+    )
+      .set("If-Match", created.headers.etag)
+      .send({ folderId: first.body.data.id });
+    expect(studentEdit.status).toBe(403);
+    const edited = await unsafe(
+      request(app()).patch(`/api/v1/posts/${created.body.data.id}`),
+    )
+      .set("If-Match", created.headers.etag)
+      .send({ folderId: first.body.data.id })
+      .expect(200);
+    expect(edited.body.data.folder).toEqual(first.body.data);
+    const renamed = await unsafe(
+      request(app(ids.staff)).patch(`${base}/${first.body.data.id}`),
+    )
+      .send({ name: "  Gamma  " })
+      .expect(200);
+    expect(renamed.body.data.name).toBe("Gamma");
+    const fetched = await request(app())
+      .get(`/api/v1/posts/${created.body.data.id}`)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(fetched.body.data.folder.name).toBe("Gamma");
+    const names = await request(app())
+      .get(base)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(
+      names.body.data.map((folder: { name: string }) => folder.name),
+    ).toEqual(["Beta", "Gamma"]);
+  });
+  it("counts supplementary Unicode letters once in folder name limits", async () => {
+    const base = `/api/v1/courses/${ids.course}/post-folders`;
+    const letter = "𐐀";
+    const created = await unsafe(request(app(ids.staff)).post(base))
+      .send({ name: letter.repeat(40) })
+      .expect(201);
+    expect(created.body.data.name).toBe(letter.repeat(40));
+    await unsafe(request(app(ids.staff)).post(base))
+      .send({ name: letter.repeat(65) })
+      .expect(422);
+    const path = `${base}/${created.body.data.id}`;
+    const renamed = await unsafe(request(app(ids.staff)).patch(path))
+      .send({ name: letter.repeat(64) })
+      .expect(200);
+    expect(renamed.body.data.name).toBe(letter.repeat(64));
+    await unsafe(request(app(ids.staff)).patch(path))
+      .send({ name: letter.repeat(65) })
+      .expect(422);
+    await unsafe(request(app(ids.staff)).delete(path)).expect(204);
   });
   it("creates and retrieves a question with the documented headers and shape", async () => {
     const created = await unsafe(

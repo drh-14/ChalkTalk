@@ -148,3 +148,4 @@ vite.config.ts.timestamp-*
 !.env.example
 .agents
 .cert/
+/test-results/.last-run.json

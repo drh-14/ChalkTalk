@@ -142,6 +142,61 @@ describe("routes", () => {
     expect(feedSearch()).toBe("");
   });
 
+  it("round-trips a folder filter independently of tags", () => {
+    const folder = "01a0e5cc-58ae-7009-9f43-edde38b21440";
+    const filters = filtersFromSearch(
+      new URLSearchParams(`folder=${folder}&tag=midterm`),
+    );
+    expect(filters).toEqual({ folders: [folder], tags: ["midterm"] });
+    expect(feedSearch(undefined, filters)).toBe(
+      `?tag=midterm&folder=${folder}`,
+    );
+    expect(filtersFromSearch(new URLSearchParams("folder=unfiled"))).toEqual({
+      folders: ["unfiled"],
+    });
+  });
+
+  it("keeps named folder choices and drops a legacy combined folderless value", () => {
+    const first = "01a0e5cc-58ae-7009-9f43-edde38b21440";
+    const second = "01a0e5cc-58ae-7009-9f43-edde38b21441";
+    const filters = filtersFromSearch(
+      new URLSearchParams(
+        `folder=${first}&folder=unfiled&folder=${second}&folder=${first}`,
+      ),
+    );
+    expect(filters.folders).toEqual([first, second]);
+    expect(
+      new URLSearchParams(feedSearch(undefined, filters)).getAll("folder"),
+    ).toEqual([first, second]);
+  });
+
+  it("normalizes mixed-case folder UUIDs before deduplicating URL selections", () => {
+    const folder = "01a0e5cc-58ae-7009-9f43-edde38b21440";
+    const upper = folder.toUpperCase();
+    const route = routeFromLocation(
+      new URL(
+        `https://app.example.edu/courses/abc?folder=${upper}&folder=${folder}&folder=unfiled`,
+      ),
+    );
+
+    expect(route.filters?.folders).toEqual([folder]);
+    expect(
+      new URLSearchParams(feedSearch(undefined, route.filters)).getAll(
+        "folder",
+      ),
+    ).toEqual([folder]);
+  });
+
+  it("limits shared folder links to the API's accepted selection size", () => {
+    const params = new URLSearchParams();
+    for (let index = 0; index < 101; index++)
+      params.append(
+        "folder",
+        `01a0e5cc-58ae-7009-9f43-${(index + 1).toString(16).padStart(12, "0")}`,
+      );
+    expect(filtersFromSearch(params).folders).toHaveLength(100);
+  });
+
   it("ignores unknown or invalid filter values", () => {
     expect(
       filtersFromSearch(

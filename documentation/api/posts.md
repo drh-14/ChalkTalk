@@ -1,5 +1,9 @@
 ## Posts
 
+**Managed post folders:** Every active post includes `folder: {id, name} | null`; `null` is Unfiled. One optional flat folder is independent of tags. `folderId` on JSON create or conditional PATCH accepts an existing folder UUID in the same course or `null` to clear it. A missing/other-course folder returns `422 validation_failed` without saving. Folder changes follow ordinary author/staff edit permissions and ETag checks. Repeated `folder` values on `GET /courses/{courseId}/posts` select posts in any named folder or Unfiled; omitting `folder` shows all. The filter combines with search, tags, and sorting and is bound into pagination cursors; private-post visibility applies before pagination.
+
+Course members list alphabetical definitions with `GET /courses/{courseId}/post-folders`. Current TAs and instructors in an active course create with `POST` and `{ "name": "Week 1" }`, rename with `PATCH /courses/{courseId}/post-folders/{folderId}` and the same body, or delete with `DELETE` (204). Mutations use JSON, Origin and CSRF headers. Names are trimmed, 1–64 Unicode code points (so supplementary characters count once), and unique in a course ignoring case (`409 folder_name_conflict`); students receive `403 permission_denied`, nonmembers `404 not_found`. Deletion makes assigned posts Unfiled atomically; tags stay unchanged. Course-resource sections are separate and unaffected.
+
 **Implementation status:** JSON question, note, and poll creation, listing/search, retrieval, update, deletion, poll voting, announcements, and daily deduplicated post views are implemented. Active questions and notes can have files uploaded separately after saving; see the [OpenAPI attachment contract](../openapi.yaml) for current parent-scoped upload, download, and removal routes. Questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. The multipart post create/update shapes and attachment-processing/download-refresh fields below remain future targets and are not live; multipart create/update returns `422 validation_failed`. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
 
 **Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 options of 1–200 characters, trimmed and distinct ignoring case, fixed after creation. Every member sees each option's `voteCount` and whether they `selected` it; who voted for what is never exposed. Each member has one vote, which `PUT /posts/{postId}/vote` sets or changes and `DELETE` retracts. Votes do not change the post's `version` or activity time. Polls take no answers or followups.
@@ -84,6 +88,8 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 
 `tags` (list of string, optional): Post tags.
 
+`folderId` (UUID or null, optional): Assign a same-course managed folder; null or omission leaves the post Unfiled.
+
 ###### `CreateNotePostRequest` fields
 
 `type` (literal note, required): See the named shape.
@@ -95,6 +101,8 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `anonymous` (boolean, optional): Hide the author from course members.
 
 `tags` (list of string, optional): Post tags.
+
+`folderId` (UUID or null, optional): Assign a same-course managed folder; null or omission leaves the post Unfiled.
 
 `announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to members who enable announcement emails; cannot be combined with `anonymous`.
 
@@ -111,6 +119,8 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `anonymous` (boolean, optional): Hide the author from course members.
 
 `tags` (list of string, optional): Post tags.
+
+`folderId` (UUID or null, optional): Assign a same-course managed folder; null or omission leaves the post Unfiled.
 
 `options` (list of PollOptionInput, required): Poll choices.
 
@@ -195,6 +205,8 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `data.anonymous` (boolean, required): Whether the post was authored anonymously.
 
 `data.tags` (list of strings, required): Course-defined post tags.
+
+`data.folder` (object or null, required): Current managed folder's `id` and `name`, or null for Unfiled.
 
 `data.attachments` (list of objects, required): Files attached to the post.
 
@@ -359,6 +371,8 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `tag` (list of string, optional; at most 10 values, each 1–40 characters): Filter by one or more tags. Tags are trimmed and compared case-insensitively, and repeated values count once. More than 10 values return `400 invalid_request`.
 
+`folder` (repeated UUID or `unfiled`, optional): Select posts in any selected folder or without a folder (OR), up to 100 values. Omitting the parameter shows all posts; the browser instead requests `folder=unfiled` when all sidebar choices are cleared. Selection combines with other filters before pagination; changing the selection invalidates an existing cursor.
+
 `tagMatch` (enum: any, all, optional; values any, all): How repeated `tag` values combine. `any`, the default, returns posts carrying at least one requested tag; `all` returns only posts carrying every requested tag. With fewer than two distinct tags both values return the same results. Any other value returns `400 invalid_request`.
 
 `authorId` (string, optional; minimum length 1, maximum length 255): Filter by author identifier. Staff may match all content; students may match nonanonymous content and their own anonymous content, except that a deleted author's content never matches a student `authorId` filter. Items whose identity is hidden from the viewer are removed before ranking, pagination, `hasMore`, and counts; no visible matches return an empty `200 OK` collection.
@@ -426,6 +440,8 @@ None specific to this operation.
 `data[].anonymous` (boolean, required): Whether the post was authored anonymously.
 
 `data[].tags` (list of strings, required): Course-defined post tags.
+
+`data[].folder` (object or null, required): Current managed folder's `id` and `name`, or null for Unfiled.
 
 `data[].attachments` (list of objects, required): Files attached to the post.
 
@@ -621,6 +637,8 @@ None.
 
 `data.tags` (list of strings, required): Course-defined post tags.
 
+`data.folder` (object or null, required): Current managed folder's `id` and `name`, or null for Unfiled.
+
 `data.attachments` (list of objects, required): Files attached to the post.
 
 See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
@@ -795,6 +813,8 @@ None.
 
 `tags` (list of string, optional): Replacement tags.
 
+`folderId` (UUID or null, optional): Assign a same-course managed folder or clear the assignment; omission keeps the current folder.
+
 `pinned` (boolean, optional): Staff-controlled pinned state.
 
 `private` (boolean, optional): `false` makes a private post public; the author or staff only, and it cannot be undone. `true` on a public post returns `422 post_already_public`, and is ignored on a private post.
@@ -856,6 +876,8 @@ None.
 `data.anonymous` (boolean, required): Whether the post was authored anonymously.
 
 `data.tags` (list of strings, required): Course-defined post tags.
+
+`data.folder` (object or null, required): Current managed folder's `id` and `name`, or null for Unfiled.
 
 `data.attachments` (list of objects, required): Files attached to the post.
 

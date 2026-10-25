@@ -18,6 +18,7 @@ export type FeedSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type FeedFilters = {
   filter?: string;
   tags?: string[];
+  folders?: string[];
   /** Only the non-default choice is kept; several tags otherwise match all. */
   tagMatch?: "any";
   sort?: FeedSort;
@@ -25,6 +26,7 @@ export type FeedFilters = {
 
 /** The API accepts at most this many tags in one feed request. */
 export const MAX_FEED_TAGS = 10;
+export const MAX_FEED_FOLDERS = 100;
 
 export type Route = {
   name: RouteName;
@@ -36,7 +38,9 @@ export type Route = {
   filters?: FeedFilters;
 };
 
-const FILTER_KEYS = ["filter", "tag", "tagMatch", "sort"] as const;
+const FILTER_KEYS = ["filter", "tag", "tagMatch", "sort", "folder"] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FILTER_VALUES = new Set([
   "mine",
   "instructors",
@@ -65,6 +69,17 @@ export function filtersFromSearch(params: URLSearchParams): FeedFilters {
       tags.push(tag);
   }
   if (tags.length) filters.tags = tags;
+  const folders = [
+    ...new Set(
+      params
+        .getAll("folder")
+        .filter((folder) => folder === "unfiled" || UUID_PATTERN.test(folder))
+        .map((folder) => folder.toLowerCase()),
+    ),
+  ].slice(0, MAX_FEED_FOLDERS);
+  const namedFolders = folders.filter((folder) => folder !== "unfiled");
+  if (namedFolders.length) filters.folders = namedFolders;
+  else if (folders.includes("unfiled")) filters.folders = ["unfiled"];
   if (tags.length > 1 && params.get("tagMatch") === "any")
     filters.tagMatch = "any";
   const sort = params.get("sort");
@@ -81,7 +96,11 @@ export function hasTag(tags: readonly string[] | undefined, tag: string) {
 
 export function hasFilters(filters: FeedFilters | undefined): boolean {
   return Boolean(
-    filters && (filters.filter || filters.tags?.length || filters.sort),
+    filters &&
+    (filters.filter ||
+      filters.tags?.length ||
+      filters.folders?.length ||
+      filters.sort),
   );
 }
 
@@ -91,6 +110,7 @@ export function feedSearch(query?: string, filters?: FeedFilters): string {
   if (query) params.set("q", query);
   if (filters?.filter) params.set("filter", filters.filter);
   for (const tag of filters?.tags ?? []) params.append("tag", tag);
+  for (const folder of filters?.folders ?? []) params.append("folder", folder);
   if (filters?.tagMatch === "any" && (filters.tags?.length ?? 0) > 1)
     params.set("tagMatch", "any");
   if (filters?.sort) params.set("sort", filters.sort);
