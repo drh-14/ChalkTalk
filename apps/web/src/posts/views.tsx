@@ -26,6 +26,7 @@ import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
   createPost,
+  deletePost,
   getDuplicateReview,
   getPost,
   listMergedPosts,
@@ -1311,6 +1312,8 @@ function DiscussionContent({
   const [pinError, setPinError] = useState("");
   const [lockPending, setLockPending] = useState(false);
   const [lockError, setLockError] = useState("");
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [readError, setReadError] = useState("");
   const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
@@ -1384,6 +1387,7 @@ function DiscussionContent({
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   const currentFeed = useRef(0);
+  const deletedPostIds = useRef(new Set<string>());
 
   useEffect(() => {
     if (!userId) return;
@@ -1519,7 +1523,12 @@ function DiscussionContent({
         if (currentFeed.current === generation) {
           if (postView === "duplicates")
             setMergedItems(page.data as MergedPost[]);
-          else setItems(page.data as Post[]);
+          else
+            setItems(
+              (page.data as Post[]).filter(
+                (post) => !deletedPostIds.current.has(post.id),
+              ),
+            );
           setCursor(page.page.nextCursor);
           setLoading(false);
         }
@@ -1556,6 +1565,7 @@ function DiscussionContent({
     const controller = new AbortController();
     setDetail(undefined);
     setDetailError("");
+    setDeleteError("");
     void getPost(postId, controller.signal)
       .then((next) => {
         if (active) {
@@ -1647,7 +1657,10 @@ function DiscussionContent({
             const known = new Set(prior.map((post) => post.id));
             return [
               ...prior,
-              ...(page.data as Post[]).filter((post) => !known.has(post.id)),
+              ...(page.data as Post[]).filter(
+                (post) =>
+                  !known.has(post.id) && !deletedPostIds.current.has(post.id),
+              ),
             ];
           });
         setCursor(page.page.nextCursor);
@@ -1670,7 +1683,7 @@ function DiscussionContent({
       });
   }
   function leaveComposer() {
-    if (mergePending) return false;
+    if (mergePending || deletePending) return false;
     if (editingPostId) {
       if (editorState.current.pending) return false;
       if (
@@ -1693,7 +1706,11 @@ function DiscussionContent({
     return true;
   }
   function beforeMerge() {
-    if (editorState.current.pending || composerState.current.pending)
+    if (
+      deletePending ||
+      editorState.current.pending ||
+      composerState.current.pending
+    )
       return false;
     if (editingPostId && editorState.current.dirty)
       return window.confirm("Discard your unsaved post edits?");
@@ -1709,6 +1726,47 @@ function DiscussionContent({
   );
   function navigate(path: string) {
     if (leaveComposer()) onNavigate(path);
+  }
+  async function deleteCurrentPost(post: Post) {
+    if (
+      deletePending ||
+      mergePending ||
+      editorState.current.pending ||
+      !window.confirm(`Delete “${post.title}”? This cannot be undone.`)
+    )
+      return;
+    setDeletePending(true);
+    setDeleteError("");
+    try {
+      await deletePost(post, csrfToken);
+      deletedPostIds.current.add(post.id);
+      setItems((current) => current.filter((item) => item.id !== post.id));
+      setDetail(undefined);
+      setEditingPostId(undefined);
+      editorState.current = { dirty: false, pending: false };
+      onNavigate(discussionPath(courseId, search));
+    } catch (caught) {
+      setDeleteError(message(caught));
+      if (caught instanceof ApiError && caught.status === 412) {
+        try {
+          const latest = await getPost(post.id);
+          if (
+            !("redirectToPostId" in latest) &&
+            !latest.deleted &&
+            latest.courseId === courseId
+          ) {
+            setDetail(latest);
+            setItems((current) =>
+              current.map((item) => (item.id === latest.id ? latest : item)),
+            );
+          }
+        } catch {
+          // Keep the API conflict visible and the unsaved editor mounted.
+        }
+      }
+    } finally {
+      setDeletePending(false);
+    }
   }
   function openPost(id: string) {
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
@@ -2470,8 +2528,25 @@ function DiscussionContent({
                     <p>This post was deleted.</p>
                   ) : (
                     <article>
+                      {canEditDetail && (
+                        <div className="post-delete-action">
+                          <button
+                            type="button"
+                            className="button danger compact"
+                            disabled={mergePending || deletePending}
+                            onClick={() => void deleteCurrentPost(detail)}
+                          >
+                            {deletePending ? "Deleting…" : "Delete post"}
+                          </button>
+                          {deleteError && (
+                            <p className="form-message error" role="alert">
+                              {deleteError}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {canEditDetail && editingPostId === detail.id && (
-                        <div inert={mergePending}>
+                        <div inert={mergePending || deletePending}>
                           <PostEditor
                             key={detail.id}
                             post={detail}
@@ -2620,7 +2695,7 @@ function DiscussionContent({
                             <button
                               type="button"
                               className="button secondary edit-button"
-                              disabled={mergePending}
+                              disabled={mergePending || deletePending}
                               onClick={() => setEditingPostId(detail.id)}
                             >
                               Edit post
@@ -2638,7 +2713,7 @@ function DiscussionContent({
                             <button
                               type="button"
                               className="button secondary compact"
-                              disabled={pinPending}
+                              disabled={pinPending || deletePending}
                               onClick={() => void togglePin(detail)}
                             >
                               {pinPending

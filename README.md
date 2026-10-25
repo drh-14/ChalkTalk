@@ -35,6 +35,8 @@ ChalkTalk's goal is to turn a semester's discussion history into a searchable an
 
 To manage your account, select your name in the signed-in top bar. Account settings lets you change your display name or password, manage each course's activity, announcement, and daily-digest emails, or delete your account after confirming with your current password. You can also change email choices in each course's settings. Deletion signs you out and leaves past contributions with your name removed. If you are a course's final instructor, assign another instructor before deleting your account.
 
+To delete a post you can read, open its detail view and select **Delete post**. The control is available to its author and current course TAs or instructors while the course is active, and asks for confirmation before deleting.
+
 ## Team
 
 - **Nicholas Smirnov** — authentication, authorization, security, account management, permissions

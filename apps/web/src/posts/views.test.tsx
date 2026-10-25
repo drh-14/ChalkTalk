@@ -6194,3 +6194,291 @@ it("ignores a stale lock response after newer detail and feed versions load", as
   expect(screen.queryByText(/Discussion locked\. Existing content/)).toBeNull();
   expect(screen.getByRole("button", { name: "Lock discussion" })).toBeTruthy();
 });
+
+it("lets readable staff confirm post deletion and leaves the discussion list", async () => {
+  const target = { ...post("post-1", "Post to moderate"), version: 3 };
+  const survivor = { ...post("post-2", "Keep me"), version: 1 };
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+    if (url.endsWith("/posts/post-1") && init?.method === "DELETE")
+      return new Response(null, { status: 204 });
+    if (url.endsWith("/posts/post-1")) return json({ data: target });
+    return page([target, survivor]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const onNavigate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="post-1"
+      onNavigate={onNavigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Delete post" }));
+  expect(confirm).toHaveBeenCalled();
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          url.endsWith("/posts/post-1") && init?.method === "DELETE",
+      ),
+    ).toBe(true),
+  );
+  expect(onNavigate).toHaveBeenCalledWith("/courses/course-1");
+  expect(screen.queryByRole("link", { name: /Post to moderate/ })).toBeNull();
+  expect(screen.getByRole("link", { name: /Keep me/ })).toBeTruthy();
+});
+
+it("does not restore a deleted post from an in-flight initial feed", async () => {
+  const target = { ...post("post-1", "Deleted post"), version: 1 };
+  const survivor = post("post-2", "Remaining post");
+  let releaseFeed!: (response: Response) => void;
+  const pendingFeed = new Promise<Response>((resolve) => {
+    releaseFeed = resolve;
+  });
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+    if (url.endsWith("/posts/post-1") && init?.method === "DELETE")
+      return new Response(null, { status: 204 });
+    if (url.endsWith("/posts/post-1")) return json({ data: target });
+    return pendingFeed;
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const user = userEvent.setup();
+  const onNavigate = vi.fn();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="post-1"
+      onNavigate={onNavigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Delete post" }));
+  await waitFor(() =>
+    expect(onNavigate).toHaveBeenCalledWith("/courses/course-1"),
+  );
+  expect(
+    fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
+  ).toBe(true);
+  releaseFeed(page([target, survivor]));
+  await screen.findByRole("link", { name: /Remaining post/ });
+  expect(screen.queryByRole("link", { name: /Deleted post/ })).toBeNull();
+});
+
+it("does not restore a deleted post from an in-flight Load more page", async () => {
+  const target = { ...post("post-1", "Deleted post"), version: 1 };
+  const survivor = post("post-2", "Remaining post");
+  let releasePage!: (response: Response) => void;
+  const pendingPage = new Promise<Response>((resolve) => {
+    releasePage = resolve;
+  });
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+    if (url.endsWith("/posts/post-1") && init?.method === "DELETE")
+      return new Response(null, { status: 204 });
+    if (url.endsWith("/posts/post-1")) return json({ data: target });
+    if (url.includes("cursor=next")) return pendingPage;
+    return page([target], "next");
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const user = userEvent.setup();
+  const onNavigate = vi.fn();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="staff"
+      postId="post-1"
+      onNavigate={onNavigate}
+    />,
+  );
+  await screen.findByRole("link", { name: /Deleted post/ });
+  await user.click(screen.getByRole("button", { name: "Load more posts" }));
+  await user.click(await screen.findByRole("button", { name: "Delete post" }));
+  await waitFor(() =>
+    expect(onNavigate).toHaveBeenCalledWith("/courses/course-1"),
+  );
+  expect(
+    fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
+  ).toBe(true);
+  releasePage(page([target, survivor]));
+  await screen.findByRole("link", { name: /Remaining post/ });
+  expect(screen.queryByRole("link", { name: /Deleted post/ })).toBeNull();
+});
+
+it("does not delete when the author cancels confirmation", async () => {
+  const target = {
+    ...post("post-1", "Do not delete"),
+    version: 1,
+    author: {
+      userId: "author",
+      displayName: "Ada",
+      anonymous: false,
+      deleted: false,
+    },
+  };
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "DELETE") throw new Error("Unexpected deletion");
+    return url.endsWith("/members/author")
+      ? json({ data: { role: "student" } })
+      : url.endsWith("/posts/post-1")
+        ? json({ data: target })
+        : page([target]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  vi.spyOn(window, "confirm").mockReturnValue(false);
+  const onNavigate = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="author"
+      postId="post-1"
+      onNavigate={onNavigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Delete post" }));
+  expect(
+    fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
+  ).toBe(false);
+  expect(screen.getByRole("heading", { name: "Do not delete" })).toBeTruthy();
+  expect(onNavigate).not.toHaveBeenCalled();
+});
+
+it("offers post deletion to its author but not to another student or in an archived course", async () => {
+  const target = {
+    ...post("post-1", "Owner post"),
+    version: 2,
+    author: {
+      userId: "author",
+      displayName: "Ada",
+      anonymous: false,
+      deleted: false,
+    },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/members/author") || url.endsWith("/members/other")
+        ? json({ data: { role: "student" } })
+        : url.endsWith("/posts/post-1")
+          ? json({ data: target })
+          : page([target]),
+    ),
+  );
+  const props = {
+    courseId: course.id,
+    course,
+    csrfToken: "csrf",
+    postId: "post-1",
+    onNavigate: vi.fn(),
+  };
+  const view = render(<Discussion {...props} userId="author" />);
+  expect(
+    await screen.findByRole("button", { name: "Delete post" }),
+  ).toBeTruthy();
+  view.unmount();
+  render(<Discussion {...props} userId="other" />);
+  await screen.findByRole("heading", { name: "Owner post" });
+  expect(screen.queryByRole("button", { name: "Delete post" })).toBeNull();
+  cleanup();
+  render(
+    <Discussion
+      {...props}
+      course={{ ...course, status: "archived" }}
+      userId="author"
+    />,
+  );
+  await screen.findByRole("heading", { name: "Owner post" });
+  expect(screen.queryByRole("button", { name: "Delete post" })).toBeNull();
+});
+
+it("keeps an unsaved edit through a delete conflict and refreshes the version on 412", async () => {
+  const target = {
+    ...post("post-1", "Original"),
+    version: 1,
+    author: {
+      userId: "author",
+      displayName: "Ada",
+      anonymous: false,
+      deleted: false,
+    },
+  };
+  let current = target;
+  let attempts = 0;
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/author"))
+      return json({ data: { role: "student" } });
+    if (url.endsWith("/posts/post-1") && init?.method === "DELETE") {
+      attempts++;
+      if (attempts === 1) {
+        current = { ...target, version: 2 };
+        return json(
+          { error: { code: "version_conflict", message: "Post changed" } },
+          412,
+        );
+      }
+      return json(
+        {
+          error: { code: "canonical_has_duplicates", message: "Unmerge first" },
+        },
+        409,
+      );
+    }
+    if (url.endsWith("/posts/post-1")) return json({ data: current });
+    return page([target]);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const user = userEvent.setup();
+  const onNavigate = vi.fn();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="author"
+      postId="post-1"
+      onNavigate={onNavigate}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Edit post" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    " draft",
+  );
+  await user.click(screen.getByRole("button", { name: "Delete post" }));
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    "Post changed",
+  );
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Original draft",
+  );
+  await user.click(screen.getByRole("button", { name: "Delete post" }));
+  expect(await screen.findByText("Unmerge first")).toBeTruthy();
+  expect(
+    fetchMock.mock.calls
+      .filter(
+        ([url, init]) =>
+          url.endsWith("/posts/post-1") && init?.method === "DELETE",
+      )
+      .map(([, init]) => new Headers(init?.headers).get("If-Match")),
+  ).toEqual(['"v1"', '"v2"']);
+  expect(onNavigate).not.toHaveBeenCalled();
+  expect(confirm).toHaveBeenCalledTimes(2);
+});
