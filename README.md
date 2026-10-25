@@ -42,6 +42,8 @@ To manage your account, select your name in the signed-in top bar. Account setti
 
 Detailed project requirements, user stories, scope, and architecture are available in the project documentation.
 
+For a single-VM deployment from a pinned commit, see the [Compose deployment guide](deployment/README.md). It is a runnable skeleton, not a production-readiness guarantee; the instructions below are for local development.
+
 ## Local development
 
 Prerequisites: Node.js 22 or later, npm, and Docker with Docker Compose.

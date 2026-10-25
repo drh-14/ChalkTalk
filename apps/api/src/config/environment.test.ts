@@ -9,6 +9,16 @@ const base = {
 };
 
 describe("authentication environment", () => {
+  it("disables proxy trust by default and only accepts one explicit hop", () => {
+    expect(loadEnvironment(base).trustProxyHops).toBe(0);
+    expect(
+      loadEnvironment({ ...base, TRUST_PROXY_HOPS: "1" }).trustProxyHops,
+    ).toBe(1);
+    for (const value of ["2", "true", "-1", "localhost"])
+      expect(() =>
+        loadEnvironment({ ...base, TRUST_PROXY_HOPS: value }),
+      ).toThrow("TRUST_PROXY_HOPS");
+  });
   it("parses configured origins, domains, and documented rate defaults", () => {
     const environment = loadEnvironment(base);
     expect(environment.frontendOrigins).toEqual(
