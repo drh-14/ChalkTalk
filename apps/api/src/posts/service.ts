@@ -50,6 +50,26 @@ export type CreatePost = {
   announcement?: boolean;
   /** Questions and notes only: readable by the author and course staff. */
   private?: boolean;
+  /** Confirm this owner's course draft revision before publication. */
+  draftVersion?: number;
+};
+export type DraftContent = {
+  type: "question" | "note" | "poll";
+  title: string;
+  bodyMarkdown: string;
+  anonymous: boolean;
+  tags: string[];
+  options?: string[];
+  announcement?: boolean;
+  private?: boolean;
+};
+type DraftRow = {
+  course_id: string;
+  user_id: string;
+  content: DraftContent | null;
+  created_at: Date;
+  updated_at: Date;
+  version: string | number;
 };
 export type UpdatePost = Partial<
   Omit<CreatePost, "type" | "options" | "announcement">
@@ -95,6 +115,7 @@ export type ListPosts = {
   cursor?: string;
 };
 export const postEtag = (post: { version: number }) => `"v${post.version}"`;
+export const draftEtag = postEtag;
 const notFound = () => new AuthError(404, "not_found", "Post is not found");
 /** Private posts the viewer cannot read look exactly like missing ones. */
 const readable = (row: Row, viewerId: string, role: Role) => {
@@ -213,6 +234,89 @@ export class PostService {
   private writable(status: string) {
     if (status !== "active")
       throw new AuthError(409, "course_archived", "Course is not active");
+  }
+  private draftValue(courseId: string, row?: DraftRow) {
+    return {
+      courseId,
+      content: row?.content ?? null,
+      updatedAt: row?.updated_at.toISOString() ?? null,
+      version: Number(row?.version ?? 0),
+    };
+  }
+  private async draftMembership(db: Db, courseId: string, userId: string) {
+    const member = await this.membership(db, courseId, userId);
+    if (member.status === "deleting") throw notFound();
+    return member;
+  }
+  private async draftRow(
+    db: Db,
+    courseId: string,
+    userId: string,
+    lock = false,
+  ) {
+    const result = await db.query<DraftRow>(
+      `SELECT * FROM post_drafts WHERE course_id=$1 AND user_id=$2${lock ? " FOR UPDATE" : ""}`,
+      [courseId, userId],
+    );
+    return result.rows[0];
+  }
+  private async lockedDraftRow(
+    db: PoolClient,
+    courseId: string,
+    userId: string,
+  ) {
+    await db.query(
+      "INSERT INTO post_drafts(course_id,user_id,content) VALUES ($1,$2,NULL) ON CONFLICT (course_id,user_id) DO NOTHING",
+      [courseId, userId],
+    );
+    return (await this.draftRow(db, courseId, userId, true))!;
+  }
+  private checkDraftRevision(row: DraftRow, etag: string | undefined) {
+    if (!etag)
+      throw new AuthError(428, "precondition_required", "If-Match is required");
+    if (etag !== draftEtag({ version: Number(row.version) }))
+      throw new AuthError(412, "version_conflict", "Draft version has changed");
+  }
+  async getDraft(courseId: string, userId: string) {
+    await this.draftMembership(this.pool, courseId, userId);
+    return this.draftValue(
+      courseId,
+      await this.draftRow(this.pool, courseId, userId),
+    );
+  }
+  async updateDraft(
+    courseId: string,
+    userId: string,
+    etag: string | undefined,
+    content: DraftContent,
+  ) {
+    return this.tx(async (db) => {
+      const member = await this.membership(db, courseId, userId, true);
+      this.writable(member.status);
+      const row = await this.lockedDraftRow(db, courseId, userId);
+      this.checkDraftRevision(row, etag);
+      const result = await db.query<DraftRow>(
+        "UPDATE post_drafts SET content=$3,version=version+1,updated_at=now() WHERE course_id=$1 AND user_id=$2 RETURNING *",
+        [courseId, userId, content],
+      );
+      return this.draftValue(courseId, result.rows[0]!);
+    });
+  }
+  async deleteDraft(
+    courseId: string,
+    userId: string,
+    etag: string | undefined,
+  ) {
+    return this.tx(async (db) => {
+      await this.draftMembership(db, courseId, userId);
+      const row = await this.lockedDraftRow(db, courseId, userId);
+      this.checkDraftRevision(row, etag);
+      const result = await db.query<DraftRow>(
+        "UPDATE post_drafts SET content=NULL,version=version+1,updated_at=now() WHERE course_id=$1 AND user_id=$2 RETURNING *",
+        [courseId, userId],
+      );
+      return this.draftValue(courseId, result.rows[0]!);
+    });
   }
   private async row(
     db: Db,
@@ -393,6 +497,15 @@ export class PostService {
         );
       }
       this.writable(member.status);
+      const draft = await this.lockedDraftRow(db, courseId, userId);
+      if (body.draftVersion !== undefined) {
+        if (Number(draft.version) !== body.draftVersion)
+          throw new AuthError(
+            412,
+            "version_conflict",
+            "Draft version has changed",
+          );
+      }
       const staff = STAFF.has(member.role);
       if (body.type === "poll" && !staff)
         throw new AuthError(
@@ -471,6 +584,10 @@ export class PostService {
       });
       const row = await this.row(db, id);
       const value = await this.project(db, row!, userId, member.role);
+      await db.query(
+        "UPDATE post_drafts SET content=NULL,version=version+1,updated_at=now() WHERE course_id=$1 AND user_id=$2",
+        [courseId, userId],
+      );
       if (key !== undefined)
         await db.query(
           "INSERT INTO idempotency_records (scope,key,request_hash,response_status,response_body,expires_at) VALUES ($1,$2,$3,201,$4,now()+interval '24 hours')",

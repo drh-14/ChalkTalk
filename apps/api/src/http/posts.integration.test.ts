@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
 import type { AuthService } from "../auth/service.js";
@@ -2277,6 +2277,252 @@ integration("text posts HTTP contract", () => {
         pinned: false,
         announcement: true,
       });
+    });
+  });
+  describe("durable post drafts", () => {
+    beforeEach(async () => {
+      await pool.query(
+        "DELETE FROM post_drafts WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.author],
+      );
+    });
+    it("keeps one course draft, clears content after publish, and rejects a stale second device", async () => {
+      const singleton = `/api/v1/courses/${ids.course}/post-draft`;
+      const empty = await request(app()).get(singleton).set("Cookie", cookie);
+      expect(empty.status).toBe(200);
+      expect(empty.headers.etag).toBe('"v0"');
+      expect(empty.body.data.content).toBeNull();
+      const first = await unsafe(request(app()).put(singleton))
+        .set("If-Match", '"v0"')
+        .send({
+          content: {
+            type: "question",
+            title: "First",
+            bodyMarkdown: "Body",
+            anonymous: false,
+            tags: [],
+          },
+        });
+      expect(first.status).toBe(200);
+      expect(first.headers.etag).toBe('"v1"');
+      const staleDevice = '"v1"';
+      const second = await unsafe(request(app()).put(singleton))
+        .set("If-Match", '"v1"')
+        .send({
+          content: {
+            type: "question",
+            title: "Second",
+            bodyMarkdown: "Body",
+            anonymous: false,
+            tags: [],
+          },
+        });
+      expect(second.status).toBe(200);
+      expect(
+        (
+          await unsafe(request(app()).put(singleton))
+            .set("If-Match", staleDevice)
+            .send({ content: first.body.data.content })
+        ).status,
+      ).toBe(412);
+      const published = await unsafe(
+        request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+      ).send({
+        type: "question",
+        title: "Published",
+        bodyMarkdown: "Body",
+        draftVersion: 2,
+      });
+      expect(published.status).toBe(201);
+      const cleared = await request(app()).get(singleton).set("Cookie", cookie);
+      expect(cleared.body.data.content).toBeNull();
+      expect(cleared.headers.etag).toBe('"v3"');
+      expect(
+        (
+          await unsafe(request(app()).put(singleton))
+            .set("If-Match", '"v2"')
+            .send({ content: first.body.data.content })
+        ).status,
+      ).toBe(412);
+      expect(
+        (await request(app()).get(singleton).set("Cookie", cookie)).body.data
+          .content,
+      ).toBeNull();
+    });
+    const path = `/api/v1/courses/${ids.course}/post-draft`;
+    const content = {
+      type: "question",
+      title: "Partial",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: ["physics"],
+    };
+    const put = (userId: string, etag: string, next = content) =>
+      unsafe(request(app(userId)).put(path))
+        .set("If-Match", etag)
+        .send({ content: next });
+
+    it("requires conditional saves, isolates owners, and retains a marker on discard", async () => {
+      const initial = await request(app()).get(path).set("Cookie", cookie);
+      expect(initial.headers["cache-control"]).toBe("private, no-store");
+      expect(initial.body.data.content).toBeNull();
+      expect(
+        (await unsafe(request(app()).put(path)).send({ content })).status,
+      ).toBe(428);
+      const saved = await put(ids.author, '"v0"');
+      expect(saved.status).toBe(200);
+      expect(saved.body.data.content).toEqual(content);
+      expect(
+        (await request(app(ids.staff)).get(path).set("Cookie", cookie)).body
+          .data.content,
+      ).toBeNull();
+      expect(
+        (await request(app(ids.outsider)).get(path).set("Cookie", cookie))
+          .status,
+      ).toBe(404);
+      expect((await put(ids.author, '"v0"')).status).toBe(412);
+      const discarded = await unsafe(request(app()).delete(path)).set(
+        "If-Match",
+        '"v1"',
+      );
+      expect(discarded.status).toBe(200);
+      expect(discarded.body.data.content).toBeNull();
+      expect(discarded.headers.etag).toBe('"v2"');
+      expect((await put(ids.author, '"v1"')).status).toBe(412);
+      expect((await put(ids.author, '"v2"')).status).toBe(200);
+    });
+
+    it("keeps incomplete metadata but rejects attachments and invalid text", async () => {
+      const bad = await unsafe(request(app()).put(path))
+        .set("If-Match", '"v0"')
+        .send({ content: { ...content, attachments: [] } });
+      expect(bad.status).toBe(422);
+      expect(
+        (await put(ids.author, '"v0"', { ...content, title: "a\u0000b" }))
+          .status,
+      ).toBe(422);
+      const saved = await put(ids.author, '"v0"', {
+        ...content,
+        title: "",
+        tags: ["", " foo "],
+      });
+      expect(saved.status).toBe(200);
+      const invalidPublish = await unsafe(
+        request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+      ).send({
+        type: "question",
+        title: "Published",
+        bodyMarkdown: "Body",
+        tags: ["", " foo "],
+        draftVersion: 1,
+      });
+      expect(invalidPublish.status).toBe(422);
+      expect(
+        (await request(app()).get(path).set("Cookie", cookie)).body.data.content
+          .tags,
+      ).toEqual(["", " foo "]);
+    });
+
+    it("supports archived read/discard but blocks save and publish", async () => {
+      expect((await put(ids.author, '"v0"')).status).toBe(200);
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        ids.course,
+      ]);
+      try {
+        expect(
+          (await request(app()).get(path).set("Cookie", cookie)).body.data
+            .content,
+        ).toEqual(content);
+        expect((await put(ids.author, '"v1"')).status).toBe(409);
+        expect(
+          (
+            await unsafe(
+              request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+            ).send({
+              type: "question",
+              title: "Publish",
+              bodyMarkdown: "Body",
+              draftVersion: 1,
+            })
+          ).status,
+        ).toBe(409);
+        expect(
+          (await unsafe(request(app()).delete(path)).set("If-Match", '"v1"'))
+            .status,
+        ).toBe(200);
+      } finally {
+        await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+          ids.course,
+        ]);
+      }
+    });
+
+    it("replays a published request without consuming the marker again", async () => {
+      expect((await put(ids.author, '"v0"')).status).toBe(200);
+      const key = uuidv7();
+      const make = () =>
+        unsafe(request(app()).post(`/api/v1/courses/${ids.course}/posts`))
+          .set("Idempotency-Key", key)
+          .send({
+            type: "question",
+            title: "Once",
+            bodyMarkdown: "Body",
+            draftVersion: 1,
+          });
+      const first = await make();
+      expect(first.status).toBe(201);
+      expect(
+        (await request(app()).get(path).set("Cookie", cookie)).headers.etag,
+      ).toBe('"v2"');
+      const replay = await make();
+      expect(replay.status).toBe(201);
+      expect(replay.body.data.id).toBe(first.body.data.id);
+      expect(
+        (await request(app()).get(path).set("Cookie", cookie)).headers.etag,
+      ).toBe('"v2"');
+    });
+
+    it("allows only one concurrent first save from version zero", async () => {
+      const [left, right] = await Promise.all([
+        put(ids.author, '"v0"', { ...content, title: "Left" }),
+        put(ids.author, '"v0"', { ...content, title: "Right" }),
+      ]);
+      expect([left.status, right.status].sort()).toEqual([200, 412]);
+      const saved = await request(app()).get(path).set("Cookie", cookie);
+      expect(saved.headers.etag).toBe('"v1"');
+      expect(["Left", "Right"]).toContain(saved.body.data.content.title);
+    });
+
+    it("rolls back draft clearing when post creation fails downstream", async () => {
+      expect((await put(ids.author, '"v0"')).status).toBe(200);
+      await pool.query(`CREATE FUNCTION reject_draft_publish_tag() RETURNS trigger AS $$
+        BEGIN RAISE EXCEPTION 'simulated tag failure'; END;
+        $$ LANGUAGE plpgsql`);
+      await pool.query(`CREATE TRIGGER reject_draft_publish_tag BEFORE INSERT ON post_tags
+        FOR EACH ROW EXECUTE FUNCTION reject_draft_publish_tag()`);
+      try {
+        const failed = await unsafe(
+          request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+        ).send({
+          type: "question",
+          title: "Failed atomic publish",
+          bodyMarkdown: "Body",
+          tags: ["rollback-check"],
+          draftVersion: 1,
+        });
+        expect(failed.status).toBe(500);
+        const retained = await request(app()).get(path).set("Cookie", cookie);
+        expect(retained.headers.etag).toBe('"v1"');
+        expect(retained.body.data.content).toEqual(content);
+        const posts = await pool.query(
+          "SELECT id FROM posts WHERE course_id=$1 AND title='Failed atomic publish'",
+          [ids.course],
+        );
+        expect(posts.rowCount).toBe(0);
+      } finally {
+        await pool.query("DROP TRIGGER reject_draft_publish_tag ON post_tags");
+        await pool.query("DROP FUNCTION reject_draft_publish_tag()");
+      }
     });
   });
 });
