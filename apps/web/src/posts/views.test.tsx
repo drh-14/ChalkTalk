@@ -129,7 +129,9 @@ it("omits disallowed anonymous and private choices from the new-post composer", 
     screen.queryByRole("checkbox", { name: "Post anonymously" }),
   ).toBeNull();
   expect(
-    screen.queryByRole("option", { name: "Instructors and TAs" }),
+    screen.queryByRole("option", {
+      name: "Private — only you and current instructors/TAs",
+    }),
   ).toBeNull();
 });
 
@@ -5434,7 +5436,7 @@ it("lets staff compose a poll with its options", async () => {
     expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
   );
   await user.selectOptions(
-    screen.getByRole("combobox", { name: "Post to" }),
+    screen.getByRole("combobox", { name: "Visibility" }),
     "staff",
   );
   await user.selectOptions(type, "poll");
@@ -5722,9 +5724,17 @@ it("posts privately to staff and turns off the announcement option meanwhile", a
     name: "Post as announcement (pinned; email sent to subscribers)",
   });
   await user.click(announce);
-  const audience = screen.getByRole("combobox", { name: "Post to" });
-  expect((audience as HTMLSelectElement).value).toBe("course");
-  await user.selectOptions(audience, "staff");
+  const visibility = screen.getByRole("combobox", { name: "Visibility" });
+  expect((visibility as HTMLSelectElement).value).toBe("course");
+  expect(
+    screen.getByRole("option", { name: "Public — everyone in course" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("option", {
+      name: "Private — only you and current instructors/TAs",
+    }),
+  ).toBeTruthy();
+  await user.selectOptions(visibility, "staff");
   expect((announce as HTMLInputElement).disabled).toBe(true);
   expect((announce as HTMLInputElement).checked).toBe(false);
   await user.type(screen.getByRole("textbox", { name: "Post title" }), "Grade");
@@ -5743,7 +5753,7 @@ it("posts privately to staff and turns off the announcement option meanwhile", a
   expect(body).not.toHaveProperty("announcement");
 }, 30_000);
 
-it("offers no audience choice for polls", async () => {
+it("offers no private visibility choice for polls", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) =>
@@ -5763,12 +5773,12 @@ it("offers no audience choice for polls", async () => {
     />,
   );
   await user.click(await screen.findByRole("button", { name: "Create post" }));
-  expect(screen.getByRole("combobox", { name: "Post to" })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "Visibility" })).toBeTruthy();
   await user.selectOptions(
     await screen.findByRole("combobox", { name: "Post type" }),
     "poll",
   );
-  expect(screen.queryByRole("combobox", { name: "Post to" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Visibility" })).toBeNull();
 });
 
 it("badges private posts and lists them with the Private filter", async () => {

@@ -27,7 +27,7 @@
 ## 5. Web
 
 - [x] 5.1 Posts client `private` field, filter, and publish call; verify client tests
-- [x] 5.2 Composer **Post to** choice, which disables the announcement option (design D6); verify component tests for the request body and the disabled checkbox
+- [x] 5.2 Composer visibility choice, which disables the announcement option (design D6); verify component tests for the request body and the disabled checkbox
 - [x] 5.3 Feed badge, **Private** filter, detail notice, and **Make public** with confirmation; bell wording for `post_published`; verify component tests
 
 ## 6. Checks
