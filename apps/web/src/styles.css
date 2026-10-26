@@ -781,6 +781,19 @@ h2[tabindex="-1"]:focus {
 .post-list-scroll > p {
   padding-inline: 1.25rem;
 }
+.new-posts-status-slot {
+  align-items: center;
+  display: flex;
+  flex: none;
+  height: 2.5rem;
+  padding-inline: 1.25rem;
+}
+.new-posts-notice {
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0;
+}
 .discussion-toolbar {
   display: flex;
   flex-wrap: wrap;

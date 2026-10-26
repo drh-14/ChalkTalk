@@ -29,6 +29,7 @@ import {
   deletePost,
   getDuplicateReview,
   getPost,
+  countNewPosts,
   listMergedPosts,
   listPosts,
   makePostPublic,
@@ -1323,6 +1324,8 @@ function DiscussionContent({
   const [pageError, setPageError] = useState("");
   const [pagePending, setPagePending] = useState(false);
   const [feedCycle, setFeedCycle] = useState(0);
+  const [feedSnapshot, setFeedSnapshot] = useState<string | null>(null);
+  const [newPostCount, setNewPostCount] = useState(0);
   const [composerOpen, setComposerOpen] = useState(false);
   const [detail, setDetail] = useState<PostDetail>();
   const [detailError, setDetailError] = useState("");
@@ -1445,8 +1448,12 @@ function DiscussionContent({
     else setLocalFilters(next);
   }
   const filterOptions = feedFilters(userId, staff);
-  const activeFilter = filterOptions.find(
-    (item) => item.key === activeFilters.filter,
+  const activeFilter = useMemo(
+    () =>
+      feedFilters(userId, staff).find(
+        (item) => item.key === activeFilters.filter,
+      ),
+    [userId, staff, activeFilters.filter],
   );
   const filter = activeFilter?.key ?? "all";
   // Filters may arrive as fresh objects on each render, so tags keep their identity by content.
@@ -1496,6 +1503,8 @@ function DiscussionContent({
     setCursor(null);
     setFeedError("");
     setPageError("");
+    setFeedSnapshot(null);
+    setNewPostCount(0);
     setLoading(true);
     setPagePending(false);
     pageBusy.current = false;
@@ -1520,24 +1529,24 @@ function DiscussionContent({
         : listPosts(courseId, options)
     )
       .then((page) => {
-        if (currentFeed.current === generation) {
-          if (postView === "duplicates")
-            setMergedItems(page.data as MergedPost[]);
-          else
-            setItems(
-              (page.data as Post[]).filter(
-                (post) => !deletedPostIds.current.has(post.id),
-              ),
-            );
-          setCursor(page.page.nextCursor);
-          setLoading(false);
+        if (currentFeed.current !== generation) return;
+        if (postView === "duplicates")
+          setMergedItems(page.data as MergedPost[]);
+        else {
+          setItems(
+            (page.data as Post[]).filter(
+              (post) => !deletedPostIds.current.has(post.id),
+            ),
+          );
+          setFeedSnapshot("snapshot" in page ? (page.snapshot ?? null) : null);
         }
+        setCursor(page.page.nextCursor);
+        setLoading(false);
       })
       .catch((caught) => {
-        if (currentFeed.current === generation) {
-          setFeedError(message(caught));
-          setLoading(false);
-        }
+        if (currentFeed.current !== generation) return;
+        setFeedError(message(caught));
+        setLoading(false);
       });
     return () => {
       controller.abort();
@@ -1554,6 +1563,43 @@ function DiscussionContent({
     tags,
     tagMatch,
     userId,
+  ]);
+  useEffect(() => {
+    if (!feedSnapshot || postView !== "posts" || loading) return;
+    let active = true;
+    let pending = false;
+    const options = feedOptions(query, activeFilter, sort, tags, tagMatch);
+    const check = () => {
+      if (document.visibilityState === "hidden" || pending) return;
+      pending = true;
+      void countNewPosts(courseId, feedSnapshot, options)
+        .then((count) => {
+          if (active) setNewPostCount(count);
+        })
+        .catch(() => {
+          /* Keep the current feed and last known count on polling failure. */
+        })
+        .finally(() => {
+          pending = false;
+        });
+    };
+    check();
+    const timer = window.setInterval(check, 20_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [
+    courseId,
+    feedSnapshot,
+    postView,
+    loading,
+    query,
+    filter,
+    activeFilter,
+    sort,
+    tags,
+    tagMatch,
   ]);
   useEffect(() => {
     if (!postId) {
@@ -2203,6 +2249,20 @@ function DiscussionContent({
               Search words, "quoted phrases", OR, or -excluded terms.
             </p>
             {reviewError && <p role="alert">{reviewError}</p>}
+            <div className="new-posts-status-slot">
+              {newPostCount > 0 &&
+                postView === "posts" &&
+                !loading &&
+                !feedError && (
+                  <p
+                    role="status"
+                    className="new-posts-notice"
+                    aria-label={`${newPostCount} new ${newPostCount === 1 ? "post" : "posts"}`}
+                  >
+                    {newPostCount} new {newPostCount === 1 ? "post" : "posts"}
+                  </p>
+                )}
+            </div>
             <div
               className="post-list-scroll"
               role="region"

@@ -411,7 +411,9 @@ None.
 
 #### Response headers
 
-None specific to this operation.
+`X-Feed-Snapshot` (string): A base64url-encoded course- and viewer-bound server timestamp from the list query, for the newly created post count. It contains the course and viewer IDs but no post IDs; clients must treat it as an opaque token, not a secret. The encoding is unsigned and is not authentication or authorization: a caller can supply a different timestamp, but every count still requires a current session and applies course membership and post visibility. The client must not derive a watermark from its clock or the first result page. The notice is best-effort: a creation transaction that began before the watermark but committed afterward can be missed; manually refreshing the feed still shows it.
+
+`Cache-Control`: `private, no-store`.
 
 #### Response body
 
@@ -1608,3 +1610,7 @@ curl --request POST '/api/v1/courses/course_123/read-marks' \
 ##### `503 Service Unavailable`
 
 `service_unavailable`: A required service is temporarily unavailable.
+
+### New-post notice endpoint
+
+**`GET /api/v1/courses/{courseId}/posts/new-count?snapshot=<token>`** returns `{ "data": { "count": number } }` and `Cache-Control: private, no-store`. It accepts the same list filters except `cursor` and `duplicateStatus=confirmed`, and counts active, unmerged, currently readable posts created after the supplied watermark and matching the supplied filters. Edits and new activity on old posts do not count. The unsigned token includes course and viewer IDs, which are checked against the request; missing, malformed, or cross-course/viewer tokens return `400 invalid_request`. Its encoding does not prove issuance, so the timestamp is not a security boundary. A nonmember receives `404 not_found`; an unauthenticated caller receives `401`. This check never marks posts read or moves an existing feed. The count is best-effort for a creation transaction that began before the original list snapshot but committed afterward.

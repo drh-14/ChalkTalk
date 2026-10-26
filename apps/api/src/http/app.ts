@@ -530,6 +530,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "announcement",
     "private",
     "unresolvedFollowups",
+    "snapshot",
     "authorRole",
     "duplicateStatus",
     "sort",
@@ -618,6 +619,9 @@ function postListQuery(query: Request["query"]): ListPosts {
       "invalid_request",
       "Unresolved followups filter is invalid",
     );
+  const snapshot = one("snapshot");
+  if (snapshot !== undefined && (snapshot.length < 1 || snapshot.length > 2048))
+    throw new AuthError(400, "invalid_request", "Feed snapshot is invalid");
   const authorRole = one("authorRole");
   if (
     authorRole !== undefined &&
@@ -659,6 +663,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     announcement: rawAnnouncement === "true" ? true : undefined,
     private: rawPrivate === "true" ? true : undefined,
     unresolvedFollowups: rawUnresolved === "true" ? true : undefined,
+    newSince: snapshot,
     authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
@@ -2253,13 +2258,52 @@ export function createApp(
       try {
         const current = await requireSession(request);
         const options = postListQuery(request.query);
+        if (options.newSince)
+          throw new AuthError(400, "invalid_request", "Filter is invalid");
         const result = await posts().list(
           param(request.params.courseId),
           current.session.user.id,
           options,
         );
         response.locals.safeResultCount = result.data.length;
-        response.json(result);
+        const { snapshot, ...body } = result;
+        if (snapshot)
+          response.set({
+            "X-Feed-Snapshot": snapshot,
+            "Access-Control-Expose-Headers": "X-Feed-Snapshot",
+            "Cache-Control": "private, no-store",
+          });
+        response.json(body);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/posts/new-count",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const options = postListQuery(request.query);
+        if (
+          !options.newSince ||
+          options.cursor ||
+          options.duplicateStatus === "confirmed"
+        )
+          throw new AuthError(
+            400,
+            "invalid_request",
+            "Feed snapshot or filter is invalid",
+          );
+        const result = await posts().list(
+          param(request.params.courseId),
+          current.session.user.id,
+          options,
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: { count: result.newCount } });
       } catch (error) {
         next(error);
       }

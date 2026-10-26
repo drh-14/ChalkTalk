@@ -6,6 +6,8 @@ It is designed to make large course forums easier to search, organize, and maint
 
 Students can ask questions, participate in threaded discussions, contribute to shared answers, search previous posts, view course resources, vote in polls, and optionally post anonymously.
 
+A passive new-post count shows how many matching posts arrived since the feed loaded without interrupting the current post or an unsent draft. A browser refresh loads the latest posts.
+
 Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
 
 Instructors can turn off new anonymous or private contributions and pause follow-up resolution in a course's settings. Existing contributions and resolution markers remain visible to their authorized readers.

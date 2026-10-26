@@ -3581,6 +3581,16 @@ paths:
         - session_cookie: []
       responses:
         "200":
+          headers:
+            X-Feed-Snapshot:
+              description: Base64url-encoded course- and viewer-bound server timestamp from the list query for new-count; contains course and viewer IDs but no post IDs. The encoding is unsigned, not authentication or authorization; each count still checks current membership and post visibility. Clients treat it as opaque, not secret. A rare concurrent commit may be missed by the notice.
+              schema: { type: string }
+            Access-Control-Expose-Headers:
+              description: Exposes X-Feed-Snapshot to the credentialed frontend.
+              schema: { type: string }
+            Cache-Control:
+              description: Prevents caching the viewer-specific snapshot and feed.
+              schema: { type: string, enum: ["private, no-store"] }
           description: Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
           content:
             application/json:
@@ -10578,6 +10588,169 @@ paths:
                       message: The server could not complete the request.
                       requestId: req_listCourseCollaborationSessions
                       details: []
+  "/courses/{courseId}/posts/new-count":
+    get:
+      tags: [Posts]
+      summary: Count newly created posts matching active viewer filters
+      description: Best-effort count since a supplied X-Feed-Snapshot watermark. The unsigned encoding does not prove issuance; authentication, membership, and post visibility are checked on every request. Counts active, unmerged, currently readable creations; old-post edits and activity are excluded. A rare in-flight creation can be missed. The accepted filters match the course post list except confirmed duplicate review and pagination cursor.
+      operationId: countNewCoursePosts
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: snapshot
+          in: query
+          required: true
+          description: Unsigned base64url course- and viewer-bound watermark from X-Feed-Snapshot; not an authorization capability.
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+        - name: q
+          in: query
+          required: false
+          description: Trimmed non-empty search text; see the [course posts API reference](api/posts.md) for matching rules. Omit to list without search.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+        - name: semanticQuery
+          in: query
+          required: false
+          description: Optional semantic candidate query; requires q. See the course posts API reference for matching rules.
+          schema: { type: string, minLength: 1, maxLength: 500 }
+        - name: type
+          in: query
+          required: false
+          description: Filter by post type.
+          schema:
+            type: string
+            enum:
+              - question
+              - note
+              - poll
+        - name: tag
+          in: query
+          required: false
+          description: Filter by one or more tags, trimmed and compared case-insensitively; repeated values count once. tagMatch controls how several tags combine. More than 10 values return 400 invalid_request.
+          schema:
+            type: array
+            items:
+              type: string
+              description: Course-defined post tag.
+              minLength: 1
+              maxLength: 40
+            maxItems: 10
+          style: form
+          explode: true
+        - name: tagMatch
+          in: query
+          required: false
+          description: How repeated tag values combine. any returns posts carrying at least one requested tag; all returns only posts carrying every requested tag. With fewer than two distinct tags both values return the same results.
+          schema:
+            type: string
+            enum:
+              - any
+              - all
+            default: any
+        - name: authorId
+          in: query
+          required: false
+          description: Staff may match all content by this author. Students may match nonanonymous content and their own anonymous content. Items whose identity is hidden from the viewer are removed before ranking, pagination, hasMore, and counts; no visible matches return an empty 200 collection.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+        - name: createdAfter
+          in: query
+          required: false
+          description: Return posts created at or after this timestamp.
+          schema:
+            type: string
+            format: date-time
+        - name: createdBefore
+          in: query
+          required: false
+          description: Return posts created at or before this timestamp.
+          schema:
+            type: string
+            format: date-time
+        - name: answered
+          in: query
+          required: false
+          description: Filter question posts by answer presence.
+          schema:
+            type: boolean
+        - name: unresolvedFollowups
+          in: query
+          required: false
+          description: Only true is accepted; lists questions with at least one unresolved followup discussion.
+          schema:
+            type: boolean
+            enum:
+              - true
+        - name: pinned
+          in: query
+          required: false
+          description: Filter by pinned state. Combine with type to list pinned posts of one type.
+          schema:
+            type: boolean
+        - name: announcement
+          in: query
+          required: false
+          description: Only true is accepted; lists announcements only.
+          schema:
+            type: boolean
+            enum:
+              - true
+        - name: private
+          in: query
+          required: false
+          description: Only true is accepted; lists the private posts the caller can read.
+          schema:
+            type: boolean
+            enum:
+              - true
+        - name: authorRole
+          in: query
+          required: false
+          description: Filter by the author's current role in the course. For a student, anonymous posts other than the student's own are removed before ranking and pagination, so the filter cannot reveal an anonymous author's role.
+          schema:
+            type: string
+            enum:
+              - instructor
+              - ta
+        - name: sort
+          in: query
+          required: false
+          description: Pinned posts appear before unpinned posts for every sort. Within each group, newest and oldest order by creation time, descending and ascending; recent_activity orders by the latest activity. Defaults to relevance when q is present and recent_activity otherwise.
+          schema:
+            type: string
+            enum:
+              - relevance
+              - newest
+              - oldest
+              - recent_activity
+        - name: duplicateStatus
+          in: query
+          required: false
+          description: Confirmed duplicate review is not accepted for new-post counting.
+          schema: { type: string, enum: [none, suggested] }
+        - name: limit
+          in: query
+          required: false
+          description: Accepted as on the course post list but does not limit the count.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        "200":
+          description: Count of visible newly created posts matching supplied filters.
+          headers:
+            Cache-Control:
+              description: Prevents caching the viewer-specific count.
+              schema: { type: string, enum: ["private, no-store"] }
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/NewPostCountResponse" }
+        "400":
+          { description: Missing, invalid, or cross-viewer snapshot or filter }
+        "401": { description: Unauthorized }
+        "404": { description: Course absent or hidden }
   "/posts/{postId}/follow":
     put:
       tags:
@@ -15963,6 +16136,17 @@ components:
           uniqueItems: true
       additionalProperties: false
       minProperties: 1
+    NewPostCountResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            count: { type: integer, minimum: 0 }
+          additionalProperties: false
+          required: [count]
+      additionalProperties: false
+      required: [data]
     FollowResponse:
       type: object
       properties:

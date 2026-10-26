@@ -2491,4 +2491,294 @@ integration("text posts HTTP contract", () => {
       });
     });
   });
+  it("does not expose removed viewer-state feed filters or saved-post mutations", async () => {
+    for (const query of ["saved=true", "unread=true", "following=true"]) {
+      const list = await request(app(ids.student))
+        .get(`/api/v1/courses/${ids.course}/posts?${query}`)
+        .set("Cookie", cookie);
+      expect(list.status).toBe(400);
+      expect(list.body.error.code).toBe("invalid_request");
+    }
+    const removed = await unsafe(
+      request(app(ids.student)).put(`/api/v1/posts/${ids.course}/saved`),
+    );
+    expect(removed.status).toBe(404);
+  });
+
+  it("counts only visible matching new creations since a server-issued snapshot", async () => {
+    const initial = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts?type=note`)
+      .set("Cookie", cookie);
+    expect(initial.status).toBe(200);
+    expect(typeof initial.headers["x-feed-snapshot"]).toBe("string");
+    const snapshot = initial.headers["x-feed-snapshot"] as string;
+    const before = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts/new-count?snapshot=${encodeURIComponent(snapshot)}&type=note`,
+      )
+      .set("Cookie", cookie);
+    expect(before.status).toBe(200);
+    expect(before.body.data.count).toBe(0);
+    const allBefore = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts/new-count?snapshot=${encodeURIComponent(snapshot)}`,
+      )
+      .set("Cookie", cookie);
+    expect(allBefore.body.data.count).toBe(0);
+    await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    ).send({
+      type: "question",
+      title: "Not a matching note",
+      bodyMarkdown: "Body",
+      tags: [],
+    });
+    const matching = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    ).send({
+      type: "note",
+      title: "Matching new note",
+      bodyMarkdown: "Body",
+      tags: [],
+    });
+    expect(matching.status).toBe(201);
+    const count = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts/new-count?snapshot=${encodeURIComponent(snapshot)}&type=note`,
+      )
+      .set("Cookie", cookie);
+    expect(count.status).toBe(200);
+    expect(count.body.data.count).toBe(1);
+    const otherViewer = await request(app())
+      .get(
+        `/api/v1/courses/${ids.course}/posts/new-count?snapshot=${encodeURIComponent(snapshot)}&type=note`,
+      )
+      .set("Cookie", cookie);
+    expect(otherViewer.status).toBe(400);
+    const plainList = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts?snapshot=${encodeURIComponent(snapshot)}`,
+      )
+      .set("Cookie", cookie);
+    expect(plainList.status).toBe(400);
+    const staffList = await request(app(ids.staff))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .set("Cookie", cookie);
+    const staffSnapshot = staffList.headers["x-feed-snapshot"] as string;
+    const mergedCount = await request(app(ids.staff))
+      .get(
+        `/api/v1/courses/${ids.course}/posts/new-count?snapshot=${encodeURIComponent(staffSnapshot)}&duplicateStatus=confirmed`,
+      )
+      .set("Cookie", cookie);
+    expect(mergedCount.status).toBe(400);
+    expect(
+      (
+        await request(app(ids.student))
+          .get(
+            `/api/v1/courses/${ids.course}/posts/new-count?snapshot=not-a-token`,
+          )
+          .set("Cookie", cookie)
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(app(ids.student))
+          .get(`/api/v1/courses/${ids.course}/posts/new-count`)
+          .set("Cookie", cookie)
+      ).status,
+    ).toBe(400);
+    const corsList = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts`)
+      .set("Cookie", cookie)
+      .set("Origin", environment.frontendBaseUrl);
+    expect(corsList.headers["access-control-expose-headers"]).toContain(
+      "X-Feed-Snapshot",
+    );
+  });
+
+  it("does not expose post IDs or count old posts made visible later", async () => {
+    const publicPost = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    ).send({
+      type: "note",
+      title: "Visible snapshot post",
+      bodyMarkdown: "Body",
+      tags: [],
+    });
+    const privatePost = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    ).send({
+      type: "note",
+      title: "Private snapshot post",
+      bodyMarkdown: "Body",
+      tags: [],
+      private: true,
+    });
+    expect(publicPost.status).toBe(201);
+    expect(privatePost.status).toBe(201);
+    const mergedPost = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    ).send({
+      type: "note",
+      title: "Hidden merged snapshot post",
+      bodyMarkdown: "Body",
+      tags: [],
+    });
+    expect(mergedPost.status).toBe(201);
+    await pool.query(
+      "UPDATE posts SET duplicate_status='confirmed',duplicate_of_post_id=$2 WHERE id=$1",
+      [mergedPost.body.data.id, publicPost.body.data.id],
+    );
+
+    const studentList = await request(app(ids.student))
+      .get(`/api/v1/courses/${ids.course}/posts?type=note`)
+      .set("Cookie", cookie);
+    expect(studentList.status).toBe(200);
+    expect(
+      studentList.body.data.map((post: { id: string }) => post.id),
+    ).not.toContain(privatePost.body.data.id);
+    const studentSnapshot = JSON.parse(
+      Buffer.from(studentList.headers["x-feed-snapshot"], "base64url").toString(
+        "utf8",
+      ),
+    );
+    expect(studentSnapshot.at).toEqual(expect.any(String));
+    for (const post of [publicPost, privatePost, mergedPost]) {
+      expect(JSON.stringify(studentSnapshot)).not.toContain(post.body.data.id);
+    }
+    const callerChosenWatermark = Buffer.from(
+      JSON.stringify({ ...studentSnapshot, at: "2000-01-01T00:00:00.000000Z" }),
+    ).toString("base64url");
+    const callerChosenCount = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts/new-count?snapshot=${encodeURIComponent(callerChosenWatermark)}&type=note`,
+      )
+      .set("Cookie", cookie);
+    expect(callerChosenCount.status).toBe(200);
+    expect(callerChosenCount.body.data.count).toBeGreaterThan(0);
+
+    const authorList = await request(app())
+      .get(`/api/v1/courses/${ids.course}/posts?type=note`)
+      .set("Cookie", cookie);
+    expect(authorList.status).toBe(200);
+    const authorSnapshot = JSON.parse(
+      Buffer.from(authorList.headers["x-feed-snapshot"], "base64url").toString(
+        "utf8",
+      ),
+    );
+    for (const post of [publicPost, privatePost, mergedPost]) {
+      expect(JSON.stringify(authorSnapshot)).not.toContain(post.body.data.id);
+    }
+
+    await pool.query("UPDATE posts SET private=false WHERE id=$1", [
+      privatePost.body.data.id,
+    ]);
+    await pool.query(
+      "UPDATE posts SET duplicate_status='none',duplicate_of_post_id=NULL WHERE id=$1",
+      [mergedPost.body.data.id],
+    );
+    const oldCount = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts/new-count?snapshot=${encodeURIComponent(studentList.headers["x-feed-snapshot"])}&type=note`,
+      )
+      .set("Cookie", cookie);
+    expect(oldCount.status).toBe(200);
+    expect(oldCount.body.data.count).toBe(0);
+
+    const newPost = await unsafe(
+      request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+    ).send({
+      type: "note",
+      title: "Created after snapshot",
+      bodyMarkdown: "Body",
+      tags: [],
+    });
+    expect(newPost.status).toBe(201);
+    const newCount = await request(app(ids.student))
+      .get(
+        `/api/v1/courses/${ids.course}/posts/new-count?snapshot=${encodeURIComponent(studentList.headers["x-feed-snapshot"])}&type=note`,
+      )
+      .set("Cookie", cookie);
+    expect(newCount.status).toBe(200);
+    expect(newCount.body.data.count).toBe(1);
+  });
+
+  it("issues a usable snapshot for an empty course feed", async () => {
+    const emptyCourseId = uuidv7();
+    await pool.query(
+      "INSERT INTO courses(id,organization_id,created_by_user_id,name,join_code) VALUES($1,$2,$3,'Empty notice course','CDEFGHIJ')",
+      [emptyCourseId, ids.organization, ids.author],
+    );
+    await pool.query(
+      "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,'instructor')",
+      [emptyCourseId, ids.author],
+    );
+    const initial = await request(app())
+      .get(`/api/v1/courses/${emptyCourseId}/posts`)
+      .set("Cookie", cookie);
+    expect(initial.status).toBe(200);
+    expect(initial.body.data).toEqual([]);
+    expect(initial.body.page).toEqual({ nextCursor: null, hasMore: false });
+    const snapshot = initial.headers["x-feed-snapshot"] as string;
+    expect(snapshot).toEqual(expect.any(String));
+    const before = await request(app())
+      .get(
+        `/api/v1/courses/${emptyCourseId}/posts/new-count?snapshot=${encodeURIComponent(snapshot)}`,
+      )
+      .set("Cookie", cookie);
+    expect(before.status).toBe(200);
+    expect(before.body.data.count).toBe(0);
+    await unsafe(request(app()).post(`/api/v1/courses/${emptyCourseId}/posts`))
+      .send({
+        type: "note",
+        title: "First post",
+        bodyMarkdown: "Body",
+        tags: [],
+      })
+      .expect(201);
+    const after = await request(app())
+      .get(
+        `/api/v1/courses/${emptyCourseId}/posts/new-count?snapshot=${encodeURIComponent(snapshot)}`,
+      )
+      .set("Cookie", cookie);
+    expect(after.status).toBe(200);
+    expect(after.body.data.count).toBe(1);
+  });
+
+  it("does not count a post already visible in the initial feed", async () => {
+    const creator = new PostService(pool);
+    let insertedId: string | undefined;
+    let intercepted = false;
+    const delayedPool = new Proxy(pool, {
+      get(target, property) {
+        if (property !== "query") {
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+        return async (sql: string, values?: unknown[]) => {
+          if (!intercepted && sql.includes("SELECT listed.* FROM listed")) {
+            intercepted = true;
+            const created = await creator.create(ids.course, ids.author, {
+              type: "note",
+              title: "Committed before the page query",
+              bodyMarkdown: "Body",
+              tags: [],
+            });
+            insertedId = created.value.id;
+          }
+          return target.query(sql, values);
+        };
+      },
+    });
+    const service = new PostService(delayedPool);
+    const options = { sort: "newest" as const, limit: 100 };
+    const initial = await service.list(ids.course, ids.student, options);
+    expect(intercepted).toBe(true);
+    expect(initial.data.map((item) => item.id)).toContain(insertedId);
+    const count = await service.list(ids.course, ids.student, {
+      ...options,
+      newSince: initial.snapshot,
+    });
+    expect(count.newCount).toBe(0);
+  });
 });

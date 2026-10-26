@@ -282,3 +282,11 @@ it("surfaces a failed post deletion using the API error envelope", async () => {
     code: "canonical_has_duplicates",
   });
 });
+
+it("counts new posts using the active list filters and snapshot", async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: { count: 2 } }));
+  vi.stubGlobal("fetch", fetchMock);
+  const { countNewPosts } = await import("./client.js");
+  expect(await countNewPosts("course-1", "opaque", { type: "note" })).toBe(2);
+  expect(fetchMock.mock.calls[0]![0]).toContain("snapshot=opaque&type=note");
+});
