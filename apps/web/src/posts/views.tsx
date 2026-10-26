@@ -28,14 +28,17 @@ import {
   createPost,
   deletePostDraft,
   getPostDraft,
+  deletePost,
   getDuplicateReview,
   getPost,
+  countNewPosts,
   listMergedPosts,
   listPosts,
   makePostPublic,
   markCourseRead,
   setFollowing,
   setPostPinned,
+  setPostDiscussionLocked,
   unmergePost,
   updatePost,
   updatePostDraft,
@@ -95,6 +98,14 @@ const message = (error: unknown) =>
   error instanceof Error
     ? error.message
     : "Something went wrong. Please try again.";
+const validCloseDate = (value: string) => {
+  const date = value.slice(0, 10);
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  return (
+    Number.isFinite(parsed) &&
+    new Date(parsed).toISOString().slice(0, 10) === date
+  );
+};
 const discussionPath = (courseId: string, search = "") =>
   `/courses/${encodeURIComponent(courseId)}${search}`;
 const postPath = (courseId: string, postId: string, search = "") =>
@@ -589,6 +600,8 @@ function Composer({
   csrfToken,
   staff = false,
   archived = false,
+  allowAnonymousPosting = true,
+  allowPrivatePosting = true,
   onCreated,
   onClose,
   onDiscardLocalChanges,
@@ -601,6 +614,8 @@ function Composer({
   /** TAs and instructors may post polls and announcements. */
   staff?: boolean;
   archived?: boolean;
+  allowAnonymousPosting?: boolean;
+  allowPrivatePosting?: boolean;
   onCreated: (post: Post) => void;
   onClose: () => void;
   onDiscardLocalChanges: () => void;
@@ -611,6 +626,15 @@ function Composer({
 }) {
   const [type, setType] = useState<"question" | "note" | "poll">("question");
   const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [selectionMode, setSelectionMode] = useState<"single" | "multiple">(
+    "single",
+  );
+  const [maxSelections, setMaxSelections] = useState(2);
+  const [closesAt, setClosesAt] = useState("");
+  const [releaseMode, setReleaseMode] = useState<
+    "live" | "manual" | "automatic"
+  >("live");
+  const [explanation, setExplanation] = useState("");
   const [announcement, setAnnouncement] = useState(false);
   const [audience, setAudience] = useState<"course" | "staff">("course");
   const [title, setTitle] = useState(initialTitle);
@@ -966,6 +990,9 @@ function Composer({
       setSwitchingDraft(false);
     }
   }
+  const privately = type !== "poll" && audience === "staff";
+  const announcing = type === "note" && announcement && !privately;
+  const submittedAnonymous = announcing ? false : anonymous;
 
   useEffect(() => {
     onStateChange(
@@ -1030,21 +1057,47 @@ function Composer({
       if (complete) onCreated(published);
       return;
     }
-    const privately = type !== "poll" && audience === "staff";
-    const announcing = type === "note" && announcement && !privately;
+    if (submittedAnonymous && !allowAnonymousPosting) {
+      setError(
+        "Anonymous posting is disabled for this course. Choose a named post before publishing.",
+      );
+      return;
+    }
+    if (privately && !allowPrivatePosting) {
+      setError(
+        "Private posting is disabled for this course. Choose the entire class before publishing.",
+      );
+      return;
+    }
     const labels = pollOptions.map((label) => label.trim());
     const input: CreatePostInput = {
       type,
       title: title.trim(),
       bodyMarkdown: body,
-      anonymous: announcing ? false : anonymous,
+      anonymous: submittedAnonymous,
       tags: parseComposerTags(tags),
       ...(type === "poll"
-        ? { options: labels.filter(Boolean).map((label) => ({ label })) }
+        ? {
+            options: labels.filter(Boolean).map((label) => ({ label })),
+            selectionMode,
+            ...(selectionMode === "multiple" ? { maxSelections } : {}),
+            ...(closesAt &&
+            validCloseDate(closesAt) &&
+            !Number.isNaN(Date.parse(closesAt))
+              ? { closesAt: new Date(closesAt).toISOString() }
+              : {}),
+            ...(releaseMode === "live" ? {} : { releaseMode }),
+            ...(explanation.trim() ? { explanation: explanation.trim() } : {}),
+          }
         : {}),
       ...(announcing ? { announcement: true } : {}),
       ...(privately ? { private: true } : {}),
     };
+    // Matches the published body below, so a retry keeps its original deadline.
+    const payload = JSON.stringify({
+      ...input,
+      draftVersion: revisionRef.current?.draft.version,
+    });
     if (type === "poll") {
       const filled = labels.filter(Boolean);
       if (filled.length < 2) {
@@ -1060,6 +1113,25 @@ function Composer({
         filled.length
       ) {
         setError("Poll options must be different from each other.");
+        return;
+      }
+      if (
+        selectionMode === "multiple" &&
+        (!Number.isInteger(maxSelections) ||
+          maxSelections < 2 ||
+          maxSelections > filled.length)
+      ) {
+        setError(`Maximum selections must be between 2 and ${filled.length}.`);
+        return;
+      }
+      if (
+        closesAt &&
+        (!validCloseDate(closesAt) ||
+          Number.isNaN(Date.parse(closesAt)) ||
+          (Date.parse(closesAt) <= Date.now() &&
+            lastAttempt.current?.body !== payload))
+      ) {
+        setError("Choose a future poll close time.");
         return;
       }
     }
@@ -1318,6 +1390,73 @@ function Composer({
                 )}
               </fieldset>
             )}
+            {type === "poll" && (
+              <div className="poll-settings">
+                <label>
+                  Selection mode
+                  <select
+                    value={selectionMode}
+                    onChange={(event) => {
+                      const mode = event.target.value as "single" | "multiple";
+                      setSelectionMode(mode);
+                      if (mode === "multiple")
+                        setReleaseMode((current) =>
+                          current === "live" ? "manual" : current,
+                        );
+                    }}
+                  >
+                    <option value="single">Choose one</option>
+                    <option value="multiple">Choose multiple</option>
+                  </select>
+                </label>
+                {selectionMode === "multiple" && (
+                  <label>
+                    Maximum selections
+                    <input
+                      type="number"
+                      min={2}
+                      max={MAX_POLL_OPTIONS}
+                      value={maxSelections}
+                      onChange={(event) =>
+                        setMaxSelections(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                )}
+                <label>
+                  Close time (optional)
+                  <input
+                    type="datetime-local"
+                    value={closesAt}
+                    onChange={(event) => setClosesAt(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Results release
+                  <select
+                    value={releaseMode}
+                    onChange={(event) =>
+                      setReleaseMode(
+                        event.target.value as "live" | "manual" | "automatic",
+                      )
+                    }
+                  >
+                    {selectionMode === "single" && (
+                      <option value="live">Live</option>
+                    )}
+                    <option value="manual">Staff release</option>
+                    <option value="automatic">Automatically when closed</option>
+                  </select>
+                </label>
+                <label>
+                  Results explanation (optional)
+                  <textarea
+                    value={explanation}
+                    onChange={(event) => setExplanation(event.target.value)}
+                  />
+                </label>
+              </div>
+            )}
             <label>
               Tags (comma-separated)
               <input
@@ -1328,7 +1467,7 @@ function Composer({
             </label>
             {type !== "poll" && (
               <label>
-                Post to
+                Visibility
                 <select
                   value={audience}
                   disabled={
@@ -1338,8 +1477,12 @@ function Composer({
                     setAudience(event.target.value as "course" | "staff")
                   }
                 >
-                  <option value="course">Entire class</option>
-                  <option value="staff">Instructors and TAs</option>
+                  <option value="course">Public — everyone in course</option>
+                  {allowPrivatePosting && (
+                    <option value="staff">
+                      Private — only you and current instructors/TAs
+                    </option>
+                  )}
                 </select>
               </label>
             )}
@@ -1347,35 +1490,24 @@ function Composer({
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={announcement && audience !== "staff"}
-                  disabled={
-                    archived ||
-                    pending ||
-                    switchingDraft ||
-                    audience === "staff"
-                  }
+                  checked={announcing}
+                  disabled={archived || pending || switchingDraft || privately}
                   onChange={(event) => setAnnouncement(event.target.checked)}
                 />
                 Post as announcement (pinned; email sent to subscribers)
               </label>
             )}
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={
-                  anonymous &&
-                  !(type === "note" && announcement && audience !== "staff")
-                }
-                disabled={
-                  archived ||
-                  pending ||
-                  switchingDraft ||
-                  (type === "note" && announcement && audience !== "staff")
-                }
-                onChange={(event) => setAnonymous(event.target.checked)}
-              />
-              Post anonymously
-            </label>
+            {allowAnonymousPosting && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={submittedAnonymous}
+                  disabled={archived || pending || switchingDraft || announcing}
+                  onChange={(event) => setAnonymous(event.target.checked)}
+                />
+                Post anonymously
+              </label>
+            )}
           </>
         )}
         {!archived && (
@@ -1383,6 +1515,30 @@ function Composer({
             queue={attachmentQueue}
             disabled={pending || switchingDraft}
           />
+        )}
+        {!allowAnonymousPosting && submittedAnonymous && !published && (
+          <p className="form-message error">
+            Anonymous posting is now disabled. Your draft is unchanged.{" "}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setAnonymous(false)}
+            >
+              Switch to named post
+            </button>
+          </p>
+        )}
+        {!allowPrivatePosting && privately && !published && (
+          <p className="form-message error">
+            Private posting is now disabled. Your draft is unchanged.{" "}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setAudience("course")}
+            >
+              Switch to entire class
+            </button>
+          </p>
         )}
         {error && (
           <p className="form-message error" role="alert">
@@ -1877,6 +2033,10 @@ function DiscussionContent({
   const [localSortQuery, setLocalSortQuery] = useState<string>();
   const [pinPending, setPinPending] = useState(false);
   const [pinError, setPinError] = useState("");
+  const [lockPending, setLockPending] = useState(false);
+  const [lockError, setLockError] = useState("");
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [readError, setReadError] = useState("");
   const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
@@ -1886,9 +2046,13 @@ function DiscussionContent({
   const [pageError, setPageError] = useState("");
   const [pagePending, setPagePending] = useState(false);
   const [feedCycle, setFeedCycle] = useState(0);
+  const [feedSnapshot, setFeedSnapshot] = useState<string | null>(null);
+  const [newPostCount, setNewPostCount] = useState(0);
   const [composerOpen, setComposerOpen] = useState(false);
   const [detail, setDetail] = useState<PostDetail>();
   const [detailError, setDetailError] = useState("");
+  const currentPostRoute = useRef({ courseId, postId });
+  currentPostRoute.current = { courseId, postId };
   const canEditDetail =
     !!detail &&
     !detail.deleted &&
@@ -1949,6 +2113,7 @@ function DiscussionContent({
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   const currentFeed = useRef(0);
+  const deletedPostIds = useRef(new Set<string>());
 
   useEffect(() => {
     if (!userId) return;
@@ -2006,8 +2171,12 @@ function DiscussionContent({
     else setLocalFilters(next);
   }
   const filterOptions = feedFilters(userId, staff);
-  const activeFilter = filterOptions.find(
-    (item) => item.key === activeFilters.filter,
+  const activeFilter = useMemo(
+    () =>
+      feedFilters(userId, staff).find(
+        (item) => item.key === activeFilters.filter,
+      ),
+    [userId, staff, activeFilters.filter],
   );
   const filter = activeFilter?.key ?? "all";
   // Filters may arrive as fresh objects on each render, so tags keep their identity by content.
@@ -2057,6 +2226,8 @@ function DiscussionContent({
     setCursor(null);
     setFeedError("");
     setPageError("");
+    setFeedSnapshot(null);
+    setNewPostCount(0);
     setLoading(true);
     setPagePending(false);
     pageBusy.current = false;
@@ -2081,19 +2252,24 @@ function DiscussionContent({
         : listPosts(courseId, options)
     )
       .then((page) => {
-        if (currentFeed.current === generation) {
-          if (postView === "duplicates")
-            setMergedItems(page.data as MergedPost[]);
-          else setItems(page.data as Post[]);
-          setCursor(page.page.nextCursor);
-          setLoading(false);
+        if (currentFeed.current !== generation) return;
+        if (postView === "duplicates")
+          setMergedItems(page.data as MergedPost[]);
+        else {
+          setItems(
+            (page.data as Post[]).filter(
+              (post) => !deletedPostIds.current.has(post.id),
+            ),
+          );
+          setFeedSnapshot("snapshot" in page ? (page.snapshot ?? null) : null);
         }
+        setCursor(page.page.nextCursor);
+        setLoading(false);
       })
       .catch((caught) => {
-        if (currentFeed.current === generation) {
-          setFeedError(message(caught));
-          setLoading(false);
-        }
+        if (currentFeed.current !== generation) return;
+        setFeedError(message(caught));
+        setLoading(false);
       });
     return () => {
       controller.abort();
@@ -2112,6 +2288,43 @@ function DiscussionContent({
     userId,
   ]);
   useEffect(() => {
+    if (!feedSnapshot || postView !== "posts" || loading) return;
+    let active = true;
+    let pending = false;
+    const options = feedOptions(query, activeFilter, sort, tags, tagMatch);
+    const check = () => {
+      if (document.visibilityState === "hidden" || pending) return;
+      pending = true;
+      void countNewPosts(courseId, feedSnapshot, options)
+        .then((count) => {
+          if (active) setNewPostCount(count);
+        })
+        .catch(() => {
+          /* Keep the current feed and last known count on polling failure. */
+        })
+        .finally(() => {
+          pending = false;
+        });
+    };
+    check();
+    const timer = window.setInterval(check, 20_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [
+    courseId,
+    feedSnapshot,
+    postView,
+    loading,
+    query,
+    filter,
+    activeFilter,
+    sort,
+    tags,
+    tagMatch,
+  ]);
+  useEffect(() => {
     if (!postId) {
       setDetail(undefined);
       setDetailError("");
@@ -2121,6 +2334,7 @@ function DiscussionContent({
     const controller = new AbortController();
     setDetail(undefined);
     setDetailError("");
+    setDeleteError("");
     void getPost(postId, controller.signal)
       .then((next) => {
         if (active) {
@@ -2212,7 +2426,10 @@ function DiscussionContent({
             const known = new Set(prior.map((post) => post.id));
             return [
               ...prior,
-              ...(page.data as Post[]).filter((post) => !known.has(post.id)),
+              ...(page.data as Post[]).filter(
+                (post) =>
+                  !known.has(post.id) && !deletedPostIds.current.has(post.id),
+              ),
             ];
           });
         setCursor(page.page.nextCursor);
@@ -2235,7 +2452,7 @@ function DiscussionContent({
       });
   }
   function leaveComposer() {
-    if (mergePending) return false;
+    if (mergePending || deletePending) return false;
     if (editingPostId) {
       if (editorState.current.pending) return false;
       if (
@@ -2259,7 +2476,11 @@ function DiscussionContent({
     return true;
   }
   function beforeMerge() {
-    if (editorState.current.pending || composerState.current.pending)
+    if (
+      deletePending ||
+      editorState.current.pending ||
+      composerState.current.pending
+    )
       return false;
     if (editingPostId && editorState.current.dirty)
       return window.confirm("Discard your unsaved post edits?");
@@ -2275,6 +2496,47 @@ function DiscussionContent({
   );
   function navigate(path: string) {
     if (leaveComposer()) onNavigate(path);
+  }
+  async function deleteCurrentPost(post: Post) {
+    if (
+      deletePending ||
+      mergePending ||
+      editorState.current.pending ||
+      !window.confirm(`Delete “${post.title}”? This cannot be undone.`)
+    )
+      return;
+    setDeletePending(true);
+    setDeleteError("");
+    try {
+      await deletePost(post, csrfToken);
+      deletedPostIds.current.add(post.id);
+      setItems((current) => current.filter((item) => item.id !== post.id));
+      setDetail(undefined);
+      setEditingPostId(undefined);
+      editorState.current = { dirty: false, pending: false };
+      onNavigate(discussionPath(courseId, search));
+    } catch (caught) {
+      setDeleteError(message(caught));
+      if (caught instanceof ApiError && caught.status === 412) {
+        try {
+          const latest = await getPost(post.id);
+          if (
+            !("redirectToPostId" in latest) &&
+            !latest.deleted &&
+            latest.courseId === courseId
+          ) {
+            setDetail(latest);
+            setItems((current) =>
+              current.map((item) => (item.id === latest.id ? latest : item)),
+            );
+          }
+        } catch {
+          // Keep the API conflict visible and the unsaved editor mounted.
+        }
+      }
+    } finally {
+      setDeletePending(false);
+    }
   }
   function openPost(id: string) {
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
@@ -2374,6 +2636,52 @@ function DiscussionContent({
       setDetailCycle((value) => value + 1);
     } finally {
       setPinPending(false);
+    }
+  }
+  async function toggleDiscussionLock(post: Post) {
+    if (lockPending) return;
+    setLockPending(true);
+    setLockError("");
+    try {
+      const next = await setPostDiscussionLocked(
+        post,
+        !post.discussionLocked,
+        csrfToken,
+      );
+      setDetail((current) =>
+        currentPostRoute.current.courseId === next.courseId &&
+        currentPostRoute.current.postId === next.id &&
+        current?.id === next.id &&
+        !current.deleted &&
+        current.version <= next.version
+          ? {
+              ...current,
+              discussionLocked: next.discussionLocked,
+              version: next.version,
+            }
+          : current,
+      );
+      setItems((current) =>
+        current.map((item) =>
+          item.id === next.id && item.version <= next.version
+            ? {
+                ...item,
+                discussionLocked: next.discussionLocked,
+                version: next.version,
+              }
+            : item,
+        ),
+      );
+    } catch (caught) {
+      if (
+        currentPostRoute.current.courseId === post.courseId &&
+        currentPostRoute.current.postId === post.id
+      ) {
+        setLockError(message(caught));
+        setDetailCycle((value) => value + 1);
+      }
+    } finally {
+      setLockPending(false);
     }
   }
   async function unmerge(post: MergedPost) {
@@ -2671,6 +2979,20 @@ function DiscussionContent({
               Search words, "quoted phrases", OR, or -excluded terms.
             </p>
             {reviewError && <p role="alert">{reviewError}</p>}
+            <div className="new-posts-status-slot">
+              {newPostCount > 0 &&
+                postView === "posts" &&
+                !loading &&
+                !feedError && (
+                  <p
+                    role="status"
+                    className="new-posts-notice"
+                    aria-label={`${newPostCount} new ${newPostCount === 1 ? "post" : "posts"}`}
+                  >
+                    {newPostCount} new {newPostCount === 1 ? "post" : "posts"}
+                  </p>
+                )}
+            </div>
             <div
               className="post-list-scroll"
               role="region"
@@ -2889,6 +3211,8 @@ function DiscussionContent({
                       csrfToken={csrfToken}
                       staff={staff}
                       archived={course?.status !== "active"}
+                      allowAnonymousPosting={course?.allowAnonymousPosting}
+                      allowPrivatePosting={course?.allowPrivatePosting}
                       onClose={leaveComposer}
                       onDiscardLocalChanges={() => {
                         if (
@@ -3013,8 +3337,25 @@ function DiscussionContent({
                     <p>This post was deleted.</p>
                   ) : (
                     <article>
+                      {canEditDetail && (
+                        <div className="post-delete-action">
+                          <button
+                            type="button"
+                            className="button danger compact"
+                            disabled={mergePending || deletePending}
+                            onClick={() => void deleteCurrentPost(detail)}
+                          >
+                            {deletePending ? "Deleting…" : "Delete post"}
+                          </button>
+                          {deleteError && (
+                            <p className="form-message error" role="alert">
+                              {deleteError}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {canEditDetail && editingPostId === detail.id && (
-                        <div inert={mergePending}>
+                        <div inert={mergePending || deletePending}>
                           <PostEditor
                             key={detail.id}
                             post={detail}
@@ -3040,6 +3381,12 @@ function DiscussionContent({
                             {postTypeOf(detail.type).label}
                           </p>
                           <h2>{detail.title}</h2>
+                          {detail.discussionLocked && (
+                            <p className="discussion-lock-notice" role="status">
+                              Discussion locked. Existing content remains
+                              available, but new replies and votes are closed.
+                            </p>
+                          )}
                           {detail.private && (
                             <PrivateNotice
                               post={detail}
@@ -3107,9 +3454,36 @@ function DiscussionContent({
                                 key={detail.id}
                                 postId={detail.id}
                                 options={detail.options}
-                                totalVotes={detail.totalVotes ?? 0}
-                                closed={course?.status !== "active"}
+                                totalVotes={detail.totalVotes}
+                                selectionMode={detail.selectionMode}
+                                maxSelections={detail.maxSelections}
+                                closesAt={detail.closesAt}
+                                releaseMode={detail.releaseMode}
+                                resultsReleased={detail.resultsReleased}
+                                explanation={detail.explanation}
+                                closed={
+                                  course?.status !== "active" ||
+                                  Boolean(detail.closed)
+                                }
+                                discussionLocked={detail.discussionLocked}
                                 csrfToken={csrfToken}
+                                staff={staff}
+                                courseActive={course?.status === "active"}
+                                version={detail.version}
+                                onPostChange={(updated) => {
+                                  setDetail(updated);
+                                  setItems((current) =>
+                                    current.map((item) =>
+                                      item.id === updated.id ? updated : item,
+                                    ),
+                                  );
+                                }}
+                                onCloned={(created) => {
+                                  setItems((current) => [created, ...current]);
+                                  navigate(
+                                    postPath(courseId, created.id, search),
+                                  );
+                                }}
                                 onChange={(state) => {
                                   setDetail((current) =>
                                     current?.id === detail.id &&
@@ -3156,7 +3530,7 @@ function DiscussionContent({
                             <button
                               type="button"
                               className="button secondary edit-button"
-                              disabled={mergePending}
+                              disabled={mergePending || deletePending}
                               onClick={() => setEditingPostId(detail.id)}
                             >
                               Edit post
@@ -3174,7 +3548,7 @@ function DiscussionContent({
                             <button
                               type="button"
                               className="button secondary compact"
-                              disabled={pinPending}
+                              disabled={pinPending || deletePending}
                               onClick={() => void togglePin(detail)}
                             >
                               {pinPending
@@ -3185,6 +3559,31 @@ function DiscussionContent({
                                   ? "Unpin"
                                   : "Pin"}
                             </button>
+                          )}
+                          {course?.status === "active" &&
+                            detail.type !== "note" && (
+                              <button
+                                type="button"
+                                className="button secondary compact"
+                                disabled={lockPending}
+                                aria-pressed={!!detail.discussionLocked}
+                                onClick={() =>
+                                  void toggleDiscussionLock(detail)
+                                }
+                              >
+                                {lockPending
+                                  ? detail.discussionLocked
+                                    ? "Unlocking…"
+                                    : "Locking…"
+                                  : detail.discussionLocked
+                                    ? "Unlock discussion"
+                                    : "Lock discussion"}
+                              </button>
+                            )}
+                          {lockError && (
+                            <p className="form-message error" role="alert">
+                              {lockError}
+                            </p>
                           )}
                           {pinError && (
                             <p className="form-message error" role="alert">
@@ -3214,6 +3613,11 @@ function DiscussionContent({
                           postId={detail.id}
                           role={role}
                           courseStatus={course?.status}
+                          allowAnonymousPosting={course?.allowAnonymousPosting}
+                          allowFollowupResolution={
+                            course?.allowFollowupResolution
+                          }
+                          discussionLocked={detail.discussionLocked}
                           csrfToken={csrfToken}
                           onActivity={() => void refreshFollowing(detail.id)}
                         />

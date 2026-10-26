@@ -49,10 +49,11 @@ export const POST_TYPES: Record<string, PostTypeConfig> = {
     plural: "Polls",
     tone: "poll",
     options: { type: "poll" },
-    extras: (post) =>
-      post.totalVotes === undefined
-        ? undefined
-        : `${post.totalVotes} ${post.totalVotes === 1 ? "vote" : "votes"}`,
+    extras: (post) => {
+      if (post.totalVotes === undefined) return undefined;
+      const unit = post.selectionMode === "multiple" ? "ballot" : "vote";
+      return `${post.totalVotes} ${unit}${post.totalVotes === 1 ? "" : "s"}`;
+    },
   },
 };
 export const FALLBACK_POST_TYPE: PostTypeConfig = {
@@ -67,6 +68,9 @@ export const postTypeOf = (type: string): PostTypeConfig =>
 /** A post's own type statuses followed by statuses every type shares. */
 export function postStatuses(post: Post): PostStatus[] {
   return [
+    ...(post.discussionLocked
+      ? [{ label: "Discussion locked", tone: "neutral" as const }]
+      : []),
     ...(post.private ? [{ label: "Private", tone: "private" as const }] : []),
     ...(post.announcement
       ? [{ label: "Announcement", tone: "attention" as const }]

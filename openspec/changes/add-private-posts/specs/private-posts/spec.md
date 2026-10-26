@@ -63,7 +63,7 @@ Marking a post as a suggested or confirmed duplicate of a private post SHALL ret
 
 ### Requirement: The interface shows privacy
 
-The composer SHALL offer **Post to: Entire class** (default) or **Instructors and TAs** for questions and notes, and SHALL disable the announcement option while **Instructors and TAs** is chosen. Private posts SHALL show a **Private** badge in the feed and the notice "Only you and course staff can see this" on the post for its author, and "Only the author and course staff can see this" for staff. The feed SHALL offer a **Private** filter, `private=true` in the list API, which lists the private posts the viewer can read. The author and staff SHALL see **Make public** on a private post, and it SHALL ask for confirmation before publishing.
+The composer's current visibility choices are specified in [course discussion frontend](../../../../specs/course-discussion-frontend/spec.md). Choosing private visibility SHALL disable the announcement option. Private posts SHALL show a **Private** badge in the feed and the notice "Only you and course staff can see this" on the post for its author, and "Only the author and course staff can see this" for staff. The feed SHALL offer a **Private** filter, `private=true` in the list API, which lists the private posts the viewer can read. The author and staff SHALL see **Make public** on a private post, and it SHALL ask for confirmation before publishing.
 
 #### Scenario: A student reviews their private questions
 

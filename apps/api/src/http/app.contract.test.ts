@@ -4,7 +4,7 @@ import { SESSION_COOKIE_NAME } from "../auth/crypto.js";
 import { AuthError } from "../auth/errors.js";
 import { type AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
-import { type PostService } from "../posts/service.js";
+import type { PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
 
 const environment = loadEnvironment({
@@ -70,6 +70,35 @@ it("rejects incompatible draft Unicode before calling the persistence service", 
   expect(updateDraft).not.toHaveBeenCalled();
 });
 
+it("rejects nonexistent poll deadline dates before creating a post", async () => {
+  const create = vi.fn();
+  const app = createApp({
+    environment,
+    authService: authenticatedService,
+    postService: { create } as unknown as PostService,
+  });
+  for (const closesAt of [
+    "2099-02-30T12:00:00Z",
+    "2099-02-30T12:00:00+02:30",
+  ]) {
+    const response = await request(app)
+      .post("/api/v1/courses/course_123/posts")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("Cookie", `${SESSION_COOKIE_NAME}=opaque-session-credential`)
+      .set("X-CSRF-Token", "csrf-token")
+      .send({
+        type: "poll",
+        title: "Invalid deadline",
+        bodyMarkdown: "Pick one",
+        options: [{ label: "One" }, { label: "Two" }],
+        closesAt,
+      });
+    expect(response.status).toBe(422);
+    expect(response.body.error.code).toBe("validation_failed");
+  }
+  expect(create).not.toHaveBeenCalled();
+});
+
 describe("authenticated read CORS contract", () => {
   it.each(["/api/v1/sessions/current", "/api/v1/users/me"])(
     "returns credentialed CORS headers for %s",
@@ -108,6 +137,49 @@ describe("authenticated read CORS contract", () => {
       ).toBeUndefined();
     }
   });
+});
+
+describe("authentication client IP behind Caddy", () => {
+  it.each([
+    [undefined, false],
+    ["1", true],
+  ])(
+    "uses forwarded IP only with one trusted hop (%s)",
+    async (hop, trusted) => {
+      const recorded: string[] = [];
+      const proxyEnvironment = loadEnvironment({
+        AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+        FRONTEND_ORIGINS: "https://app.example.edu",
+        FRONTEND_BASE_URL: "https://app.example.edu",
+        ...(hop ? { TRUST_PROXY_HOPS: hop } : {}),
+      });
+      const authService = {
+        checkLimit: async (_email: string, ip: string) => {
+          recorded.push(ip);
+        },
+        login: async () => {
+          throw new AuthError(
+            401,
+            "invalid_credentials",
+            "Invalid credentials",
+          );
+        },
+      } as unknown as AuthService;
+
+      const response = await request(
+        createApp({ environment: proxyEnvironment, authService }),
+      )
+        .post("/api/v1/sessions")
+        .set("Origin", "https://app.example.edu")
+        .set("X-Forwarded-For", "203.0.113.42")
+        .send({ email: "ada@example.edu", password: "invalid-password" });
+
+      expect(response.status).toBe(401);
+      expect(recorded).toHaveLength(1);
+      if (trusted) expect(recorded[0]).toBe("203.0.113.42");
+      else expect(recorded[0]).not.toBe("203.0.113.42");
+    },
+  );
 });
 
 function sessionService() {

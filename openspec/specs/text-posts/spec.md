@@ -131,17 +131,6 @@ Every successful post update, including pinning, unpinning, merging, and unmergi
 - **WHEN** its author or course staff deletes an active post with a current ETag
 - **THEN** delete returns `204`, later member retrieval returns the seven-field tombstone, and further mutation is rejected
 
-### Requirement: Unsupported variants remain outside this phase
-
-PATCH or DELETE of an already-deleted post SHALL return `404 not_found`. Post creation and text updates SHALL remain JSON-only, and attachments SHALL use separate parent-scoped multipart endpoints.
-
-This phase SHALL reject poll creation and multipart create/update requests with `422 validation_failed`, reject a poll list filter with `400 invalid_request`, and SHALL NOT register vote routes.
-
-#### Scenario: A member attempts to create a poll
-
-- **WHEN** a course member submits a JSON post with `type: poll`
-- **THEN** the API returns `422 validation_failed` without writing a post
-
 ### Requirement: Course deletion cleans post data
 
 The durable course-deletion worker SHALL remove answer contributors, answers, post-tag links, posts, and tags and attachment metadata/objects before removing the course, without breaking retry after a partial cleanup failure.
@@ -380,3 +369,129 @@ The existing JSON create-post operation SHALL optionally accept the owner's cour
 
 - **WHEN** the client repeats the same draft-backed create request with the same valid idempotency key after the first request committed
 - **THEN** the original post response is returned and no second post is created
+
+### Requirement: Posts stay JSON-only and tombstones stay final
+
+PATCH or DELETE of an already-deleted post SHALL return `404 not_found`. Post creation and text updates SHALL remain JSON-only, multipart create/update requests SHALL return `422 validation_failed`, and attachments SHALL use separate parent-scoped multipart endpoints.
+
+#### Scenario: A member sends a multipart post
+
+- **WHEN** a course member submits a post as `multipart/form-data`
+- **THEN** the API returns `422 validation_failed` without writing a post
+
+### Requirement: Staff can create polls
+
+A TA or instructor SHALL be able to create a post with `type: poll`, a title (1–200 characters), a Markdown body (1–100,000 characters), optional tags, optional anonymity, and `options`: 2 to 10 labels of 1–200 characters after trimming, distinct ignoring case, kept in the given order. A student's poll creation SHALL return `403 permission_denied` without writing a post. A poll's options SHALL not change after creation; a PATCH SHALL accept only the fields allowed for other posts. Polls SHALL not accept answers or followups. Every basic live-results poll projection, in lists and in detail, SHALL include `options` (each `id`, `label`, `voteCount`, and `selected` for the viewer) and `totalVotes`. Configured advanced polls follow the `advanced-polls` capability, which can withhold aggregates from students until release. The list `type` filter SHALL accept `poll`.
+
+#### Scenario: A TA runs a quick poll
+
+- **WHEN** a TA creates a poll "Which review session time works?" with three options
+- **THEN** the post appears in the feed with three options, no votes, and the TA as author
+
+#### Scenario: A student tries to create a poll
+
+- **WHEN** a student submits a post with `type: poll`
+- **THEN** the API returns `403 permission_denied` and no post is created
+
+### Requirement: Members vote on polls
+
+`PUT /api/v1/posts/{postId}/vote` with `{ "optionId": "…" }` SHALL record the caller's single vote on an active single-select poll, replacing any earlier vote, and return `200` with the poll's `postId`, updated `options`, and `totalVotes` when results are visible to that caller. Multi-choice ballots follow the `advanced-polls` capability. `DELETE /api/v1/posts/{postId}/vote` on an open poll SHALL remove the caller's ballot and return `204`, even when they had none; closed polls follow the `advanced-polls` rule and reject retraction. Voting SHALL require current course membership and CSRF protection like other writes, return `404 not_found` for a hidden, deleted, or other-course post, `422 not_a_poll` for a non-poll post, `422 poll_option_invalid` for an option of another poll, and `409 poll_closed` when the course is archived. Vote counts on basic live-results polls SHALL be visible to every member; configured advanced polls follow their release policy. Who voted for what SHALL not be exposed. Votes SHALL be removed with their poll's course.
+
+#### Scenario: A student changes their vote
+
+- **WHEN** a student votes for one option and then for another
+- **THEN** the poll shows one vote, on the second option, selected for that student
+
+#### Scenario: A poll in an archived course
+
+- **WHEN** a member votes in an archived course
+- **THEN** the API returns `409 poll_closed` and the votes are unchanged
+
+### Requirement: Staff can post announcements
+
+A TA or instructor SHALL be able to create a note with `announcement: true`. An announcement SHALL be pinned on creation, SHALL not be anonymous (`422 validation_failed`), and SHALL report `announcement: true` in every projection; other posts report `false`. A student's announcement SHALL return `403 permission_denied` without writing a post, and `announcement` SHALL be rejected on questions and polls with `422 validation_failed`. Staff may later unpin an announcement; it stays an announcement. The list SHALL accept `announcement=true` to return only announcements. The feed and post detail SHALL show an **Announcement** badge.
+
+#### Scenario: An instructor moves office hours
+
+- **WHEN** an instructor posts the note "Office hours moved to Thursday" as an announcement
+- **THEN** it appears pinned at the top of the feed with an **Announcement** badge
+
+### Requirement: Announcements are emailed to the course
+
+Creating an announcement SHALL queue, in the same transaction, one email job for each other current course member whose account is not deleted. The job worker SHALL send each email only if the announcement is still active and an announcement, the course is still active, and the recipient is still a member; otherwise it SHALL send nothing. The subject SHALL be `[<course name>] <title>` and the text SHALL name the author and course, include the title and the Markdown body (truncated to 2,000 characters with an ellipsis), and link to the post.
+
+#### Scenario: A student is emailed an announcement
+
+- **WHEN** an instructor posts an announcement in a course with two students
+- **THEN** each student receives one email with the announcement and a link to it, and the instructor receives none
+
+#### Scenario: An announcement is deleted before sending
+
+- **WHEN** an announcement is deleted before the worker processes its emails
+- **THEN** no email is sent
+
+### Requirement: Tests cover polls and announcements
+
+API tests SHALL cover poll creation (validation, staff-only, projection, list filter), voting (cast, change, retract, each error, archived course), announcement creation (staff-only, pinned, not anonymous, type rules, filter), and the queued email jobs. Worker tests SHALL cover the announcement email's content and every skip condition. Component tests SHALL cover the composer's poll options editor and announcement choice, voting and counts, and the badge. A browser test SHALL show a TA creating a poll, a student voting and changing their vote, and an instructor's announcement appearing pinned with its badge.
+
+#### Scenario: A student's poll is accepted
+
+- **WHEN** a change lets a student create a poll
+- **THEN** an automated test fails
+
+### Requirement: New posts obey current course discussion policy
+
+A new post requesting `anonymous: true` SHALL be rejected with `409 anonymous_posting_disabled` when the course disallows anonymity. A new post requesting `private: true` SHALL be rejected with `409 private_posting_disabled` when the course disallows private posting. The policy check SHALL serialize against instructor updates and SHALL occur only after a matching successful idempotent retry has been recognized. Existing posts SHALL retain their anonymity and privacy, remain readable/editable under their existing authorization rules, and may be made less private. An edit SHALL NOT newly enable anonymity when the current course policy disallows it.
+
+#### Scenario: Student creates an anonymous post after disablement
+
+- **WHEN** a member creates a valid post with `anonymous: true` after anonymity is disabled
+- **THEN** the API returns `409 anonymous_posting_disabled` without creating a post
+
+#### Scenario: Existing private post remains private
+
+- **WHEN** an instructor disables private posting after a private post exists
+- **THEN** the post remains private and authorized readers can still read and edit it
+
+#### Scenario: Idempotent replay after disablement
+
+- **WHEN** a successful post creation is retried with the same key and body after the policy is disabled
+- **THEN** the original successful response is replayed and no second post is created
+
+### Requirement: Feed snapshot and matching new-post count
+
+The course list SHALL provide an opaque-to-clients, unsigned server timestamp from its list query in a response header. The token SHALL NOT be treated as authentication, authorization, or cryptographic proof of issuance; a caller MAY choose a different timestamp, but the count SHALL still apply current session, membership, and post visibility. A member MAY query the count of newly created posts visible since that snapshot using the same course, viewer, and active filters. The count SHALL include all matching newly created posts, not only the first page, and SHALL exclude edits, activity on old posts, deleted and confirmed-duplicate posts, and private posts the viewer cannot read. The notice is best-effort: a rare post whose creation transaction began before the snapshot and committed afterward MAY not be counted; manual feed refresh SHALL still show it. Counting SHALL NOT mark posts read, mutate pagination, or disclose hidden posts. Malformed or cross-course/viewer tokens SHALL return `400 invalid_request`.
+
+#### Scenario: New matching post arrives
+
+- **WHEN** a member has a feed snapshot with an active `type=note` filter and a newly created matching note becomes visible
+- **THEN** the new-post count increases without changing the old feed response or cursor
+
+#### Scenario: Old post gains activity
+
+- **WHEN** an existing post receives a new answer after the snapshot
+- **THEN** it does not increase the new-post count
+
+#### Scenario: Private creation
+
+- **WHEN** a private post is created after a snapshot and the viewer cannot read it
+- **THEN** it never contributes to that viewer's count
+
+### Requirement: Authorized post deletion is available in the course discussion UI
+
+For an active, readable, non-merged post, the course discussion detail SHALL offer Delete post to its current author or current course TA/instructor. It SHALL not offer the action to other students, on an archived course, or for a confirmed merged source. Staff SHALL have no blind-delete UI for posts they cannot read. The action SHALL require an explicit confirmation and use the existing `DELETE /api/v1/posts/{postId}` with the current post ETag and session CSRF token. On `204`, the UI SHALL remove the post from the loaded feed and navigate to the discussion list. On cancel or failure, it SHALL keep the post visible and preserve any unsaved post-edit text; on `412`, it SHALL fetch the latest readable post version before retry, without overwriting local editor text. It SHALL display the API error for `409` and other failed deletes.
+
+#### Scenario: Staff deletes a readable post
+
+- **WHEN** a current TA confirms Delete post on a readable active post with its current version
+- **THEN** the browser sends conditional DELETE and removes the post from the feed after `204`
+
+#### Scenario: Student cannot delete another author's post
+
+- **WHEN** a student reads another member's post
+- **THEN** Delete post is not offered
+
+#### Scenario: Cancel, conflict, or failed delete
+
+- **WHEN** the author cancels confirmation or the API returns `409` or `412`
+- **THEN** the post remains visible, unsaved edits are preserved, and the conflict or error is explained without navigating away

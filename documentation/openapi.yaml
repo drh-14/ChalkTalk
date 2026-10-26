@@ -15,13 +15,13 @@ info:
     use a wildcard origin. Every unsafe request validates `Origin`; authenticated
     unsafe requests also validate the session-bound `X-CSRF-Token`. Expiring or
     revoking a session invalidates its CSRF token.
-    Implementation status: JSON question and note posts, shared student and staff
+    Implementation status: JSON question, note, and poll posts, shared student and staff
     answers, question-owned threaded followups, and answer/followup upvotes are live.
     Answer bodies support explicit save-only versioned REST editing; followups and
     replies also use REST only. Saved questions, notes, answers, and followups
     support separate parent-scoped file attachments; create/update text requests
     remain JSON-only. Private post-anchored live sessions are live through the
-    collaboration-session routes and the collaboration WebSocket. Polls, multipart
+    collaboration-session routes and the collaboration WebSocket. Multipart
     post create/update, download refresh, and subchannel-anchored collaboration
     sessions remain unavailable.
   license:
@@ -3384,7 +3384,7 @@ paths:
       tags:
         - Posts
       summary: Create post in course
-      description: Create post in course. Currently JSON question/note only; poll and multipart post-create definitions are future targets. Upload files separately to a saved parent.
+      description: Create a JSON question, note, or staff poll. Polls support optional ballot mode, deadline, and result-release controls. Multipart post creation remains a future target; upload files separately to a saved parent.
       x-implementation-status: text-posts-live
       operationId: createPost
       security:
@@ -3467,6 +3467,22 @@ paths:
                     error:
                       code: course_archived
                       message: The course is archived.
+                      requestId: req_createPost
+                      details: []
+                anonymous_posting_disabled:
+                  summary: The course disallows new anonymous posts.
+                  value:
+                    error:
+                      code: anonymous_posting_disabled
+                      message: Anonymous posting is disabled for this course.
+                      requestId: req_createPost
+                      details: []
+                private_posting_disabled:
+                  summary: The course disallows new private posts.
+                  value:
+                    error:
+                      code: private_posting_disabled
+                      message: Private posting is disabled for this course.
                       requestId: req_createPost
                       details: []
                 idempotency_key_reused:
@@ -3645,13 +3661,23 @@ paths:
       tags:
         - Posts
       summary: List or search posts in course
-      description: List or search active question/note posts in course. Search matching and ranking follow the [course posts API reference](api/posts.md). Deleted and confirmed duplicate posts are excluded before ranking and pagination. Staff-only duplicateStatus=confirmed returns restricted source-title and canonical-target review entries. Poll filtering is future-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+      description: List or search active question, note, or poll posts in course. Search matching and ranking follow the [course posts API reference](api/posts.md). Deleted and confirmed duplicate posts are excluded before ranking and pagination. Staff-only duplicateStatus=confirmed returns restricted source-title and canonical-target review entries. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
       x-implementation-status: text-posts-live
       operationId: listCoursePosts
       security:
         - session_cookie: []
       responses:
         "200":
+          headers:
+            X-Feed-Snapshot:
+              description: Base64url-encoded course- and viewer-bound server timestamp from the list query for new-count; contains course and viewer IDs but no post IDs. The encoding is unsigned, not authentication or authorization; each count still checks current membership and post visibility. Clients treat it as opaque, not secret. A rare concurrent commit may be missed by the notice.
+              schema: { type: string }
+            Access-Control-Expose-Headers:
+              description: Exposes X-Feed-Snapshot to the credentialed frontend.
+              schema: { type: string }
+            Cache-Control:
+              description: Prevents caching the viewer-specific snapshot and feed.
+              schema: { type: string, enum: ["private, no-store"] }
           description: Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
           content:
             application/json:
@@ -3979,7 +4005,7 @@ paths:
       tags:
         - Posts
       summary: Retrieve post
-      description: Retrieve a post for a current course member, including a minimal tombstone by ID after deletion. A confirmed duplicate returns 303 to its canonical post without revealing source content. Poll details are future-only.
+      description: Retrieve a post for a current course member, including a minimal tombstone by ID after deletion. A confirmed duplicate returns 303 to its canonical post without revealing source content. Poll results are projected according to the viewer's role and release state.
       x-implementation-status: text-posts-live
       operationId: getPost
       security:
@@ -4181,6 +4207,14 @@ paths:
                     error:
                       code: course_archived
                       message: The course is archived.
+                      requestId: req_updatePost
+                      details: []
+                anonymous_posting_disabled:
+                  summary: A named post cannot become anonymous while the course disallows anonymity.
+                  value:
+                    error:
+                      code: anonymous_posting_disabled
+                      message: Anonymous posting is disabled for this course
                       requestId: req_updatePost
                       details: []
         "412":
@@ -4496,13 +4530,373 @@ paths:
         - "$ref": "#/components/parameters/PostId"
         - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
+  "/posts/{postId}/close":
+    post:
+      tags: [Posts]
+      summary: Close a poll
+      description: Staff-only, version-conditional manual close. Automatic release occurs for automatic-mode polls.
+      operationId: closePoll
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          {
+            description: Updated poll with ETag,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { "$ref": "#/components/schemas/PostDetailResponse" },
+                  },
+              },
+          }
+        "403":
+          {
+            description: Staff access or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Poll already closed or course inactive,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "412":
+          {
+            description: Stale post version,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "428":
+          {
+            description: If-Match required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/reopen":
+    post:
+      tags: [Posts]
+      summary: Reopen a poll
+      description: Staff-only, version-conditional. Clears an elapsed deadline but never hides released results.
+      operationId: reopenPoll
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          {
+            description: Updated poll with ETag,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { "$ref": "#/components/schemas/PostDetailResponse" },
+                  },
+              },
+          }
+        "403":
+          {
+            description: Staff access or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Poll already open or course inactive,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "412":
+          {
+            description: Stale post version,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "428":
+          {
+            description: If-Match required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/release":
+    post:
+      tags: [Posts]
+      summary: Release poll results
+      description: Staff-only, version-conditional, irreversible result release.
+      operationId: releasePoll
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          {
+            description: Updated poll with ETag,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { "$ref": "#/components/schemas/PostDetailResponse" },
+                  },
+              },
+          }
+        "403":
+          {
+            description: Staff access or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Course inactive,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "412":
+          {
+            description: Stale post version,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "428":
+          {
+            description: If-Match required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/poll-results.csv":
+    get:
+      tags: [Posts]
+      summary: Download aggregate poll results
+      description: Staff-only CSV with option labels, selection counts, and distinct ballot totals; never voter identities.
+      operationId: exportPollResults
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+      responses:
+        "200":
+          {
+            description: Aggregate CSV,
+            content: { text/csv: { schema: { type: string } } },
+          }
+        "403":
+          {
+            description: Staff access required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/clone":
+    post:
+      tags: [Posts]
+      summary: Clone poll settings and options
+      description: Staff-only. New poll has no ballots, deadline, manual close, or released results.
+      operationId: clonePoll
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "201":
+          {
+            description: New poll with Location and ETag,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { "$ref": "#/components/schemas/PostDetailResponse" },
+                  },
+              },
+          }
+        "403":
+          {
+            description: Staff access or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/discussion-lock":
+    put:
+      tags:
+        - Posts
+      summary: Lock or unlock discussion on one question or poll
+      operationId: putPostDiscussionLock
+      security:
+        - session_cookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                locked: { type: boolean }
+              required: [locked]
+              additionalProperties: false
+      responses:
+        "200":
+          description: Post lock state updated or already equal to the requested state.
+          headers:
+            ETag:
+              "$ref": "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ActivePostDetailResponse"
+        "401":
+          description: Authentication is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "403":
+          description: Current course staff role is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: Post does not exist or is not accessible.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: Course is archived.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "412":
+          description: Stale post ETag.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "422":
+          description: Invalid JSON body or locked value, or the post is a note or announcement.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "428":
+          description: If-Match is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
   "/posts/{postId}/vote":
     put:
       tags:
         - Posts
       summary: Cast or change vote on poll
-      x-implementation-status: future
-      description: Cast or change vote on poll. Each user has one selected option; another PUT changes the vote.
+      description: Replace an entire ballot on an open poll. Legacy optionId works for single-select; optionIds carries one to maxSelections choices. Aggregates are omitted for unreleased students.
       operationId: putPostVote
       security:
         - session_cookie: []
@@ -4523,7 +4917,7 @@ paths:
                       requestId: req_putPostVote
                       details: []
         "200":
-          description: Each user has one selected option; another PUT changes the vote.
+          description: Ballot replaced; response includes own selected choices and aggregates only when visible to this viewer.
           content:
             application/json:
               schema:
@@ -4640,8 +5034,7 @@ paths:
       tags:
         - Posts
       summary: Retract vote from poll
-      x-implementation-status: future
-      description: Retract vote from poll. Returns 204 even when the caller has no vote.
+      description: Retract a ballot from an open, unlocked poll. Returns 204 even when the caller has no vote; a closed or locked poll rejects all changes.
       operationId: deletePostVote
       security:
         - session_cookie: []
@@ -4662,7 +5055,7 @@ paths:
                       requestId: req_deletePostVote
                       details: []
         "204":
-          description: Returns 204 even when the caller has no vote.
+          description: Returns 204 even when the caller has no vote on an unlocked poll.
         "409":
           description: Conflict
           content:
@@ -4777,7 +5170,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, answer kind occupied, idempotency key reused, or anonymous posting disabled.
           content:
             application/json:
               schema:
@@ -4848,7 +5241,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, answer kind occupied, idempotency key reused, anonymous posting disabled, or discussion locked.
           content:
             application/json:
               schema:
@@ -5277,7 +5670,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, idempotency key reused, or anonymous posting disabled.
           content:
             application/json:
               schema:
@@ -5348,7 +5741,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, idempotency key reused, anonymous posting disabled, or discussion locked.
           content:
             application/json:
               schema:
@@ -5408,7 +5801,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, idempotency key reused, or anonymous posting disabled.
           content:
             application/json:
               schema:
@@ -5479,7 +5872,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, idempotency key reused, anonymous posting disabled, or discussion locked.
           content:
             application/json:
               schema:
@@ -5692,7 +6085,7 @@ paths:
     put:
       tags: [Answers]
       summary: Resolve followup discussion
-      description: Marks a root followup resolved. Idempotent; changes neither the followup's version nor the question's last activity. A new reply anywhere in the discussion reopens it.
+      description: Marks a root followup resolved while course resolution is enabled. Idempotent; changes neither the followup's version nor the question's last activity. A new reply anywhere in the discussion reopens it only while resolution remains enabled; existing markers stay visible when disabled.
       operationId: resolveFollowup
       security:
         - session_cookie: []
@@ -5770,6 +6163,14 @@ paths:
                       message: The course is not active.
                       requestId: req_resolveFollowup
                       details: []
+                followup_resolution_disabled:
+                  summary: The course disallows resolution changes.
+                  value:
+                    error:
+                      code: followup_resolution_disabled
+                      message: Followup resolution is disabled for this course
+                      requestId: req_resolveFollowup
+                      details: []
         "422":
           description: Unprocessable Content
           content:
@@ -5788,7 +6189,7 @@ paths:
     delete:
       tags: [Answers]
       summary: Reopen followup discussion
-      description: Marks a root followup unresolved. Idempotent; changes neither the followup's version nor the question's last activity.
+      description: Marks a root followup unresolved while course resolution is enabled. Idempotent; changes neither the followup's version nor the question's last activity. Existing markers stay visible when resolution is disabled.
       operationId: reopenFollowup
       security:
         - session_cookie: []
@@ -5864,6 +6265,14 @@ paths:
                     error:
                       code: course_archived
                       message: The course is not active.
+                      requestId: req_reopenFollowup
+                      details: []
+                followup_resolution_disabled:
+                  summary: The course disallows resolution changes.
+                  value:
+                    error:
+                      code: followup_resolution_disabled
+                      message: Followup resolution is disabled for this course
                       requestId: req_reopenFollowup
                       details: []
         "422":
@@ -10550,6 +10959,169 @@ paths:
                       message: The server could not complete the request.
                       requestId: req_listCourseCollaborationSessions
                       details: []
+  "/courses/{courseId}/posts/new-count":
+    get:
+      tags: [Posts]
+      summary: Count newly created posts matching active viewer filters
+      description: Best-effort count since a supplied X-Feed-Snapshot watermark. The unsigned encoding does not prove issuance; authentication, membership, and post visibility are checked on every request. Counts active, unmerged, currently readable creations; old-post edits and activity are excluded. A rare in-flight creation can be missed. The accepted filters match the course post list except confirmed duplicate review and pagination cursor.
+      operationId: countNewCoursePosts
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: snapshot
+          in: query
+          required: true
+          description: Unsigned base64url course- and viewer-bound watermark from X-Feed-Snapshot; not an authorization capability.
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+        - name: q
+          in: query
+          required: false
+          description: Trimmed non-empty search text; see the [course posts API reference](api/posts.md) for matching rules. Omit to list without search.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+        - name: semanticQuery
+          in: query
+          required: false
+          description: Optional semantic candidate query; requires q. See the course posts API reference for matching rules.
+          schema: { type: string, minLength: 1, maxLength: 500 }
+        - name: type
+          in: query
+          required: false
+          description: Filter by post type.
+          schema:
+            type: string
+            enum:
+              - question
+              - note
+              - poll
+        - name: tag
+          in: query
+          required: false
+          description: Filter by one or more tags, trimmed and compared case-insensitively; repeated values count once. tagMatch controls how several tags combine. More than 10 values return 400 invalid_request.
+          schema:
+            type: array
+            items:
+              type: string
+              description: Course-defined post tag.
+              minLength: 1
+              maxLength: 40
+            maxItems: 10
+          style: form
+          explode: true
+        - name: tagMatch
+          in: query
+          required: false
+          description: How repeated tag values combine. any returns posts carrying at least one requested tag; all returns only posts carrying every requested tag. With fewer than two distinct tags both values return the same results.
+          schema:
+            type: string
+            enum:
+              - any
+              - all
+            default: any
+        - name: authorId
+          in: query
+          required: false
+          description: Staff may match all content by this author. Students may match nonanonymous content and their own anonymous content. Items whose identity is hidden from the viewer are removed before ranking, pagination, hasMore, and counts; no visible matches return an empty 200 collection.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+        - name: createdAfter
+          in: query
+          required: false
+          description: Return posts created at or after this timestamp.
+          schema:
+            type: string
+            format: date-time
+        - name: createdBefore
+          in: query
+          required: false
+          description: Return posts created at or before this timestamp.
+          schema:
+            type: string
+            format: date-time
+        - name: answered
+          in: query
+          required: false
+          description: Filter question posts by answer presence.
+          schema:
+            type: boolean
+        - name: unresolvedFollowups
+          in: query
+          required: false
+          description: Only true is accepted; lists questions with at least one unresolved followup discussion.
+          schema:
+            type: boolean
+            enum:
+              - true
+        - name: pinned
+          in: query
+          required: false
+          description: Filter by pinned state. Combine with type to list pinned posts of one type.
+          schema:
+            type: boolean
+        - name: announcement
+          in: query
+          required: false
+          description: Only true is accepted; lists announcements only.
+          schema:
+            type: boolean
+            enum:
+              - true
+        - name: private
+          in: query
+          required: false
+          description: Only true is accepted; lists the private posts the caller can read.
+          schema:
+            type: boolean
+            enum:
+              - true
+        - name: authorRole
+          in: query
+          required: false
+          description: Filter by the author's current role in the course. For a student, anonymous posts other than the student's own are removed before ranking and pagination, so the filter cannot reveal an anonymous author's role.
+          schema:
+            type: string
+            enum:
+              - instructor
+              - ta
+        - name: sort
+          in: query
+          required: false
+          description: Pinned posts appear before unpinned posts for every sort. Within each group, newest and oldest order by creation time, descending and ascending; recent_activity orders by the latest activity. Defaults to relevance when q is present and recent_activity otherwise.
+          schema:
+            type: string
+            enum:
+              - relevance
+              - newest
+              - oldest
+              - recent_activity
+        - name: duplicateStatus
+          in: query
+          required: false
+          description: Confirmed duplicate review is not accepted for new-post counting.
+          schema: { type: string, enum: [none, suggested] }
+        - name: limit
+          in: query
+          required: false
+          description: Accepted as on the course post list but does not limit the count.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      responses:
+        "200":
+          description: Count of visible newly created posts matching supplied filters.
+          headers:
+            Cache-Control:
+              description: Prevents caching the viewer-specific count.
+              schema: { type: string, enum: ["private, no-store"] }
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/NewPostCountResponse" }
+        "400":
+          { description: Missing, invalid, or cross-viewer snapshot or filter }
+        "401": { description: Unauthorized }
+        "404": { description: Course absent or hidden }
   "/posts/{postId}/follow":
     put:
       tags:
@@ -12794,6 +13366,15 @@ components:
             - active
             - archived
             - deleting
+        allowAnonymousPosting:
+          type: boolean
+          description: Whether future posts, answers, followups, and replies may be anonymous.
+        allowPrivatePosting:
+          type: boolean
+          description: Whether future applicable posts may be private.
+        allowFollowupResolution:
+          type: boolean
+          description: Whether discussion resolution markers may change.
         createdAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
@@ -12826,6 +13407,9 @@ components:
         - organizationId
         - name
         - status
+        - allowAnonymousPosting
+        - allowPrivatePosting
+        - allowFollowupResolution
         - createdAt
         - updatedAt
         - version
@@ -12996,7 +13580,7 @@ components:
           maxLength: 200
         voteCount:
           type: integer
-          description: Votes currently cast for this option.
+          description: Selected-option count. Omitted for students before results release.
           minimum: 0
         selected:
           type: boolean
@@ -13005,7 +13589,6 @@ components:
       required:
         - id
         - label
-        - voteCount
         - selected
     QuestionPost:
       type: object
@@ -13062,6 +13645,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -13134,6 +13720,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -13201,6 +13788,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -13266,6 +13856,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -13331,6 +13922,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -13392,8 +13986,28 @@ components:
           maxItems: 10
         totalVotes:
           type: integer
-          description: Total votes cast.
+          description: Distinct member ballots, not selected options. Omitted for students before release.
           minimum: 0
+        selectionMode:
+          type: string
+          enum: [single, multiple]
+        maxSelections:
+          type: integer
+          minimum: 1
+          maximum: 10
+        closesAt:
+          type: [string, "null"]
+          format: date-time
+        closed:
+          type: boolean
+        releaseMode:
+          type: string
+          enum: [live, manual, automatic]
+        resultsReleased:
+          type: boolean
+        explanation:
+          type: string
+          description: Omitted for students before release.
       additionalProperties: false
       required:
         - deleted
@@ -13407,6 +14021,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -13418,7 +14033,12 @@ components:
         - updatedAt
         - version
         - options
-        - totalVotes
+        - selectionMode
+        - maxSelections
+        - closesAt
+        - closed
+        - releaseMode
+        - resultsReleased
     QuestionPostTombstone:
       type: object
       properties:
@@ -15483,13 +16103,26 @@ components:
           maxItems: 10
         totalVotes:
           type: integer
-          description: Total votes cast.
+          description: Distinct member ballots; omitted for unreleased students.
           minimum: 0
+        selectionMode: { type: string, enum: [single, multiple] }
+        maxSelections: { type: integer, minimum: 1, maximum: 10 }
+        closesAt: { type: [string, "null"], format: date-time }
+        closed: { type: boolean }
+        releaseMode: { type: string, enum: [live, manual, automatic] }
+        resultsReleased: { type: boolean }
+        explanation:
+          { type: string, description: Omitted for unreleased students. }
       additionalProperties: false
       required:
         - postId
         - options
-        - totalVotes
+        - selectionMode
+        - maxSelections
+        - closesAt
+        - closed
+        - releaseMode
+        - resultsReleased
     VoteResultResponse:
       type: object
       properties:
@@ -15685,6 +16318,15 @@ components:
           enum:
             - active
             - archived
+        allowAnonymousPosting:
+          type: boolean
+          description: Allow future anonymous contributions.
+        allowPrivatePosting:
+          type: boolean
+          description: Allow future private posts.
+        allowFollowupResolution:
+          type: boolean
+          description: Allow changing followup resolution markers.
       additionalProperties: false
       minProperties: 1
     JoinCourseRequest:
@@ -15843,6 +16485,33 @@ components:
           type: integer
           minimum: 0
           description: Current owner/course draft version to check before atomic publication.
+        selectionMode:
+          type: string
+          enum: [single, multiple]
+          default: single
+        maxSelections:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: One for single-select; 2 through the option count for multi-select.
+        closesAt:
+          type: string
+          format: date-time
+          description: Optional future deadline with a real calendar date and explicit Z or numeric offset; normalized to UTC before storage.
+        releaseMode:
+          type: string
+          enum: [manual, automatic]
+          description: Required for multi-select polls; omit only for basic single-select live-results behavior.
+        explanation:
+          type: string
+          maxLength: 10000
+      if:
+        properties:
+          selectionMode:
+            const: multiple
+        required: [selectionMode]
+      then:
+        required: [maxSelections, releaseMode]
       additionalProperties: false
       required:
         - type
@@ -15962,6 +16631,17 @@ components:
           uniqueItems: true
       additionalProperties: false
       minProperties: 1
+    NewPostCountResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            count: { type: integer, minimum: 0 }
+          additionalProperties: false
+          required: [count]
+      additionalProperties: false
+      required: [data]
     FollowResponse:
       type: object
       properties:
@@ -16090,9 +16770,16 @@ components:
           maxLength: 255
           examples:
             - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
+        optionIds:
+          type: array
+          items: { type: string, format: uuid }
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
       additionalProperties: false
-      required:
-        - optionId
+      oneOf:
+        - required: [optionId]
+        - required: [optionIds]
     CreateContentRequest:
       type: object
       properties:

@@ -44,6 +44,9 @@ const course = {
   createdAt: "2026-09-20T14:30:00Z",
   updatedAt: "2026-09-20T14:30:00Z",
   version: 1,
+  allowAnonymousPosting: true,
+  allowPrivatePosting: true,
+  allowFollowupResolution: true,
 };
 
 function jsonResponse(body: unknown, status = 200, headers: HeadersInit = {}) {
