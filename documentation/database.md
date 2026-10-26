@@ -226,9 +226,17 @@ The application must verify that a post and tag belong to the same course before
 - `course_id`: `uuid_v7`.
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`; part of the primary key.
 - `user_id`: `uuid_v7`; foreign key to `users.id`; part of the primary key.
-- `option_id`: `uuid_v7`; with `course_id` and `post_id`, foreign key to `poll_options(course_id, post_id, id)`.
+- `option_id`: `uuid_v7`; with `course_id` and `post_id`, foreign key to `poll_options(course_id, post_id, id)`; part of the primary key.
 - `created_at`, `updated_at`: `timestamptz`; `updated_at` changes when a member changes their vote.
-- One vote per member per poll; votes are deleted with their poll. Counts are public within the course, while individual votes are never exposed.
+- One row per selected option, with a `(post_id, user_id, option_id)` primary key. A member's rows form one editable ballot. Votes are deleted with their poll. Counts and ballot totals are visible to staff and to students after release; identities and choice mappings are never exposed.
+
+### `poll_settings`
+
+- `post_id`: primary key and foreign key to `posts.id`; one settings row per poll, deleted with the post. Existing polls were backfilled with single-select, live results. A missing row is an API invariant failure, not a live/open fallback.
+- `selection_mode`: `single` or `multiple`; `max_selections` is one for single-select and 2–10 for multi-select (the service also bounds it by the number of options).
+- `closes_at`: optional deadline; `closed_at`: optional manual close time. An elapsed deadline closes the poll even without a worker.
+- `release_mode`: `live` for existing and basic single-select polls, `manual`, or `automatic` on close. New multi-select polls require `manual` or `automatic` at the API boundary. `results_released_at` records an irreversible release; automatic release at the deadline is also inferred before the next write materializes it.
+- `explanation`: optional staff-authored text (up to 10,000 characters), exposed to students only with released results.
 
 ### `answers`
 

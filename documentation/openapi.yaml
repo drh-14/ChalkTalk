@@ -15,13 +15,13 @@ info:
     use a wildcard origin. Every unsafe request validates `Origin`; authenticated
     unsafe requests also validate the session-bound `X-CSRF-Token`. Expiring or
     revoking a session invalidates its CSRF token.
-    Implementation status: JSON question and note posts, shared student and staff
+    Implementation status: JSON question, note, and poll posts, shared student and staff
     answers, question-owned threaded followups, and answer/followup upvotes are live.
     Answer bodies support explicit save-only versioned REST editing; followups and
     replies also use REST only. Saved questions, notes, answers, and followups
     support separate parent-scoped file attachments; create/update text requests
     remain JSON-only. Private post-anchored live sessions are live through the
-    collaboration-session routes and the collaboration WebSocket. Polls, multipart
+    collaboration-session routes and the collaboration WebSocket. Multipart
     post create/update, download refresh, and subchannel-anchored collaboration
     sessions remain unavailable.
   license:
@@ -3309,7 +3309,7 @@ paths:
       tags:
         - Posts
       summary: Create post in course
-      description: Create post in course. Currently JSON question/note only; poll and multipart post-create definitions are future targets. Upload files separately to a saved parent.
+      description: Create a JSON question, note, or staff poll. Polls support optional ballot mode, deadline, and result-release controls. Multipart post creation remains a future target; upload files separately to a saved parent.
       x-implementation-status: text-posts-live
       operationId: createPost
       security:
@@ -3574,7 +3574,7 @@ paths:
       tags:
         - Posts
       summary: List or search posts in course
-      description: List or search active question/note posts in course. Search matching and ranking follow the [course posts API reference](api/posts.md). Deleted and confirmed duplicate posts are excluded before ranking and pagination. Staff-only duplicateStatus=confirmed returns restricted source-title and canonical-target review entries. Poll filtering is future-only. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
+      description: List or search active question, note, or poll posts in course. Search matching and ranking follow the [course posts API reference](api/posts.md). Deleted and confirmed duplicate posts are excluded before ranking and pagination. Staff-only duplicateStatus=confirmed returns restricted source-title and canonical-target review entries. Without q, results default to recent_activity. With q, results default to relevance. relevance is invalid when q is omitted.
       x-implementation-status: text-posts-live
       operationId: listCoursePosts
       security:
@@ -3918,7 +3918,7 @@ paths:
       tags:
         - Posts
       summary: Retrieve post
-      description: Retrieve a post for a current course member, including a minimal tombstone by ID after deletion. A confirmed duplicate returns 303 to its canonical post without revealing source content. Poll details are future-only.
+      description: Retrieve a post for a current course member, including a minimal tombstone by ID after deletion. A confirmed duplicate returns 303 to its canonical post without revealing source content. Poll results are projected according to the viewer's role and release state.
       x-implementation-status: text-posts-live
       operationId: getPost
       security:
@@ -4443,6 +4443,292 @@ paths:
         - "$ref": "#/components/parameters/PostId"
         - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
+  "/posts/{postId}/close":
+    post:
+      tags: [Posts]
+      summary: Close a poll
+      description: Staff-only, version-conditional manual close. Automatic release occurs for automatic-mode polls.
+      operationId: closePoll
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          {
+            description: Updated poll with ETag,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { "$ref": "#/components/schemas/PostDetailResponse" },
+                  },
+              },
+          }
+        "403":
+          {
+            description: Staff access or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Poll already closed or course inactive,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "412":
+          {
+            description: Stale post version,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "428":
+          {
+            description: If-Match required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/reopen":
+    post:
+      tags: [Posts]
+      summary: Reopen a poll
+      description: Staff-only, version-conditional. Clears an elapsed deadline but never hides released results.
+      operationId: reopenPoll
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          {
+            description: Updated poll with ETag,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { "$ref": "#/components/schemas/PostDetailResponse" },
+                  },
+              },
+          }
+        "403":
+          {
+            description: Staff access or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Poll already open or course inactive,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "412":
+          {
+            description: Stale post version,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "428":
+          {
+            description: If-Match required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/release":
+    post:
+      tags: [Posts]
+      summary: Release poll results
+      description: Staff-only, version-conditional, irreversible result release.
+      operationId: releasePoll
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          {
+            description: Updated poll with ETag,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { "$ref": "#/components/schemas/PostDetailResponse" },
+                  },
+              },
+          }
+        "403":
+          {
+            description: Staff access or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "409":
+          {
+            description: Course inactive,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "412":
+          {
+            description: Stale post version,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "428":
+          {
+            description: If-Match required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/poll-results.csv":
+    get:
+      tags: [Posts]
+      summary: Download aggregate poll results
+      description: Staff-only CSV with option labels, selection counts, and distinct ballot totals; never voter identities.
+      operationId: exportPollResults
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+      responses:
+        "200":
+          {
+            description: Aggregate CSV,
+            content: { text/csv: { schema: { type: string } } },
+          }
+        "403":
+          {
+            description: Staff access required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+  "/posts/{postId}/clone":
+    post:
+      tags: [Posts]
+      summary: Clone poll settings and options
+      description: Staff-only. New poll has no ballots, deadline, manual close, or released results.
+      operationId: clonePoll
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/CsrfToken"
+      responses:
+        "201":
+          {
+            description: New poll with Location and ETag,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { "$ref": "#/components/schemas/PostDetailResponse" },
+                  },
+              },
+          }
+        "403":
+          {
+            description: Staff access or CSRF required,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
+        "404":
+          {
+            description: Poll not found,
+            content:
+              {
+                application/json:
+                  { schema: { "$ref": "#/components/schemas/Error" } },
+              },
+          }
   "/posts/{postId}/discussion-lock":
     put:
       tags:
@@ -4523,8 +4809,7 @@ paths:
       tags:
         - Posts
       summary: Cast or change vote on poll
-      x-implementation-status: future
-      description: Cast or change vote on poll. Each user has one selected option; another PUT changes the vote.
+      description: Replace an entire ballot on an open poll. Legacy optionId works for single-select; optionIds carries one to maxSelections choices. Aggregates are omitted for unreleased students.
       operationId: putPostVote
       security:
         - session_cookie: []
@@ -4545,7 +4830,7 @@ paths:
                       requestId: req_putPostVote
                       details: []
         "200":
-          description: Each user has one selected option; another PUT changes the vote.
+          description: Ballot replaced; response includes own selected choices and aggregates only when visible to this viewer.
           content:
             application/json:
               schema:
@@ -4662,8 +4947,7 @@ paths:
       tags:
         - Posts
       summary: Retract vote from poll
-      x-implementation-status: future
-      description: Retract vote from an unlocked poll. Returns 204 even when the caller has no vote.
+      description: Retract a ballot from an open, unlocked poll. Returns 204 even when the caller has no vote; a closed or locked poll rejects all changes.
       operationId: deletePostVote
       security:
         - session_cookie: []
@@ -13209,7 +13493,7 @@ components:
           maxLength: 200
         voteCount:
           type: integer
-          description: Votes currently cast for this option.
+          description: Selected-option count. Omitted for students before results release.
           minimum: 0
         selected:
           type: boolean
@@ -13218,7 +13502,6 @@ components:
       required:
         - id
         - label
-        - voteCount
         - selected
     QuestionPost:
       type: object
@@ -13616,8 +13899,28 @@ components:
           maxItems: 10
         totalVotes:
           type: integer
-          description: Total votes cast.
+          description: Distinct member ballots, not selected options. Omitted for students before release.
           minimum: 0
+        selectionMode:
+          type: string
+          enum: [single, multiple]
+        maxSelections:
+          type: integer
+          minimum: 1
+          maximum: 10
+        closesAt:
+          type: [string, "null"]
+          format: date-time
+        closed:
+          type: boolean
+        releaseMode:
+          type: string
+          enum: [live, manual, automatic]
+        resultsReleased:
+          type: boolean
+        explanation:
+          type: string
+          description: Omitted for students before release.
       additionalProperties: false
       required:
         - deleted
@@ -13643,7 +13946,12 @@ components:
         - updatedAt
         - version
         - options
-        - totalVotes
+        - selectionMode
+        - maxSelections
+        - closesAt
+        - closed
+        - releaseMode
+        - resultsReleased
     QuestionPostTombstone:
       type: object
       properties:
@@ -15708,13 +16016,26 @@ components:
           maxItems: 10
         totalVotes:
           type: integer
-          description: Total votes cast.
+          description: Distinct member ballots; omitted for unreleased students.
           minimum: 0
+        selectionMode: { type: string, enum: [single, multiple] }
+        maxSelections: { type: integer, minimum: 1, maximum: 10 }
+        closesAt: { type: [string, "null"], format: date-time }
+        closed: { type: boolean }
+        releaseMode: { type: string, enum: [live, manual, automatic] }
+        resultsReleased: { type: boolean }
+        explanation:
+          { type: string, description: Omitted for unreleased students. }
       additionalProperties: false
       required:
         - postId
         - options
-        - totalVotes
+        - selectionMode
+        - maxSelections
+        - closesAt
+        - closed
+        - releaseMode
+        - resultsReleased
     VoteResultResponse:
       type: object
       properties:
@@ -16065,6 +16386,33 @@ components:
           description: Poll choices in display order. Labels are trimmed and must be distinct ignoring case. Options cannot change after creation. Only TAs and instructors may create polls.
           minItems: 2
           maxItems: 10
+        selectionMode:
+          type: string
+          enum: [single, multiple]
+          default: single
+        maxSelections:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: One for single-select; 2 through the option count for multi-select.
+        closesAt:
+          type: string
+          format: date-time
+          description: Optional future deadline with a real calendar date and explicit Z or numeric offset; normalized to UTC before storage.
+        releaseMode:
+          type: string
+          enum: [manual, automatic]
+          description: Required for multi-select polls; omit only for basic single-select live-results behavior.
+        explanation:
+          type: string
+          maxLength: 10000
+      if:
+        properties:
+          selectionMode:
+            const: multiple
+        required: [selectionMode]
+      then:
+        required: [maxSelections, releaseMode]
       additionalProperties: false
       required:
         - type
@@ -16275,9 +16623,16 @@ components:
           maxLength: 255
           examples:
             - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
+        optionIds:
+          type: array
+          items: { type: string, format: uuid }
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
       additionalProperties: false
-      required:
-        - optionId
+      oneOf:
+        - required: [optionId]
+        - required: [optionIds]
     CreateContentRequest:
       type: object
       properties:

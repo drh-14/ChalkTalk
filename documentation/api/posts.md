@@ -2,7 +2,7 @@
 
 **Implementation status:** JSON question, note, and poll creation, listing/search, retrieval, update, deletion, poll voting, announcements, and daily deduplicated post views are implemented. Active questions and notes can have files uploaded separately after saving; see the [OpenAPI attachment contract](../openapi.yaml) for current parent-scoped upload, download, and removal routes. Questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. The multipart post create/update shapes and attachment-processing/download-refresh fields below remain future targets and are not live; multipart create/update returns `422 validation_failed`. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
 
-**Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 options of 1–200 characters, trimmed and distinct ignoring case, fixed after creation. Every member sees each option's `voteCount` and whether they `selected` it; who voted for what is never exposed. Each member has one vote, which `PUT /posts/{postId}/vote` sets or changes and `DELETE` retracts. Votes do not change the post's `version` or activity time. Polls take no answers or followups.
+**Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 fixed options of 1–200 characters, trimmed and distinct ignoring case. Omitted advanced fields preserve the basic poll: single-select, no deadline, live aggregates. Staff may instead configure `selectionMode: "single" | "multiple"`, `maxSelections` (one for single, 2 through the option count for multiple), future ISO `closesAt` with `Z` or a numeric offset, `releaseMode: "manual" | "automatic"`, and optional `explanation` (up to 10,000 characters). Multi-select creation requires an explicit manual or automatic release mode; omission is valid only for basic single-select live results. Members may replace a whole ballot with `{ "optionIds": ["..."] }`; legacy `{ "optionId": "..." }` remains valid for single-select. `DELETE` retracts before close. A deadline or staff close rejects all ballot changes with `409 poll_closed`; archive has the same effect. Staff may `POST /posts/{postId}/close`, `/reopen`, or `/release` with `If-Match`; each returns the updated post and advances its ETag. Release is irreversible, and reopening an expired poll clears its deadline. Poll projections include `selectionMode`, `maxSelections`, `closesAt`, `closed`, `releaseMode`, `resultsReleased`, and each option's `selected` flag. Option `voteCount`, aggregate `totalVotes` (distinct member ballots, not selections), and `explanation` are **absent**, not zero, for students before release; staff always see aggregates. Ballot identities are never exposed. Staff may GET `/posts/{postId}/poll-results.csv` (aggregate-only CSV) or POST `/posts/{postId}/clone` (new, open poll without ballots/deadline/release). A legacy live-results source clones to manual release so the new results start hidden; other stable settings and options copy. Votes do not change post `version` or activity time. Polls take no answers or followups. All member-specific poll responses use `Cache-Control: private, no-store`.
 
 **Discussion locks:** Every active post list and detail projection includes `discussionLocked: boolean` (default `false`; always `false` for notes and announcements). Staff can conditionally lock or unlock a question or poll with `PUT /posts/{postId}/discussion-lock`; notes and announcements return `422 validation_failed`. A lock prevents new answers, followups, replies, poll votes and retractions, and answer/followup upvote changes; each returns `409 discussion_locked`. Existing content remains readable and editable/deletable according to ordinary permissions, and staff can change existing followup resolution markers. Toggling the lock advances the post version without changing `lastActivityAt`, so it does not reorder the recent-activity feed.
 
@@ -58,7 +58,7 @@ Creates a post in a course.
 
 `Content-Type` (required): Selects one documented request media type.
 
-`Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
+`Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries, including after a poll deadline passes; keys are retained for 24 hours. A new poll create with a past deadline is rejected.
 
 `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
 
@@ -119,6 +119,16 @@ For the `private` field on question and note requests, see the [OpenAPI request 
 `options` (list of PollOptionInput, required): Poll choices.
 
 `options[].label` (string, required): Visible poll choice label.
+
+`selectionMode` (enum: single, multiple, optional; default single): Ballot mode.
+
+`maxSelections` (integer, optional; default 1 for single): Maximum choices; required as 2 through option count for multiple.
+
+`closesAt` (ISO date-time, optional): Future deadline with a real calendar date and explicit `Z` or `±HH:MM` offset. Offset-free and nonexistent dates return `422 validation_failed`; accepted instants are normalized to UTC.
+
+`releaseMode` (enum: manual, automatic): Required for multi-select; omit only for basic single-select live-results behavior.
+
+`explanation` (string, optional): Staff-authored results explanation, visible to students only after release.
 
 #### Multipart parts
 
@@ -236,11 +246,11 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.options[].label` (string, required): Visible choice label.
 
-`data.options[].voteCount` (integer, required): Votes currently cast for the option.
+`data.options[].voteCount` (integer, conditional): Selected-option count; omitted for students before release.
 
 `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
 
-`data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
+`data.totalVotes` (integer, conditional): Distinct member ballots; omitted for students before release.
 
 #### Example request
 
@@ -473,11 +483,11 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data[].options[].label` (string, required): Visible choice label.
 
-`data[].options[].voteCount` (integer, required): Votes currently cast for the option.
+`data[].options[].voteCount` (integer, conditional): Selected-option count; omitted for students before release.
 
 `data[].options[].selected` (boolean, required): Whether the authenticated user selected the option.
 
-`data[].totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
+`data[].totalVotes` (integer, conditional): Distinct member ballots; omitted for students before release.
 
 `page` (object, required): Pagination details for the current result set.
 
@@ -667,11 +677,11 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.options[].label` (string, required): Visible choice label.
 
-`data.options[].voteCount` (integer, required): Votes currently cast for the option.
+`data.options[].voteCount` (integer, conditional): Selected-option count; omitted for students before release.
 
 `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
 
-`data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
+`data.totalVotes` (integer, conditional): Distinct member ballots; omitted for students before release.
 
 #### Example request
 
@@ -903,11 +913,11 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.options[].label` (string, required): Visible choice label.
 
-`data.options[].voteCount` (integer, required): Votes currently cast for the option.
+`data.options[].voteCount` (integer, conditional): Selected-option count; omitted for students before release.
 
 `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
 
-`data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
+`data.totalVotes` (integer, conditional): Distinct member ballots; omitted for students before release.
 
 #### Example request
 
@@ -1135,11 +1145,19 @@ curl --request DELETE '/api/v1/posts/post_123' \
 
 ---
 
+### Poll lifecycle, export, and clone
+
+`POST /api/v1/posts/{postId}/close`, `/reopen`, and `/release` require a current TA or instructor, session cookie, allowed Origin, CSRF token, and current `If-Match: "vN"`. They return `200 {"data": <viewer-aware poll post>}` with the next `ETag` and `Cache-Control: private, no-store`. Missing/stale ETags return `428 precondition_required`/`412 version_conflict`; students receive `403 permission_denied`; missing, deleted, hidden, or unrelated polls return `404 not_found`; a non-poll returns `422 not_a_poll`; an inactive course or already reached close/open state returns `409`. Closing an automatic-release poll exposes aggregates; reopening never hides them and removes an elapsed deadline. Manual release is irreversible.
+
+`GET /api/v1/posts/{postId}/poll-results.csv` requires staff membership and returns `200 text/csv; charset=utf-8`, an attachment filename, and `Cache-Control: private, no-store`. Its columns are `option,count,ballots`; counts are selections, ballots are distinct members. Labels are CSV-quoted and spreadsheet-formula escaped. No voter IDs, names, or per-ballot rows are included. Students receive `403 permission_denied`.
+
+`POST /api/v1/posts/{postId}/clone` requires staff membership and the usual unsafe-request CSRF protections. It returns `201 {"data": <new poll>}`, `Location`, and `ETag`. Title, body, option labels, selection mode, maximum, explanation, and nonlegacy release mode copy; ballots, deadline, closed state, and release state reset. A legacy live-results source becomes manual-release on its clone. Students receive `403 permission_denied`; inactive courses return `409 course_archived`.
+
 <a id="putPostVote"></a>
 
 ### **`PUT /api/v1/posts/{postId}/vote`**
 
-Casts or changes the authenticated user’s vote on a poll. Each user has one selected option; another PUT changes the vote.
+Casts or replaces the authenticated user’s entire ballot on an open poll. Use legacy `optionId` for single-select or `optionIds` for an array of distinct selections (one through the configured maximum).
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -1171,7 +1189,7 @@ None.
 
 ##### `VoteRequest` (required)
 
-`optionId` (string, required): Opaque stable identifier.
+Exactly one of `optionId` (single-select legacy ballot) or `optionIds` (array of one through `maxSelections` distinct option IDs) is required; see the [VoteRequest schema](../openapi.yaml).
 
 #### Multipart parts
 
@@ -1187,13 +1205,13 @@ None specific to this operation.
 
 #### Response body
 
-##### `data` (object, required): The caller's vote and the updated poll totals.
+##### `data` (object, required): The caller's selected choices and viewer-visible poll results.
 
 `data.postId` (string, required): Opaque stable identifier.
 
 `data.options` (list of objects, required): Updated poll choices.
 
-`data.totalVotes` (integer, required): Total votes cast.
+`data.totalVotes` (integer, conditional): Distinct member ballots, omitted for unreleased student results.
 
 #### Example request
 
@@ -1266,7 +1284,7 @@ curl --request PUT '/api/v1/posts/post_123/vote' \
 
 ### **`DELETE /api/v1/posts/{postId}/vote`**
 
-Retracts the authenticated user’s vote from an unlocked poll. Returns 204 even when the caller has no vote.
+Retracts the authenticated user’s ballot from an open, unlocked poll. Returns 204 even when the caller has no ballot; a closed or locked poll rejects the change.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

@@ -469,6 +469,11 @@ function postCreateBody(value: unknown): CreatePost {
       "options",
       "announcement",
       "private",
+      "selectionMode",
+      "maxSelections",
+      "closesAt",
+      "releaseMode",
+      "explanation",
     ],
     ["type", "title", "bodyMarkdown"],
   );
@@ -484,6 +489,7 @@ function postCreateBody(value: unknown): CreatePost {
       : body.options !== undefined
   )
     throw validationError("Only polls have options");
+  const options = body.type === "poll" ? pollOptions(body.options) : undefined;
   if (body.announcement !== undefined && typeof body.announcement !== "boolean")
     throw validationError("Announcement is invalid");
   if (body.announcement && body.type !== "note")
@@ -492,13 +498,76 @@ function postCreateBody(value: unknown): CreatePost {
     throw validationError("Announcements cannot be anonymous");
   if (body.private !== undefined && typeof body.private !== "boolean")
     throw validationError("Private is invalid");
+  const advanced = [
+    "selectionMode",
+    "maxSelections",
+    "closesAt",
+    "releaseMode",
+    "explanation",
+  ] as const;
+  if (body.type !== "poll" && advanced.some((key) => body[key] !== undefined))
+    throw validationError("Only polls have poll settings");
+  const selectionMode = body.selectionMode ?? "single";
+  if (body.type === "poll") {
+    if (selectionMode !== "single" && selectionMode !== "multiple")
+      throw validationError("Selection mode is invalid");
+    const optionCount = options!.length;
+    const max =
+      body.maxSelections ?? (selectionMode === "single" ? 1 : undefined);
+    if (
+      !Number.isInteger(max) ||
+      (selectionMode === "single"
+        ? max !== 1
+        : (max as number) < 2 || (max as number) > optionCount)
+    )
+      throw validationError("Maximum selections is invalid");
+    if (
+      body.releaseMode !== undefined &&
+      body.releaseMode !== "manual" &&
+      body.releaseMode !== "automatic"
+    )
+      throw validationError("Release mode is invalid");
+    if (selectionMode === "multiple" && body.releaseMode === undefined)
+      throw validationError("Release mode is required for multi-select polls");
+    if (
+      body.closesAt !== undefined &&
+      (typeof body.closesAt !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+          body.closesAt,
+        ) ||
+        !Number.isFinite(Date.parse(body.closesAt)) ||
+        new Date(`${body.closesAt.slice(0, 10)}T00:00:00Z`)
+          .toISOString()
+          .slice(0, 10) !== body.closesAt.slice(0, 10))
+    )
+      throw validationError("Close time must be in the future");
+    if (
+      body.explanation !== undefined &&
+      (typeof body.explanation !== "string" || body.explanation.length > 10000)
+    )
+      throw validationError("Explanation is invalid");
+  }
   return {
     type: body.type,
     title,
     bodyMarkdown,
     anonymous: body.anonymous as boolean | undefined,
     tags: postTags(body.tags),
-    ...(body.type === "poll" ? { options: pollOptions(body.options) } : {}),
+    ...(body.type === "poll" ? { options } : {}),
+    ...(body.type === "poll"
+      ? {
+          selectionMode: selectionMode as "single" | "multiple",
+          maxSelections: (body.maxSelections ?? 1) as number,
+          ...(body.closesAt
+            ? { closesAt: new Date(body.closesAt as string).toISOString() }
+            : {}),
+          releaseMode: (body.releaseMode ?? "live") as
+            "live" | "manual" | "automatic",
+          ...(body.explanation
+            ? { explanation: body.explanation as string }
+            : {}),
+        }
+      : {}),
     ...(body.announcement ? { announcement: true } : {}),
     ...(body.private ? { private: true } : {}),
   };
@@ -2244,6 +2313,7 @@ export function createApp(
           .set({
             Location: `/api/v1/posts/${result.value.id}`,
             ETag: postEtag(result.value),
+            "Cache-Control": "private, no-store",
           })
           .json({ data: result.value });
       } catch (error) {
@@ -2267,11 +2337,11 @@ export function createApp(
         );
         response.locals.safeResultCount = result.data.length;
         const { snapshot, ...body } = result;
+        response.set("Cache-Control", "private, no-store");
         if (snapshot)
           response.set({
             "X-Feed-Snapshot": snapshot,
             "Access-Control-Expose-Headers": "X-Feed-Snapshot",
-            "Cache-Control": "private, no-store",
           });
         response.json(body);
       } catch (error) {
@@ -2484,13 +2554,28 @@ export function createApp(
     async (request, response, next) => {
       try {
         requireJsonRequest(request);
-        const body = strictBody(request.body, ["optionId"], ["optionId"]);
+        const body = strictBody(request.body, ["optionId", "optionIds"]);
+        if ((body.optionId === undefined) === (body.optionIds === undefined))
+          throw validationError("Provide one ballot format");
+        const choice =
+          body.optionIds === undefined
+            ? stringWithin(body.optionId, "Option", 1, 255)
+            : body.optionIds;
+        if (
+          Array.isArray(choice) &&
+          (!choice.length || choice.some((id) => typeof id !== "string"))
+        )
+          throw validationError("Ballot choices are invalid");
+        if (typeof choice !== "string" && !Array.isArray(choice))
+          throw validationError("Ballot choices are invalid");
         const value = await posts().vote(
           param(request.params.postId),
           auth(response).session.user.id,
-          stringWithin(body.optionId, "Option", 1, 255),
+          choice as string | string[],
         );
-        response.json({ data: value });
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
       } catch (error) {
         next(error);
       }
@@ -2506,6 +2591,74 @@ export function createApp(
           auth(response).session.user.id,
         );
         response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const action of ["close", "reopen", "release"] as const)
+    app.post(
+      `/api/v1/posts/:postId/${action}`,
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          const value = await posts().transitionPoll(
+            param(request.params.postId),
+            auth(response).session.user.id,
+            request.header("if-match"),
+            action,
+          );
+          response
+            .set({
+              ETag: postEtag(value),
+              "Cache-Control": "private, no-store",
+            })
+            .json({ data: value });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  app.get(
+    "/api/v1/posts/:postId/poll-results.csv",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const csv = await posts().pollCsv(
+          param(request.params.postId),
+          current.session.user.id,
+        );
+        response
+          .set({
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": `attachment; filename="poll-${param(request.params.postId)}-results.csv"`,
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+          })
+          .send(csv);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/posts/:postId/clone",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const value = await posts().clonePoll(
+          param(request.params.postId),
+          auth(response).session.user.id,
+        );
+        response
+          .status(201)
+          .set({
+            Location: `/api/v1/posts/${value.id}`,
+            ETag: postEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
       } catch (error) {
         next(error);
       }

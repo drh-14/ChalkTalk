@@ -687,6 +687,7 @@ integration("semantic post search HTTP contract", () => {
       "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'poll','Optical ballot','Choose an instrument')",
       [poll, courseId, userId],
     );
+    await pool.query("INSERT INTO poll_settings(post_id) VALUES($1)", [poll]);
     await pool.query(
       `INSERT INTO post_embeddings(post_id,generation,source_revision,chunk_ordinal,embedding) SELECT p.id,$2,${POST_REVISION_SQL},0,'[1,0]'::public.vector FROM posts p WHERE p.id=$1`,
       [poll, config.generation],

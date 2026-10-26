@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
 import type { AuthService } from "../auth/service.js";
@@ -2194,6 +2194,565 @@ integration("text posts HTTP contract", () => {
     const read = (userId: string, postId: string) =>
       request(app(userId)).get(`/api/v1/posts/${postId}`).set("Cookie", cookie);
 
+    it("requires controlled release for new multi-select polls", async () => {
+      for (const release of [undefined, "live"] as const) {
+        const title = `Rejected multi-select ${release ?? "omitted"}`;
+        const response = await poll(ids.staff, {
+          title,
+          selectionMode: "multiple",
+          maxSelections: 2,
+          ...(release === undefined ? {} : { releaseMode: release }),
+        });
+        expect(response.status).toBe(422);
+        const stored = await pool.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM posts WHERE course_id=$1 AND title=$2",
+          [ids.course, title],
+        );
+        expect(stored.rows[0]!.count).toBe(0);
+      }
+      const basic = await poll(ids.staff);
+      expect(basic.status).toBe(201);
+      expect(basic.body.data).toMatchObject({
+        selectionMode: "single",
+        releaseMode: "live",
+        resultsReleased: true,
+      });
+    });
+
+    it("rejects ballot writes when the deadline passes before the write statement", async () => {
+      const created = await poll(ids.staff, { releaseMode: "manual" });
+      expect(created.status).toBe(201);
+      const postId = created.body.data.id as string;
+      const firstOption = created.body.data.options[0].id as string;
+      const secondOption = created.body.data.options[1].id as string;
+      expect((await vote(ids.student, postId, firstOption)).status).toBe(200);
+
+      for (const action of ["replace", "retract"] as const) {
+        await pool.query(
+          "UPDATE poll_settings SET closes_at=clock_timestamp()+interval '800 milliseconds' WHERE post_id=$1",
+          [postId],
+        );
+        const service = new PostService(pool);
+        const connect = pool.connect.bind(pool);
+        Reflect.set(pool, "connect", async () => {
+          const client = await connect();
+          const query = client.query.bind(client);
+          Reflect.set(client, "query", async (...args: unknown[]) => {
+            if (
+              typeof args[0] === "string" &&
+              args[0].startsWith("DELETE FROM poll_votes")
+            ) {
+              Reflect.set(client, "query", query);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+            return Reflect.apply(query, client, args);
+          });
+          return client;
+        });
+        try {
+          await expect(
+            action === "replace"
+              ? service.vote(postId, ids.student, secondOption)
+              : service.unvote(postId, ids.student),
+          ).rejects.toMatchObject({ status: 409, code: "poll_closed" });
+        } finally {
+          Reflect.set(pool, "connect", connect);
+        }
+        const ballot = await pool.query<{ option_id: string }>(
+          "SELECT option_id FROM poll_votes WHERE post_id=$1 AND user_id=$2",
+          [postId, ids.student],
+        );
+        expect(ballot.rows.map((row) => row.option_id)).toEqual([firstOption]);
+      }
+    });
+
+    it("rechecks staff authorization before replaying an idempotent poll", async () => {
+      const key = "private-poll-replay";
+      const body = {
+        type: "poll",
+        title: "Private results",
+        bodyMarkdown: "Choose one.",
+        options: [{ label: "A" }, { label: "B" }],
+        releaseMode: "manual",
+        explanation: "Staff-only explanation",
+      };
+      const create = () =>
+        unsafe(request(app(ids.staff)).post(path))
+          .set("Idempotency-Key", key)
+          .send(body);
+      const first = await create();
+      expect(first.status).toBe(201);
+      expect(first.body.data.explanation).toBe(body.explanation);
+      await pool.query(
+        "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+        [ids.course, ids.staff],
+      );
+      try {
+        const replay = await create();
+        expect(replay.status).toBe(403);
+        expect(JSON.stringify(replay.body)).not.toContain(body.explanation);
+      } finally {
+        await pool.query(
+          "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+          [ids.course, ids.staff],
+        );
+      }
+      const released = await unsafe(
+        request(app(ids.staff)).post(
+          `/api/v1/posts/${first.body.data.id}/release`,
+        ),
+      ).set("If-Match", '"v1"');
+      expect(released.status).toBe(200);
+      const replay = await create();
+      expect(replay.status).toBe(201);
+      expect(replay.body.data.resultsReleased).toBe(true);
+      expect(replay.body.data.version).toBe(released.body.data.version);
+    });
+
+    it("replays an exact poll request after its deadline but rejects new creates", async () => {
+      const closesAt = new Date(Date.now() + 3600_000).toISOString();
+      const body = {
+        type: "poll",
+        title: "Expiring idempotent poll",
+        bodyMarkdown: "Choose one.",
+        options: [{ label: "A" }, { label: "B" }],
+        closesAt,
+        releaseMode: "manual",
+        explanation: "Staff explanation",
+      };
+      const create = (key?: string) => {
+        const call = unsafe(request(app(ids.staff)).post(path));
+        if (key) call.set("Idempotency-Key", key);
+        return call.send(body);
+      };
+      const first = await create("deadline-replay");
+      expect(first.status).toBe(201);
+      const clock = vi
+        .spyOn(Date, "now")
+        .mockReturnValue(Date.parse(closesAt) + 1000);
+      try {
+        const replay = await create("deadline-replay");
+        expect(replay.status).toBe(201);
+        expect(replay.body.data.id).toBe(first.body.data.id);
+        expect(replay.body.data.explanation).toBe(body.explanation);
+
+        await pool.query(
+          "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+          [ids.course, ids.staff],
+        );
+        const denied = await create("deadline-replay");
+        expect(denied.status).toBe(403);
+        expect(JSON.stringify(denied.body)).not.toContain(body.explanation);
+        await pool.query(
+          "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+          [ids.course, ids.staff],
+        );
+
+        for (const key of [undefined, "new-after-deadline"]) {
+          const fresh = await create(key);
+          expect(fresh.status).toBe(422);
+          expect(fresh.body.error.code).toBe("validation_failed");
+        }
+        const stored = await pool.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM posts WHERE course_id=$1 AND title=$2",
+          [ids.course, body.title],
+        );
+        expect(stored.rows[0]!.count).toBe(1);
+      } finally {
+        clock.mockRestore();
+        await pool.query(
+          "UPDATE course_memberships SET role='ta' WHERE course_id=$1 AND user_id=$2",
+          [ids.course, ids.staff],
+        );
+      }
+    });
+
+    it("returns option counts and ballot totals from the same read snapshot", async () => {
+      const created = await poll(ids.staff);
+      expect(created.status).toBe(201);
+      const postId = created.body.data.id as string;
+      const optionId = created.body.data.options[0].id as string;
+      const query = pool.query.bind(pool);
+      let injected = false;
+      Reflect.set(pool, "query", async (...args: unknown[]) => {
+        const result = await Reflect.apply(query, pool, args);
+        if (
+          !injected &&
+          result.rows?.[0] &&
+          "vote_count" in result.rows[0] &&
+          "selected" in result.rows[0]
+        ) {
+          injected = true;
+          Reflect.set(pool, "query", query);
+          expect((await vote(ids.student, postId, optionId)).status).toBe(200);
+        }
+        return result;
+      });
+      let response;
+      try {
+        response = await read(ids.staff, postId);
+      } finally {
+        Reflect.set(pool, "query", query);
+      }
+      expect(injected).toBe(true);
+      expect(response.status).toBe(200);
+      const counts = response.body.data.options as { voteCount: number }[];
+      expect(counts.reduce((sum, option) => sum + option.voteCount, 0)).toBe(
+        response.body.data.totalVotes,
+      );
+    });
+
+    it("keeps legacy polls live while hiding controlled multi-select totals from students", async () => {
+      const legacy = await poll(ids.staff);
+      expect(legacy.body.data).toMatchObject({
+        selectionMode: "single",
+        maxSelections: 1,
+        resultsReleased: true,
+        totalVotes: 0,
+      });
+      const created = await poll(ids.staff, {
+        selectionMode: "multiple",
+        maxSelections: 2,
+        releaseMode: "manual",
+        explanation: "Wednesday won.",
+      });
+      expect(created.status).toBe(201);
+      expect(created.body.data).toMatchObject({
+        selectionMode: "multiple",
+        maxSelections: 2,
+        resultsReleased: false,
+        totalVotes: 0,
+      });
+      const student = await read(ids.student, created.body.data.id);
+      expect(student.body.data).not.toHaveProperty("totalVotes");
+      expect(student.body.data).not.toHaveProperty("explanation");
+      expect(student.body.data.options[0]).not.toHaveProperty("voteCount");
+      const listed = await request(app(ids.student))
+        .get(`${path}?type=poll`)
+        .set("Cookie", cookie);
+      const listing = listed.body.data.find(
+        (item: { id: string }) => item.id === created.body.data.id,
+      );
+      expect(listing).not.toHaveProperty("totalVotes");
+    });
+
+    it("atomically replaces a multi-choice ballot and rejects an invalid replacement", async () => {
+      const created = await poll(ids.staff, {
+        selectionMode: "multiple",
+        maxSelections: 2,
+        releaseMode: "manual",
+      });
+      expect(created.status).toBe(201);
+      const [a, b, c] = created.body.data.options as { id: string }[];
+      const ballot = (optionIds: string[]) =>
+        unsafe(
+          request(app(ids.student)).put(
+            `/api/v1/posts/${created.body.data.id}/vote`,
+          ),
+        ).send({ optionIds });
+      expect((await ballot([a!.id, b!.id])).status).toBe(200);
+      expect((await ballot([b!.id, c!.id])).status).toBe(200);
+      expect((await ballot([a!.id, b!.id, c!.id])).status).toBe(422);
+      expect((await ballot([b!.id, b!.id])).status).toBe(422);
+      const own = await read(ids.student, created.body.data.id);
+      expect(
+        own.body.data.options.map(
+          (option: { selected: boolean }) => option.selected,
+        ),
+      ).toEqual([false, true, true]);
+      const staff = await read(ids.staff, created.body.data.id);
+      expect(staff.body.data.totalVotes).toBe(1);
+      expect(
+        staff.body.data.options.map(
+          (option: { voteCount: number }) => option.voteCount,
+        ),
+      ).toEqual([0, 1, 1]);
+    });
+
+    it("closes, releases, reopens, and exports aggregates without voter identities", async () => {
+      const created = await poll(ids.staff, {
+        selectionMode: "multiple",
+        maxSelections: 2,
+        releaseMode: "automatic",
+      });
+      expect(created.status).toBe(201);
+      const id = created.body.data.id as string;
+      const voteResponse = await unsafe(
+        request(app(ids.student)).put(`/api/v1/posts/${id}/vote`),
+      ).send({ optionIds: [created.body.data.options[0].id] });
+      expect(voteResponse.status).toBe(200);
+      expect(voteResponse.body.data).not.toHaveProperty("totalVotes");
+      const close = await unsafe(
+        request(app(ids.staff)).post(`/api/v1/posts/${id}/close`),
+      ).set("If-Match", '"v1"');
+      expect(close.status).toBe(200);
+      expect(close.headers.etag).toBe('"v2"');
+      expect(close.body.data).toMatchObject({
+        closed: true,
+        resultsReleased: true,
+      });
+      const rejected = await unsafe(
+        request(app(ids.student)).delete(`/api/v1/posts/${id}/vote`),
+      );
+      expect(rejected.status).toBe(409);
+      expect(rejected.body.error.code).toBe("poll_closed");
+      const visible = await read(ids.student, id);
+      expect(visible.body.data.totalVotes).toBe(1);
+      const stale = await unsafe(
+        request(app(ids.staff)).post(`/api/v1/posts/${id}/reopen`),
+      ).set("If-Match", '"v1"');
+      expect(stale.status).toBe(412);
+      const reopened = await unsafe(
+        request(app(ids.staff)).post(`/api/v1/posts/${id}/reopen`),
+      ).set("If-Match", '"v2"');
+      expect(reopened.status).toBe(200);
+      expect(reopened.body.data).toMatchObject({
+        closed: false,
+        resultsReleased: true,
+      });
+      const csv = await request(app(ids.staff))
+        .get(`/api/v1/posts/${id}/poll-results.csv`)
+        .set("Cookie", cookie);
+      expect(csv.status).toBe(200);
+      expect(csv.headers["content-type"]).toMatch(/^text\/csv/);
+      expect(csv.text).not.toContain(ids.student);
+      expect(csv.text).toContain("ballots");
+      expect(
+        (
+          await request(app(ids.student))
+            .get(`/api/v1/posts/${id}/poll-results.csv`)
+            .set("Cookie", cookie)
+        ).status,
+      ).toBe(403);
+    });
+
+    it("enforces deadlines, manual release, clone reset, and validation", async () => {
+      const closesAt = new Date(Date.now() + 3600_000).toISOString();
+      const created = await poll(ids.staff, {
+        selectionMode: "multiple",
+        maxSelections: 2,
+        releaseMode: "manual",
+        closesAt,
+        explanation: "A clear winner.",
+      });
+      expect(created.status).toBe(201);
+      const id = created.body.data.id as string;
+      expect(created.body.data.resultsReleased).toBe(false);
+      expect(
+        (await poll(ids.staff, { selectionMode: "multiple", maxSelections: 4 }))
+          .status,
+      ).toBe(422);
+      expect(
+        (await poll(ids.staff, { closesAt: "2020-01-01T00:00:00Z" })).status,
+      ).toBe(422);
+      await pool.query(
+        "UPDATE poll_settings SET closes_at=clock_timestamp()-interval '1 second' WHERE post_id=$1",
+        [id],
+      );
+      const due = await read(ids.student, id);
+      expect(due.body.data.closed).toBe(true);
+      expect(due.body.data).not.toHaveProperty("totalVotes");
+      const rejected = await vote(
+        ids.student,
+        id,
+        created.body.data.options[0].id,
+      );
+      expect(rejected.status).toBe(409);
+      const release = await unsafe(
+        request(app(ids.staff)).post(`/api/v1/posts/${id}/release`),
+      ).set("If-Match", '"v1"');
+      expect(release.status).toBe(200);
+      expect(release.body.data.resultsReleased).toBe(true);
+      const visible = await read(ids.student, id);
+      expect(visible.body.data).toMatchObject({
+        totalVotes: 0,
+        explanation: "A clear winner.",
+      });
+      const clone = await unsafe(
+        request(app(ids.staff)).post(`/api/v1/posts/${id}/clone`),
+      );
+      expect(clone.status).toBe(201);
+      expect(clone.body.data).toMatchObject({
+        selectionMode: "multiple",
+        maxSelections: 2,
+        releaseMode: "manual",
+        closesAt: null,
+        closed: false,
+        resultsReleased: false,
+        totalVotes: 0,
+      });
+      expect(clone.body.data.id).not.toBe(id);
+      expect(
+        (
+          await unsafe(
+            request(app(ids.student)).post(`/api/v1/posts/${id}/clone`),
+          )
+        ).status,
+      ).toBe(403);
+    });
+
+    it("requires an explicit deadline offset and stores its normalized instant", async () => {
+      const instant = new Date(Date.now() + 3600_000);
+      const local = instant.toISOString().slice(0, -1);
+      const rejected = await poll(ids.staff, {
+        title: "Ambiguous deadline",
+        closesAt: local,
+      });
+      expect(rejected.status).toBe(422);
+      expect(rejected.body.error.code).toBe("validation_failed");
+      const absent = await pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM posts WHERE course_id=$1 AND title=$2",
+        [ids.course, "Ambiguous deadline"],
+      );
+      expect(absent.rows[0]!.count).toBe(0);
+
+      const offsetTime = new Date(instant.getTime() + 150 * 60_000)
+        .toISOString()
+        .replace("Z", "+02:30");
+      const created = await poll(ids.staff, {
+        title: "Offset deadline",
+        closesAt: offsetTime,
+      });
+      expect(created.status).toBe(201);
+      expect(created.body.data.closesAt).toBe(instant.toISOString());
+      const stored = await pool.query<{ closes_at: Date }>(
+        "SELECT closes_at FROM poll_settings WHERE post_id=$1",
+        [created.body.data.id],
+      );
+      expect(stored.rows[0]!.closes_at.toISOString()).toBe(
+        instant.toISOString(),
+      );
+    });
+
+    it("rejects nonexistent deadline dates even with an explicit offset", async () => {
+      for (const closesAt of [
+        "2099-02-30T12:00:00Z",
+        "2099-02-30T12:00:00+02:30",
+      ]) {
+        const rejected = await poll(ids.staff, {
+          title: "Invalid calendar deadline",
+          closesAt,
+        });
+        expect(rejected.status).toBe(422);
+        expect(rejected.body.error.code).toBe("validation_failed");
+      }
+      const absent = await pool.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM posts WHERE course_id=$1 AND title=$2",
+        [ids.course, "Invalid calendar deadline"],
+      );
+      expect(absent.rows[0]!.count).toBe(0);
+
+      const leapDay = await poll(ids.staff, {
+        title: "Leap day deadline",
+        closesAt: "2096-02-29T12:00:00+02:30",
+      });
+      expect(leapDay.status).toBe(201);
+      expect(leapDay.body.data.closesAt).toBe("2096-02-29T09:30:00.000Z");
+    });
+
+    it("keeps staff-only aggregates out of unreleased mutation responses and escapes CSV labels", async () => {
+      const created = await poll(ids.staff, {
+        options: [{ label: "=SUM(1,2)" }, { label: "Plain" }],
+        selectionMode: "multiple",
+        maxSelections: 2,
+        releaseMode: "manual",
+      });
+      expect(created.status).toBe(201);
+      const id = created.body.data.id as string;
+      const first = created.body.data.options[0].id as string;
+      const voteResponse = await unsafe(
+        request(app(ids.student)).put(`/api/v1/posts/${id}/vote`),
+      ).send({ optionIds: [first] });
+      expect(voteResponse.status).toBe(200);
+      expect(voteResponse.headers["cache-control"]).toBe("private, no-store");
+      expect(voteResponse.body.data.options[0]).toMatchObject({
+        selected: true,
+      });
+      expect(voteResponse.body.data.options[0]).not.toHaveProperty("voteCount");
+      expect(voteResponse.body.data).not.toHaveProperty("totalVotes");
+      expect(JSON.stringify(voteResponse.body)).not.toContain(ids.student);
+      const csv = await request(app(ids.staff))
+        .get(`/api/v1/posts/${id}/poll-results.csv`)
+        .set("Cookie", cookie);
+      expect(csv.status).toBe(200);
+      expect(csv.text).toContain("'" + "=SUM(1,2)");
+      expect(csv.text).not.toContain(ids.student);
+      const closedCsrf = await request(app(ids.staff))
+        .post(`/api/v1/posts/${id}/close`)
+        .set("Cookie", cookie)
+        .set("Origin", environment.frontendBaseUrl)
+        .set("If-Match", '"v1"');
+      expect(closedCsrf.status, JSON.stringify(closedCsrf.body)).toBe(403);
+      const denied = await unsafe(
+        request(app(ids.student)).post(`/api/v1/posts/${id}/close`),
+      ).set("If-Match", '"v1"');
+      expect(denied.status).toBe(403);
+      const noIfMatch = await unsafe(
+        request(app(ids.staff)).post(`/api/v1/posts/${id}/close`),
+      );
+      expect(noIfMatch.status).toBe(428);
+    });
+
+    it("clones a legacy live-results poll as manual and unreleased", async () => {
+      const source = await poll(ids.staff);
+      expect(source.body.data.releaseMode).toBe("live");
+      const clone = await unsafe(
+        request(app(ids.staff)).post(
+          `/api/v1/posts/${source.body.data.id}/clone`,
+        ),
+      );
+      expect(clone.status).toBe(201);
+      expect(clone.body.data).toMatchObject({
+        releaseMode: "manual",
+        resultsReleased: false,
+        closed: false,
+        selectionMode: "single",
+        maxSelections: 1,
+        totalVotes: 0,
+      });
+      expect(
+        clone.body.data.options.map(
+          (option: { label: string }) => option.label,
+        ),
+      ).toEqual(
+        source.body.data.options.map(
+          (option: { label: string }) => option.label,
+        ),
+      );
+      expect(
+        (await read(ids.student, clone.body.data.id)).body.data,
+      ).not.toHaveProperty("totalVotes");
+    });
+
+    it("automatically releases a due poll without a worker and keeps release after reopening", async () => {
+      const created = await poll(ids.staff, {
+        releaseMode: "automatic",
+        closesAt: new Date(Date.now() + 3600_000).toISOString(),
+      });
+      expect(created.status).toBe(201);
+      const id = created.body.data.id as string;
+      await pool.query(
+        "UPDATE poll_settings SET closes_at=clock_timestamp()-interval '1 second' WHERE post_id=$1",
+        [id],
+      );
+      const due = await read(ids.student, id);
+      expect(due.body.data).toMatchObject({
+        closed: true,
+        resultsReleased: true,
+        totalVotes: 0,
+      });
+      const reopened = await unsafe(
+        request(app(ids.staff)).post(`/api/v1/posts/${id}/reopen`),
+      ).set("If-Match", '"v1"');
+      expect(reopened.status).toBe(200);
+      expect(reopened.body.data).toMatchObject({
+        closed: false,
+        closesAt: null,
+        resultsReleased: true,
+      });
+      expect((await read(ids.student, id)).body.data.totalVotes).toBe(0);
+    });
+
     it("enforces poll and announcement rules in the schema", async () => {
       const insert = (type: string, extra = "", values: unknown[] = []) =>
         pool.query(
@@ -2209,6 +2768,10 @@ integration("text posts HTTP contract", () => {
       ).rejects.toMatchObject({ code: "23514" });
       const first = (await insert("poll")).rows[0]!.id as string;
       const second = (await insert("poll")).rows[0]!.id as string;
+      await pool.query("INSERT INTO poll_settings (post_id) VALUES ($1),($2)", [
+        first,
+        second,
+      ]);
       const option = (
         await pool.query<{ id: string }>(
           "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES (gen_random_uuid(),$1,$2,0,'A') RETURNING id",
@@ -2236,6 +2799,17 @@ integration("text posts HTTP contract", () => {
     it("lets staff create polls and rejects students and invalid options", async () => {
       const created = await poll(ids.staff);
       expect(created.status).toBe(201);
+      const settings = await pool.query<{
+        selection_mode: string;
+        max_selections: number;
+        release_mode: string;
+      }>(
+        "SELECT selection_mode,max_selections,release_mode FROM poll_settings WHERE post_id=$1",
+        [created.body.data.id],
+      );
+      expect(settings.rows).toEqual([
+        { selection_mode: "single", max_selections: 1, release_mode: "live" },
+      ]);
       expect(created.body.data).toMatchObject({
         type: "poll",
         announcement: false,
@@ -2277,6 +2851,49 @@ integration("text posts HTTP contract", () => {
         [ids.student],
       );
       expect(count.rows[0].count).toBe(0);
+    });
+
+    it("fails poll API operations when the required settings row is missing", async () => {
+      const created = await poll(ids.staff, { title: "Missing settings" });
+      expect(created.status).toBe(201);
+      const id = created.body.data.id as string;
+      const optionId = created.body.data.options[0].id as string;
+      await pool.query("DELETE FROM poll_settings WHERE post_id=$1", [id]);
+      try {
+        const responses = [
+          await read(ids.student, id),
+          await request(app(ids.staff))
+            .get(`${path}?type=poll`)
+            .set("Cookie", cookie),
+          await vote(ids.student, id, optionId),
+          await unsafe(
+            request(app(ids.student)).delete(`/api/v1/posts/${id}/vote`),
+          ),
+          await unsafe(
+            request(app(ids.staff)).post(`/api/v1/posts/${id}/close`),
+          ).set("If-Match", '"v1"'),
+          await unsafe(
+            request(app(ids.staff)).post(`/api/v1/posts/${id}/clone`),
+          ),
+          await request(app(ids.staff))
+            .get(`/api/v1/posts/${id}/poll-results.csv`)
+            .set("Cookie", cookie),
+        ];
+        for (const response of responses) {
+          expect(response.status).toBe(500);
+          expect(response.body.error).toMatchObject({
+            code: "internal_error",
+            message: "Poll settings are missing",
+          });
+        }
+        const votes = await pool.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM poll_votes WHERE post_id=$1",
+          [id],
+        );
+        expect(votes.rows[0]!.count).toBe(0);
+      } finally {
+        await pool.query("DELETE FROM posts WHERE id=$1", [id]);
+      }
     });
 
     it("lists polls with their state and keeps options fixed", async () => {

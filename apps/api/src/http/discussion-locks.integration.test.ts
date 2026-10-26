@@ -82,11 +82,13 @@ async function post(
       announcement,
     ],
   );
-  if (type === "poll")
+  if (type === "poll") {
     await pool.query(
       "INSERT INTO poll_options (id,course_id,post_id,label,position) VALUES ($1,$2,$3,'Option',0)",
       [uuidv7(), ids.course, id],
     );
+    await pool.query("INSERT INTO poll_settings (post_id) VALUES ($1)", [id]);
+  }
   return id;
 }
 async function toggle(
