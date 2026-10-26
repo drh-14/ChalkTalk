@@ -60,6 +60,46 @@ const json = (body: unknown, status = 200) =>
   });
 const page = (posts: unknown[], cursor: string | null = null) =>
   json({ data: posts, page: { nextCursor: cursor, hasMore: !!cursor } });
+function stubFetch(
+  implementation: (url: string, init?: RequestInit) => Promise<Response>,
+) {
+  let version = 0;
+  let content: unknown = null;
+  const draftResponse = () =>
+    new Response(
+      JSON.stringify({
+        data: {
+          courseId: course.id,
+          content,
+          updatedAt: "2026-01-01",
+          version,
+        },
+      }),
+      {
+        headers: { "Content-Type": "application/json", ETag: `"v${version}"` },
+      },
+    );
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init?: RequestInit) =>
+      url.endsWith("/post-draft")
+        ? Promise.resolve(
+            (() => {
+              if (init?.method === "PUT") {
+                content = JSON.parse(String(init.body)).content;
+                version++;
+              }
+              if (init?.method === "DELETE") {
+                content = null;
+                version++;
+              }
+              return draftResponse();
+            })(),
+          )
+        : implementation(url, init),
+    ),
+  );
+}
 beforeEach(() => {
   class AnalysisWorker {
     onmessage: ((event: { data: unknown }) => void) | null = null;
@@ -192,7 +232,7 @@ const choiceLabels = (name: FilterSection) =>
 it("collapses desktop filters with an accessible boundary control without fetching", async () => {
   mockDesktopViewport();
   const fetchMock = vi.fn(async () => page([post("p1", "First post")]));
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -226,7 +266,7 @@ it("keeps the selected filter and post detail while desktop filters collapse", a
   const fetchMock = vi.fn(async (url: string) =>
     url.endsWith("/posts/p1") ? json({ data: note }) : page([note]),
   );
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -256,10 +296,7 @@ it("keeps the selected filter and post detail while desktop filters collapse", a
 
 it("starts desktop filters expanded on each discussion mount", async () => {
   mockDesktopViewport();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   const props = {
     courseId: course.id,
@@ -283,10 +320,7 @@ it("starts desktop filters expanded on each discussion mount", async () => {
 
 it("shows mobile filters after resize and restores desktop collapse state", async () => {
   const resize = mockDesktopViewport();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -312,10 +346,7 @@ it("shows mobile filters after resize and restores desktop collapse state", asyn
 });
 
 it("offers formatting controls and previews the unsent post body", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -354,10 +385,7 @@ it.each([
   ["Inline code", "`ptr`"],
   ["Inline math", "$ptr$"],
 ])("wraps a real editor selection with %s syntax", async (button, expected) => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -377,10 +405,7 @@ it.each([
 });
 
 it("places the link destination under the caret for immediate typing", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -406,10 +431,7 @@ it.each([
   ["Numbered list", "1. one\n2. two"],
   ["Block math", "$$\none\ntwo\n$$"],
 ])("formats selected lines with %s in the editor", async (button, expected) => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -434,10 +456,7 @@ it.each([
 });
 
 it("inserts math at the editor caret and removes a live LaTeX error when corrected", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -464,10 +483,7 @@ it("inserts math at the editor caret and removes a live LaTeX error when correct
 });
 
 it("renders complete inline math in the editable body and reveals source on activation", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -490,10 +506,7 @@ it("renders complete inline math in the editable body and reveals source on acti
 });
 
 it("renders standalone block math and reveals its source when a selection reaches it", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -515,10 +528,7 @@ it("renders standalone block math and reveals its source when a selection reache
 });
 
 it("reveals inline source when the keyboard caret reaches either formula boundary", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -540,10 +550,7 @@ it("reveals inline source when the keyboard caret reaches either formula boundar
 });
 
 it("shows source and an accessible error when rendered math becomes invalid, then rerenders after correction", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -579,7 +586,7 @@ it("submits the original math Markdown even while its formula is rendered in the
       ? json({ data: post("new-post", "Math question") }, 201)
       : page([]),
   );
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -617,7 +624,7 @@ it("publishes the exact indented Markdown body with trailing whitespace", async 
       ? json({ data: post("new-post", "Code") }, 201)
       : page([]),
   );
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -645,7 +652,7 @@ it("publishes the exact indented Markdown body with trailing whitespace", async 
 
 it("rejects a whitespace-only Markdown body", async () => {
   const fetchMock = vi.fn<typeof fetch>(async () => page([]));
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -668,10 +675,7 @@ it("rejects a whitespace-only Markdown body", async () => {
 });
 
 it("copies, pastes, and undoes formula source rather than rendered math", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -700,10 +704,7 @@ it("copies, pastes, and undoes formula source rather than rendered math", async 
 });
 
 it("applies toolbar syntax at the raw caret after a rendered formula is opened", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -747,10 +748,7 @@ it("ignores older worker diagnostics after the author edits the body again", asy
     terminate() {}
   }
   vi.stubGlobal("Worker", FakeWorker);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -797,10 +795,7 @@ it("keeps the post body editable if LaTeX checking fails", async () => {
     terminate() {}
   }
   vi.stubGlobal("Worker", BrokenWorker);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -833,10 +828,7 @@ it("keeps raw Markdown editable when the math worker cannot be constructed", asy
       }
     },
   );
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -871,10 +863,7 @@ it("reveals previously rendered source if the math worker later fails", async ()
     terminate() {}
   }
   vi.stubGlobal("Worker", FakeWorker);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -921,10 +910,7 @@ it("reveals raw source when the external math renderer fails in the editor", asy
   vi.spyOn(katex, "render").mockImplementation(() => {
     throw new Error("DOM rendering unavailable");
   });
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -942,8 +928,7 @@ it("reveals raw source when the external math renderer fails in the editor", asy
 });
 
 it("keeps the controls above a focusable scroll region for posts and duplicates", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
@@ -1043,7 +1028,7 @@ it("paginates duplicate posts with the active query and resets them after switch
     }
     return page([post("active-1", "Active post")]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -1095,8 +1080,7 @@ it("paginates duplicate posts with the active query and resets them after switch
 it("lets staff review merged posts without exposing their body and unmerge one", async () => {
   const calls: string[] = [];
   let isMerged = true;
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
       if (url.endsWith("/members/user-staff"))
@@ -1241,8 +1225,7 @@ it("lets staff review merged posts without exposing their body and unmerge one",
 });
 
 it("opens a duplicate card's canonical post in a new tab without replacing review", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
@@ -1312,8 +1295,7 @@ it("opens a duplicate card's canonical post in a new tab without replacing revie
 
 it("shows the selected duplicate's retained detail instead of the canonical post", async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url.endsWith("/members/user-staff"))
@@ -1399,8 +1381,7 @@ it("shows the selected duplicate's retained detail instead of the canonical post
 
 it("does not show a late duplicate review after switching back to posts", async () => {
   let finishReview: ((response: Response) => void) | undefined;
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
@@ -1460,8 +1441,7 @@ it("does not show a late duplicate review after switching back to posts", async 
 });
 
 it("does not offer merged-post review to students", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/members/user-student")
         ? json({ data: { role: "student" } })
@@ -1482,8 +1462,7 @@ it("does not offer merged-post review to students", async () => {
 });
 
 it("only offers merging while staff are viewing posts", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
@@ -1528,8 +1507,7 @@ it("navigates an old merged-post route to its canonical post", async () => {
     redirected: { value: true },
     url: { value: "https://app.example.edu/api/v1/posts/canonical-1" },
   });
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/posts/merged-1") ? redirected : page([]),
     ),
@@ -1558,8 +1536,7 @@ it("lets staff find a canonical post and confirm a merge from post detail", asyn
   const unaffected = post("unaffected-1", "Unaffected post");
   const calls: { url: string; init?: RequestInit }[] = [];
   let isMerged = false;
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url.endsWith("/members/user-staff"))
@@ -1714,8 +1691,7 @@ it("guards merge before discarding an unsaved edit or sending its mutation", asy
   const source = { ...post("source-1", "Source post"), version: 1 };
   const target = { ...post("target-1", "Canonical post"), version: 1 };
   const writes: RequestInit[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
       if (url.endsWith("/posts/source-1") && init?.method === "PATCH") {
@@ -1792,8 +1768,7 @@ it("blocks opening Edit while a merge request is pending", async () => {
     finishMerge = resolve;
   });
   const onNavigate = vi.fn();
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
       if (url.endsWith("/posts/source-1") && init?.method === "PATCH")
@@ -1843,8 +1818,7 @@ it("does not start a merge while an edit Save is pending", async () => {
     finishSave = resolve;
   });
   const writes: unknown[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
       if (url.endsWith("/posts/source-1") && init?.method === "PATCH") {
@@ -1897,8 +1871,7 @@ it("does not start a merge while an edit Save is pending", async () => {
 });
 
 it("keeps search syntax accessible without showing explanatory copy", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
     ),
@@ -1920,8 +1893,7 @@ it("keeps search syntax accessible without showing explanatory copy", async () =
 
 it("searches live after 300 ms, preserves syntax, and removes the Search button", async () => {
   const calls: string[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       calls.push(url);
       if (url.endsWith("/courses/course-1")) return json({ data: course });
@@ -1960,8 +1932,7 @@ it("searches live after 300 ms, preserves syntax, and removes the Search button"
 
 it("clears a live search immediately and retains the unfiltered feed", async () => {
   const replaceQuery = vi.fn();
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/courses/course-1")
         ? json({ data: course })
@@ -1985,8 +1956,7 @@ it("clears a live search immediately and retains the unfiltered feed", async () 
 
 it("does not replace newer typing with an earlier debounced URL update", async () => {
   const replaceQuery = vi.fn();
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
     ),
@@ -2017,8 +1987,7 @@ it("does not replace newer typing with an earlier debounced URL update", async (
 
 it("does not replace new typing after a clear with the delayed empty URL query", async () => {
   const replaceQuery = vi.fn();
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
     ),
@@ -2049,8 +2018,7 @@ it("does not replace new typing after a clear with the delayed empty URL query",
 
 it("bounds the live query to 500 characters", async () => {
   const replaceQuery = vi.fn();
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
     ),
@@ -2080,8 +2048,7 @@ it("bounds the live query to 500 characters", async () => {
 
 it("retains first-page cards and retries the same cursor without duplicates", async () => {
   let next = 0;
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.includes("cursor=next"))
@@ -2121,7 +2088,7 @@ it("restarts a stale semantic page from the first lexical page with search filte
       ? page([post("semantic", "Semantic first")], "semantic-next")
       : page([post("lexical", "Lexical first")]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -2156,8 +2123,7 @@ it("discards an old cursor response when a new live query begins", async () => {
   const oldPage = new Promise<Response>((resolve) => {
     releaseOld = resolve;
   });
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.includes("cursor=old-cursor")) return oldPage;
@@ -2195,8 +2161,7 @@ it("discards an old cursor response when a new live query begins", async () => {
 
 it("offers retry after an initial feed error", async () => {
   let attempts = 0;
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       return ++attempts === 1
@@ -2214,8 +2179,7 @@ it("offers retry after an initial feed error", async () => {
 });
 
 it("opens the composer in the detail panel and restores the selected post when closed empty", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/p1"))
@@ -2247,14 +2211,31 @@ it("opens the composer in the detail panel and restores the selected post when c
   ).toBeTruthy();
 });
 
-it("asks before discarding a draft when selecting a post or closing the composer", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) =>
-      url.endsWith("/courses/course-1")
-        ? json({ data: course })
-        : page([post("p1", "First question")]),
-    ),
+it("saves the latest draft before navigating to another post", async () => {
+  stubFetch(
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/courses/course-1") && !init?.method)
+        return json({ data: course });
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "draft-navigation",
+              courseId: course.id,
+              content: JSON.parse(String(init.body)).content,
+              createdAt: "2026-01-01",
+              updatedAt: "2026-01-01",
+              version: 1,
+            },
+          }),
+          {
+            status: 201,
+            headers: { "Content-Type": "application/json", ETag: '"v1"' },
+          },
+        );
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([post("p1", "First question")]);
+    }),
   );
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const navigate = vi.fn();
@@ -2266,27 +2247,44 @@ it("asks before discarding a draft when selecting a post or closing the composer
   await user.click(screen.getByRole("button", { name: "Create post" }));
   await user.type(screen.getByRole("textbox", { name: "Post title" }), "Draft");
   await user.click(screen.getByRole("link", { name: /First question/ }));
-  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(confirm).not.toHaveBeenCalled();
   expect(navigate).not.toHaveBeenCalled();
   expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
     "value",
     "Draft",
   );
-  await user.click(screen.getByRole("button", { name: "Close composer" }));
-  expect(confirm).toHaveBeenCalledTimes(2);
-  expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
-  confirm.mockReturnValue(true);
+  await screen.findByText("Draft saved.");
   await user.click(screen.getByRole("link", { name: /First question/ }));
   expect(navigate).toHaveBeenCalledWith("/courses/course-1/posts/p1");
   expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
+  expect(confirm).not.toHaveBeenCalled();
 });
 
-it("shows a mobile Back to posts action for the composer and confirms draft discard", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) =>
-      url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
-    ),
+it("shows a mobile Back to posts action that waits for draft autosave", async () => {
+  stubFetch(
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/courses/course-1") && !init?.method)
+        return json({ data: course });
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "draft-back",
+              courseId: course.id,
+              content: JSON.parse(String(init.body)).content,
+              createdAt: "2026-01-01",
+              updatedAt: "2026-01-01",
+              version: 1,
+            },
+          }),
+          {
+            status: 201,
+            headers: { "Content-Type": "application/json", ETag: '"v1"' },
+          },
+        );
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
+      return page([]);
+    }),
   );
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const user = userEvent.setup();
@@ -2305,11 +2303,11 @@ it("shows a mobile Back to posts action for the composer and confirms draft disc
     "Draft body",
   );
   await user.click(screen.getByRole("button", { name: /Back to posts/ }));
-  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(confirm).not.toHaveBeenCalled();
   expect(screen.getByRole("textbox", { name: "Post body" }).textContent).toBe(
     "Draft body",
   );
-  confirm.mockReturnValue(true);
+  await screen.findByText("Draft saved.");
   await user.click(screen.getByRole("button", { name: /Back to posts/ }));
   expect(screen.queryByRole("textbox", { name: "Post body" })).toBeNull();
 });
@@ -2325,7 +2323,7 @@ it("keeps a failed creation draft and navigates to the returned post after retry
         : json({ data: post("new-post", "My question") }, 201);
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const navigate = vi.fn();
   const user = userEvent.setup();
   render(
@@ -2381,7 +2379,7 @@ it("prevents a second create while the first request is pending", async () => {
     if (init?.method === "POST") return pending;
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
@@ -2409,8 +2407,7 @@ it("prevents a second create while the first request is pending", async () => {
 
 it("uses submitted search text and server relevance order without parsing syntax", async () => {
   const urls: string[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       urls.push(url);
       return url.endsWith("/courses/course-1")
@@ -2444,8 +2441,7 @@ it("uses submitted search text and server relevance order without parsing syntax
 });
 
 it("renders Markdown and LaTeX in feed cards without nested links", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/courses/course-1")
         ? json({ data: course })
@@ -2484,8 +2480,7 @@ it("renders Markdown and LaTeX in feed cards without nested links", async () => 
 });
 
 it("renders Markdown and LaTeX in related questions without nested links", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.includes("type=question"))
@@ -2518,8 +2513,7 @@ it("renders Markdown and LaTeX in related questions without nested links", async
 });
 
 it("shows a direct post with viewer-projected author and blocks hostile Markdown HTML", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/p1"))
@@ -2553,8 +2547,7 @@ it("shows a direct post with viewer-projected author and blocks hostile Markdown
 
 it("bounds debounced related-question requests to ten results while title and body both contribute", async () => {
   const urls: string[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       urls.push(url);
       if (url.endsWith("/courses/course-1")) return json({ data: course });
@@ -2615,8 +2608,7 @@ it.each([
   "includes recent distinct body words in the request for %s",
   async (title, body, expectedQuery) => {
     const urls: string[] = [];
-    vi.stubGlobal(
-      "fetch",
+    stubFetch(
       vi.fn(async (url: string) => {
         urls.push(url);
         return url.endsWith("/courses/course-1")
@@ -2654,8 +2646,7 @@ it("does not show an obsolete feed response after the submitted query changes", 
   const oldPage = new Promise<Response>((resolve) => {
     releaseOld = resolve;
   });
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.includes("q=old")) return oldPage;
@@ -2685,8 +2676,7 @@ it("does not show an obsolete feed response after the submitted query changes", 
 });
 
 it("shows deleted and wrong-course details without previous identity or content", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/deleted"))
@@ -2724,8 +2714,7 @@ it("shows deleted and wrong-course details without previous identity or content"
 });
 
 it("shows an unavailable state for a hidden post returned as 404", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/hidden"))
@@ -2748,14 +2737,14 @@ it("shows an unavailable state for a hidden post returned as 404", async () => {
   expect(screen.queryByText("Anonymous")).toBeNull();
 });
 
-it("rejects blank and overlong composer fields before sending creation", async () => {
+it("rejects blank composer fields and caps title length before creation", async () => {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") throw new Error("Unexpected create request");
     return url.endsWith("/courses/course-1")
       ? json({ data: course })
       : page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
@@ -2768,17 +2757,17 @@ it("rejects blank and overlong composer fields before sending creation", async (
     screen.getByRole("textbox", { name: "Post title" }),
     "x".repeat(201),
   );
-  await user.type(screen.getByRole("textbox", { name: "Post body" }), "body");
-  await user.click(screen.getByRole("button", { name: "Publish post" }));
-  expect(screen.getByRole("alert").textContent).toContain("200 characters");
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "x".repeat(200),
+  );
   expect(
     fetchMock.mock.calls.every(([, init]) => init?.method !== "POST"),
   ).toBe(true);
 });
 
 it("keeps related questions visible after pointer exit, focus departure, and Escape", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/courses/course-1")
         ? json({ data: course })
@@ -2831,7 +2820,7 @@ it("rejects an overlong body before sending creation", async () => {
       ? json({ data: course })
       : page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
@@ -2865,7 +2854,7 @@ it("ignores an older related-question response after the draft changes", async (
         : page([post("new", "New suggestion")]);
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
@@ -2904,7 +2893,7 @@ it("creates a note without requesting related questions", async () => {
       );
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   const navigate = vi.fn();
   render(
@@ -2944,8 +2933,7 @@ it("creates a note without requesting related questions", async () => {
 
 it("uses the whole long title and caps body-derived suggestion terms", async () => {
   const urls: string[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       urls.push(url);
       return url.endsWith("/courses/course-1")
@@ -2985,8 +2973,7 @@ const timeIn = (element: Element) => element.querySelector("time");
 
 it("shows each post's creation time beside its author in the feed and detail", async () => {
   vi.setSystemTime(now);
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/p2"))
@@ -3042,8 +3029,7 @@ it("shows each post's creation time beside its author in the feed and detail", a
 
 it("shows an anonymous post's time without identifying its author", async () => {
   vi.setSystemTime(now);
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/p1"))
@@ -3073,8 +3059,7 @@ it("shows an anonymous post's time without identifying its author", async () => 
 
 it("shows a duplicate's time in staff review detail but not on its review card", async () => {
   vi.setSystemTime(now);
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
@@ -3131,8 +3116,7 @@ it("shows a duplicate's time in staff review detail but not on its review card",
 
 it("shows no time for a deleted post or a related-question suggestion", async () => {
   vi.setSystemTime(now);
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/deleted"))
@@ -3178,8 +3162,7 @@ it("shows no time for a deleted post or a related-question suggestion", async ()
 });
 
 it("makes the post detail a focusable region beside the post listings and marks only the selected row", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/p2"))
@@ -3229,7 +3212,7 @@ it("shows shared answer areas for questions and hides them for notes and tombsto
       return json({ data: [], meta: { total: 0, nextCursor: null } });
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const view = render(
     <Discussion
       courseId={course.id}
@@ -3290,7 +3273,7 @@ it("maps every Show option to its exact feed request parameters", async () => {
       return json({ data: { role: "student" } });
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -3333,7 +3316,7 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
       "next",
     );
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -3393,7 +3376,7 @@ it("retains a type filter on pagination and resets the cursor when Show changes"
     if (params.get("cursor")) return page([post("p2", "Second question")]);
     return page([post("p1", "First question")], "next");
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
@@ -3431,7 +3414,7 @@ it("sorts the feed and offers best match only while searching", async () => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   const view = render(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
@@ -3505,7 +3488,7 @@ it("keeps the newest selected sort and cursor when an older sort request finishe
           );
     return page([post("baseline", "Baseline")]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -3550,7 +3533,7 @@ it("keeps the newest selected sort and cursor when an older sort request finishe
 it("keeps a section open while choosing and summarizes it when closed without fetching", async () => {
   mockDesktopViewport();
   const fetchMock = vi.fn(async () => page([]));
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -3588,10 +3571,7 @@ it("keeps a section open while choosing and summarizes it when closed without fe
 });
 
 it("starts sections open on wide screens or without media queries and keeps that state on resize", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const props = {
     courseId: course.id,
     course,
@@ -3615,10 +3595,7 @@ it("starts sections open on wide screens or without media queries and keeps that
 
 it("starts sections closed on phones with the current choices in their headers", async () => {
   const resize = mockDesktopViewport(false);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -3646,7 +3623,7 @@ it("falls back to All posts for an unknown Show filter", async () => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   render(
     <Discussion
       courseId={course.id}
@@ -3667,8 +3644,7 @@ it("falls back to All posts for an unknown Show filter", async () => {
 });
 
 it("disables the sidebar filters in the staff duplicate view", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
@@ -3705,8 +3681,7 @@ it("disables the sidebar filters in the staff duplicate view", async () => {
 
 it("lays out each card with a type badge, status, preview, and byline from the post type list", async () => {
   vi.setSystemTime(new Date("2026-09-28T12:00:00Z"));
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       return page([
@@ -3783,8 +3758,7 @@ it("lays out each card with a type badge, status, preview, and byline from the p
 });
 
 it("labels the post type in the detail pane from the post type list", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/n1"))
@@ -3810,7 +3784,7 @@ it("restores filters from props and keeps them on post links", async () => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
     return page([post("p1", "Filtered")]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const onFiltersChange = vi.fn();
   render(
     <Discussion
@@ -3851,7 +3825,7 @@ it("filters by a tag from a row or the post, keeps the selected post, and remove
       return json({ data: { ...post("p1", "Selected"), tags: ["midterm"] } });
     return page([{ ...post("p1", "Selected"), tags: ["midterm"] }]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -3896,7 +3870,7 @@ it("combines tags, matches all by default, and switches to any or clears them", 
     if (params.get("cursor")) return page([post("p3", "Later tagged")]);
     return page([both], "next");
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -3969,7 +3943,7 @@ it("announces the tag limit and leaves ten active tags unchanged", async () => {
     if (url.endsWith("/courses/course-1")) return json({ data: course });
     return page([{ ...post("p1", "Eleventh"), tags: ["eleventh"] }]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const onFiltersChange = vi.fn();
   const user = userEvent.setup();
   render(
@@ -3996,8 +3970,7 @@ it("announces the tag limit and leaves ten active tags unchanged", async () => {
 });
 
 it("disables tag chips and the tag match in the staff duplicate view", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
@@ -4048,8 +4021,7 @@ function pinFixture(options: {
   let pinned = false;
   const calls: { url: string; init?: RequestInit }[] = [];
   const current = () => ({ ...post("p1", "Pin me"), version, pinned });
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url.endsWith("/members/user-1"))
@@ -4161,7 +4133,7 @@ it.each(["oldest", "newest", "recent_activity", "relevance"] as const)(
       );
       return page(posts);
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubFetch(fetchMock);
     const user = userEvent.setup();
     render(
       <Discussion
@@ -4240,7 +4212,7 @@ it("keeps an unpinned post in the Questions feed and retains its detail", async 
     if (url === "/api/v1/posts/p1") return json({ data: current() });
     return page([current()]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -4291,7 +4263,7 @@ it("keeps a newly pinned detail in the matching Questions feed", async () => {
         : [],
     );
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -4337,7 +4309,7 @@ it("keeps a newly pinned detail out of a Questions feed whose tag does not match
     if (url === "/api/v1/posts/p1") return json({ data: current() });
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -4417,8 +4389,7 @@ it("hides pinning from students and in archived courses", async () => {
 
 it("shows the last activity time in the post view when it differs from the creation time", async () => {
   vi.setSystemTime(new Date("2026-09-28T12:00:00Z"));
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
       if (url.endsWith("/posts/p1"))
@@ -4466,10 +4437,7 @@ it("shows the last activity time in the post view when it differs from the creat
 });
 
 it("distinguishes an empty course from filters that match nothing and clears them", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -4493,8 +4461,7 @@ it("distinguishes an empty course from filters that match nothing and clears the
 });
 
 it("returns from a post to the list with the same search and filters", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url === "/api/v1/posts/p1"
         ? json({ data: post("p1", "Open post") })
@@ -4523,8 +4490,7 @@ it("returns from a post to the list with the same search and filters", async () 
 });
 
 it("restores the page scroll position when returning from a post", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url === "/api/v1/posts/p1"
         ? json({ data: post("p1", "Row") })
@@ -4556,10 +4522,7 @@ it("restores the page scroll position when returning from a post", async () => {
 });
 
 it("clears an applied search with the Clear search control and refocuses the field", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([post("p1", "Cutoff post")])),
-  );
+  stubFetch(vi.fn(async () => page([post("p1", "Cutoff post")])));
   const onQueryChange = vi.fn();
   const user = userEvent.setup();
   render(
@@ -4586,10 +4549,7 @@ it("clears an applied search with the Clear search control and refocuses the fie
 });
 
 it("focuses search on slash except while typing in a field", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([post("p1", "Row")])),
-  );
+  stubFetch(vi.fn(async () => page([post("p1", "Row")])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -4614,10 +4574,27 @@ it("focuses search on slash except while typing in a field", async () => {
 
 it("asks an unmatched search as a new question with the body focused", async () => {
   const urls: string[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) => {
+  stubFetch(
+    vi.fn(async (url: string, init?: RequestInit) => {
       urls.push(url);
+      if (url.endsWith("/post-drafts") && init?.method === "POST")
+        return new Response(
+          JSON.stringify({
+            data: {
+              id: "draft-search",
+              courseId: course.id,
+              content: JSON.parse(String(init.body)).content,
+              createdAt: "2026-01-01",
+              updatedAt: "2026-01-01",
+              version: 1,
+            },
+          }),
+          {
+            status: 201,
+            headers: { "Content-Type": "application/json", ETag: '"v1"' },
+          },
+        );
+      if (url.endsWith("/post-drafts")) return json({ data: [] });
       return page([]);
     }),
   );
@@ -4655,16 +4632,14 @@ it("asks an unmatched search as a new question with the body focused", async () 
       ),
     ).toBe(true),
   );
+  await screen.findByText("Draft saved.");
   await user.click(screen.getByRole("button", { name: "Close composer" }));
   expect(confirm).not.toHaveBeenCalled();
   expect(screen.queryByRole("textbox", { name: "Post title" })).toBeNull();
 });
 
 it("prompts to choose or start a post when nothing is selected", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => page([])),
-  );
+  stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
   render(
     <Discussion
@@ -4682,8 +4657,7 @@ it("prompts to choose or start a post when nothing is selected", async () => {
 });
 
 it("renders Markdown previews without dropping ordinary punctuation", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async () =>
       page([
         {
@@ -4744,7 +4718,7 @@ it("keeps a created note and retries only its failed attachment", async () => {
     }
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const navigate = vi.fn();
   const user = userEvent.setup();
   render(
@@ -4816,8 +4790,7 @@ it("retains an existing post's failed file after refreshing a successful sibling
   });
   let reads = 0;
   const uploads: { name: string; key: string }[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/members/user-staff"))
         return json({ data: { role: "ta" } });
@@ -4893,8 +4866,7 @@ it("shows post Edit for its author but keeps viewing attachments read-only", asy
       deleted: false,
     },
   };
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/author-1"))
         return json({ data: { role: "student" } });
@@ -4950,7 +4922,7 @@ it("keeps post edits local until Save, sends If-Match, and Cancel discards text"
     }
     return page([current]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   render(
     <Discussion
       courseId={course.id}
@@ -5032,7 +5004,7 @@ it("retains a failed post draft and requires explicit latest-version review afte
     }
     return page([current]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -5096,8 +5068,7 @@ it.each([
         deleted: false,
       },
     };
-    vi.stubGlobal(
-      "fetch",
+    stubFetch(
       vi.fn(async (url: string) => {
         if (url.endsWith("/members/author")) return json({ data: { role } });
         if (url === "/api/v1/posts/p1") return json({ data: current });
@@ -5159,7 +5130,7 @@ it("removes files only in Edit and overwrites remote text only on explicit Save"
     }
     return page([current]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -5225,8 +5196,7 @@ it("saves text before files and retains text typed during uploads for the next v
     finishUpload = resolve;
   });
   const writes: { version: string; title: string }[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
       if (url === "/api/v1/posts/p1/attachments" && init?.method === "POST") {
@@ -5297,8 +5267,7 @@ it("saves text before files and retains text typed during uploads for the next v
 
 it("guards unsaved post edits when opening Create or switching duplicate views", async () => {
   const current = { ...post("p1", "Note"), type: "note", version: 1 };
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
       if (url === "/api/v1/posts/p1") return json({ data: current });
@@ -5337,8 +5306,7 @@ it("guards unsaved post edits when opening Create or switching duplicate views",
 
 it("returns an active editor to read-only viewing when the course is archived", async () => {
   const current = { ...post("p1", "Archived note"), type: "note", version: 1 };
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
       if (url === "/api/v1/posts/p1") return json({ data: current });
@@ -5370,8 +5338,7 @@ it.each(["question", "note"])(
   "places %s Edit after the rendered post body and attachments",
   async (type) => {
     const current = { ...post("p1", "Readable post"), type, version: 1 };
-    vi.stubGlobal(
-      "fetch",
+    stubFetch(
       vi.fn(async (url: string) => {
         if (url.endsWith("/members/staff"))
           return json({ data: { role: "ta" } });
@@ -5418,7 +5385,7 @@ it("lets staff compose a poll with its options", async () => {
       );
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   const onNavigate = vi.fn();
   const { rerender } = render(
@@ -5498,7 +5465,7 @@ it("sends advanced poll configuration from the staff composer", async () => {
       return json({ data: { ...post("poll-2", "Review"), type: "poll" } }, 201);
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -5581,7 +5548,7 @@ it("retries the same poll create after its deadline with its original key", asyn
     }
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -5630,7 +5597,7 @@ it("lets staff post a note as a non-anonymous announcement", async () => {
       return json({ data: { ...post("a-1", "Moved"), type: "note" } }, 201);
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   const onNavigate = vi.fn();
   const { rerender } = render(
@@ -5700,8 +5667,7 @@ it("lets staff post a note as a non-anonymous announcement", async () => {
 }, 30_000);
 
 it("offers students neither polls nor announcements, and badges announcements", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async () =>
       page([
         {
@@ -5740,8 +5706,7 @@ it("offers students neither polls nor announcements, and badges announcements", 
 it("follows and unfollows a post from its detail", async () => {
   let following = false;
   const calls: { url: string; init?: RequestInit }[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url === "/api/v1/posts/p1/follow") {
@@ -5779,8 +5744,7 @@ it("follows and unfollows a post from its detail", async () => {
 
 it("marks unread posts in the feed, clears one on opening, and marks all read", async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url.endsWith("/read-marks"))
@@ -5836,7 +5800,7 @@ it("posts privately to staff and turns off the announcement option meanwhile", a
       );
     return page([]);
   });
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   render(
     <Discussion
@@ -5886,8 +5850,7 @@ it("posts privately to staff and turns off the announcement option meanwhile", a
 }, 30_000);
 
 it("offers no private visibility choice for polls", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) =>
       url.endsWith("/members/user-staff")
         ? json({ data: { role: "ta" } })
@@ -5917,7 +5880,7 @@ it("badges private posts and lists them with the Private filter", async () => {
   const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () =>
     page([{ ...post("x-1", "Regrade please"), private: true }]),
   );
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   const user = userEvent.setup();
   mockDesktopViewport();
   render(
@@ -5956,8 +5919,7 @@ it("shows the private notice and lets the author make the post public after conf
     private: isPrivate,
     version,
   });
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
       if (url.endsWith("/members/user-1"))
@@ -6009,8 +5971,7 @@ it("shows the private notice and lets the author make the post public after conf
 });
 
 it("hides Make public from a student who is not the author", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/members/user-2"))
         return json({ data: { role: "student" } });
@@ -6045,7 +6006,7 @@ it("shows the unresolved count on question cards and gives staff an Unresolved f
       ? json({ data: { role: "ta" } })
       : page([{ ...post("q-1", "Needs replies"), unresolvedFollowups: 2 }]),
   );
-  vi.stubGlobal("fetch", fetchMock);
+  stubFetch(fetchMock);
   mockDesktopViewport();
   const user = userEvent.setup();
   render(
@@ -6071,8 +6032,7 @@ it("shows the unresolved count on question cards and gives staff an Unresolved f
 });
 
 it("offers students no Unresolved filter and shows no badge without unresolved discussions", async () => {
-  vi.stubGlobal(
-    "fetch",
+  stubFetch(
     vi.fn(async () =>
       page([{ ...post("q-1", "All settled"), unresolvedFollowups: 0 }]),
     ),
@@ -6089,6 +6049,334 @@ it("offers students no Unresolved filter and shows no badge without unresolved d
   const card = (await screen.findByText("All settled")).closest("a")!;
   expect(card.textContent).not.toContain("unresolved");
   expect(choiceLabels("Show")).not.toContain("Unresolved");
+});
+
+it("automatically restores the one saved draft over a suggested search title", async () => {
+  const saved = {
+    courseId: course.id,
+    content: {
+      type: "question",
+      title: "Saved question",
+      bodyMarkdown: "Saved body",
+      anonymous: false,
+      tags: ["physics"],
+    },
+    updatedAt: "2026-01-01",
+    version: 3,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/post-draft"))
+        return new Response(JSON.stringify({ data: saved }), {
+          headers: { "Content-Type": "application/json", ETag: '"v3"' },
+        });
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="Search title"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText(/No posts/);
+  await user.click(screen.getByRole("button", { name: /Ask.*question/i }));
+  expect(
+    await screen.findByText("Saved draft restored for this course."),
+  ).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Saved question",
+  );
+  expect(
+    screen.getByRole("textbox", { name: "Post body" }).textContent,
+  ).toContain("Saved body");
+});
+
+it("keeps a failed initial draft load locked until retry restores the draft", async () => {
+  let reads = 0;
+  let resolveRetry!: (response: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (!url.endsWith("/post-draft")) return page([]);
+      reads++;
+      if (reads === 1)
+        return json({ error: { message: "Temporarily unavailable" } }, 503);
+      return new Promise<Response>((resolve) => {
+        resolveRetry = resolve;
+      });
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText(/No posts/);
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  const retry = await screen.findByRole("button", {
+    name: "Retry loading draft",
+  });
+  expect(retry).toHaveProperty("disabled", false);
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  await user.click(retry);
+  expect(retry).toHaveProperty("disabled", true);
+  fireEvent.click(retry);
+  expect(reads).toBe(2);
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  await act(async () => {
+    resolveRetry(
+      new Response(
+        JSON.stringify({
+          data: {
+            courseId: course.id,
+            content: {
+              type: "question",
+              title: "Saved title",
+              bodyMarkdown: "Saved body",
+              anonymous: false,
+              tags: [],
+            },
+            updatedAt: "2026-01-01",
+            version: 2,
+          },
+        }),
+        { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+      ),
+    );
+  });
+  await screen.findByText("Saved draft restored for this course.");
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Saved title",
+  );
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+  expect(reads).toBe(2);
+});
+
+it.each(["GET", "PUT"])(
+  "retains conflict recovery and local text after overwrite %s fails",
+  async (failedMethod) => {
+    let writes = 0;
+    let reads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!url.endsWith("/post-draft")) return page([]);
+        if (!init?.method || init.method === "GET") {
+          reads++;
+          if (failedMethod === "GET" && reads === 2)
+            return json({ error: { message: "Temporarily unavailable" } }, 503);
+          return new Response(
+            JSON.stringify({
+              data: {
+                courseId: course.id,
+                content: null,
+                updatedAt: null,
+                version: 1,
+              },
+            }),
+            { headers: { "Content-Type": "application/json", ETag: '"v1"' } },
+          );
+        }
+        writes++;
+        if (writes === 1)
+          return json({ error: { message: "Changed elsewhere" } }, 412);
+        if (failedMethod === "PUT" && writes === 2)
+          return json({ error: { message: "Temporarily unavailable" } }, 503);
+        expect(init.headers).toMatchObject({ "If-Match": '"v1"' });
+        return new Response(
+          JSON.stringify({
+            data: {
+              courseId: course.id,
+              content: JSON.parse(String(init.body)).content,
+              updatedAt: "2026-01-01",
+              version: 2,
+            },
+          }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(
+      <Discussion
+        courseId={course.id}
+        course={course}
+        csrfToken="csrf"
+        onNavigate={vi.fn()}
+      />,
+    );
+    await screen.findByText(/No posts/);
+    await user.click(screen.getByRole("button", { name: "Create post" }));
+    const title = screen.getByRole("textbox", { name: "Post title" });
+    await user.type(title, "Local title");
+    await screen.findByText(/This draft changed elsewhere/);
+    await user.click(
+      screen.getByRole("button", { name: "Overwrite saved draft" }),
+    );
+    await screen.findByText(/Draft not saved: Temporarily unavailable/);
+    expect(title).toHaveProperty("value", "Local title");
+    expect(
+      screen.getByRole("button", { name: "Overwrite saved draft" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Reload saved draft" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Retry draft save" }),
+    ).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Overwrite saved draft" }),
+    );
+    await screen.findByText("Draft saved.");
+    expect(title).toHaveProperty("value", "Local title");
+    expect(writes).toBe(failedMethod === "PUT" ? 3 : 2);
+  },
+);
+
+it("offers draft conflict recovery when publishing with a stale version", async () => {
+  const content = {
+    type: "question",
+    title: "Local title",
+    bodyMarkdown: "Local body",
+    anonymous: false,
+    tags: [],
+  };
+  let publishes = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-draft"))
+        return new Response(
+          JSON.stringify({
+            data: {
+              courseId: course.id,
+              content,
+              updatedAt: "2026-01-01",
+              version: 2,
+            },
+          }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      if (url.endsWith("/posts") && init?.method === "POST") {
+        publishes++;
+        expect(JSON.parse(String(init.body)).draftVersion).toBe(2);
+        return json({ error: { message: "Draft changed elsewhere" } }, 412);
+      }
+      return page([]);
+    }),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText(/No posts/);
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByText("Saved draft restored for this course.");
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await screen.findByText(/This draft changed elsewhere/);
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Local title",
+  );
+  expect(
+    screen.getByRole("button", { name: "Reload saved draft" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Overwrite saved draft" }),
+  ).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Publish post" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  expect(publishes).toBe(1);
+});
+
+it("offers draft conflict recovery when discard uses a stale version", async () => {
+  const content = {
+    type: "question",
+    title: "Local title",
+    bodyMarkdown: "Local body",
+    anonymous: false,
+    tags: [],
+  };
+  let deletes = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/post-draft")) {
+        if (init?.method === "DELETE") {
+          deletes++;
+          expect(init.headers).toMatchObject({ "If-Match": '"v2"' });
+          return json({ error: { message: "Draft changed elsewhere" } }, 412);
+        }
+        return new Response(
+          JSON.stringify({
+            data: {
+              courseId: course.id,
+              content,
+              updatedAt: "2026-01-01",
+              version: 2,
+            },
+          }),
+          { headers: { "Content-Type": "application/json", ETag: '"v2"' } },
+        );
+      }
+      return page([]);
+    }),
+  );
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText(/No posts/);
+  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByText("Saved draft restored for this course.");
+  await user.click(screen.getByRole("button", { name: "Discard draft" }));
+  await screen.findByText(/This draft changed elsewhere/);
+  expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
+    "value",
+    "Local title",
+  );
+  expect(
+    screen.getByRole("button", { name: "Reload saved draft" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Overwrite saved draft" }),
+  ).toBeTruthy();
+  expect(deletes).toBe(1);
 });
 
 it.each([

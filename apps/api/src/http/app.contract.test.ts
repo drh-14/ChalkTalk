@@ -33,6 +33,43 @@ const authenticatedService = {
   profile: async () => user,
 } as unknown as AuthService;
 
+it("rejects incompatible draft Unicode before calling the persistence service", async () => {
+  const updateDraft = vi.fn();
+  const app = createApp({
+    environment,
+    authService: authenticatedService,
+    postService: { updateDraft } as unknown as PostService,
+  });
+  const path =
+    "/api/v1/courses/01a0e5cc-58ae-7009-9f43-d5453c12bca9/post-draft";
+  const content = {
+    type: "question",
+    title: "Draft",
+    bodyMarkdown: "",
+    anonymous: false,
+    tags: ["bad\u0000tag"],
+  };
+  const created = await request(app)
+    .put(path)
+    .set("Cookie", `${SESSION_COOKIE_NAME}=opaque-session-credential`)
+    .set("Origin", environment.frontendBaseUrl)
+    .set("X-CSRF-Token", "csrf-token")
+    .set("If-Match", '"v0"')
+    .send({ content });
+  expect(created.status).toBe(422);
+  expect(created.body.error.code).toBe("validation_failed");
+  const replaced = await request(app)
+    .put(path)
+    .set("Cookie", `${SESSION_COOKIE_NAME}=opaque-session-credential`)
+    .set("Origin", environment.frontendBaseUrl)
+    .set("X-CSRF-Token", "csrf-token")
+    .set("If-Match", '"v1"')
+    .send({ content: { ...content, tags: [], title: "bad\ud800title" } });
+  expect(replaced.status).toBe(422);
+  expect(replaced.body.error.code).toBe("validation_failed");
+  expect(updateDraft).not.toHaveBeenCalled();
+});
+
 it("rejects nonexistent poll deadline dates before creating a post", async () => {
   const create = vi.fn();
   const app = createApp({

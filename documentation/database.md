@@ -131,6 +131,13 @@ Account deletion locks each affected `courses` row before testing instructor car
 
 ## Posts, answers, and polls
 
+### `post_drafts`
+
+- `(course_id,user_id)`: composite primary key and foreign key to `course_memberships(course_id,user_id)` with `ON DELETE CASCADE`; there is at most one draft per current member per course.
+- `content`: nullable JSONB object of validated partial new-post text and metadata, never attachments. NULL is a content-free revision marker after discard or publication, not a visible draft.
+- `created_at`, `updated_at`: `timestamptz`; saved content has no expiry.
+- `version`: nonnegative `bigint`, starting at 0 and incremented on every save, discard, and successful publication; `If-Match` prevents a stale device from recreating cleared content.
+
 ### `posts`
 
 - `id`: `uuid_v7`; primary key.

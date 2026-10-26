@@ -341,6 +341,35 @@ Semantic search SHALL use only established full-text and fuzzy results until dur
 - **WHEN** a post changes during initial scanning or indexing fails
 - **THEN** pending work prevents semantic ranking until revision-safe recovery, without allowing another generation's worker to declare this one ready
 
+### Requirement: Publish from a current draft revision atomically
+
+The existing JSON create-post operation SHALL optionally accept the owner's course draft version. If supplied, it SHALL match the current resource version before creation; a stale version SHALL return `412 version_conflict` without creating a post. The supplied complete post body remains authoritative and SHALL be validated under ordinary creation rules. A successful create SHALL clear any current owner/course draft content and advance its content-free version marker in the same transaction as post creation and side effects; a failed create SHALL leave draft state intact. Replaying a matching unexpired `Idempotency-Key` SHALL return the original post result without rechecking a version already consumed or creating a duplicate. Creation without a draft version SHALL retain its prior post behavior while still clearing any saved course draft on success.
+
+#### Scenario: Publish saved draft
+
+- **WHEN** an owner publishes a valid post with a matching course draft version
+- **THEN** the API returns the usual `201` post response, creates the post and side effects once, and clears draft content atomically
+
+#### Scenario: Stale draft
+
+- **WHEN** a member submits an earlier course draft version
+- **THEN** the API returns `412 version_conflict`, creates no post, and leaves the saved draft unchanged
+
+#### Scenario: Nonmember cannot publish
+
+- **WHEN** a user attempts to publish in a course where they are not a member
+- **THEN** the request fails without creating a post or exposing a member's draft
+
+#### Scenario: Failed publish
+
+- **WHEN** full post validation or a transactional write fails while publishing a draft
+- **THEN** no post is committed and draft content remains available
+
+#### Scenario: Idempotent replay
+
+- **WHEN** the client repeats the same draft-backed create request with the same valid idempotency key after the first request committed
+- **THEN** the original post response is returned and no second post is created
+
 ### Requirement: Posts stay JSON-only and tombstones stay final
 
 PATCH or DELETE of an already-deleted post SHALL return `404 not_found`. Post creation and text updates SHALL remain JSON-only, multipart create/update requests SHALL return `422 validation_failed`, and attachments SHALL use separate parent-scoped multipart endpoints.

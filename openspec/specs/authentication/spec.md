@@ -87,8 +87,8 @@ The web application SHALL make the signed-in user's name in the top bar open a p
 
 #### Scenario: Preserve a course draft
 
-- **WHEN** a course editor has an unsaved draft and activates the account link
-- **THEN** the existing leave-draft confirmation applies before navigation
+- **WHEN** a course editor has an unsaved new-post revision and activates the account link
+- **THEN** navigation follows the save-before-leave behavior in the [post-drafts specification](../post-drafts/spec.md); queued attachments still require discard confirmation
 
 #### Scenario: Open account page on a narrow course screen
 

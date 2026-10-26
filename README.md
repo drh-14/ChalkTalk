@@ -24,6 +24,7 @@ Core features include:
 - threaded follow-up discussions,
 - endorsed answers,
 - anonymous posting,
+- private, autosaved drafts for unfinished new posts,
 - Markdown and LaTeX support,
 - image and document uploads,
 - live code and whiteboard collaboration sessions,
@@ -37,6 +38,8 @@ Core features include:
 ChalkTalk's goal is to turn a semester's discussion history into a searchable and reusable course knowledge base rather than a collection of disconnected posts.
 
 To manage your account, select your name in the signed-in top bar. Account settings lets you change your display name or password, manage each course's activity, announcement, and daily-digest emails, or delete your account after confirming with your current password. You can also change email choices in each course's settings. Deletion signs you out and leaves past contributions with your name removed. If you are a course's final instructor, assign another instructor before deleting your account.
+
+When starting a post, your one private course draft is automatically restored. Text and post settings autosave across sessions; queued files are not saved with the draft and must be reselected after a reload. See the [post drafts reference](documentation/api/posts.md#private-new-post-drafts) for save, conflict, and archived-course behavior.
 
 To delete a post you can read, open its detail view and select **Delete post**. The control is available to its author and current course TAs or instructors while the course is active, and asks for confirmation before deleting.
 

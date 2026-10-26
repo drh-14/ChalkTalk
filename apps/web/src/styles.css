@@ -1138,7 +1138,7 @@ h2[tabindex="-1"]:focus {
   display: flex;
   gap: var(--space-2);
 }
-.poll-option-row input {
+.poll-option-row textarea {
   flex: 1;
 }
 .post-type-badge.other {
@@ -1462,6 +1462,10 @@ h2[tabindex="-1"]:focus {
 .post-composer textarea {
   min-height: 10rem;
   resize: vertical;
+}
+.post-composer .post-title-input,
+.post-composer .poll-option-row textarea {
+  min-height: 2.6rem;
 }
 .post-body-field {
   display: grid;

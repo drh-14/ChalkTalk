@@ -167,7 +167,7 @@ Search SHALL update after approximately 300 ms without input changes, with no Se
 
 ### Requirement: Course discussion and settings share a stable frame
 
-The protected Discussion, Course resources, and Course settings routes for the same course SHALL render one persistent course header in the app bar. From the start of the bar, it shows the ChalkTalk logo and an "All courses" link followed by the course name, as a breadcrumb; the course name SHALL be the page's top-level heading, and a course that is not active SHALL also show its status. A "Switch course" control SHALL follow the course name. It SHALL load the member's courses only when first opened, mark the current course, link to each course and to All courses, and close on Escape or an outside click. Discussion, Course resources, and Course settings tabs SHALL be centered in the bar, in that order, with the account controls at the end. Switching between the three routes SHALL use same-document navigation, not reload the application or re-run session restoration. The active tab SHALL be identifiable visually and to assistive technology. When the route changes, focus SHALL move to the course heading for screen-reader announcement without a visible focus ring. Following a tab, All courses, the logo, a course in the switcher, or Sign out SHALL ask before discarding an unsent post draft. When the bar is too narrow for one row, the tabs SHALL move to their own centered row; at phone widths, the logo and account controls, the breadcrumb, and the tabs SHALL each take a row without horizontal scrolling, and the switcher list SHALL fit within the screen. Settings content MAY remain narrower than the discussion content.
+The protected Discussion, Course resources, and Course settings routes for the same course SHALL render one persistent course header in the app bar. From the start of the bar, it shows the ChalkTalk logo and an "All courses" link followed by the course name, as a breadcrumb; the course name SHALL be the page's top-level heading, and a course that is not active SHALL also show its status. A "Switch course" control SHALL follow the course name. It SHALL load the member's courses only when first opened, mark the current course, link to each course and to All courses, and close on Escape or an outside click. Discussion, Course resources, and Course settings tabs SHALL be centered in the bar, in that order, with the account controls at the end. Switching between the three routes SHALL use same-document navigation, not reload the application or re-run session restoration. The active tab SHALL be identifiable visually and to assistive technology. When the route changes, focus SHALL move to the course heading for screen-reader announcement without a visible focus ring. Leaving an open new-post composer SHALL follow the [post-drafts save-before-leave and attachment rules](../post-drafts/spec.md). When the bar is too narrow for one row, the tabs SHALL move to their own centered row; at phone widths, the logo and account controls, the breadcrumb, and the tabs SHALL each take a row without horizontal scrolling, and the switcher list SHALL fit within the screen. Settings content MAY remain narrower than the discussion content.
 
 #### Scenario: A member opens Course settings from Discussion
 
@@ -186,8 +186,8 @@ The protected Discussion, Course resources, and Course settings routes for the s
 
 #### Scenario: A member leaves with an unsent draft
 
-- **WHEN** a member with an unsent post draft follows a tab, All courses, the logo, or Sign out and declines the discard prompt
-- **THEN** the draft, route, and session remain unchanged
+- **WHEN** a member with an unsaved new-post revision follows a tab, All courses, the logo, or Sign out
+- **THEN** the attempted navigation is held until the revision is saved, as specified for post drafts
 
 #### Scenario: A member switches course
 
@@ -196,8 +196,8 @@ The protected Discussion, Course resources, and Course settings routes for the s
 
 #### Scenario: A member with a draft declines to switch course
 
-- **WHEN** a member with an unsent post draft selects another course in the switcher and declines the discard prompt
-- **THEN** the course, route, and draft remain unchanged
+- **WHEN** a member with queued attachments selects another course in the switcher and declines their discard confirmation
+- **THEN** the course, route, and attachment queue remain unchanged
 
 ### Requirement: Settings load and fail inside the shared course frame
 
