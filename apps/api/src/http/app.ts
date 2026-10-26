@@ -2329,6 +2329,31 @@ export function createApp(
       }
     },
   );
+  app.put(
+    "/api/v1/posts/:postId/discussion-lock",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["locked"], ["locked"]);
+        if (typeof body.locked !== "boolean")
+          throw new AuthError(
+            422,
+            "validation_failed",
+            "Locked must be a boolean",
+          );
+        const value = await posts().setDiscussionLocked(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body.locked,
+        );
+        response.set("ETag", postEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.delete(
     "/api/v1/posts/:postId",
     ...authenticatedUnsafe,

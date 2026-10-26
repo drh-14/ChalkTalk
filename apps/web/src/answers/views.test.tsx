@@ -2526,3 +2526,39 @@ it("shows a resolved discussion as unresolved after a nested reply", async () =>
     ).toBe("true"),
   );
 });
+
+it("shows locked discussion read-only participation while preserving edit and staff resolution", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.includes("/answers")) return answers([answer()]);
+      return discussions([followup({ canResolve: true })]);
+    }),
+  );
+  render(<QuestionResponses {...props} role="ta" discussionLocked />);
+  await screen.findByText(/Use/);
+  expect(screen.queryByRole("button", { name: /write.*answer/i })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Compose a new followup discussion" }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: "Upvote answer" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  expect(
+    screen.getByRole("button", { name: "Upvote followup" }),
+  ).toHaveProperty("disabled", true);
+  expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Edit answer" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+  expect(screen.getByRole("button", { name: "Edit followup" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+  expect(screen.getByRole("button", { name: "Resolved" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+});

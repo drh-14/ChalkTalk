@@ -34,6 +34,7 @@ export type Post = {
   pinned?: boolean;
   /** Staff notes pinned and emailed to the course. */
   announcement?: boolean;
+  discussionLocked?: boolean;
   /** Readable only by the author and course staff. */
   private?: boolean;
   answered?: boolean;
@@ -260,6 +261,30 @@ export async function confirmMergePost(
       }),
     }),
   );
+}
+
+export async function setPostDiscussionLocked(
+  post: Post,
+  locked: boolean,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(
+      `/api/v1/posts/${encodeURIComponent(post.id)}/discussion-lock`,
+      {
+        method: "PUT",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+          "If-Match": `"v${post.version}"`,
+        },
+        body: JSON.stringify({ locked }),
+      },
+    ),
+  );
+  return payload.data;
 }
 
 export async function setPostPinned(

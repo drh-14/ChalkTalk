@@ -101,13 +101,14 @@ export class FollowupService {
       deleted_at: Date | null;
       duplicate_status: string;
       private: boolean;
+      discussion_locked: boolean;
       author_user_id: string | null;
       status: string;
       allow_anonymous_posting: boolean;
       allow_followup_resolution: boolean;
       role: Role;
     }>(
-      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.author_user_id,c.status,c.allow_anonymous_posting,c.allow_followup_resolution,m.role
+      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.discussion_locked,p.author_user_id,c.status,c.allow_anonymous_posting,c.allow_followup_resolution,m.role
        FROM posts p JOIN courses c ON c.id=p.course_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
        WHERE p.id=$1${lock ? " FOR NO KEY UPDATE OF p FOR SHARE OF c,m" : ""}`,
@@ -333,6 +334,8 @@ export class FollowupService {
         );
       }
       this.active(question.status);
+      if (question.discussion_locked)
+        throw new AuthError(409, "discussion_locked", "Discussion is locked");
       if (parentId) {
         const parent = await this.row(db, parentId, true);
         if (parent.post_id !== postId || parent.deleted_at) throw notFound();
@@ -611,6 +614,8 @@ export class FollowupService {
       const question = await this.question(db, postId, userId, true);
       const row = await this.row(db, id, true);
       this.active(question.status);
+      if (question.discussion_locked)
+        throw new AuthError(409, "discussion_locked", "Discussion is locked");
       if (row.deleted_at) throw notFound();
       if (enabled)
         await db.query(
