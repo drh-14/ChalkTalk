@@ -218,6 +218,23 @@ export async function updatePost(
   return result.data;
 }
 
+/** Deletes an authorized post using the version last shown to the viewer. */
+export async function deletePost(
+  post: Pick<Post, "id" | "version">,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+      "If-Match": `"v${post.version}"`,
+    },
+  });
+  if (!response.ok) await receive<never>(response);
+}
+
 export async function unmergePost(
   post: MergedPost,
   csrfToken: string,

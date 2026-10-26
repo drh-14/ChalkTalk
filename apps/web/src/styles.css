@@ -1278,6 +1278,12 @@ h2[tabindex="-1"]:focus {
   margin-top: var(--space-6);
   padding-top: var(--space-4);
 }
+.post-delete-action {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 .staff-actions > .form-message,
 .staff-actions > .post-merge-control > div {
   flex-basis: 100%;

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createPost,
+  deletePost,
   getPost,
   listPosts,
   retractVote,
@@ -234,5 +235,50 @@ it("filters private posts and makes one public with its revision", async () => {
     method: "PATCH",
     body: JSON.stringify({ private: false }),
     headers: { "If-Match": '"v4"', "X-CSRF-Token": "csrf" },
+  });
+});
+
+it("deletes a post with its current ETag and CSRF, accepting a bodyless 204", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(new Response(null, { status: 204 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(
+    deletePost({ id: "post/1", version: 4 }, "csrf"),
+  ).resolves.toBeUndefined();
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/posts/post%2F1",
+    expect.objectContaining({
+      method: "DELETE",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "X-CSRF-Token": "csrf",
+        "If-Match": '"v4"',
+      },
+    }),
+  );
+});
+
+it("surfaces a failed post deletion using the API error envelope", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      json(
+        {
+          error: {
+            code: "canonical_has_duplicates",
+            message: "Unmerge first",
+          },
+        },
+        409,
+      ),
+    ),
+  );
+  await expect(
+    deletePost({ id: "post-1", version: 1 }, "csrf"),
+  ).rejects.toMatchObject({
+    status: 409,
+    code: "canonical_has_duplicates",
   });
 });

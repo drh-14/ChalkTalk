@@ -96,7 +96,7 @@ The system tracks engagement signals per post, including view count, followup ac
 | Create poll          | No       | Yes   | Yes        |
 | Create announcement  | No       | Yes   | Yes        |
 | Endorse answers      | No       | Yes   | Yes        |
-| Archive/delete post  | Own only | Yes   | Yes        |
+| Delete readable post | Own only | Yes   | Yes        |
 | Create channel       | No       | Yes   | Yes        |
 | Manage members       | No       | Maybe | Yes        |
 | Archive/delete class | No       | No    | Yes        |
