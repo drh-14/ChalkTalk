@@ -8,6 +8,10 @@ Students can ask questions, participate in threaded discussions, contribute to s
 
 Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
 
+Instructors can turn off new anonymous or private contributions and pause follow-up resolution in a course's settings. Existing contributions and resolution markers remain visible to their authorized readers.
+
+Staff can pause new discussion and voting on an individual question or poll without hiding its existing content.
+
 Core features include:
 
 - course-based discussion forums,
@@ -32,6 +36,8 @@ ChalkTalk's goal is to turn a semester's discussion history into a searchable an
 
 To manage your account, select your name in the signed-in top bar. Account settings lets you change your display name or password, manage each course's activity, announcement, and daily-digest emails, or delete your account after confirming with your current password. You can also change email choices in each course's settings. Deletion signs you out and leaves past contributions with your name removed. If you are a course's final instructor, assign another instructor before deleting your account.
 
+To delete a post you can read, open its detail view and select **Delete post**. The control is available to its author and current course TAs or instructors while the course is active, and asks for confirmation before deleting.
+
 ## Team
 
 - **Nicholas Smirnov** — authentication, authorization, security, account management, permissions
@@ -42,6 +48,8 @@ To manage your account, select your name in the signed-in top bar. Account setti
 ## Project map and documentation
 
 The React/Vite client (`apps/web`) talks to the Express API (`apps/api`). PostgreSQL stores application data and background jobs; a separate worker sends mail and processes queued work. A collaboration server handles live-session WebSockets. Uploaded files use S3-compatible storage (SeaweedFS locally). See the [architecture diagram](diagrams/architecture/architecture.svg), [design](documentation/design.md), [database reference](documentation/database.md), and [API reference](documentation/openapi.yaml). The [`documentation/api/`](documentation/api/) directory explains individual API areas.
+
+For a single-VM deployment from a pinned commit, see the [Compose deployment guide](deployment/README.md). It is a runnable skeleton, not a production-readiness guarantee; the instructions below are for local development.
 
 The Compose setup below is for **reproducible local development**. It includes a local mail sink, hot-reloading servers, and development credentials. It is not a production-hardened EC2 deployment; do not expose it publicly without replacing those settings, TLS termination, storage/backup, and SMTP configuration.
 
@@ -123,6 +131,19 @@ For **real email delivery** outside local development, configure a verified send
 ### Demo data
 
 With `MOCK_DATA=true` and `AMS161_DEMO_INSTRUCTOR_PASSWORD` set before a full-Compose start, the one-shot `seed-mock` service creates a local-only AMS161 course with instructor Maya Chen, a TA, students, questions, notes, answers, tags, and anonymous/pinned examples. Sign in as `maya.chen@ams161.mock.chalktalk.invalid` with the chosen instructor password. The course join code is `AMS16101`. `AMS161_DEMO_STUDENT_PASSWORD` optionally enables `riley.nguyen@ams161.mock.chalktalk.invalid`; other mock users receive discarded random passwords. Repeated runs do not reset credentials or overwrite user-edited content. Direct mode requires the explicit `npm run db:seed:mock` step above.
+
+### Importing a Piazza class
+
+To demo ChalkTalk with a real course, copy a Piazza class you belong to into your local database:
+
+```bash
+PIAZZA_EMAIL=you@school.edu PIAZZA_PASSWORD=... PIAZZA_DEMO_PASSWORD='local demo password' \
+  npm run db:import:piazza -- --owner you@school.edu --class "CSE 416" --save piazza-cse416.json
+```
+
+The `--owner` ChalkTalk account must already exist and becomes the course instructor; your own Piazza posts are attributed to it. Every other Piazza author becomes a course member with their Piazza name and role (professor → instructor, TA, student) and a placeholder `@piazza.invalid` email. Set `PIAZZA_DEMO_PASSWORD` (12–128 characters) to log in as any of them; the command then prints each account's email. Without it they receive a discarded random password. Questions, notes, instructor and student answers, followups and replies, folders (as tags), pins, endorsements, and helpful votes are imported with their original timestamps. Piazza HTML becomes Markdown, and images and attachments stay linked to Piazza. Polls become notes without their options. Piazza hides anonymous authors from students, so those posts belong to one shared "Anonymous Piazza user". A student account also sees only its own private posts and cannot read the roster or emails.
+
+The command fetches one request per second, so a large class takes several minutes. Run it again at any time: matching Piazza ids add new content and refresh edited content without duplicating anything, and content deleted in ChalkTalk stays deleted. `--save` keeps the fetched data, and `--from piazza-cse416.json` re-imports from that file without contacting Piazza. Piazza has no public API; this uses the internal API its own website calls, which may change without notice.
 
 ### Optional semantic search
 

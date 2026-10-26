@@ -4,7 +4,7 @@ import { Discussion } from "../posts/views.js";
 import "../styles.css";
 
 export function Fixture() {
-  const [postId, setPostId] = useState(
+  const [postId, setPostId] = useState<string | undefined>(
     new URLSearchParams(location.search).get("post") ?? "p1",
   );
   return (
@@ -26,13 +26,16 @@ export function Fixture() {
           createdAt: "2026-10-01T00:00:00Z",
           updatedAt: "2026-10-01T00:00:00Z",
           version: 1,
+          allowAnonymousPosting: true,
+          allowPrivatePosting: true,
+          allowFollowupResolution: true,
         }}
         csrfToken="fixture-csrf"
         userId="u1"
         postId={postId}
         onNavigate={(path) => {
           const id = path.match(/\/posts\/([^/?]+)/)?.[1];
-          if (id) setPostId(id);
+          setPostId(id);
         }}
       />
     </main>

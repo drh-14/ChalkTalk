@@ -15,6 +15,7 @@ export function PollCard({
   options,
   totalVotes,
   closed,
+  discussionLocked = false,
   csrfToken,
   onChange,
 }: {
@@ -23,13 +24,16 @@ export function PollCard({
   totalVotes: number;
   /** Archived courses show results only. */
   closed: boolean;
+  discussionLocked?: boolean;
   csrfToken: string;
   onChange?: (state: PollState) => void;
 }) {
   const legendId = useId();
   const [state, setState] = useState<PollState>({ options, totalVotes });
   const voted = state.options.some((option) => option.selected);
-  const [choosing, setChoosing] = useState(!voted && !closed);
+  const [choosing, setChoosing] = useState(
+    !voted && !closed && !discussionLocked,
+  );
   const [choice, setChoice] = useState(
     state.options.find((option) => option.selected)?.id ?? "",
   );
@@ -86,9 +90,14 @@ export function PollCard({
     <section className="poll-card" aria-labelledby={legendId}>
       <h3 id={legendId} className="poll-heading">
         Poll · {total}
-        {closed && <span className="poll-closed"> · closed</span>}
+        {(closed || discussionLocked) && (
+          <span className="poll-closed">
+            {" "}
+            · {discussionLocked ? "locked" : "closed"}
+          </span>
+        )}
       </h3>
-      {choosing ? (
+      {choosing && !closed && !discussionLocked ? (
         <form onSubmit={(event) => void submit(event)}>
           <fieldset className="poll-choices">
             <legend className="visually-hidden">Choose one option</legend>
@@ -153,7 +162,7 @@ export function PollCard({
               );
             })}
           </ul>
-          {!closed && (
+          {!closed && !discussionLocked && (
             <div className="poll-actions">
               <button
                 type="button"

@@ -82,6 +82,7 @@ function testEnvironment(): Environment {
   return {
     databaseUrl: undefined,
     port: 3000,
+    trustProxyHops: 0,
     frontendOrigins: new Set(["https://localhost:5173"]),
     frontendBaseUrl: "https://localhost:5173",
     authTokenSecret: "test-secret-that-is-longer-than-thirty-two-characters",
@@ -355,14 +356,29 @@ function joinCourseBody(input: unknown): JsonObject {
   return body;
 }
 function courseUpdateBody(input: unknown): JsonObject {
-  const body = strictBody(input, ["name", "status"]);
-  if (body.name === undefined && body.status === undefined)
+  const switches = [
+    "allowAnonymousPosting",
+    "allowPrivatePosting",
+    "allowFollowupResolution",
+  ];
+  const body = strictBody(input, ["name", "status", ...switches]);
+  if (
+    body.name === undefined &&
+    body.status === undefined &&
+    switches.every((key) => body[key] === undefined)
+  )
     throw validationError();
   if (body.name !== undefined) stringWithin(body.name, "Course name", 1, 200);
   if (
     body.status !== undefined &&
     body.status !== "active" &&
     body.status !== "archived"
+  )
+    throw validationError();
+  if (
+    switches.some(
+      (key) => body[key] !== undefined && typeof body[key] !== "boolean",
+    )
   )
     throw validationError();
   return body;
@@ -780,6 +796,7 @@ export function createApp(
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
+  if (environment.trustProxyHops === 1) app.set("trust proxy", 1);
   app.use((_request, response, next) => {
     response.locals.requestId = randomUUID();
     response.set("X-Request-Id", response.locals.requestId);
@@ -2307,6 +2324,31 @@ export function createApp(
           auth(response).session.user.id,
           request.header("if-match"),
           body,
+        );
+        response.set("ETag", postEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/posts/:postId/discussion-lock",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["locked"], ["locked"]);
+        if (typeof body.locked !== "boolean")
+          throw new AuthError(
+            422,
+            "validation_failed",
+            "Locked must be a boolean",
+          );
+        const value = await posts().setDiscussionLocked(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body.locked,
         );
         response.set("ETag", postEtag(value)).json({ data: value });
       } catch (error) {

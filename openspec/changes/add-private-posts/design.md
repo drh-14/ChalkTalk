@@ -62,7 +62,7 @@ export const readablePost = (post: string, viewer: string, role: string) =>
 
 ### D6. Web
 
-- **Composer.** A **Post to** select offers **Entire class** (default) and **Instructors and TAs**, for questions and notes only. Choosing **Instructors and TAs** unchecks and disables the announcement checkbox.
+- **Composer.** The current choices are specified in [course discussion frontend](../../specs/course-discussion-frontend/spec.md). Choosing private visibility unchecks and disables the announcement checkbox.
 - **Feed card.** A **Private** badge, built from the existing `PostStatusBadge` with a lock tone.
 - **Feed filter.** **Private** in the sidebar's **Show** group, mapped to `private=true` and kept in the URL like the other filters.
 - **Post detail.** The notice "Only you and course staff can see this" for the author, or "Only the author and course staff can see this" for staff. For the author or staff, a **Make public** button that confirms first ("Everyone in the course will be able to see this post"), sends `PATCH { private: false }` with `If-Match`, and updates the detail and its feed row.

@@ -3394,6 +3394,22 @@ paths:
                       message: The course is archived.
                       requestId: req_createPost
                       details: []
+                anonymous_posting_disabled:
+                  summary: The course disallows new anonymous posts.
+                  value:
+                    error:
+                      code: anonymous_posting_disabled
+                      message: Anonymous posting is disabled for this course.
+                      requestId: req_createPost
+                      details: []
+                private_posting_disabled:
+                  summary: The course disallows new private posts.
+                  value:
+                    error:
+                      code: private_posting_disabled
+                      message: Private posting is disabled for this course.
+                      requestId: req_createPost
+                      details: []
                 idempotency_key_reused:
                   summary: The idempotency key was already used with a different request body.
                   value:
@@ -4096,6 +4112,14 @@ paths:
                       message: The course is archived.
                       requestId: req_updatePost
                       details: []
+                anonymous_posting_disabled:
+                  summary: A named post cannot become anonymous while the course disallows anonymity.
+                  value:
+                    error:
+                      code: anonymous_posting_disabled
+                      message: Anonymous posting is disabled for this course
+                      requestId: req_updatePost
+                      details: []
         "412":
           description: Precondition Failed
           content:
@@ -4409,6 +4433,81 @@ paths:
         - "$ref": "#/components/parameters/PostId"
         - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
+  "/posts/{postId}/discussion-lock":
+    put:
+      tags:
+        - Posts
+      summary: Lock or unlock discussion on one question or poll
+      operationId: putPostDiscussionLock
+      security:
+        - session_cookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                locked: { type: boolean }
+              required: [locked]
+              additionalProperties: false
+      responses:
+        "200":
+          description: Post lock state updated or already equal to the requested state.
+          headers:
+            ETag:
+              "$ref": "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ActivePostDetailResponse"
+        "401":
+          description: Authentication is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "403":
+          description: Current course staff role is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "404":
+          description: Post does not exist or is not accessible.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "409":
+          description: Course is archived.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "412":
+          description: Stale post ETag.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "422":
+          description: Invalid JSON body or locked value, or the post is a note or announcement.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+        "428":
+          description: If-Match is required.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/PostId"
+        - "$ref": "#/components/parameters/IfMatch"
+        - "$ref": "#/components/parameters/CsrfToken"
   "/posts/{postId}/vote":
     put:
       tags:
@@ -4554,7 +4653,7 @@ paths:
         - Posts
       summary: Retract vote from poll
       x-implementation-status: future
-      description: Retract vote from poll. Returns 204 even when the caller has no vote.
+      description: Retract vote from an unlocked poll. Returns 204 even when the caller has no vote.
       operationId: deletePostVote
       security:
         - session_cookie: []
@@ -4575,7 +4674,7 @@ paths:
                       requestId: req_deletePostVote
                       details: []
         "204":
-          description: Returns 204 even when the caller has no vote.
+          description: Returns 204 even when the caller has no vote on an unlocked poll.
         "409":
           description: Conflict
           content:
@@ -4690,7 +4789,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, answer kind occupied, idempotency key reused, or anonymous posting disabled.
           content:
             application/json:
               schema:
@@ -4761,7 +4860,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, answer kind occupied, idempotency key reused, anonymous posting disabled, or discussion locked.
           content:
             application/json:
               schema:
@@ -5190,7 +5289,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, idempotency key reused, or anonymous posting disabled.
           content:
             application/json:
               schema:
@@ -5261,7 +5360,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, idempotency key reused, anonymous posting disabled, or discussion locked.
           content:
             application/json:
               schema:
@@ -5321,7 +5420,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, idempotency key reused, or anonymous posting disabled.
           content:
             application/json:
               schema:
@@ -5392,7 +5491,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Request rejected
+          description: Course archived, idempotency key reused, anonymous posting disabled, or discussion locked.
           content:
             application/json:
               schema:
@@ -5605,7 +5704,7 @@ paths:
     put:
       tags: [Answers]
       summary: Resolve followup discussion
-      description: Marks a root followup resolved. Idempotent; changes neither the followup's version nor the question's last activity. A new reply anywhere in the discussion reopens it.
+      description: Marks a root followup resolved while course resolution is enabled. Idempotent; changes neither the followup's version nor the question's last activity. A new reply anywhere in the discussion reopens it only while resolution remains enabled; existing markers stay visible when disabled.
       operationId: resolveFollowup
       security:
         - session_cookie: []
@@ -5683,6 +5782,14 @@ paths:
                       message: The course is not active.
                       requestId: req_resolveFollowup
                       details: []
+                followup_resolution_disabled:
+                  summary: The course disallows resolution changes.
+                  value:
+                    error:
+                      code: followup_resolution_disabled
+                      message: Followup resolution is disabled for this course
+                      requestId: req_resolveFollowup
+                      details: []
         "422":
           description: Unprocessable Content
           content:
@@ -5701,7 +5808,7 @@ paths:
     delete:
       tags: [Answers]
       summary: Reopen followup discussion
-      description: Marks a root followup unresolved. Idempotent; changes neither the followup's version nor the question's last activity.
+      description: Marks a root followup unresolved while course resolution is enabled. Idempotent; changes neither the followup's version nor the question's last activity. Existing markers stay visible when resolution is disabled.
       operationId: reopenFollowup
       security:
         - session_cookie: []
@@ -5777,6 +5884,14 @@ paths:
                     error:
                       code: course_archived
                       message: The course is not active.
+                      requestId: req_reopenFollowup
+                      details: []
+                followup_resolution_disabled:
+                  summary: The course disallows resolution changes.
+                  value:
+                    error:
+                      code: followup_resolution_disabled
+                      message: Followup resolution is disabled for this course
                       requestId: req_reopenFollowup
                       details: []
         "422":
@@ -12707,6 +12822,15 @@ components:
             - active
             - archived
             - deleting
+        allowAnonymousPosting:
+          type: boolean
+          description: Whether future posts, answers, followups, and replies may be anonymous.
+        allowPrivatePosting:
+          type: boolean
+          description: Whether future applicable posts may be private.
+        allowFollowupResolution:
+          type: boolean
+          description: Whether discussion resolution markers may change.
         createdAt:
           type: string
           description: UTC timestamp in ISO 8601 date-time format.
@@ -12739,6 +12863,9 @@ components:
         - organizationId
         - name
         - status
+        - allowAnonymousPosting
+        - allowPrivatePosting
+        - allowFollowupResolution
         - createdAt
         - updatedAt
         - version
@@ -12975,6 +13102,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -13047,6 +13177,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -13114,6 +13245,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -13179,6 +13313,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -13244,6 +13379,9 @@ components:
         pinned:
           type: boolean
           description: Whether staff pinned the post.
+        discussionLocked:
+          type: boolean
+          description: Staff-locked post; new discussion and all vote changes are blocked while true.
         announcement:
           type: boolean
           description: Whether staff posted this note as an announcement, which is pinned on creation and emailed to members who enable announcement emails. Always false for questions and polls.
@@ -13320,6 +13458,7 @@ components:
         - tags
         - attachments
         - pinned
+        - discussionLocked
         - announcement
         - private
         - following
@@ -13576,7 +13715,8 @@ components:
         upvoteCount: { type: integer, minimum: 0 }
         viewerUpvoted: { type: boolean }
         replyCount: { type: integer, minimum: 0 }
-        attachments: { type: array, items: { $ref: "#/components/schemas/Attachment" } }
+        attachments:
+          { type: array, items: { $ref: "#/components/schemas/Attachment" } }
         resolved:
           type: boolean
           description: Whether this discussion (root followup) is resolved; always false for replies.
@@ -15597,6 +15737,15 @@ components:
           enum:
             - active
             - archived
+        allowAnonymousPosting:
+          type: boolean
+          description: Allow future anonymous contributions.
+        allowPrivatePosting:
+          type: boolean
+          description: Allow future private posts.
+        allowFollowupResolution:
+          type: boolean
+          description: Allow changing followup resolution markers.
       additionalProperties: false
       minProperties: 1
     JoinCourseRequest:

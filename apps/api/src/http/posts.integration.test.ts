@@ -136,6 +136,119 @@ integration("text posts HTTP contract", () => {
     await admin?.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await admin?.end();
   });
+  it("rejects future anonymous and private posts but preserves existing content and idempotent replay", async () => {
+    const path = `/api/v1/courses/${ids.course}/posts`;
+    const prior = await unsafe(request(app()).post(path))
+      .set("Idempotency-Key", "course-policy-existing-post")
+      .send({
+        type: "question",
+        title: "Existing private",
+        bodyMarkdown: "Body",
+        private: true,
+        anonymous: true,
+      });
+    expect(prior.status).toBe(201);
+    const named = await unsafe(request(app()).post(path)).send({
+      type: "question",
+      title: "Existing named",
+      bodyMarkdown: "Body",
+    });
+    expect(named.status).toBe(201);
+    await pool.query(
+      "UPDATE courses SET allow_anonymous_posting=false,allow_private_posting=false WHERE id=$1",
+      [ids.course],
+    );
+    try {
+      const anonymous = await unsafe(request(app()).post(path)).send({
+        type: "question",
+        title: "Blocked anonymous",
+        bodyMarkdown: "Body",
+        anonymous: true,
+      });
+      expect(anonymous.status).toBe(409);
+      expect(anonymous.body.error.code).toBe("anonymous_posting_disabled");
+      const privatePost = await unsafe(request(app()).post(path)).send({
+        type: "question",
+        title: "Blocked private",
+        bodyMarkdown: "Body",
+        private: true,
+      });
+      expect(privatePost.status).toBe(409);
+      expect(privatePost.body.error.code).toBe("private_posting_disabled");
+      const replay = await unsafe(request(app()).post(path))
+        .set("Idempotency-Key", "course-policy-existing-post")
+        .send({
+          type: "question",
+          title: "Existing private",
+          bodyMarkdown: "Body",
+          private: true,
+          anonymous: true,
+        });
+      expect(replay.status).toBe(201);
+      expect(replay.body.data.id).toBe(prior.body.data.id);
+      const existing = await request(app())
+        .get(`/api/v1/posts/${prior.body.data.id}`)
+        .set("Cookie", cookie);
+      expect(existing.body.data).toMatchObject({
+        private: true,
+        anonymous: true,
+      });
+      const edit = await unsafe(
+        request(app()).patch(`/api/v1/posts/${prior.body.data.id}`),
+      )
+        .set("If-Match", prior.headers.etag)
+        .send({ bodyMarkdown: "Still editable" });
+      expect(edit.status).toBe(200);
+      const renaming = await unsafe(
+        request(app()).patch(`/api/v1/posts/${named.body.data.id}`),
+      )
+        .set("If-Match", named.headers.etag)
+        .send({ anonymous: true });
+      expect(renaming.status).toBe(409);
+      expect(renaming.body.error.code).toBe("anonymous_posting_disabled");
+    } finally {
+      await pool.query(
+        "UPDATE courses SET allow_anonymous_posting=true,allow_private_posting=true WHERE id=$1",
+        [ids.course],
+      );
+    }
+  });
+  it("orders policy updates and new post creation by the course row lock", async () => {
+    const db = await pool.connect();
+    try {
+      await db.query("BEGIN");
+      await db.query(
+        "UPDATE courses SET allow_anonymous_posting=false WHERE id=$1",
+        [ids.course],
+      );
+      const pending = unsafe(
+        request(app()).post(`/api/v1/courses/${ids.course}/posts`),
+      ).send({
+        type: "question",
+        title: "Concurrent anonymous",
+        bodyMarkdown: "Body",
+        anonymous: true,
+      });
+      const result = pending.then((value) => value);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const waiting = await pool.query(
+        "SELECT count(*)::int AS count FROM posts WHERE course_id=$1 AND title='Concurrent anonymous'",
+        [ids.course],
+      );
+      expect(waiting.rows[0].count).toBe(0);
+      await db.query("COMMIT");
+      const blocked = await result;
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.error.code).toBe("anonymous_posting_disabled");
+    } finally {
+      await db.query("ROLLBACK");
+      db.release();
+      await pool.query(
+        "UPDATE courses SET allow_anonymous_posting=true WHERE id=$1",
+        [ids.course],
+      );
+    }
+  });
   it("creates and retrieves a question with the documented headers and shape", async () => {
     const created = await unsafe(
       request(app()).post(`/api/v1/courses/${ids.course}/posts`),
@@ -366,6 +479,105 @@ integration("text posts HTTP contract", () => {
     );
     expect(repeated.status).toBe(404);
   });
+  it.each([
+    ["TA", ids.staff],
+    ["instructor", ids.instructor],
+  ])(
+    "lets a current %s delete a student's readable post",
+    async (_role, staffId) => {
+      const created = await unsafe(
+        request(app(ids.student)).post(`/api/v1/courses/${ids.course}/posts`),
+      )
+        .send({
+          type: "question",
+          title: "Student question",
+          bodyMarkdown: "Please moderate",
+        })
+        .expect(201);
+      const readable = await request(app(staffId))
+        .get(created.headers.location)
+        .set("Cookie", cookie)
+        .expect(200);
+      expect(readable.body.data.author.userId).toBe(ids.student);
+      const removed = await unsafe(
+        request(app(staffId)).delete(created.headers.location),
+      )
+        .set("If-Match", readable.headers.etag)
+        .expect(204);
+      expect(removed.text).toBe("");
+      const persisted = await pool.query(
+        "SELECT title,body_markdown,author_user_id,deleted_at,version::int AS version FROM posts WHERE id=$1",
+        [created.body.data.id],
+      );
+      expect(persisted.rows).toEqual([
+        {
+          title: null,
+          body_markdown: null,
+          author_user_id: null,
+          deleted_at: expect.any(Date),
+          version: 2,
+        },
+      ]);
+      const tombstone = await request(app(ids.student))
+        .get(created.headers.location)
+        .set("Cookie", cookie)
+        .expect(200);
+      expect(tombstone.body.data).toMatchObject({
+        id: created.body.data.id,
+        deleted: true,
+      });
+    },
+  );
+  it.each([
+    ["TA", ids.staff],
+    ["instructor", ids.instructor],
+  ])(
+    "rejects a student's deletion of a %s-owned post",
+    async (_role, staffId) => {
+      const created = await unsafe(
+        request(app(staffId)).post(`/api/v1/courses/${ids.course}/posts`),
+      )
+        .send({
+          type: "note",
+          title: "Staff guidance",
+          bodyMarkdown: "Read this",
+        })
+        .expect(201);
+      const before = await pool.query("SELECT * FROM posts WHERE id=$1", [
+        created.body.data.id,
+      ]);
+      expect(before.rows).toHaveLength(1);
+      const denied = await unsafe(
+        request(app(ids.student)).delete(created.headers.location),
+      )
+        .set("If-Match", created.headers.etag)
+        .expect(403);
+      expect(denied.body.error.code).toBe("permission_denied");
+      const persisted = await pool.query("SELECT * FROM posts WHERE id=$1", [
+        created.body.data.id,
+      ]);
+      expect(persisted.rows).toEqual(before.rows);
+      expect(persisted.rows).toMatchObject([
+        {
+          title: "Staff guidance",
+          body_markdown: "Read this",
+          author_user_id: staffId,
+          deleted_at: null,
+          version: "1",
+        },
+      ]);
+      const stillReadable = await request(app(ids.student))
+        .get(created.headers.location)
+        .set("Cookie", cookie)
+        .expect(200);
+      expect(stillReadable.body.data).toMatchObject({
+        id: created.body.data.id,
+        deleted: false,
+        title: "Staff guidance",
+        version: 1,
+      });
+    },
+  );
   it("binds idempotency retries to the same caller, course, and body", async () => {
     const path = `/api/v1/courses/${ids.course}/posts`;
     const body = { type: "note", title: "Idempotent", bodyMarkdown: "One row" };

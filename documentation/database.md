@@ -111,6 +111,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `created_by_user_id`: `uuid_v7`; foreign key to `users.id`.
 - `name`: `varchar(200)`.
 - `status`: `text`; `active`, `archived`, or `deleting`.
+- `allow_anonymous_posting`, `allow_private_posting`, `allow_followup_resolution`: non-null booleans, default `true`; instructor-managed policy for future discussion actions. Existing content is not rewritten when a switch changes.
 - `join_code`: `char(8)`.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
@@ -140,6 +141,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `title`: `varchar(200)`, nullable.
 - `body_markdown`: `text`, nullable.
 - `anonymous`, `pinned`: `boolean`.
+- `discussion_locked`: `boolean NOT NULL DEFAULT false`; staff-controlled participation gate. Lock changes advance `version` and `updated_at`, not `last_activity_at`. New answers, followups, replies and all vote changes acquire the parent post row lock and fail while set.
 - `announcement`: `boolean`, default false; only a non-anonymous note can be an announcement (`posts_announcement_check`). Announcements are created pinned by staff and emailed to current members who enable announcement emails; see [Create post](api/posts.md#createPost).
 - `private`: `boolean`, default false; readable only by the author and course staff. Announcements and polls are never private (`posts_private_check`), and a private post can become public but never the reverse. A partial index on `(course_id, last_activity_at DESC)` for active private posts serves the private filter.
 - `duplicate_of_post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.

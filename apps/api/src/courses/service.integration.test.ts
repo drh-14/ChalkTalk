@@ -64,6 +64,47 @@ integration("CourseService PostgreSQL lifecycle", () => {
       }),
     ).resolves.toMatchObject({ status: "archived" });
   });
+  it("defaults discussion controls on and lets only instructors change them conditionally", async () => {
+    const created = await service.create(organization, owner, "Policy course");
+    expect(created).toMatchObject({
+      allowAnonymousPosting: true,
+      allowPrivatePosting: true,
+      allowFollowupResolution: true,
+    });
+    await service.join(created.id, guest, created.joinCode!);
+    await expect(
+      service.update(created.id, guest, courseEtag(created), {
+        allowAnonymousPosting: false,
+      }),
+    ).rejects.toMatchObject({ status: 404, code: "not_found" });
+    const updated = await service.update(
+      created.id,
+      owner,
+      courseEtag(created),
+      {
+        allowAnonymousPosting: false,
+        allowPrivatePosting: false,
+        allowFollowupResolution: false,
+      },
+    );
+    expect(updated).toMatchObject({
+      allowAnonymousPosting: false,
+      allowPrivatePosting: false,
+      allowFollowupResolution: false,
+      version: created.version + 1,
+    });
+    expect(await service.get(created.id, guest)).toMatchObject({
+      allowAnonymousPosting: false,
+      allowPrivatePosting: false,
+      allowFollowupResolution: false,
+      joinCode: null,
+    });
+    await expect(
+      service.update(created.id, owner, courseEtag(created), {
+        allowAnonymousPosting: true,
+      }),
+    ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+  });
   it("marks deletion durably and worker-visible", async () => {
     const course = await service.create(organization, owner, "Networks");
     const deleting = await service.delete(course.id, owner, courseEtag(course));

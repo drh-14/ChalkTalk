@@ -26,6 +26,7 @@ import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
   createPost,
+  deletePost,
   getDuplicateReview,
   getPost,
   listMergedPosts,
@@ -34,6 +35,7 @@ import {
   markCourseRead,
   setFollowing,
   setPostPinned,
+  setPostDiscussionLocked,
   unmergePost,
   updatePost,
   type CreatePostInput,
@@ -448,6 +450,8 @@ function Composer({
   courseId,
   csrfToken,
   staff = false,
+  allowAnonymousPosting = true,
+  allowPrivatePosting = true,
   onCreated,
   onClose,
   onStateChange,
@@ -457,6 +461,8 @@ function Composer({
   csrfToken: string;
   /** TAs and instructors may post polls and announcements. */
   staff?: boolean;
+  allowAnonymousPosting?: boolean;
+  allowPrivatePosting?: boolean;
   onCreated: (post: Post) => void;
   onClose: () => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
@@ -490,6 +496,9 @@ function Composer({
     undefined,
   );
   const query = relatedQuery(title, body);
+  const privately = type !== "poll" && audience === "staff";
+  const announcing = type === "note" && announcement && !privately;
+  const submittedAnonymous = announcing ? false : anonymous;
 
   useEffect(() => {
     onStateChange(
@@ -569,14 +578,24 @@ function Composer({
       if (complete) onCreated(published);
       return;
     }
-    const privately = type !== "poll" && audience === "staff";
-    const announcing = type === "note" && announcement && !privately;
+    if (submittedAnonymous && !allowAnonymousPosting) {
+      setError(
+        "Anonymous posting is disabled for this course. Choose a named post before publishing.",
+      );
+      return;
+    }
+    if (privately && !allowPrivatePosting) {
+      setError(
+        "Private posting is disabled for this course. Choose the entire class before publishing.",
+      );
+      return;
+    }
     const labels = pollOptions.map((label) => label.trim());
     const input: CreatePostInput = {
       type,
       title: title.trim(),
       bodyMarkdown: body,
-      anonymous: announcing ? false : anonymous,
+      anonymous: submittedAnonymous,
       tags: tags
         .split(",")
         .map((tag) => tag.trim())
@@ -739,15 +758,19 @@ function Composer({
             </label>
             {type !== "poll" && (
               <label>
-                Post to
+                Visibility
                 <select
                   value={audience}
                   onChange={(event) =>
                     setAudience(event.target.value as "course" | "staff")
                   }
                 >
-                  <option value="course">Entire class</option>
-                  <option value="staff">Instructors and TAs</option>
+                  <option value="course">Public — everyone in course</option>
+                  {allowPrivatePosting && (
+                    <option value="staff">
+                      Private — only you and current instructors/TAs
+                    </option>
+                  )}
                 </select>
               </label>
             )}
@@ -755,30 +778,51 @@ function Composer({
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={announcement && audience !== "staff"}
-                  disabled={audience === "staff"}
+                  checked={announcing}
+                  disabled={privately}
                   onChange={(event) => setAnnouncement(event.target.checked)}
                 />
                 Post as announcement (pinned; email sent to subscribers)
               </label>
             )}
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={
-                  anonymous &&
-                  !(type === "note" && announcement && audience !== "staff")
-                }
-                disabled={
-                  type === "note" && announcement && audience !== "staff"
-                }
-                onChange={(event) => setAnonymous(event.target.checked)}
-              />
-              Post anonymously
-            </label>
+            {allowAnonymousPosting && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={submittedAnonymous}
+                  disabled={announcing}
+                  onChange={(event) => setAnonymous(event.target.checked)}
+                />
+                Post anonymously
+              </label>
+            )}
           </>
         )}
         <AttachmentSelection queue={attachmentQueue} disabled={pending} />
+        {!allowAnonymousPosting && submittedAnonymous && !published && (
+          <p className="form-message error">
+            Anonymous posting is now disabled. Your draft is unchanged.{" "}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setAnonymous(false)}
+            >
+              Switch to named post
+            </button>
+          </p>
+        )}
+        {!allowPrivatePosting && privately && !published && (
+          <p className="form-message error">
+            Private posting is now disabled. Your draft is unchanged.{" "}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setAudience("course")}
+            >
+              Switch to entire class
+            </button>
+          </p>
+        )}
         {error && (
           <p className="form-message error" role="alert">
             {error}
@@ -1266,6 +1310,10 @@ function DiscussionContent({
   const [localSortQuery, setLocalSortQuery] = useState<string>();
   const [pinPending, setPinPending] = useState(false);
   const [pinError, setPinError] = useState("");
+  const [lockPending, setLockPending] = useState(false);
+  const [lockError, setLockError] = useState("");
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [readError, setReadError] = useState("");
   const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
@@ -1278,6 +1326,8 @@ function DiscussionContent({
   const [composerOpen, setComposerOpen] = useState(false);
   const [detail, setDetail] = useState<PostDetail>();
   const [detailError, setDetailError] = useState("");
+  const currentPostRoute = useRef({ courseId, postId });
+  currentPostRoute.current = { courseId, postId };
   const canEditDetail =
     !!detail &&
     !detail.deleted &&
@@ -1337,6 +1387,7 @@ function DiscussionContent({
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   const currentFeed = useRef(0);
+  const deletedPostIds = useRef(new Set<string>());
 
   useEffect(() => {
     if (!userId) return;
@@ -1472,7 +1523,12 @@ function DiscussionContent({
         if (currentFeed.current === generation) {
           if (postView === "duplicates")
             setMergedItems(page.data as MergedPost[]);
-          else setItems(page.data as Post[]);
+          else
+            setItems(
+              (page.data as Post[]).filter(
+                (post) => !deletedPostIds.current.has(post.id),
+              ),
+            );
           setCursor(page.page.nextCursor);
           setLoading(false);
         }
@@ -1509,6 +1565,7 @@ function DiscussionContent({
     const controller = new AbortController();
     setDetail(undefined);
     setDetailError("");
+    setDeleteError("");
     void getPost(postId, controller.signal)
       .then((next) => {
         if (active) {
@@ -1600,7 +1657,10 @@ function DiscussionContent({
             const known = new Set(prior.map((post) => post.id));
             return [
               ...prior,
-              ...(page.data as Post[]).filter((post) => !known.has(post.id)),
+              ...(page.data as Post[]).filter(
+                (post) =>
+                  !known.has(post.id) && !deletedPostIds.current.has(post.id),
+              ),
             ];
           });
         setCursor(page.page.nextCursor);
@@ -1623,7 +1683,7 @@ function DiscussionContent({
       });
   }
   function leaveComposer() {
-    if (mergePending) return false;
+    if (mergePending || deletePending) return false;
     if (editingPostId) {
       if (editorState.current.pending) return false;
       if (
@@ -1646,7 +1706,11 @@ function DiscussionContent({
     return true;
   }
   function beforeMerge() {
-    if (editorState.current.pending || composerState.current.pending)
+    if (
+      deletePending ||
+      editorState.current.pending ||
+      composerState.current.pending
+    )
       return false;
     if (editingPostId && editorState.current.dirty)
       return window.confirm("Discard your unsaved post edits?");
@@ -1662,6 +1726,47 @@ function DiscussionContent({
   );
   function navigate(path: string) {
     if (leaveComposer()) onNavigate(path);
+  }
+  async function deleteCurrentPost(post: Post) {
+    if (
+      deletePending ||
+      mergePending ||
+      editorState.current.pending ||
+      !window.confirm(`Delete “${post.title}”? This cannot be undone.`)
+    )
+      return;
+    setDeletePending(true);
+    setDeleteError("");
+    try {
+      await deletePost(post, csrfToken);
+      deletedPostIds.current.add(post.id);
+      setItems((current) => current.filter((item) => item.id !== post.id));
+      setDetail(undefined);
+      setEditingPostId(undefined);
+      editorState.current = { dirty: false, pending: false };
+      onNavigate(discussionPath(courseId, search));
+    } catch (caught) {
+      setDeleteError(message(caught));
+      if (caught instanceof ApiError && caught.status === 412) {
+        try {
+          const latest = await getPost(post.id);
+          if (
+            !("redirectToPostId" in latest) &&
+            !latest.deleted &&
+            latest.courseId === courseId
+          ) {
+            setDetail(latest);
+            setItems((current) =>
+              current.map((item) => (item.id === latest.id ? latest : item)),
+            );
+          }
+        } catch {
+          // Keep the API conflict visible and the unsaved editor mounted.
+        }
+      }
+    } finally {
+      setDeletePending(false);
+    }
   }
   function openPost(id: string) {
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
@@ -1761,6 +1866,52 @@ function DiscussionContent({
       setDetailCycle((value) => value + 1);
     } finally {
       setPinPending(false);
+    }
+  }
+  async function toggleDiscussionLock(post: Post) {
+    if (lockPending) return;
+    setLockPending(true);
+    setLockError("");
+    try {
+      const next = await setPostDiscussionLocked(
+        post,
+        !post.discussionLocked,
+        csrfToken,
+      );
+      setDetail((current) =>
+        currentPostRoute.current.courseId === next.courseId &&
+        currentPostRoute.current.postId === next.id &&
+        current?.id === next.id &&
+        !current.deleted &&
+        current.version <= next.version
+          ? {
+              ...current,
+              discussionLocked: next.discussionLocked,
+              version: next.version,
+            }
+          : current,
+      );
+      setItems((current) =>
+        current.map((item) =>
+          item.id === next.id && item.version <= next.version
+            ? {
+                ...item,
+                discussionLocked: next.discussionLocked,
+                version: next.version,
+              }
+            : item,
+        ),
+      );
+    } catch (caught) {
+      if (
+        currentPostRoute.current.courseId === post.courseId &&
+        currentPostRoute.current.postId === post.id
+      ) {
+        setLockError(message(caught));
+        setDetailCycle((value) => value + 1);
+      }
+    } finally {
+      setLockPending(false);
     }
   }
   async function unmerge(post: MergedPost) {
@@ -2269,6 +2420,8 @@ function DiscussionContent({
                       courseId={courseId}
                       csrfToken={csrfToken}
                       staff={staff}
+                      allowAnonymousPosting={course?.allowAnonymousPosting}
+                      allowPrivatePosting={course?.allowPrivatePosting}
                       onClose={leaveComposer}
                       onStateChange={(dirty, pending) => {
                         composerState.current = { dirty, pending };
@@ -2375,8 +2528,25 @@ function DiscussionContent({
                     <p>This post was deleted.</p>
                   ) : (
                     <article>
+                      {canEditDetail && (
+                        <div className="post-delete-action">
+                          <button
+                            type="button"
+                            className="button danger compact"
+                            disabled={mergePending || deletePending}
+                            onClick={() => void deleteCurrentPost(detail)}
+                          >
+                            {deletePending ? "Deleting…" : "Delete post"}
+                          </button>
+                          {deleteError && (
+                            <p className="form-message error" role="alert">
+                              {deleteError}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {canEditDetail && editingPostId === detail.id && (
-                        <div inert={mergePending}>
+                        <div inert={mergePending || deletePending}>
                           <PostEditor
                             key={detail.id}
                             post={detail}
@@ -2402,6 +2572,12 @@ function DiscussionContent({
                             {postTypeOf(detail.type).label}
                           </p>
                           <h2>{detail.title}</h2>
+                          {detail.discussionLocked && (
+                            <p className="discussion-lock-notice" role="status">
+                              Discussion locked. Existing content remains
+                              available, but new replies and votes are closed.
+                            </p>
+                          )}
                           {detail.private && (
                             <PrivateNotice
                               post={detail}
@@ -2471,6 +2647,7 @@ function DiscussionContent({
                                 options={detail.options}
                                 totalVotes={detail.totalVotes ?? 0}
                                 closed={course?.status !== "active"}
+                                discussionLocked={detail.discussionLocked}
                                 csrfToken={csrfToken}
                                 onChange={(state) => {
                                   setDetail((current) =>
@@ -2518,7 +2695,7 @@ function DiscussionContent({
                             <button
                               type="button"
                               className="button secondary edit-button"
-                              disabled={mergePending}
+                              disabled={mergePending || deletePending}
                               onClick={() => setEditingPostId(detail.id)}
                             >
                               Edit post
@@ -2536,7 +2713,7 @@ function DiscussionContent({
                             <button
                               type="button"
                               className="button secondary compact"
-                              disabled={pinPending}
+                              disabled={pinPending || deletePending}
                               onClick={() => void togglePin(detail)}
                             >
                               {pinPending
@@ -2547,6 +2724,31 @@ function DiscussionContent({
                                   ? "Unpin"
                                   : "Pin"}
                             </button>
+                          )}
+                          {course?.status === "active" &&
+                            detail.type !== "note" && (
+                              <button
+                                type="button"
+                                className="button secondary compact"
+                                disabled={lockPending}
+                                aria-pressed={!!detail.discussionLocked}
+                                onClick={() =>
+                                  void toggleDiscussionLock(detail)
+                                }
+                              >
+                                {lockPending
+                                  ? detail.discussionLocked
+                                    ? "Unlocking…"
+                                    : "Locking…"
+                                  : detail.discussionLocked
+                                    ? "Unlock discussion"
+                                    : "Lock discussion"}
+                              </button>
+                            )}
+                          {lockError && (
+                            <p className="form-message error" role="alert">
+                              {lockError}
+                            </p>
                           )}
                           {pinError && (
                             <p className="form-message error" role="alert">
@@ -2576,6 +2778,11 @@ function DiscussionContent({
                           postId={detail.id}
                           role={role}
                           courseStatus={course?.status}
+                          allowAnonymousPosting={course?.allowAnonymousPosting}
+                          allowFollowupResolution={
+                            course?.allowFollowupResolution
+                          }
+                          discussionLocked={detail.discussionLocked}
                           csrfToken={csrfToken}
                           onActivity={() => void refreshFollowing(detail.id)}
                         />

@@ -25,6 +25,7 @@ type Row = {
   anonymous: boolean;
   pinned: boolean;
   announcement: boolean;
+  discussion_locked: boolean;
   private: boolean;
   duplicate_of_post_id: string | null;
   duplicate_status: "none" | "suggested" | "confirmed";
@@ -203,8 +204,13 @@ export class PostService {
     userId: string,
     lock = false,
   ) {
-    const result = await db.query<{ role: Role; status: string }>(
-      `SELECT m.role,c.status FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m,c" : ""}`,
+    const result = await db.query<{
+      role: Role;
+      status: string;
+      allow_anonymous_posting: boolean;
+      allow_private_posting: boolean;
+    }>(
+      `SELECT m.role,c.status,c.allow_anonymous_posting,c.allow_private_posting FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m,c" : ""}`,
       [courseId, userId],
     );
     if (!result.rows[0]) throw notFound();
@@ -273,6 +279,7 @@ export class PostService {
           : await listAttachments(db, "post", row.id),
       pinned: row.pinned,
       announcement: row.announcement,
+      discussionLocked: row.type === "note" ? false : row.discussion_locked,
       private: row.private,
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
@@ -414,6 +421,18 @@ export class PostService {
         );
       if (body.private && body.type === "poll")
         throw new AuthError(422, "private_poll", "Polls cannot be private");
+      if (body.anonymous && !member.allow_anonymous_posting)
+        throw new AuthError(
+          409,
+          "anonymous_posting_disabled",
+          "Anonymous posting is disabled for this course",
+        );
+      if (body.private && !member.allow_private_posting)
+        throw new AuthError(
+          409,
+          "private_posting_disabled",
+          "Private posting is disabled for this course",
+        );
       const id = uuidv7();
       await db.query(
         "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
@@ -863,6 +882,39 @@ export class PostService {
     if (etag !== postEtag({ version: Number(row.version) }))
       throw new AuthError(412, "version_conflict", "Post version has changed");
   }
+  async setDiscussionLocked(
+    id: string,
+    userId: string,
+    etag: string | undefined,
+    locked: boolean,
+  ): Promise<Post> {
+    if (!UUID_PATTERN.test(id)) throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, id, true);
+      if (!row || row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      if (!STAFF.has(member.role))
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff may lock a post",
+        );
+      this.writable(member.status);
+      this.checkRevision(row, etag);
+      if (row.type === "note")
+        throw validation("Only questions and polls can be discussion locked");
+      if (row.discussion_locked !== locked) {
+        await db.query(
+          "UPDATE posts SET discussion_locked=$2,updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
+          [id, locked],
+        );
+      }
+      return this.project(db, (await this.row(db, id))!, userId, member.role);
+    });
+  }
+
   async update(
     id: string,
     userId: string,
@@ -909,6 +961,16 @@ export class PostService {
           403,
           "permission_denied",
           "Post edit is not permitted",
+        );
+      if (
+        body.anonymous === true &&
+        !row.anonymous &&
+        !member.allow_anonymous_posting
+      )
+        throw new AuthError(
+          409,
+          "anonymous_posting_disabled",
+          "Anonymous posting is disabled for this course",
         );
       if (body.pinned !== undefined && !staff)
         throw new AuthError(403, "permission_denied", "Pinning is staff-only");
@@ -1133,6 +1195,8 @@ export class PostService {
         throw notFound();
       if (row.type !== "poll")
         throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      if (row.discussion_locked)
+        throw new AuthError(409, "discussion_locked", "Discussion is locked");
       if (member.status !== "active")
         throw new AuthError(409, "poll_closed", "The poll or course is closed");
       const option = UUID_PATTERN.test(optionId)
@@ -1159,18 +1223,22 @@ export class PostService {
   /** Removes the caller's vote; succeeds when there was none. */
   async unvote(postId: string, userId: string) {
     if (!UUID_PATTERN.test(postId)) throw notFound();
-    const row = await this.row(this.pool, postId);
-    if (!row) throw notFound();
-    const member = await this.membership(this.pool, row.course_id, userId);
-    readable(row, userId, member.role);
-    if (row.deleted_at || row.duplicate_status === "confirmed")
-      throw notFound();
-    if (row.type !== "poll")
-      throw new AuthError(422, "not_a_poll", "The post is not a poll");
-    await this.pool.query(
-      "DELETE FROM poll_votes WHERE post_id=$1 AND user_id=$2",
-      [postId, userId],
-    );
+    await this.tx(async (db) => {
+      const row = await this.row(db, postId, true);
+      if (!row) throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      if (row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      if (row.type !== "poll")
+        throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      if (row.discussion_locked)
+        throw new AuthError(409, "discussion_locked", "Discussion is locked");
+      await db.query("DELETE FROM poll_votes WHERE post_id=$1 AND user_id=$2", [
+        postId,
+        userId,
+      ]);
+    });
   }
 
   async delete(
