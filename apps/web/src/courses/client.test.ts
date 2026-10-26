@@ -16,6 +16,9 @@ const course = {
   createdAt: "2026-09-26T14:30:00Z",
   updatedAt: "2026-09-26T14:30:00Z",
   version: 1,
+  allowAnonymousPosting: true,
+  allowPrivatePosting: true,
+  allowFollowupResolution: true,
 };
 
 const membership = {

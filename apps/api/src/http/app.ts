@@ -355,14 +355,29 @@ function joinCourseBody(input: unknown): JsonObject {
   return body;
 }
 function courseUpdateBody(input: unknown): JsonObject {
-  const body = strictBody(input, ["name", "status"]);
-  if (body.name === undefined && body.status === undefined)
+  const switches = [
+    "allowAnonymousPosting",
+    "allowPrivatePosting",
+    "allowFollowupResolution",
+  ];
+  const body = strictBody(input, ["name", "status", ...switches]);
+  if (
+    body.name === undefined &&
+    body.status === undefined &&
+    switches.every((key) => body[key] === undefined)
+  )
     throw validationError();
   if (body.name !== undefined) stringWithin(body.name, "Course name", 1, 200);
   if (
     body.status !== undefined &&
     body.status !== "active" &&
     body.status !== "archived"
+  )
+    throw validationError();
+  if (
+    switches.some(
+      (key) => body[key] !== undefined && typeof body[key] !== "boolean",
+    )
   )
     throw validationError();
   return body;

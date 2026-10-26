@@ -459,6 +459,31 @@ export function CourseDetail({
       setPending(false);
     }
   }
+  async function changePolicy(
+    key:
+      | "allowAnonymousPosting"
+      | "allowPrivatePosting"
+      | "allowFollowupResolution",
+    enabled: boolean,
+  ) {
+    if (!course || pending || !instructor) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      const next = await updateCourse(
+        courseId,
+        { [key]: enabled },
+        csrfToken,
+        course.etag,
+      );
+      if (alive.current && currentCourseId.current === courseId)
+        setCourse(next);
+    } catch (caught) {
+      resolveMutationError(caught, () => void changePolicy(key, enabled));
+    } finally {
+      setPending(false);
+    }
+  }
   async function rename() {
     if (!course || pending || name.trim() === course.data.name) return;
     setPending(true);
@@ -692,6 +717,43 @@ export function CourseDetail({
           )}
         </section>
       )}
+      <section
+        className="settings-card"
+        aria-labelledby="discussion-controls-heading"
+      >
+        <div className="section-title">
+          <h2 id="discussion-controls-heading">Discussion controls</h2>
+        </div>
+        <p>
+          Anonymous and private-post choices apply to new content. Existing
+          content remains available. Disabling resolution pauses marker changes.
+        </p>
+        {(
+          [
+            ["allowAnonymousPosting", "Allow anonymous posting"],
+            ["allowPrivatePosting", "Allow private posts"],
+            ["allowFollowupResolution", "Allow followup resolution"],
+          ] as const
+        ).map(([key, label]) =>
+          instructor && course.data.status !== "deleting" ? (
+            <label className="checkbox-label" key={key}>
+              <input
+                type="checkbox"
+                checked={course.data[key]}
+                disabled={pending}
+                onChange={(event) =>
+                  void changePolicy(key, event.target.checked)
+                }
+              />
+              {label}
+            </label>
+          ) : (
+            <p key={key}>
+              {label}: {course.data[key] ? "Allowed" : "Disabled"}
+            </p>
+          ),
+        )}
+      </section>
       <section className="members-card" aria-labelledby="members-heading">
         <div className="section-title">
           <h2 id="members-heading">Members</h2>

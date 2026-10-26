@@ -31,6 +31,9 @@ const course = {
   createdAt: "2026-01-01",
   updatedAt: "2026-01-01",
   version: 1,
+  allowAnonymousPosting: true,
+  allowPrivatePosting: true,
+  allowFollowupResolution: true,
 };
 const post = (id: string, title: string) => ({
   id,
@@ -101,6 +104,67 @@ function mockDesktopViewport(initial = true) {
     });
   };
 }
+
+it("omits disallowed anonymous and private choices from the new-post composer", async () => {
+  mockDesktopViewport();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={{
+        ...course,
+        allowAnonymousPosting: false,
+        allowPrivatePosting: false,
+      }}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: /Create post/ }));
+  expect(
+    screen.queryByRole("checkbox", { name: "Post anonymously" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("option", { name: "Instructors and TAs" }),
+  ).toBeNull();
+});
+
+it("lets an open anonymous draft switch to named if policy changes", async () => {
+  mockDesktopViewport();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => page([])),
+  );
+  const user = userEvent.setup();
+  const { rerender } = render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: /Create post/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Post anonymously" }));
+  rerender(
+    <Discussion
+      courseId={course.id}
+      course={{ ...course, allowAnonymousPosting: false }}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Switch to named post" }),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Switch to named post" }),
+  ).toBeNull();
+});
 
 type FilterSection = "Show" | "Sort by";
 /** The single-choice group inside an open sidebar section. */
@@ -5354,13 +5418,14 @@ it("lets staff compose a poll with its options", async () => {
   });
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
-  render(
+  const onNavigate = vi.fn();
+  const { rerender } = render(
     <Discussion
       courseId={course.id}
       course={course}
       csrfToken="csrf"
       userId="user-staff"
-      onNavigate={vi.fn()}
+      onNavigate={onNavigate}
     />,
   );
   await user.click(await screen.findByRole("button", { name: "Create post" }));
@@ -5368,6 +5433,27 @@ it("lets staff compose a poll with its options", async () => {
   await waitFor(() =>
     expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
   );
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post to" }),
+    "staff",
+  );
+  await user.selectOptions(type, "poll");
+  rerender(
+    <Discussion
+      courseId={course.id}
+      course={{ ...course, allowPrivatePosting: false }}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={onNavigate}
+    />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Switch to entire class" }),
+  ).toBeNull();
+  await user.selectOptions(type, "note");
+  expect(
+    screen.getByRole("button", { name: "Switch to entire class" }),
+  ).toBeTruthy();
   await user.selectOptions(type, "poll");
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
@@ -5399,6 +5485,7 @@ it("lets staff compose a poll with its options", async () => {
     type: "poll",
     options: [{ label: "Monday" }, { label: "Tuesday" }],
   });
+  expect(JSON.parse(create[1]?.body as string)).not.toHaveProperty("private");
 }, 30_000);
 
 it("lets staff post a note as a non-anonymous announcement", async () => {
@@ -5411,13 +5498,14 @@ it("lets staff post a note as a non-anonymous announcement", async () => {
   });
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
-  render(
+  const onNavigate = vi.fn();
+  const { rerender } = render(
     <Discussion
       courseId={course.id}
       course={course}
       csrfToken="csrf"
       userId="user-staff"
-      onNavigate={vi.fn()}
+      onNavigate={onNavigate}
     />,
   );
   await user.click(await screen.findByRole("button", { name: "Create post" }));
@@ -5433,6 +5521,29 @@ it("lets staff post a note as a non-anonymous announcement", async () => {
   await user.click(announce);
   expect((anonymous as HTMLInputElement).disabled).toBe(true);
   expect((anonymous as HTMLInputElement).checked).toBe(false);
+  rerender(
+    <Discussion
+      courseId={course.id}
+      course={{ ...course, allowAnonymousPosting: false }}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={onNavigate}
+    />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Switch to named post" }),
+  ).toBeNull();
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post type" }),
+    "question",
+  );
+  expect(
+    screen.getByRole("button", { name: "Switch to named post" }),
+  ).toBeTruthy();
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post type" }),
+    "note",
+  );
   await user.type(screen.getByRole("textbox", { name: "Post title" }), "Moved");
   await user.type(
     screen.getByRole("textbox", { name: "Post body" }),

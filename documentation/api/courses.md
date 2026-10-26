@@ -1,5 +1,7 @@
 ## Courses
 
+Every course exposes `allowAnonymousPosting`, `allowPrivatePosting`, and `allowFollowupResolution` booleans. All default to `true`; current instructors alone can change them with the conditional course PATCH. Anonymity and private-post restrictions apply to future content, not existing contributions. Disabling resolution preserves displayed markers but freezes changes until re-enabled.
+
 <a id="createCourse"></a>
 
 ### **`POST /api/v1/organizations/{organizationId}/courses`**
@@ -66,6 +68,12 @@ None.
 
 `data.status` (enum: active, archived, deleting, required): Course lifecycle state.
 
+`data.allowAnonymousPosting` (boolean, required): Whether future anonymous contributions are allowed.
+
+`data.allowPrivatePosting` (boolean, required): Whether future private posts are allowed.
+
+`data.allowFollowupResolution` (boolean, required): Whether resolution markers may change.
+
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -96,6 +104,9 @@ curl --request POST '/api/v1/organizations/org_123/courses' \
     "organizationId": "org_123",
     "name": "CS 101",
     "status": "active",
+    "allowAnonymousPosting": true,
+    "allowPrivatePosting": true,
+    "allowFollowupResolution": true,
     "joinCode": "CS101F26",
     "createdAt": "2026-09-01T00:00:00Z",
     "updatedAt": "2026-09-01T00:00:00Z",
@@ -194,6 +205,12 @@ None specific to this operation.
 
 `data.status` (enum: active, archived, deleting, required): Course lifecycle state.
 
+`data.allowAnonymousPosting` (boolean, required): Whether future anonymous contributions are allowed.
+
+`data.allowPrivatePosting` (boolean, required): Whether future private posts are allowed.
+
+`data.allowFollowupResolution` (boolean, required): Whether resolution markers may change.
+
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -220,6 +237,9 @@ curl --request GET '/api/v1/organizations/org_123/courses' \
       "organizationId": "org_123",
       "name": "CS 101",
       "status": "active",
+      "allowAnonymousPosting": true,
+      "allowPrivatePosting": true,
+      "allowFollowupResolution": true,
       "createdAt": "2026-09-01T00:00:00Z",
       "updatedAt": "2026-09-20T14:30:00Z",
       "version": 3
@@ -314,6 +334,12 @@ None specific to this operation.
 
 `data.status` (enum: active, archived, deleting, required): Course lifecycle state.
 
+`data.allowAnonymousPosting` (boolean, required): Whether future anonymous contributions are allowed.
+
+`data.allowPrivatePosting` (boolean, required): Whether future private posts are allowed.
+
+`data.allowFollowupResolution` (boolean, required): Whether resolution markers may change.
+
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -340,6 +366,9 @@ curl --request GET '/api/v1/courses' \
       "organizationId": "org_123",
       "name": "CS 101",
       "status": "active",
+      "allowAnonymousPosting": true,
+      "allowPrivatePosting": true,
+      "allowFollowupResolution": true,
       "createdAt": "2026-09-01T00:00:00Z",
       "updatedAt": "2026-09-20T14:30:00Z",
       "version": 3
@@ -426,6 +455,12 @@ None.
 
 `data.status` (enum: active, archived, deleting, required): Course lifecycle state.
 
+`data.allowAnonymousPosting` (boolean, required): Whether future anonymous contributions are allowed.
+
+`data.allowPrivatePosting` (boolean, required): Whether future private posts are allowed.
+
+`data.allowFollowupResolution` (boolean, required): Whether resolution markers may change.
+
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -451,6 +486,9 @@ curl --request GET '/api/v1/courses/course_123' \
     "organizationId": "org_123",
     "name": "CS 101",
     "status": "active",
+    "allowAnonymousPosting": true,
+    "allowPrivatePosting": true,
+    "allowFollowupResolution": true,
     "joinCode": "CS101F26",
     "createdAt": "2026-09-01T00:00:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
@@ -483,7 +521,7 @@ curl --request GET '/api/v1/courses/course_123' \
 
 ### **`PATCH /api/v1/courses/{courseId}`**
 
-Updates a course’s name or status. At least one field is required.
+Updates a course’s name, status, or discussion switches. At least one field is required. Only current instructors may update a course.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -521,6 +559,8 @@ None.
 
 `status` (enum: active, archived, optional): Replacement course state.
 
+`allowAnonymousPosting`, `allowPrivatePosting`, `allowFollowupResolution` (boolean, optional): Instructor-managed controls for future discussion actions. Non-booleans return `422 validation_failed`.
+
 #### Multipart parts
 
 None.
@@ -544,6 +584,12 @@ None.
 `data.name` (string, required): Human-readable title.
 
 `data.status` (enum: active, archived, deleting, required): Course lifecycle state.
+
+`data.allowAnonymousPosting` (boolean, required): Whether future anonymous contributions are allowed.
+
+`data.allowPrivatePosting` (boolean, required): Whether future private posts are allowed.
+
+`data.allowFollowupResolution` (boolean, required): Whether resolution markers may change.
 
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
@@ -575,6 +621,9 @@ curl --request PATCH '/api/v1/courses/course_123' \
     "organizationId": "org_123",
     "name": "CS 101",
     "status": "archived",
+    "allowAnonymousPosting": true,
+    "allowPrivatePosting": true,
+    "allowFollowupResolution": true,
     "joinCode": "CS101F26",
     "createdAt": "2026-09-01T00:00:00Z",
     "updatedAt": "2026-09-20T14:40:00Z",
@@ -603,7 +652,7 @@ curl --request PATCH '/api/v1/courses/course_123' \
 
 ##### `422 Unprocessable Content`
 
-`validation_failed`: No valid editable field was supplied.
+`validation_failed`: No valid editable field was supplied, or a discussion switch was not a boolean.
 
 ##### `428 Precondition Required`
 
@@ -679,6 +728,12 @@ None.
 
 `data.status` (enum: active, archived, deleting, required): Course lifecycle state.
 
+`data.allowAnonymousPosting` (boolean, required): Whether future anonymous contributions are allowed.
+
+`data.allowPrivatePosting` (boolean, required): Whether future private posts are allowed.
+
+`data.allowFollowupResolution` (boolean, required): Whether resolution markers may change.
+
 `data.createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
@@ -707,6 +762,9 @@ curl --request DELETE '/api/v1/courses/course_123' \
     "organizationId": "org_123",
     "name": "CS 101",
     "status": "deleting",
+    "allowAnonymousPosting": true,
+    "allowPrivatePosting": true,
+    "allowFollowupResolution": true,
     "joinCode": "CS101F26",
     "createdAt": "2026-09-01T00:00:00Z",
     "updatedAt": "2026-09-20T14:40:00Z",

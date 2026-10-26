@@ -92,8 +92,12 @@ export class AnswerService {
     userId: string,
     lock = false,
   ) {
-    const result = await db.query<{ role: Role; status: string }>(
-      `SELECT m.role,c.status FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m,c" : ""}`,
+    const result = await db.query<{
+      role: Role;
+      status: string;
+      allow_anonymous_posting: boolean;
+    }>(
+      `SELECT m.role,c.status,c.allow_anonymous_posting FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m,c" : ""}`,
       [courseId, userId],
     );
     if (!result.rows[0]) throw notFound();
@@ -250,6 +254,12 @@ export class AnswerService {
           [postId, kind],
         );
         if (existing.rowCount) throw kindExists();
+        if (body.anonymous && !member.allow_anonymous_posting)
+          throw new AuthError(
+            409,
+            "anonymous_posting_disabled",
+            "Anonymous posting is disabled for this course",
+          );
         const id = uuidv7();
         await db.query(
           "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",

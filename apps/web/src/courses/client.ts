@@ -8,6 +8,9 @@ export type Course = {
   name: string;
   status: "active" | "archived" | "deleting";
   joinCode: string | null;
+  allowAnonymousPosting: boolean;
+  allowPrivatePosting: boolean;
+  allowFollowupResolution: boolean;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -195,7 +198,13 @@ export function getMembership(
 
 export function updateCourse(
   courseId: string,
-  input: { name?: string; status?: "active" | "archived" },
+  input: {
+    name?: string;
+    status?: "active" | "archived";
+    allowAnonymousPosting?: boolean;
+    allowPrivatePosting?: boolean;
+    allowFollowupResolution?: boolean;
+  },
   csrfToken: string,
   etag: string,
 ): Promise<Versioned<Course>> {
