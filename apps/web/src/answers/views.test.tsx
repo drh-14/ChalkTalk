@@ -72,8 +72,164 @@ const discussions = (
 ) => json({ data: items, meta: { total, nextCursor } });
 afterEach(() => {
   cleanup();
+  window.history.replaceState({}, "", window.location.pathname);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+it("reveals and focuses a directly linked answer", async () => {
+  window.location.hash = "#answer-a1";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => answers([answer()])),
+  );
+  const scroll = vi.fn();
+  Element.prototype.scrollIntoView = scroll;
+  render(<AnswerSections {...props} />);
+  const target = await screen.findByRole("region", {
+    name: "Answer by Ada Lovelace",
+  });
+  await waitFor(() => expect(target.id).toBe("answer-a1"));
+  await waitFor(() => expect(document.activeElement).toBe(target));
+  expect(scroll).toHaveBeenCalled();
+});
+
+it("loads and focuses a directly linked nested reply outside the first page", async () => {
+  window.location.hash = "#followup-f3";
+  const root = followup({
+    id: "f1",
+    bodyMarkdown: "Off-page root",
+    replyCount: 3,
+  });
+  const child = followup({
+    id: "f2",
+    parentId: "f1",
+    bodyMarkdown: "Parent reply",
+    replyCount: 3,
+  });
+  const target = followup({
+    id: "f3",
+    parentId: "f2",
+    bodyMarkdown: "Deep target",
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/v1/posts/p1/followups")
+        return discussions([], 1, "next");
+      if (url === "/api/v1/followups/f1") return json({ data: root });
+      if (url === "/api/v1/followups/f2") return json({ data: child });
+      if (url === "/api/v1/followups/f3") return json({ data: target });
+      if (url === "/api/v1/followups/f1/replies")
+        return discussions(
+          [
+            followup({
+              id: "f4",
+              parentId: "f1",
+              bodyMarkdown: "First root sibling",
+            }),
+          ],
+          3,
+          "root-next",
+        );
+      if (url === "/api/v1/followups/f1/replies?cursor=root-next")
+        return discussions(
+          [
+            child,
+            followup({
+              id: "f5",
+              parentId: "f1",
+              bodyMarkdown: "Later root sibling",
+            }),
+          ],
+          3,
+        );
+      if (url === "/api/v1/followups/f2/replies")
+        return discussions(
+          [
+            followup({
+              id: "f6",
+              parentId: "f2",
+              bodyMarkdown: "First child sibling",
+            }),
+          ],
+          3,
+          "child-next",
+        );
+      if (url === "/api/v1/followups/f2/replies?cursor=child-next")
+        return discussions(
+          [
+            target,
+            followup({
+              id: "f7",
+              parentId: "f2",
+              bodyMarkdown: "Later child sibling",
+            }),
+          ],
+          3,
+        );
+      throw new Error(`Unexpected ${url}`);
+    }),
+  );
+  const scroll = vi.fn();
+  Element.prototype.scrollIntoView = scroll;
+  render(<FollowupSections {...props} />);
+  await waitFor(() =>
+    expect(document.getElementById("followup-f3")).toBeTruthy(),
+  );
+  await waitFor(() =>
+    expect(document.activeElement).toBe(document.getElementById("followup-f3")),
+  );
+  expect(screen.getByText("Deep target")).toBeTruthy();
+  expect(scroll).toHaveBeenCalled();
+  const user = userEvent.setup();
+  const rootArticle = document.getElementById("followup-f1")!;
+  await user.click(
+    within(rootArticle).getAllByRole("button", { name: "Show 3 replies" })[0]!,
+  );
+  expect(
+    await within(rootArticle).findByText("First root sibling"),
+  ).toBeTruthy();
+  expect(screen.getByText("Deep target")).toBeTruthy();
+  await user.click(
+    within(rootArticle).getByRole("button", { name: "Load more replies" }),
+  );
+  expect(
+    await within(rootArticle).findByText("Later root sibling"),
+  ).toBeTruthy();
+  const childArticle = document.getElementById("followup-f2")!;
+  await user.click(
+    within(childArticle).getByRole("button", { name: "Show 3 replies" }),
+  );
+  expect(
+    await within(childArticle).findByText("First child sibling"),
+  ).toBeTruthy();
+  await user.click(
+    within(childArticle).getByRole("button", { name: "Load more replies" }),
+  );
+  expect(
+    await within(childArticle).findByText("Later child sibling"),
+  ).toBeTruthy();
+  expect(screen.getAllByText("Deep target")).toHaveLength(1);
+});
+
+it("does not reveal a linked reply when its authorized lookup is denied", async () => {
+  window.location.hash = "#followup-private";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/v1/posts/p1/followups")
+        return discussions([followup({ bodyMarkdown: "Visible root" })]);
+      if (url === "/api/v1/followups/private") return error("not_found", 404);
+      throw new Error(`Unexpected ${url}`);
+    }),
+  );
+  render(<FollowupSections {...props} />);
+  expect(await screen.findByText("Visible root")).toBeTruthy();
+  await waitFor(() =>
+    expect(document.getElementById("followup-private")).toBeNull(),
+  );
+  expect(screen.queryByText("Private reply")).toBeNull();
 });
 
 it("hides anonymous choices in new answer and followup composers when course policy disallows them", async () => {

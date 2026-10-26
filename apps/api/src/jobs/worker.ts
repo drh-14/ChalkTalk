@@ -4,6 +4,7 @@ import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import type { EmailSender } from "../auth/service.js";
 import type { Observability } from "../observability/index.js";
 import type { SemanticIndex } from "../semantic/index.js";
+import { readablePost } from "../posts/visibility.js";
 
 type Job = {
   id: string;
@@ -29,6 +30,8 @@ type Job = {
     postId?: string;
     userId?: string;
     notificationId?: string;
+    responseKind?: "answer" | "followup";
+    responseId?: string;
     generation?: string;
   };
   deduplicationKey: string | null;
@@ -266,9 +269,14 @@ export class JobWorker {
     const emailSender = this.emailSender;
     if (!emailSender || !this.frontendBaseUrl)
       throw new Error("Notification email delivery is not configured");
-    const { notificationId } = job.payload;
+    const { notificationId, responseKind, responseId } = job.payload;
     if (!notificationId || job.deduplicationKey !== notificationId)
       throw new Error("Notification email job payload is invalid");
+    if (
+      (responseKind || responseId) &&
+      (!responseId || !["answer", "followup"].includes(responseKind ?? ""))
+    )
+      throw new Error("Notification email response reference is invalid");
     await this.transaction(async (client) => {
       const claimed = await client.query(
         "SELECT id FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
@@ -294,13 +302,33 @@ export class JobWorker {
        JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id AND m.activity_emails
        JOIN courses c ON c.id=n.course_id
        JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
-         AND (NOT p.private OR p.author_user_id=n.user_id OR m.role IN ('ta','instructor'))
+         AND ${readablePost("p", "n.user_id", "m.role")}
        LEFT JOIN users actor ON actor.id=n.actor_user_id
-       WHERE n.id=$1 AND n.read_at IS NULL`,
+       WHERE n.id=$1 AND n.read_at IS NULL
+         AND (n.kind IN ('mentioned','post_published') OR EXISTS (
+           SELECT 1 FROM post_follows f WHERE f.post_id=n.post_id AND f.user_id=n.user_id AND f.following
+         ))`,
         [notificationId],
       );
       const row = found.rows[0];
       if (!row) return;
+      let excerpt: string | undefined;
+      if (responseKind && responseId) {
+        const response = await client.query<{ body_markdown: string }>(
+          responseKind === "answer"
+            ? "SELECT body_markdown FROM answers WHERE id=$1 AND post_id=$2 AND deleted_at IS NULL"
+            : "SELECT body_markdown FROM followups WHERE id=$1 AND post_id=$2 AND deleted_at IS NULL",
+          [responseId, row.post_id],
+        );
+        if (!response.rows[0]?.body_markdown) return;
+        excerpt = response.rows[0].body_markdown
+          .split(/\r?\n/)
+          .map((line) => line.replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .slice(0, 3)
+          .join("\n")
+          .slice(0, 360);
+      }
       const clean = (value: string) => value.replace(/\s+/g, " ").trim();
       const wording: Record<string, [string, string]> = {
         answer_created: ["New answer on", "answered"],
@@ -322,11 +350,13 @@ export class JobWorker {
       const url = new URL(
         `/courses/${encodeURIComponent(row.course_id)}/posts/${encodeURIComponent(row.post_id)}`,
         this.frontendBaseUrl,
-      ).toString();
+      );
+      if (responseKind && responseId)
+        url.hash = `${responseKind}-${responseId}`;
       await emailSender.send({
         to: row.email,
         subject: `[${course}] ${subject} "${title}"`,
-        text: `${actor} ${verb} "${title}" in ${course}.\n\n${url}\n\nTo stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
+        text: `${actor} ${verb} "${title}" in ${course}.\n\n${excerpt ? `${excerpt}\n\n` : ""}${url.toString()}\n\nTo stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
       });
       await client.query(
         "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1",

@@ -383,6 +383,7 @@ export class FollowupService {
         postId,
         actorId: userId,
         kind: parentId ? "reply_created" : "followup_created",
+        response: { kind: "followup", id },
         anonymous: input.anonymous ?? false,
         mentions: parseMentions(input.bodyMarkdown),
         follow: true,

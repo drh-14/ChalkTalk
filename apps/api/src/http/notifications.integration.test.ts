@@ -477,7 +477,11 @@ integration("notifications HTTP contract", () => {
     expect(queued.rows).toHaveLength(1);
     expect(queued.rows[0].user_id).toBe(ids.classmate);
     const job = queued.rows[0];
-    expect(job.payload).toEqual({ notificationId: job.deduplication_key });
+    expect(job.payload).toEqual({
+      notificationId: job.deduplication_key,
+      responseKind: "answer",
+      responseId: expect.any(String),
+    });
     await pool.query("UPDATE course_memberships SET activity_emails=false");
     await clearAll();
   });

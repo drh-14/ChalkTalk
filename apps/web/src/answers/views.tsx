@@ -59,6 +59,21 @@ const labels = {
 const followupOrder = (a: Followup, b: Followup) =>
   a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 
+/** Hash links identify a response without exposing its content in the URL. */
+function useResponseAnchor(id: string) {
+  useEffect(() => {
+    const reveal = () => {
+      if (window.location.hash !== `#${id}`) return;
+      const target = document.getElementById(id);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView?.({ block: "center" });
+    };
+    reveal();
+    window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [id]);
+}
+
 function applyAnswerProjection(
   current: Answer,
   next: Answer,
@@ -539,6 +554,7 @@ function AnswerCard({
   onReplace: (next: Answer | ((current: Answer) => Answer)) => void;
   onRemove: (id: string) => void;
 }) {
+  useResponseAnchor(`answer-${answer.id}`);
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -611,6 +627,8 @@ function AnswerCard({
   }
   return (
     <section
+      id={`answer-${answer.id}`}
+      tabIndex={-1}
       className="answer-card"
       role="region"
       aria-label={`Answer by ${names}`}
@@ -907,6 +925,7 @@ function FollowupItem({
   onReplace,
   onDelete,
   onThreadReply,
+  linkedChildren,
 }: {
   item: Followup;
   props: Props;
@@ -914,13 +933,28 @@ function FollowupItem({
   onDelete: (id: string, hasReplies: boolean) => void;
   /** Tells the discussion's root that a reply landed somewhere beneath it. */
   onThreadReply?: () => void;
+  /** Authorized direct-descendant path to a URL-linked nested reply. */
+  linkedChildren?: Followup[];
 }) {
+  useResponseAnchor(`followup-${item.id}`);
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
   const [children, setChildren] = useState<FollowupPage>();
   const [repliesLoaded, setRepliesLoaded] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const linkedChild = linkedChildren?.[0];
+  useEffect(() => {
+    if (!linkedChild || linkedChild.parentId !== item.id) return;
+    setChildren((current) => {
+      if (current?.data.some((child) => child.id === linkedChild.id))
+        return current;
+      return {
+        data: [...(current?.data ?? []), linkedChild].sort(followupOrder),
+        meta: current?.meta ?? { total: item.replyCount, nextCursor: null },
+      };
+    });
+  }, [item.id, item.replyCount, linkedChild]);
   const reconcile = useAuthoritativeRefresh(
     item.id,
     getFollowup,
@@ -1017,7 +1051,12 @@ function FollowupItem({
     }
   }
   return (
-    <article className="followup-item" aria-label={`Followup by ${name}`}>
+    <article
+      id={`followup-${item.id}`}
+      tabIndex={-1}
+      className="followup-item"
+      aria-label={`Followup by ${name}`}
+    >
       <div className="followup-head">
         <p className="response-byline">{name}</p>
         {item.parentId === null && !item.deleted && (
@@ -1194,6 +1233,11 @@ function FollowupItem({
                 key={child.id}
                 item={child}
                 props={props}
+                linkedChildren={
+                  linkedChild?.id === child.id
+                    ? linkedChildren?.slice(1)
+                    : undefined
+                }
                 onThreadReply={threadReply}
                 onReplace={(next) =>
                   setChildren(
@@ -1287,9 +1331,52 @@ function FollowupItem({
 
 export function FollowupSections(props: Props) {
   const [page, setPage] = useState<FollowupPage>();
+  const [linkedPath, setLinkedPath] = useState<Followup[]>([]);
   const [error, setError] = useState("");
   const [cycle, setCycle] = useState(0);
   const [composing, setComposing] = useState(false);
+  const linkedTarget = linkedPath.at(-1);
+  const visibleLinkedPath =
+    linkedTarget?.postId === props.postId &&
+    window.location.hash === `#followup-${linkedTarget.id}`
+      ? linkedPath
+      : [];
+  useEffect(() => {
+    let active = true;
+    let request = 0;
+    const load = async () => {
+      const current = ++request;
+      setLinkedPath([]);
+      const match = /^#followup-([A-Za-z0-9_-]+)$/.exec(window.location.hash);
+      if (!match) return;
+      const path: Followup[] = [];
+      const seen = new Set<string>();
+      let next: string | null = match[1]!;
+      try {
+        while (next && !seen.has(next)) {
+          seen.add(next);
+          const item: Followup = await getFollowup(next);
+          if (
+            item.postId !== props.postId ||
+            (path.length === 0 && item.deleted)
+          )
+            return;
+          path.unshift(item);
+          next = item.parentId;
+        }
+        if (active && request === current && path[0]?.parentId === null)
+          setLinkedPath(path);
+      } catch {
+        if (active && request === current) setLinkedPath([]);
+      }
+    };
+    void load();
+    window.addEventListener("hashchange", load);
+    return () => {
+      active = false;
+      window.removeEventListener("hashchange", load);
+    };
+  }, [props.postId]);
   useEffect(() => {
     let active = true;
     setPage(undefined);
@@ -1324,54 +1411,92 @@ export function FollowupSections(props: Props) {
         </p>
       )}
       {!page && !error && <p role="status">Loading followups…</p>}
-      {page?.data
-        .filter((item) => !item.deleted || item.replyCount > 0)
-        .map((item) => (
-          <FollowupItem
-            key={item.id}
-            item={item}
-            props={props}
-            onReplace={(next) =>
-              setPage(
-                (current) =>
-                  current && {
-                    ...current,
-                    data: current.data.map((entry) =>
-                      typeof next === "function"
-                        ? entry.id === item.id
-                          ? next(entry)
-                          : entry
-                        : entry.id === next.id && next.version >= entry.version
-                          ? next
-                          : entry,
-                    ),
-                  },
-              )
-            }
-            onDelete={(id, hasReplies) =>
-              setPage(
-                (current) =>
-                  current && {
-                    ...current,
-                    data: current.data.map((entry) =>
-                      entry.id === id
-                        ? {
-                            ...entry,
-                            bodyMarkdown: null,
-                            deleted: true,
-                            version: entry.version + 1,
-                          }
-                        : entry,
-                    ),
-                    meta: {
-                      ...current.meta,
-                      total: current.meta.total - (hasReplies ? 0 : 1),
+      {page &&
+        [
+          ...page.data,
+          ...(visibleLinkedPath[0] &&
+          !page.data.some((item) => item.id === visibleLinkedPath[0]!.id)
+            ? [visibleLinkedPath[0]]
+            : []),
+        ]
+          .filter((item) => !item.deleted || item.replyCount > 0)
+          .map((item) => (
+            <FollowupItem
+              key={item.id}
+              item={item}
+              props={props}
+              linkedChildren={
+                visibleLinkedPath[0]?.id === item.id
+                  ? visibleLinkedPath.slice(1)
+                  : undefined
+              }
+              onReplace={(next) => {
+                setPage(
+                  (current) =>
+                    current && {
+                      ...current,
+                      data: current.data.map((entry) =>
+                        typeof next === "function"
+                          ? entry.id === item.id
+                            ? next(entry)
+                            : entry
+                          : entry.id === next.id &&
+                              next.version >= entry.version
+                            ? next
+                            : entry,
+                      ),
                     },
-                  },
-              )
-            }
-          />
-        ))}
+                );
+                setLinkedPath((current) =>
+                  current[0]?.id === item.id
+                    ? [
+                        typeof next === "function"
+                          ? next(current[0])
+                          : next.version >= current[0].version
+                            ? next
+                            : current[0],
+                        ...current.slice(1),
+                      ]
+                    : current,
+                );
+              }}
+              onDelete={(id, hasReplies) => {
+                setPage(
+                  (current) =>
+                    current && {
+                      ...current,
+                      data: current.data.map((entry) =>
+                        entry.id === id
+                          ? {
+                              ...entry,
+                              bodyMarkdown: null,
+                              deleted: true,
+                              version: entry.version + 1,
+                            }
+                          : entry,
+                      ),
+                      meta: {
+                        ...current.meta,
+                        total: current.meta.total - (hasReplies ? 0 : 1),
+                      },
+                    },
+                );
+                setLinkedPath((current) =>
+                  current[0]?.id === id
+                    ? [
+                        {
+                          ...current[0],
+                          bodyMarkdown: null,
+                          deleted: true,
+                          version: current[0].version + 1,
+                        },
+                        ...current.slice(1),
+                      ]
+                    : current,
+                );
+              }}
+            />
+          ))}
       {page?.meta.nextCursor && (
         <button
           className="text-button"
