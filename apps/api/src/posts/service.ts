@@ -25,6 +25,7 @@ type Row = {
   anonymous: boolean;
   pinned: boolean;
   announcement: boolean;
+  discussion_locked: boolean;
   private: boolean;
   duplicate_of_post_id: string | null;
   duplicate_status: "none" | "suggested" | "confirmed";
@@ -98,6 +99,7 @@ export type ListPosts = {
   sort: "relevance" | "newest" | "oldest" | "recent_activity";
   limit: number;
   cursor?: string;
+  newSince?: string;
 };
 export const postEtag = (post: { version: number }) => `"v${post.version}"`;
 const notFound = () => new AuthError(404, "not_found", "Post is not found");
@@ -208,8 +210,13 @@ export class PostService {
     userId: string,
     lock = false,
   ) {
-    const result = await db.query<{ role: Role; status: string }>(
-      `SELECT m.role,c.status FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m,c" : ""}`,
+    const result = await db.query<{
+      role: Role;
+      status: string;
+      allow_anonymous_posting: boolean;
+      allow_private_posting: boolean;
+    }>(
+      `SELECT m.role,c.status,c.allow_anonymous_posting,c.allow_private_posting FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m,c" : ""}`,
       [courseId, userId],
     );
     if (!result.rows[0]) throw notFound();
@@ -278,6 +285,7 @@ export class PostService {
           : await listAttachments(db, "post", row.id),
       pinned: row.pinned,
       announcement: row.announcement,
+      discussionLocked: row.type === "note" ? false : row.discussion_locked,
       private: row.private,
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
@@ -504,6 +512,18 @@ export class PostService {
       );
     if (body.private && body.type === "poll")
       throw new AuthError(422, "private_poll", "Polls cannot be private");
+    if (body.anonymous && !member.allow_anonymous_posting)
+      throw new AuthError(
+        409,
+        "anonymous_posting_disabled",
+        "Anonymous posting is disabled for this course",
+      );
+    if (body.private && !member.allow_private_posting)
+      throw new AuthError(
+        409,
+        "private_posting_disabled",
+        "Private posting is disabled for this course",
+      );
     if (
       body.type === "poll" &&
       body.closesAt &&
@@ -649,7 +669,7 @@ export class PostService {
         "permission_denied",
         "Duplicate review is staff-only",
       );
-    const { cursor, limit, ...filters } = options;
+    const { cursor, limit, newSince, ...filters } = options;
     const ordinarySearch =
       options.duplicateStatus !== "confirmed" &&
       !/["\u201c\u201d]|\bOR\b|(^|\s)-\S/i.test(options.q ?? "");
@@ -665,6 +685,25 @@ export class PostService {
         ? await this.semantic!.embedQuery(semanticInput!)
         : undefined;
     let semanticReady = Boolean(semanticEmbedding);
+    let watermark: { at: string } | undefined;
+    if (newSince) {
+      try {
+        const token = JSON.parse(
+          Buffer.from(newSince, "base64url").toString("utf8"),
+        );
+        if (
+          token.courseId !== courseId ||
+          token.userId !== userId ||
+          typeof token.at !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(token.at) ||
+          Number.isNaN(Date.parse(token.at))
+        )
+          throw Error();
+        watermark = token;
+      } catch {
+        throw new AuthError(400, "invalid_request", "Feed snapshot is invalid");
+      }
+    }
     const binding = createHash("sha256")
       .update(
         JSON.stringify({
@@ -734,12 +773,11 @@ export class PostService {
       values.push(value);
       return `$${values.length}`;
     };
-    const clauses = [
-      "p.course_id=$1",
-      "p.deleted_at IS NULL",
-      readablePost("p", add(userId), add(member.role)),
-    ];
+    const visibility = readablePost("p", add(userId), add(member.role));
+    const clauses = ["p.course_id=$1", "p.deleted_at IS NULL", visibility];
     if (options.private) clauses.push("p.private");
+    if (watermark)
+      clauses.push(`p.created_at>${add(watermark.at)}::timestamptz`);
     if (options.unresolvedFollowups)
       clauses.push(`p.type='question' AND EXISTS (SELECT 1 ${UNRESOLVED})`);
     const possibleFuzzyTerms = (
@@ -845,7 +883,7 @@ export class PostService {
                HAVING MAX(CASE WHEN public.vector_dims(e.embedding)=${dimensions}::integer
                  THEN 1-(e.embedding OPERATOR(public.<=>) ${vector}::public.vector) END) IS NOT NULL`
             : "SELECT NULL::uuid AS post_id,NULL::double precision AS similarity WHERE false";
-          return `WITH search_terms AS (
+          return `search_terms AS (
             SELECT unnest(${terms}::text[]) AS term
           ), fuzzy_ids AS (
             SELECT p.id FROM posts p JOIN search_terms t
@@ -891,7 +929,7 @@ export class PostService {
       : fuzzySearch
         ? (() => {
             const terms = add(searchTerms);
-            return `WITH search_terms AS (
+            return `search_terms AS (
             SELECT unnest(${terms}::text[]) AS term
           ), fuzzy_ids AS (
             SELECT p.id FROM posts p JOIN search_terms t
@@ -928,12 +966,41 @@ export class PostService {
           )`
           }`;
           })()
-        : `WITH listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
-    const query = `${listed} SELECT listed.* FROM listed WHERE true ${cursorClause} ORDER BY listed.pinned DESC,${semanticReady && options.sort === "relevance" ? "listed.match_tier DESC," : ""}listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}`;
+        : `listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
+    if (watermark) {
+      const count = await this.pool.query<{ count: number }>(
+        `WITH ${listed} SELECT count(*)::int AS count FROM listed`,
+        values,
+      );
+      return {
+        data: [],
+        page: { nextCursor: null, hasMore: false },
+        newCount: count.rows[0]!.count,
+      };
+    }
+    const query = `WITH ${listed}
+    SELECT page.*,to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS snapshot_at
+    FROM (SELECT 1) anchor LEFT JOIN LATERAL (
+      SELECT listed.* FROM listed WHERE true ${cursorClause}
+      ORDER BY listed.pinned DESC,${semanticReady && options.sort === "relevance" ? "listed.match_tier DESC," : ""}listed.rank_value ${direction},listed.id ${direction} LIMIT ${add(limit + 1)}
+    ) page ON true`;
     const result = await this.pool.query<
-      Row & { rank_value: number | Date; match_tier?: number }
+      Row & {
+        rank_value: number | Date;
+        match_tier?: number;
+        snapshot_at: string;
+      }
     >(query, values);
-    const pageRows = result.rows.slice(0, limit);
+    const pageRows = result.rows
+      .filter((row) => row.id !== null)
+      .slice(0, limit);
+    const snapshot = Buffer.from(
+      JSON.stringify({
+        courseId,
+        userId,
+        at: result.rows[0]!.snapshot_at,
+      }),
+    ).toString("base64url");
     const data = await Promise.all(
       pageRows.map((row) =>
         options.duplicateStatus === "confirmed"
@@ -964,7 +1031,11 @@ export class PostService {
             }),
           ).toString("base64url")
         : null;
-    return { data, page: { nextCursor, hasMore: result.rows.length > limit } };
+    return {
+      data,
+      page: { nextCursor, hasMore: result.rows.length > limit },
+      snapshot,
+    };
   }
   private checkRevision(row: Row, etag: string | undefined) {
     if (!etag)
@@ -972,6 +1043,39 @@ export class PostService {
     if (etag !== postEtag({ version: Number(row.version) }))
       throw new AuthError(412, "version_conflict", "Post version has changed");
   }
+  async setDiscussionLocked(
+    id: string,
+    userId: string,
+    etag: string | undefined,
+    locked: boolean,
+  ): Promise<Post> {
+    if (!UUID_PATTERN.test(id)) throw notFound();
+    return this.tx(async (db) => {
+      const row = await this.row(db, id, true);
+      if (!row || row.deleted_at || row.duplicate_status === "confirmed")
+        throw notFound();
+      const member = await this.membership(db, row.course_id, userId, true);
+      readable(row, userId, member.role);
+      if (!STAFF.has(member.role))
+        throw new AuthError(
+          403,
+          "permission_denied",
+          "Only staff may lock a post",
+        );
+      this.writable(member.status);
+      this.checkRevision(row, etag);
+      if (row.type === "note")
+        throw validation("Only questions and polls can be discussion locked");
+      if (row.discussion_locked !== locked) {
+        await db.query(
+          "UPDATE posts SET discussion_locked=$2,updated_at=statement_timestamp(),version=version+1 WHERE id=$1",
+          [id, locked],
+        );
+      }
+      return this.project(db, (await this.row(db, id))!, userId, member.role);
+    });
+  }
+
   async update(
     id: string,
     userId: string,
@@ -1018,6 +1122,16 @@ export class PostService {
           403,
           "permission_denied",
           "Post edit is not permitted",
+        );
+      if (
+        body.anonymous === true &&
+        !row.anonymous &&
+        !member.allow_anonymous_posting
+      )
+        throw new AuthError(
+          409,
+          "anonymous_posting_disabled",
+          "Anonymous posting is disabled for this course",
         );
       if (body.pinned !== undefined && !staff)
         throw new AuthError(403, "permission_denied", "Pinning is staff-only");
@@ -1242,6 +1356,8 @@ export class PostService {
         throw notFound();
       if (row.type !== "poll")
         throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      if (row.discussion_locked)
+        throw new AuthError(409, "discussion_locked", "Discussion is locked");
       const settings = await this.pollSettings(db, postId);
       if (member.status !== "active" || this.effectivePoll(settings).closed)
         throw new AuthError(409, "poll_closed", "The poll or course is closed");
@@ -1303,6 +1419,8 @@ export class PostService {
         throw notFound();
       if (row.type !== "poll")
         throw new AuthError(422, "not_a_poll", "The post is not a poll");
+      if (row.discussion_locked)
+        throw new AuthError(409, "discussion_locked", "Discussion is locked");
       const settings = await this.pollSettings(db, postId);
       if (member.status !== "active" || this.effectivePoll(settings).closed)
         throw new AuthError(409, "poll_closed", "The poll or course is closed");

@@ -1,3 +1,5 @@
+import { renderDigest } from "./render.js";
+import type { DigestImage, DigestImageReader } from "./images.js";
 import type { Pool, PoolClient } from "pg";
 import type { EmailSender } from "../auth/service.js";
 import type { Observability } from "../observability/index.js";
@@ -14,6 +16,12 @@ type ActivityRow = {
   kind: "post" | "answer" | "followup";
   post_id: string;
   title: string;
+  entity_id: string;
+  body_markdown: string;
+  post_count: number;
+  answer_count: number;
+  followup_count: number;
+  total_count: number;
   created_at: Date;
 };
 
@@ -59,10 +67,6 @@ function compact(value: string): string {
     .trim();
 }
 
-function countLabel(count: number, singular: string, plural = `${singular}s`) {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
-
 export class DigestService {
   constructor(
     private readonly pool: Pool,
@@ -70,6 +74,7 @@ export class DigestService {
     private readonly frontendBaseUrl: string,
     private readonly workerId = `digest-worker-${process.pid}`,
     private readonly observability?: Observability,
+    private readonly readImage?: DigestImageReader,
   ) {}
 
   private async transaction<T>(
@@ -190,20 +195,20 @@ export class DigestService {
       }
       const items = await client.query<ActivityRow>(
         `WITH visible_posts AS (
-          SELECT 'post'::text AS kind,p.id AS post_id,p.title,p.created_at
+          SELECT 'post'::text AS kind,p.id AS entity_id,p.id AS post_id,p.title,p.body_markdown,p.created_at
             FROM posts p WHERE p.type IN ('question','note') AND p.deleted_at IS NULL
               AND p.duplicate_status <> 'confirmed' AND NOT p.private AND p.course_id=$1 AND p.author_user_id <> $2
               AND p.created_at >= ($3::date::timestamp AT TIME ZONE 'UTC')
               AND p.created_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC') FOR SHARE OF p
          ), shared_answers AS (
-          SELECT 'answer'::text,a.post_id,p.title,a.created_at
+          SELECT 'answer'::text,a.id AS entity_id,a.post_id,p.title,a.body_markdown,a.created_at
             FROM answers a JOIN posts p ON p.id=a.post_id AND p.course_id=a.course_id
            WHERE a.deleted_at IS NULL AND p.type='question' AND p.deleted_at IS NULL
              AND p.duplicate_status <> 'confirmed' AND NOT p.private AND a.course_id=$1 AND a.created_by_user_id <> $2
              AND a.created_at >= ($3::date::timestamp AT TIME ZONE 'UTC')
              AND a.created_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC') FOR SHARE OF a,p
          ), replies AS (
-          SELECT 'followup'::text,f.post_id,p.title,f.created_at
+          SELECT 'followup'::text,f.id AS entity_id,f.post_id,p.title,f.body_markdown,f.created_at
             FROM followups f JOIN posts p ON p.id=f.post_id AND p.course_id=f.course_id
            WHERE f.deleted_at IS NULL AND p.type='question' AND p.deleted_at IS NULL
              AND p.duplicate_status <> 'confirmed' AND NOT p.private AND f.course_id=$1 AND f.author_user_id <> $2
@@ -212,8 +217,12 @@ export class DigestService {
          ), activity AS (
           SELECT * FROM visible_posts UNION ALL SELECT * FROM shared_answers UNION ALL SELECT * FROM replies
          )
-         SELECT kind,post_id,title,created_at FROM activity
-          ORDER BY created_at,post_id,kind`,
+         SELECT kind,entity_id,post_id,title,left(body_markdown,131073) AS body_markdown,created_at,
+                (count(*) FILTER (WHERE kind='post') OVER ())::integer AS post_count,
+                (count(*) FILTER (WHERE kind='answer') OVER ())::integer AS answer_count,
+                (count(*) FILTER (WHERE kind='followup') OVER ())::integer AS followup_count,
+                (count(*) OVER ())::integer AS total_count
+           FROM activity ORDER BY created_at,post_id,kind,entity_id LIMIT 50`,
         [row.course_id, row.recipient_user_id, row.activity_date],
       );
       if (items.rows.length === 0) {
@@ -222,28 +231,59 @@ export class DigestService {
       }
       const courseName = compact(recipient.rows[0].course_name);
       const counts = {
-        post: items.rows.filter((item) => item.kind === "post").length,
-        answer: items.rows.filter((item) => item.kind === "answer").length,
-        followup: items.rows.filter((item) => item.kind === "followup").length,
+        post: items.rows[0].post_count,
+        answer: items.rows[0].answer_count,
+        followup: items.rows[0].followup_count,
       };
-      const lines = [
-        `${courseName} activity for ${row.activity_date} UTC`,
-        "",
-        [
-          countLabel(counts.post, "post"),
-          countLabel(counts.answer, "answer"),
-          countLabel(counts.followup, "followup"),
-        ].join(" · "),
-        "",
-        ...items.rows.map(
-          (item) =>
-            `${item.kind}: ${compact(item.title)}\n${this.frontendBaseUrl}/courses/${row.course_id}/posts/${item.post_id}`,
-        ),
-      ];
+      const imageRows = this.readImage
+        ? await client.query<{
+            id: string;
+            post_id: string | null;
+            answer_id: string | null;
+            followup_id: string | null;
+            object_key: string;
+            file_name: string;
+            size_bytes: string;
+          }>(
+            `SELECT id,post_id,answer_id,followup_id,object_key,file_name,size_bytes
+           FROM content_attachments WHERE course_id=$1 AND deleted_at IS NULL
+            AND media_type IN ('image/png','image/jpeg','image/webp')
+            AND (post_id=ANY($2::uuid[]) OR answer_id=ANY($3::uuid[]) OR followup_id=ANY($4::uuid[]))
+          ORDER BY created_at,id FOR SHARE`,
+            [
+              row.course_id,
+              ...(["post", "answer", "followup"] as const).map((kind) =>
+                items.rows
+                  .filter((item) => item.kind === kind)
+                  .map((item) => item.entity_id),
+              ),
+            ],
+          )
+        : undefined;
+      const rendered = await renderDigest({
+        courseName,
+        activityDate: row.activity_date,
+        courseUrl: `${this.frontendBaseUrl}/courses/${row.course_id}`,
+        counts,
+        totalItems: items.rows[0].total_count,
+        items: items.rows.map((item) => ({
+          title: compact(item.title),
+          body: item.body_markdown,
+          url: `${this.frontendBaseUrl}/courses/${row.course_id}/posts/${item.post_id}`,
+          images: (imageRows?.rows ?? [])
+            .filter((image) => image[`${item.kind}_id`] === item.entity_id)
+            .map((image): DigestImage => ({
+              filename: image.file_name,
+              url: `${this.frontendBaseUrl}/api/v1/attachments/${image.id}/download`,
+              sizeBytes: Number(image.size_bytes),
+              read: (signal) => this.readImage!(image.object_key, signal),
+            })),
+        })),
+      });
       await this.sender.send({
         to: recipient.rows[0].email,
         subject: `ChalkTalk daily digest: ${courseName} — ${row.activity_date}`,
-        text: lines.join("\n"),
+        ...rendered,
       });
       await client.query(
         `UPDATE digest_outbox SET status='sent',sent_at=clock_timestamp(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=clock_timestamp()

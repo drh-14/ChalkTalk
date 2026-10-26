@@ -340,6 +340,7 @@ Semantic search SHALL use only established full-text and fuzzy results until dur
 
 - **WHEN** a post changes during initial scanning or indexing fails
 - **THEN** pending work prevents semantic ranking until revision-safe recovery, without allowing another generation's worker to declare this one ready
+
 ### Requirement: Posts stay JSON-only and tombstones stay final
 
 PATCH or DELETE of an already-deleted post SHALL return `404 not_found`. Post creation and text updates SHALL remain JSON-only, multipart create/update requests SHALL return `422 validation_failed`, and attachments SHALL use separate parent-scoped multipart endpoints.
@@ -408,3 +409,60 @@ API tests SHALL cover poll creation (validation, staff-only, projection, list fi
 
 - **WHEN** a change lets a student create a poll
 - **THEN** an automated test fails
+
+### Requirement: New posts obey current course discussion policy
+
+A new post requesting `anonymous: true` SHALL be rejected with `409 anonymous_posting_disabled` when the course disallows anonymity. A new post requesting `private: true` SHALL be rejected with `409 private_posting_disabled` when the course disallows private posting. The policy check SHALL serialize against instructor updates and SHALL occur only after a matching successful idempotent retry has been recognized. Existing posts SHALL retain their anonymity and privacy, remain readable/editable under their existing authorization rules, and may be made less private. An edit SHALL NOT newly enable anonymity when the current course policy disallows it.
+
+#### Scenario: Student creates an anonymous post after disablement
+
+- **WHEN** a member creates a valid post with `anonymous: true` after anonymity is disabled
+- **THEN** the API returns `409 anonymous_posting_disabled` without creating a post
+
+#### Scenario: Existing private post remains private
+
+- **WHEN** an instructor disables private posting after a private post exists
+- **THEN** the post remains private and authorized readers can still read and edit it
+
+#### Scenario: Idempotent replay after disablement
+
+- **WHEN** a successful post creation is retried with the same key and body after the policy is disabled
+- **THEN** the original successful response is replayed and no second post is created
+
+### Requirement: Feed snapshot and matching new-post count
+
+The course list SHALL provide an opaque-to-clients, unsigned server timestamp from its list query in a response header. The token SHALL NOT be treated as authentication, authorization, or cryptographic proof of issuance; a caller MAY choose a different timestamp, but the count SHALL still apply current session, membership, and post visibility. A member MAY query the count of newly created posts visible since that snapshot using the same course, viewer, and active filters. The count SHALL include all matching newly created posts, not only the first page, and SHALL exclude edits, activity on old posts, deleted and confirmed-duplicate posts, and private posts the viewer cannot read. The notice is best-effort: a rare post whose creation transaction began before the snapshot and committed afterward MAY not be counted; manual feed refresh SHALL still show it. Counting SHALL NOT mark posts read, mutate pagination, or disclose hidden posts. Malformed or cross-course/viewer tokens SHALL return `400 invalid_request`.
+
+#### Scenario: New matching post arrives
+
+- **WHEN** a member has a feed snapshot with an active `type=note` filter and a newly created matching note becomes visible
+- **THEN** the new-post count increases without changing the old feed response or cursor
+
+#### Scenario: Old post gains activity
+
+- **WHEN** an existing post receives a new answer after the snapshot
+- **THEN** it does not increase the new-post count
+
+#### Scenario: Private creation
+
+- **WHEN** a private post is created after a snapshot and the viewer cannot read it
+- **THEN** it never contributes to that viewer's count
+
+### Requirement: Authorized post deletion is available in the course discussion UI
+
+For an active, readable, non-merged post, the course discussion detail SHALL offer Delete post to its current author or current course TA/instructor. It SHALL not offer the action to other students, on an archived course, or for a confirmed merged source. Staff SHALL have no blind-delete UI for posts they cannot read. The action SHALL require an explicit confirmation and use the existing `DELETE /api/v1/posts/{postId}` with the current post ETag and session CSRF token. On `204`, the UI SHALL remove the post from the loaded feed and navigate to the discussion list. On cancel or failure, it SHALL keep the post visible and preserve any unsaved post-edit text; on `412`, it SHALL fetch the latest readable post version before retry, without overwriting local editor text. It SHALL display the API error for `409` and other failed deletes.
+
+#### Scenario: Staff deletes a readable post
+
+- **WHEN** a current TA confirms Delete post on a readable active post with its current version
+- **THEN** the browser sends conditional DELETE and removes the post from the feed after `204`
+
+#### Scenario: Student cannot delete another author's post
+
+- **WHEN** a student reads another member's post
+- **THEN** Delete post is not offered
+
+#### Scenario: Cancel, conflict, or failed delete
+
+- **WHEN** the author cancels confirmation or the API returns `409` or `412`
+- **THEN** the post remains visible, unsaved edits are preserved, and the conflict or error is explained without navigating away

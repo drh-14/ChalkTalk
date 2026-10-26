@@ -7,6 +7,7 @@ import {
   requireDatabaseUrl,
 } from "../config/environment.js";
 import { createPool } from "../database/pool.js";
+import { s3DigestImageReader } from "../digest/images.js";
 import { DigestService } from "../digest/service.js";
 import { runDigestScheduleLoop } from "../digest/runner.js";
 import {
@@ -60,6 +61,7 @@ const digest = new DigestService(
   environment.frontendBaseUrl,
   undefined,
   observability,
+  s3DigestImageReader(s3, bucket),
 );
 const controller = new AbortController();
 process.once("SIGINT", () => controller.abort());

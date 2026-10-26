@@ -483,3 +483,19 @@ it("staff can close, release, export, and clone a poll with revision headers", a
     true,
   );
 });
+
+it("shows locked poll totals without voting or retraction controls", () => {
+  render(
+    <PollCard
+      postId="poll"
+      options={[{ id: "one", label: "One", voteCount: 1, selected: true }]}
+      totalVotes={1}
+      closed={false}
+      discussionLocked
+      csrfToken="csrf"
+    />,
+  );
+  expect(screen.getByText(/locked/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Change vote" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retract vote" })).toBeNull();
+});

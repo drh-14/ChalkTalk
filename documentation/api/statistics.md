@@ -245,3 +245,39 @@ curl --request GET '/api/v1/courses/course_123/statistics/students' \
 ##### `503 Service Unavailable`
 
 `service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="exportDailyStatistics"></a>
+
+### **`GET /api/v1/courses/{courseId}/statistics/export/daily`**
+
+Downloads the selected period's zero-filled UTC daily activity as a server-generated CSV. Counts follow the course summary above, including activity retained after later soft deletion.
+
+**Authentication:** Session cookie. **Access:** Current instructor or TA.
+
+**Query:** `period` (`7d`, `30d`, or `course_to_date`; optional, defaults to `30d`).
+
+**Success:** `200 OK`, `Content-Type: text/csv; charset=utf-8`, `Content-Disposition: attachment; filename="chalktalk-{courseId}-{period}-daily.csv"`, `Cache-Control: private, no-store`.
+
+The UTF-8 CSV uses CRLF records and columns `date,questions_created,answers_created,posts_viewed`. It includes every UTC date in the selected period, including zero-activity dates.
+
+**Errors:** `400 invalid_request` for an invalid period; `401 authentication_required`; `403 permission_denied` for nonstaff; `404 not_found` for a missing or hidden course; `500 internal_error`; `503 service_unavailable` for an unavailable statistics service. Errors use the standard JSON error envelope, not CSV.
+
+---
+
+<a id="exportStudentStatistics"></a>
+
+### **`GET /api/v1/courses/{courseId}/statistics/export/students`**
+
+Downloads the complete current non-deleted student roster and selected-period activity as a server-generated CSV. It is not limited by the browser's loaded pages. Current students with zero activity are included; historical activity and privacy rules follow the student statistics endpoint above.
+
+**Authentication:** Session cookie. **Access:** Current instructor or TA.
+
+**Query:** `period` (`7d`, `30d`, or `course_to_date`; optional, defaults to `30d`).
+
+**Success:** `200 OK`, `Content-Type: text/csv; charset=utf-8`, `Content-Disposition: attachment; filename="chalktalk-{courseId}-{period}-students.csv"`, `Cache-Control: private, no-store`.
+
+The UTF-8 CSV uses CRLF records and columns `user_id,display_name,questions_created,answers_contributed,posts_viewed`, ordered by user ID. Display names are CSV-escaped and leading spreadsheet formula triggers are prefixed with an apostrophe.
+
+**Errors:** Same as the daily export endpoint. Errors use the standard JSON error envelope, not CSV.

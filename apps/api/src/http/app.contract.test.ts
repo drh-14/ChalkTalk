@@ -102,6 +102,49 @@ describe("authenticated read CORS contract", () => {
   });
 });
 
+describe("authentication client IP behind Caddy", () => {
+  it.each([
+    [undefined, false],
+    ["1", true],
+  ])(
+    "uses forwarded IP only with one trusted hop (%s)",
+    async (hop, trusted) => {
+      const recorded: string[] = [];
+      const proxyEnvironment = loadEnvironment({
+        AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+        FRONTEND_ORIGINS: "https://app.example.edu",
+        FRONTEND_BASE_URL: "https://app.example.edu",
+        ...(hop ? { TRUST_PROXY_HOPS: hop } : {}),
+      });
+      const authService = {
+        checkLimit: async (_email: string, ip: string) => {
+          recorded.push(ip);
+        },
+        login: async () => {
+          throw new AuthError(
+            401,
+            "invalid_credentials",
+            "Invalid credentials",
+          );
+        },
+      } as unknown as AuthService;
+
+      const response = await request(
+        createApp({ environment: proxyEnvironment, authService }),
+      )
+        .post("/api/v1/sessions")
+        .set("Origin", "https://app.example.edu")
+        .set("X-Forwarded-For", "203.0.113.42")
+        .send({ email: "ada@example.edu", password: "invalid-password" });
+
+      expect(response.status).toBe(401);
+      expect(recorded).toHaveLength(1);
+      if (trusted) expect(recorded[0]).toBe("203.0.113.42");
+      else expect(recorded[0]).not.toBe("203.0.113.42");
+    },
+  );
+});
+
 function sessionService() {
   let revoked = false;
   const mutations: string[] = [];

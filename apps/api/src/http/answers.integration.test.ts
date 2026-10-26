@@ -139,6 +139,45 @@ integration("answers HTTP contract: create and read", () => {
       ],
     );
   });
+  it("blocks new anonymous answers after a policy change but replays prior success", async () => {
+    const firstPost = await insertPost();
+    const first = await unsafe(
+      request(app(ids.student)).post(`/api/v1/posts/${firstPost}/answers`),
+    )
+      .set("Idempotency-Key", "answer-before-policy")
+      .send({ bodyMarkdown: "Anonymous answer", anonymous: true });
+    expect(first.status).toBe(201);
+    const secondPost = await insertPost();
+    await pool.query(
+      "UPDATE courses SET allow_anonymous_posting=false WHERE id=$1",
+      [ids.course],
+    );
+    try {
+      const rejected = await answer(ids.student, secondPost, {
+        bodyMarkdown: "New anonymous answer",
+        anonymous: true,
+      });
+      expect(rejected.status).toBe(409);
+      expect(rejected.body.error.code).toBe("anonymous_posting_disabled");
+      const replay = await unsafe(
+        request(app(ids.student)).post(`/api/v1/posts/${firstPost}/answers`),
+      )
+        .set("Idempotency-Key", "answer-before-policy")
+        .send({ bodyMarkdown: "Anonymous answer", anonymous: true });
+      expect(replay.status).toBe(201);
+      expect(replay.body.data.id).toBe(first.body.data.id);
+      const current = await read(
+        ids.student,
+        `/api/v1/answers/${first.body.data.id}`,
+      );
+      expect(current.body.data.anonymous).toBe(true);
+    } finally {
+      await pool.query(
+        "UPDATE courses SET allow_anonymous_posting=true WHERE id=$1",
+        [ids.course],
+      );
+    }
+  });
   afterAll(async () => {
     await pool?.end();
     await admin?.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);

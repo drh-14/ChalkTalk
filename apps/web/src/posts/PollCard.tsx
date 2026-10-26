@@ -17,6 +17,8 @@ type Props = PollState & {
   postId: string;
   /** A course archive also closes voting. */
   closed: boolean;
+  /** A locked discussion also stops ballots. */
+  discussionLocked?: boolean;
   csrfToken: string;
   staff?: boolean;
   courseActive?: boolean;
@@ -38,6 +40,7 @@ export function PollCard({
   releaseMode = "live",
   resultsReleased = true,
   explanation,
+  discussionLocked = false,
   csrfToken,
   staff = false,
   courseActive = true,
@@ -60,7 +63,10 @@ export function PollCard({
   });
   const [revision, setRevision] = useState(version);
   const [choosing, setChoosing] = useState(
-    !staff && !options.some((option) => option.selected) && !closed,
+    !staff &&
+      !options.some((option) => option.selected) &&
+      !closed &&
+      !discussionLocked,
   );
   const [choices, setChoices] = useState<string[]>(
     options.filter((option) => option.selected).map((option) => option.id),
@@ -76,6 +82,7 @@ export function PollCard({
     state.closesAt && Date.parse(state.closesAt) <= Date.now(),
   );
   const effectiveClosed = Boolean(state.closed || deadlineElapsed);
+  const ballotClosed = effectiveClosed || discussionLocked;
   const visibleResults = staff || state.resultsReleased !== false;
   const onPostChangeRef = useRef(onPostChange);
   useEffect(() => {
@@ -268,13 +275,18 @@ export function PollCard({
     <section className="poll-card" aria-labelledby={legendId}>
       <h3 id={legendId} className="poll-heading">
         Poll{visibleResults && total ? ` · ${total}` : null}
-        {effectiveClosed && <span className="poll-closed"> · closed</span>}
+        {ballotClosed && (
+          <span className="poll-closed">
+            {" "}
+            · {discussionLocked && !effectiveClosed ? "locked" : "closed"}
+          </span>
+        )}
       </h3>
       {state.closesAt && !effectiveClosed && (
         <p>Closes {new Date(state.closesAt).toLocaleString()}</p>
       )}
       {!visibleResults && <p>Results are not released yet.</p>}
-      {!effectiveClosed && choosing ? (
+      {!ballotClosed && choosing ? (
         <form onSubmit={(event) => void submit(event)}>
           <fieldset className="poll-choices">
             <legend className="visually-hidden">
@@ -379,7 +391,7 @@ export function PollCard({
           {visibleResults && state.explanation && (
             <p className="poll-explanation">{state.explanation}</p>
           )}
-          {!effectiveClosed && (
+          {!ballotClosed && (
             <div className="poll-actions">
               <button
                 type="button"

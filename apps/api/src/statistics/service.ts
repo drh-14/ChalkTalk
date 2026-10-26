@@ -9,6 +9,31 @@ const dateKey = (date: Date) => date.toISOString().slice(0, 10);
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const STUDENT_QUERY = `SELECT u.id,u.display_name,
+        (SELECT coalesce(sum(q.question_count),0)::int FROM question_creation_daily_counts q WHERE q.course_id=$1 AND q.user_id=u.id AND q.created_on >= ($2::timestamptz AT TIME ZONE 'UTC')::date AND q.created_on <= ($3::timestamptz AT TIME ZONE 'UTC')::date) AS questions_created,
+        (SELECT count(DISTINCT e.answer_id)::int FROM answer_contribution_events e WHERE e.course_id=$1 AND e.user_id=u.id AND e.contributed_at >= $2 AND e.contributed_at <= $3) AS answers_contributed,
+        (SELECT count(*)::int FROM post_view_events v WHERE v.course_id=$1 AND v.user_id=u.id AND v.viewed_at >= $2 AND v.viewed_at <= $3) AS posts_viewed
+      FROM course_memberships m JOIN users u ON u.id=m.user_id
+      WHERE m.course_id=$1 AND m.role='student' AND u.deleted_at IS NULL
+        AND ($4::uuid IS NULL OR u.id > $4::uuid)
+      ORDER BY u.id`;
+const csvCell = (value: string) => {
+  const safe = /^[\s]*[=+@-]/.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) || safe !== value
+    ? `"${safe.replaceAll('"', '""')}"`
+    : safe;
+};
+const csv = (rows: (string | number)[][]) =>
+  rows
+    .map((row) =>
+      row
+        .map((value) =>
+          typeof value === "string" ? csvCell(value) : String(value),
+        )
+        .join(","),
+    )
+    .join("\r\n") + "\r\n";
+
 export class StatisticsService {
   constructor(private readonly pool: Pool) {}
 
@@ -158,17 +183,13 @@ export class StatisticsService {
       questions_created: number;
       answers_contributed: number;
       posts_viewed: number;
-    }>(
-      `SELECT u.id,u.display_name,
-        (SELECT coalesce(sum(q.question_count),0)::int FROM question_creation_daily_counts q WHERE q.course_id=$1 AND q.user_id=u.id AND q.created_on >= ($2::timestamptz AT TIME ZONE 'UTC')::date AND q.created_on <= ($3::timestamptz AT TIME ZONE 'UTC')::date) AS questions_created,
-        (SELECT count(DISTINCT e.answer_id)::int FROM answer_contribution_events e WHERE e.course_id=$1 AND e.user_id=u.id AND e.contributed_at >= $2 AND e.contributed_at <= $3) AS answers_contributed,
-        (SELECT count(*)::int FROM post_view_events v WHERE v.course_id=$1 AND v.user_id=u.id AND v.viewed_at >= $2 AND v.viewed_at <= $3) AS posts_viewed
-      FROM course_memberships m JOIN users u ON u.id=m.user_id
-      WHERE m.course_id=$1 AND m.role='student' AND u.deleted_at IS NULL
-        AND ($4::uuid IS NULL OR u.id > $4::uuid)
-      ORDER BY u.id LIMIT $5`,
-      [courseId, window.start, window.end, afterId, limit + 1],
-    );
+    }>(`${STUDENT_QUERY} LIMIT $5`, [
+      courseId,
+      window.start,
+      window.end,
+      afterId,
+      limit + 1,
+    ]);
     const hasMore = result.rows.length > limit;
     const rows = result.rows.slice(0, limit);
     const last = rows.at(-1);
@@ -193,5 +214,52 @@ export class StatisticsService {
             : null,
       },
     };
+  }
+  async exportDaily(
+    courseId: string,
+    userId: string,
+    period: StatisticsPeriod,
+  ) {
+    const summary = await this.summary(courseId, userId, period);
+    return csv([
+      ["date", "questions_created", "answers_created", "posts_viewed"],
+      ...summary.dailyActivity.map((day) => [
+        day.date,
+        day.questionsCreated,
+        day.answersCreated,
+        day.postsViewed,
+      ]),
+    ]);
+  }
+
+  async exportStudents(
+    courseId: string,
+    userId: string,
+    period: StatisticsPeriod,
+  ) {
+    const window = this.window(period, await this.authorized(courseId, userId));
+    const result = await this.query<{
+      id: string;
+      display_name: string;
+      questions_created: number;
+      answers_contributed: number;
+      posts_viewed: number;
+    }>(STUDENT_QUERY, [courseId, window.start, window.end, null]);
+    return csv([
+      [
+        "user_id",
+        "display_name",
+        "questions_created",
+        "answers_contributed",
+        "posts_viewed",
+      ],
+      ...result.rows.map((row) => [
+        row.id,
+        row.display_name,
+        row.questions_created,
+        row.answers_contributed,
+        row.posts_viewed,
+      ]),
+    ]);
   }
 }

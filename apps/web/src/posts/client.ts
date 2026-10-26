@@ -44,6 +44,7 @@ export type Post = {
   pinned?: boolean;
   /** Staff notes pinned and emailed to the course. */
   announcement?: boolean;
+  discussionLocked?: boolean;
   /** Readable only by the author and course staff. */
   private?: boolean;
   answered?: boolean;
@@ -128,10 +129,7 @@ async function receive<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-export async function listPosts(
-  courseId: string,
-  options: PostListOptions = {},
-): Promise<Page<Post>> {
+function postListParams(options: PostListOptions): URLSearchParams {
   const query = new URLSearchParams();
   if (options.q) query.set("q", options.q);
   if (options.semanticQuery) query.set("semanticQuery", options.semanticQuery);
@@ -150,17 +148,27 @@ export async function listPosts(
   for (const tag of tags) query.append("tag", tag);
   if (tags.length > 1) query.set("tagMatch", options.tagMatch ?? "all");
   if (options.limit) query.set("limit", String(options.limit));
+  return query;
+}
+
+export async function listPosts(
+  courseId: string,
+  options: PostListOptions = {},
+): Promise<Page<Post> & { snapshot?: string }> {
+  const query = postListParams(options);
   const suffix = query.size ? `?${query}` : "";
-  return receive<Page<Post>>(
-    await fetch(
-      `/api/v1/courses/${encodeURIComponent(courseId)}/posts${suffix}`,
-      {
-        credentials: "include",
-        headers: { Accept: "application/json" },
-        signal: options.signal,
-      },
-    ),
+  const response = await fetch(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/posts${suffix}`,
+    {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      signal: options.signal,
+    },
   );
+  return {
+    ...(await receive<Page<Post>>(response)),
+    snapshot: response.headers.get("X-Feed-Snapshot") ?? undefined,
+  };
 }
 
 export async function getPost(
@@ -239,6 +247,23 @@ export async function updatePost(
   return result.data;
 }
 
+/** Deletes an authorized post using the version last shown to the viewer. */
+export async function deletePost(
+  post: Pick<Post, "id" | "version">,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+      "If-Match": `"v${post.version}"`,
+    },
+  });
+  if (!response.ok) await receive<never>(response);
+}
+
 export async function unmergePost(
   post: MergedPost,
   csrfToken: string,
@@ -284,6 +309,30 @@ export async function confirmMergePost(
   );
 }
 
+export async function setPostDiscussionLocked(
+  post: Post,
+  locked: boolean,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(
+      `/api/v1/posts/${encodeURIComponent(post.id)}/discussion-lock`,
+      {
+        method: "PUT",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+          "If-Match": `"v${post.version}"`,
+        },
+        body: JSON.stringify({ locked }),
+      },
+    ),
+  );
+  return payload.data;
+}
+
 export async function setPostPinned(
   post: Post,
   pinned: boolean,
@@ -324,6 +373,27 @@ export async function makePostPublic(
     }),
   );
   return payload.data;
+}
+
+export async function countNewPosts(
+  courseId: string,
+  snapshot: string,
+  options: PostListOptions = {},
+): Promise<number> {
+  const query = new URLSearchParams();
+  query.set("snapshot", snapshot);
+  for (const [key, value] of postListParams(options)) query.append(key, value);
+  const payload = await receive<{ data: { count: number } }>(
+    await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/posts/new-count?${query}`,
+      {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+        signal: options.signal,
+      },
+    ),
+  );
+  return payload.data.count;
 }
 
 /** Follows or unfollows a post for the viewer. */

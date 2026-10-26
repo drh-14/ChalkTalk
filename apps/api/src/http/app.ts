@@ -82,6 +82,7 @@ function testEnvironment(): Environment {
   return {
     databaseUrl: undefined,
     port: 3000,
+    trustProxyHops: 0,
     frontendOrigins: new Set(["https://localhost:5173"]),
     frontendBaseUrl: "https://localhost:5173",
     authTokenSecret: "test-secret-that-is-longer-than-thirty-two-characters",
@@ -355,14 +356,29 @@ function joinCourseBody(input: unknown): JsonObject {
   return body;
 }
 function courseUpdateBody(input: unknown): JsonObject {
-  const body = strictBody(input, ["name", "status"]);
-  if (body.name === undefined && body.status === undefined)
+  const switches = [
+    "allowAnonymousPosting",
+    "allowPrivatePosting",
+    "allowFollowupResolution",
+  ];
+  const body = strictBody(input, ["name", "status", ...switches]);
+  if (
+    body.name === undefined &&
+    body.status === undefined &&
+    switches.every((key) => body[key] === undefined)
+  )
     throw validationError();
   if (body.name !== undefined) stringWithin(body.name, "Course name", 1, 200);
   if (
     body.status !== undefined &&
     body.status !== "active" &&
     body.status !== "archived"
+  )
+    throw validationError();
+  if (
+    switches.some(
+      (key) => body[key] !== undefined && typeof body[key] !== "boolean",
+    )
   )
     throw validationError();
   return body;
@@ -583,6 +599,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "announcement",
     "private",
     "unresolvedFollowups",
+    "snapshot",
     "authorRole",
     "duplicateStatus",
     "sort",
@@ -671,6 +688,9 @@ function postListQuery(query: Request["query"]): ListPosts {
       "invalid_request",
       "Unresolved followups filter is invalid",
     );
+  const snapshot = one("snapshot");
+  if (snapshot !== undefined && (snapshot.length < 1 || snapshot.length > 2048))
+    throw new AuthError(400, "invalid_request", "Feed snapshot is invalid");
   const authorRole = one("authorRole");
   if (
     authorRole !== undefined &&
@@ -712,6 +732,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     announcement: rawAnnouncement === "true" ? true : undefined,
     private: rawPrivate === "true" ? true : undefined,
     unresolvedFollowups: rawUnresolved === "true" ? true : undefined,
+    newSince: snapshot,
     authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
@@ -849,6 +870,7 @@ export function createApp(
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
+  if (environment.trustProxyHops === 1) app.set("trust proxy", 1);
   app.use((_request, response, next) => {
     response.locals.requestId = randomUUID();
     response.set("X-Request-Id", response.locals.requestId);
@@ -1024,6 +1046,42 @@ export function createApp(
       }
     },
   );
+  for (const kind of ["daily", "students"] as const) {
+    app.get(
+      `/api/v1/courses/:courseId/statistics/export/${kind}`,
+      optionalReadOrigin,
+      async (request, response, next) => {
+        try {
+          const current = await requireSession(request);
+          const period = StatisticsService.period(request.query.period);
+          const courseId = param(request.params.courseId);
+          const body =
+            kind === "daily"
+              ? await statistics().exportDaily(
+                  courseId,
+                  current.session.user.id,
+                  period,
+                )
+              : await statistics().exportStudents(
+                  courseId,
+                  current.session.user.id,
+                  period,
+                );
+          response
+            .set("Cache-Control", "private, no-store")
+            .set("X-Content-Type-Options", "nosniff")
+            .set(
+              "Content-Disposition",
+              `attachment; filename="chalktalk-${courseId}-${period}-${kind}.csv"`,
+            )
+            .type("text/csv; charset=utf-8")
+            .send(body);
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  }
   app.post(
     "/api/v1/account-verification-requests",
     publicOrigin,
@@ -2270,13 +2328,52 @@ export function createApp(
       try {
         const current = await requireSession(request);
         const options = postListQuery(request.query);
+        if (options.newSince)
+          throw new AuthError(400, "invalid_request", "Filter is invalid");
         const result = await posts().list(
           param(request.params.courseId),
           current.session.user.id,
           options,
         );
         response.locals.safeResultCount = result.data.length;
-        response.set("Cache-Control", "private, no-store").json(result);
+        const { snapshot, ...body } = result;
+        response.set("Cache-Control", "private, no-store");
+        if (snapshot)
+          response.set({
+            "X-Feed-Snapshot": snapshot,
+            "Access-Control-Expose-Headers": "X-Feed-Snapshot",
+          });
+        response.json(body);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/posts/new-count",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const options = postListQuery(request.query);
+        if (
+          !options.newSince ||
+          options.cursor ||
+          options.duplicateStatus === "confirmed"
+        )
+          throw new AuthError(
+            400,
+            "invalid_request",
+            "Feed snapshot or filter is invalid",
+          );
+        const result = await posts().list(
+          param(request.params.courseId),
+          current.session.user.id,
+          options,
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: { count: result.newCount } });
       } catch (error) {
         next(error);
       }
@@ -2341,6 +2438,31 @@ export function createApp(
           auth(response).session.user.id,
           request.header("if-match"),
           body,
+        );
+        response.set("ETag", postEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/posts/:postId/discussion-lock",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["locked"], ["locked"]);
+        if (typeof body.locked !== "boolean")
+          throw new AuthError(
+            422,
+            "validation_failed",
+            "Locked must be a boolean",
+          );
+        const value = await posts().setDiscussionLocked(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body.locked,
         );
         response.set("ETag", postEtag(value)).json({ data: value });
       } catch (error) {
