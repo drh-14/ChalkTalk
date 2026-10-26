@@ -10,6 +10,8 @@ Teaching assistants and instructors can collaboratively maintain staff answers, 
 
 Instructors can turn off new anonymous or private contributions and pause follow-up resolution in a course's settings. Existing contributions and resolution markers remain visible to their authorized readers.
 
+Staff can pause new discussion and voting on an individual question or poll without hiding its existing content.
+
 Core features include:
 
 - course-based discussion forums,

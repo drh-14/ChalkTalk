@@ -4,6 +4,8 @@
 
 **Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 options of 1–200 characters, trimmed and distinct ignoring case, fixed after creation. Every member sees each option's `voteCount` and whether they `selected` it; who voted for what is never exposed. Each member has one vote, which `PUT /posts/{postId}/vote` sets or changes and `DELETE` retracts. Votes do not change the post's `version` or activity time. Polls take no answers or followups.
 
+**Discussion locks:** Every active post list and detail projection includes `discussionLocked: boolean` (default `false`; always `false` for notes and announcements). Staff can conditionally lock or unlock a question or poll with `PUT /posts/{postId}/discussion-lock`; notes and announcements return `422 validation_failed`. A lock prevents new answers, followups, replies, poll votes and retractions, and answer/followup upvote changes; each returns `409 discussion_locked`. Existing content remains readable and editable/deletable according to ordinary permissions, and staff can change existing followup resolution markers. Toggling the lock advances the post version without changing `lastActivityAt`, so it does not reorder the recent-activity feed.
+
 **Following and unread:** Every active post projection includes `following` and `unread` for the viewer. Members follow a post automatically when they create it, answer it, edit an answer on it, or post a followup or reply on it, unless they unfollowed it; see [Notifications](notifications.md). A post is `unread` when its last activity is later than both the viewer's last opening of it and their course read mark, or neither exists. Retrieving a post records it, and the caller's notifications for it, as read, so its own response reports `unread: false`.
 
 **Private posts:** Any member may create a question or note with `private: true` while the course permits private posting; otherwise new private posts return `409 private_posting_disabled`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
@@ -16,7 +18,7 @@ Author fields and anonymous-content filtering follow the shared [identity visibi
 
 ## Retained deleted posts
 
-Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false` and includes the content fields documented below. A tombstone sets it to `true` and contains only `id`, `courseId`, `type`, `deleted`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and ordinary update responses contain an active post; merge confirmation is the exception described below.
+Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false`; the field inventories and examples below are illustrative, while the [OpenAPI post schemas](../openapi.yaml) define the complete current response shape. A tombstone sets `deleted` to `true` and contains only `id`, `courseId`, `type`, `deleted`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and ordinary update responses contain an active post; merge confirmation is the exception described below.
 
 Confirmed duplicates are retained in storage but removed from ordinary lists, search, and Related questions. The old direct URL returns `303 See Other` to the canonical post for a current course member; it never returns the duplicate's content. Staff can retrieve a restricted duplicate-review list, read the retained source through a staff-only review endpoint, and unmerge it. Confirming a merge returns a minimal canonical reference rather than an active post.
 
@@ -759,7 +761,7 @@ Staff confirmation retains the source text in storage but hides it from readers.
 
 When a TA or instructor confirms a **question** duplicate, the same transaction queues an email to its author. The email subject is `Your post has been marked as a duplicate`; for an active confirming staff account, the plain-text body says `Your question "<question>" was marked as a duplicate by <staff name> (<instructor or TA>).` If that staff account is deleted before delivery, it instead says `Your question "<question>" was marked as a duplicate by a TA.` or `Your question "<question>" was marked as a duplicate by an instructor.`, as appropriate. The job does not retain the staff display name, and both forms include an absolute link to the canonical post. SMTP delivery occurs asynchronously with retries, so mail failure does not change the PATCH response or undo the merge. A suggestion, note confirmation, failed update, and unmerge do not queue this email. Before delivery, the worker cancels a stale notification if the question is no longer merged to that canonical post or the author no longer has active course access. SMTP acceptance followed by a worker crash may rarely result in a repeated email.
 
-Every successful update, including pin, unpin, merge, and unmerge, advances `lastActivityAt`. An unpinned post returns to its normal sort position; in `recent_activity` that position reflects the update time.
+Every successful PATCH update, including pin, unpin, merge, and unmerge, advances `lastActivityAt`. An unpinned post returns to its normal sort position; in `recent_activity` that position reflects the update time. Discussion-lock changes use a [separate endpoint](#discussionLock) and preserve `lastActivityAt`.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -1010,6 +1012,16 @@ curl --request PATCH '/api/v1/posts/post_123' \
 
 ---
 
+<a id="discussionLock"></a>
+
+### **`PUT /api/v1/posts/{postId}/discussion-lock`**
+
+Current course TAs and instructors set an individual question's or poll's discussion lock with JSON `{ "locked": true }` or `{ "locked": false }`. This route requires the session cookie, valid Origin and CSRF token, `Content-Type: application/json`, and `If-Match: "v{version}"`. It returns `200` with `{ "data": Post }` and the current ETag. A state change increments the post version and update time; repeating the current state retains both version and last-activity time. Lock changes never move a post in the recent-activity feed.
+
+The request body must contain only the boolean `locked` field. Invalid shapes, unknown fields, non-boolean values, and attempts to lock or unlock notes (including announcements) return `422 validation_failed`; rejected note requests leave version and activity unchanged. Missing and stale `If-Match` return `428 precondition_required` and `412 version_conflict`; students receive `403 permission_denied`, while nonmembers, deleted posts, and confirmed duplicate sources return `404 not_found`. Archived courses return `409 course_archived`.
+
+---
+
 <a id="deletePost"></a>
 
 ### **`DELETE /api/v1/posts/{postId}`**
@@ -1252,7 +1264,7 @@ curl --request PUT '/api/v1/posts/post_123/vote' \
 
 ### **`DELETE /api/v1/posts/{postId}/vote`**
 
-Retracts the authenticated user’s vote from a poll. Returns 204 even when the caller has no vote.
+Retracts the authenticated user’s vote from an unlocked poll. Returns 204 even when the caller has no vote.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
