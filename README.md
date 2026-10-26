@@ -111,6 +111,19 @@ docker compose --profile app run --rm migrate
 
 Stop the full stack with `docker compose --profile app down`. The default `docker compose up -d` starts PostgreSQL, Mailpit, and SeaweedFS.
 
+### Importing a Piazza class
+
+To demo ChalkTalk with a real course, copy a Piazza class you belong to into your local database:
+
+```bash
+PIAZZA_EMAIL=you@school.edu PIAZZA_PASSWORD=... PIAZZA_DEMO_PASSWORD='local demo password' \
+  npm run db:import:piazza -- --owner you@school.edu --class "CSE 416" --save piazza-cse416.json
+```
+
+The `--owner` ChalkTalk account must already exist and becomes the course instructor; your own Piazza posts are attributed to it. Every other Piazza author becomes a course member with their Piazza name and role (professor → instructor, TA, student) and a placeholder `@piazza.invalid` email. Set `PIAZZA_DEMO_PASSWORD` (12–128 characters) to log in as any of them; the command then prints each account's email. Without it they receive a discarded random password. Questions, notes, instructor and student answers, followups and replies, folders (as tags), pins, endorsements, and helpful votes are imported with their original timestamps. Piazza HTML becomes Markdown, and images and attachments stay linked to Piazza. Polls become notes without their options. Piazza hides anonymous authors from students, so those posts belong to one shared "Anonymous Piazza user". A student account also sees only its own private posts and cannot read the roster or emails.
+
+The command fetches one request per second, so a large class takes several minutes. Run it again at any time: matching Piazza ids add new content and refresh edited content without duplicating anything, and content deleted in ChalkTalk stays deleted. `--save` keeps the fetched data, and `--from piazza-cse416.json` re-imports from that file without contacting Piazza. Piazza has no public API; this uses the internal API its own website calls, which may change without notice.
+
 ### Local API monitoring
 
 An opt-in Compose profile adds Prometheus, Grafana, Logstash, and Elasticsearch to the full application stack. In your **ignored** `.env`, set `OBSERVABILITY_ENABLED=true`, set `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` to **different** outputs of `openssl rand -hex 32`, then run:
