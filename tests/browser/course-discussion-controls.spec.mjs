@@ -229,7 +229,9 @@ test("student sees disabled policy, restricted composers, and preserved resoluti
     page.getByRole("checkbox", { name: "Post anonymously" }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("option", { name: "Instructors and TAs" }),
+    page.getByRole("option", {
+      name: "Private — only you and current instructors/TAs",
+    }),
   ).toHaveCount(0);
   await page.screenshot({
     path: resolve(screenshots, "restricted-new-post.png"),

@@ -38,6 +38,7 @@ export function loadObjectStorageConfig(
 export interface Environment {
   databaseUrl: string | undefined;
   port: number;
+  trustProxyHops: 0 | 1;
   frontendOrigins: ReadonlySet<string>;
   frontendBaseUrl: string;
   authTokenSecret: string;
@@ -92,6 +93,12 @@ export function loadEnvironment(
   if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
     throw new Error("SMTP_PORT must be an integer between 1 and 65535");
   }
+  if (
+    source.TRUST_PROXY_HOPS !== undefined &&
+    !["0", "1"].includes(source.TRUST_PROXY_HOPS)
+  )
+    throw new Error("TRUST_PROXY_HOPS must be 0 or 1");
+  const trustProxyHops = source.TRUST_PROXY_HOPS === "1" ? 1 : 0;
 
   const frontendOrigins = new Set(
     (source.FRONTEND_ORIGINS ?? "https://localhost:5173")
@@ -172,6 +179,7 @@ export function loadEnvironment(
   return {
     databaseUrl: source.DATABASE_URL,
     port,
+    trustProxyHops,
     frontendOrigins,
     frontendBaseUrl,
     authTokenSecret,
