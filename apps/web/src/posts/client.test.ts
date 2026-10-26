@@ -236,3 +236,11 @@ it("filters private posts and makes one public with its revision", async () => {
     headers: { "If-Match": '"v4"', "X-CSRF-Token": "csrf" },
   });
 });
+
+it("counts new posts using the active list filters and snapshot", async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(json({ data: { count: 2 } }));
+  vi.stubGlobal("fetch", fetchMock);
+  const { countNewPosts } = await import("./client.js");
+  expect(await countNewPosts("course-1", "opaque", { type: "note" })).toBe(2);
+  expect(fetchMock.mock.calls[0]![0]).toContain("snapshot=opaque&type=note");
+});

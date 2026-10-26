@@ -357,13 +357,35 @@ Semantic search SHALL use only established full-text and fuzzy results until dur
 A new post requesting `anonymous: true` SHALL be rejected with `409 anonymous_posting_disabled` when the course disallows anonymity. A new post requesting `private: true` SHALL be rejected with `409 private_posting_disabled` when the course disallows private posting. The policy check SHALL serialize against instructor updates and SHALL occur only after a matching successful idempotent retry has been recognized. Existing posts SHALL retain their anonymity and privacy, remain readable/editable under their existing authorization rules, and may be made less private. An edit SHALL NOT newly enable anonymity when the current course policy disallows it.
 
 #### Scenario: Student creates an anonymous post after disablement
+
 - **WHEN** a member creates a valid post with `anonymous: true` after anonymity is disabled
 - **THEN** the API returns `409 anonymous_posting_disabled` without creating a post
 
 #### Scenario: Existing private post remains private
+
 - **WHEN** an instructor disables private posting after a private post exists
 - **THEN** the post remains private and authorized readers can still read and edit it
 
 #### Scenario: Idempotent replay after disablement
+
 - **WHEN** a successful post creation is retried with the same key and body after the policy is disabled
 - **THEN** the original successful response is replayed and no second post is created
+
+### Requirement: Feed snapshot and matching new-post count
+
+The course list SHALL provide an opaque-to-clients, unsigned server timestamp from its list query in a response header. The token SHALL NOT be treated as authentication, authorization, or cryptographic proof of issuance; a caller MAY choose a different timestamp, but the count SHALL still apply current session, membership, and post visibility. A member MAY query the count of newly created posts visible since that snapshot using the same course, viewer, and active filters. The count SHALL include all matching newly created posts, not only the first page, and SHALL exclude edits, activity on old posts, deleted and confirmed-duplicate posts, and private posts the viewer cannot read. The notice is best-effort: a rare post whose creation transaction began before the snapshot and committed afterward MAY not be counted; manual feed refresh SHALL still show it. Counting SHALL NOT mark posts read, mutate pagination, or disclose hidden posts. Malformed or cross-course/viewer tokens SHALL return `400 invalid_request`.
+
+#### Scenario: New matching post arrives
+
+- **WHEN** a member has a feed snapshot with an active `type=note` filter and a newly created matching note becomes visible
+- **THEN** the new-post count increases without changing the old feed response or cursor
+
+#### Scenario: Old post gains activity
+
+- **WHEN** an existing post receives a new answer after the snapshot
+- **THEN** it does not increase the new-post count
+
+#### Scenario: Private creation
+
+- **WHEN** a private post is created after a snapshot and the viewer cannot read it
+- **THEN** it never contributes to that viewer's count

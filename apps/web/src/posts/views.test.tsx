@@ -6184,3 +6184,112 @@ it("ignores a stale lock response after newer detail and feed versions load", as
   expect(screen.queryByText(/Discussion locked\. Existing content/)).toBeNull();
   expect(screen.getByRole("button", { name: "Lock discussion" })).toBeTruthy();
 });
+
+it("shows a passive matching new-post status without personal-state filters", async () => {
+  let feedLoads = 0;
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      calls.push(url);
+      if (url.endsWith("/posts/snapshot"))
+        return json({ data: { snapshot: "snap" } });
+      if (url.includes("/posts/new-count?"))
+        return json({ data: { count: 1 } });
+      if (url.includes("/courses/course-1/posts")) {
+        feedLoads++;
+        return new Response(
+          JSON.stringify({
+            data:
+              feedLoads === 1
+                ? [post("p1", "Old post")]
+                : [post("p2", "New post"), post("p1", "Old post")],
+            page: { nextCursor: null, hasMore: false },
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "X-Feed-Snapshot": "snap",
+            },
+          },
+        );
+      }
+      return page([]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Old post");
+  const show = within(screen.getByRole("group", { name: "Show" }));
+  expect(show.queryByText("Saved")).toBeNull();
+  expect(show.queryByText("Unread")).toBeNull();
+  expect(show.queryByText("Following")).toBeNull();
+  const notice = await screen.findByRole("status", { name: "1 new post" });
+  expect(notice.textContent).toBe("1 new post");
+  expect(screen.queryByRole("button", { name: /refresh feed/i })).toBeNull();
+  expect(screen.queryByText("New post")).toBeNull();
+  expect(feedLoads).toBe(1);
+  expect(calls.some((url) => url.includes("/posts/new-count?"))).toBe(true);
+});
+
+it("does not replace a newer new-post count with a stalled poll", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  let resolveFirst: ((response: Response) => void) | undefined;
+  let countRequests = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.includes("/posts/new-count?")) {
+        countRequests++;
+        if (countRequests === 1)
+          return new Promise<Response>((resolve) => {
+            resolveFirst = resolve;
+          });
+        return json({ data: { count: 2 } });
+      }
+      if (url.includes("/courses/course-1/posts"))
+        return new Response(
+          JSON.stringify({
+            data: [post("p1", "Old post")],
+            page: { nextCursor: null, hasMore: false },
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "X-Feed-Snapshot": "snap",
+            },
+          },
+        );
+      return page([]);
+    }),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Old post");
+  await waitFor(() => expect(countRequests).toBe(1));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(40_000);
+  });
+  expect(countRequests).toBe(1);
+  await act(async () => {
+    resolveFirst!(json({ data: { count: 1 } }));
+  });
+  expect(screen.getByRole("status", { name: "1 new post" })).toBeTruthy();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(20_000);
+  });
+  expect(countRequests).toBe(2);
+  expect(screen.getByRole("status", { name: /2 new posts/i })).toBeTruthy();
+});
