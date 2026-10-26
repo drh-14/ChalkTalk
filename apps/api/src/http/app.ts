@@ -82,6 +82,7 @@ function testEnvironment(): Environment {
   return {
     databaseUrl: undefined,
     port: 3000,
+    trustProxyHops: 0,
     frontendOrigins: new Set(["https://localhost:5173"]),
     frontendBaseUrl: "https://localhost:5173",
     authTokenSecret: "test-secret-that-is-longer-than-thirty-two-characters",
@@ -795,6 +796,7 @@ export function createApp(
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
+  if (environment.trustProxyHops === 1) app.set("trust proxy", 1);
   app.use((_request, response, next) => {
     response.locals.requestId = randomUUID();
     response.set("X-Request-Id", response.locals.requestId);
