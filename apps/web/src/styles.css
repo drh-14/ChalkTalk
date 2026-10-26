@@ -860,6 +860,19 @@ h2[tabindex="-1"]:focus {
 .post-list-scroll > p {
   padding-inline: 1.25rem;
 }
+.new-posts-status-slot {
+  align-items: center;
+  display: flex;
+  flex: none;
+  height: 2.5rem;
+  padding-inline: 1.25rem;
+}
+.new-posts-notice {
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0;
+}
 .discussion-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -1176,7 +1189,15 @@ h2[tabindex="-1"]:focus {
 .poll-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
+}
+.poll-staff-controls {
+  display: grid;
+  gap: var(--space-2);
+}
+.poll-staff-controls .form-hint {
+  margin: 0;
 }
 .poll-options-editor {
   border: 1px solid var(--line);
@@ -1196,7 +1217,7 @@ h2[tabindex="-1"]:focus {
   display: flex;
   gap: var(--space-2);
 }
-.poll-option-row input {
+.poll-option-row textarea {
   flex: 1;
 }
 .post-type-badge.other {
@@ -1366,6 +1387,12 @@ h2[tabindex="-1"]:focus {
   margin-top: var(--space-6);
   padding-top: var(--space-4);
 }
+.post-delete-action {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 .staff-actions > .form-message,
 .staff-actions > .post-merge-control > div {
   flex-basis: 100%;
@@ -1523,6 +1550,10 @@ h2[tabindex="-1"]:focus {
 .post-composer textarea {
   min-height: 10rem;
   resize: vertical;
+}
+.post-composer .post-title-input,
+.post-composer .poll-option-row textarea {
+  min-height: 2.6rem;
 }
 .post-body-field {
   display: grid;
@@ -2716,6 +2747,11 @@ a:focus-visible {
   display: grid;
   gap: 0.65rem;
 }
+.answer-card:focus,
+.followup-item:focus {
+  outline: 2px solid #276f4d;
+  outline-offset: 3px;
+}
 .answer-card-header,
 .response-actions {
   display: flex;
@@ -3660,6 +3696,15 @@ a:focus-visible {
 .private-notice .form-message {
   flex-basis: 100%;
   margin: 0;
+}
+.discussion-lock-notice {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+  margin: 0.75rem 0;
+  padding: 0.65rem 0.8rem;
 }
 
 /* Followup discussion status */

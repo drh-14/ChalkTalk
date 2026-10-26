@@ -33,6 +33,9 @@ type Props = {
   postId: string;
   role?: Role;
   courseStatus?: "active" | "archived" | "deleting";
+  allowAnonymousPosting?: boolean;
+  allowFollowupResolution?: boolean;
+  discussionLocked?: boolean;
   csrfToken: string;
   /**
    * Called after the viewer answers, edits an answer, posts, deletes, or
@@ -46,6 +49,8 @@ const message = (error: unknown) =>
     : "Something went wrong. Please try again.";
 const canWrite = (props: Props) =>
   !!props.role && props.courseStatus === "active";
+const canParticipate = (props: Props) =>
+  canWrite(props) && !props.discussionLocked;
 const staff = (role?: Role) => role === "ta" || role === "instructor";
 const labels = {
   student: "Students' answer",
@@ -53,6 +58,21 @@ const labels = {
 } as const;
 const followupOrder = (a: Followup, b: Followup) =>
   a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+
+/** Hash links identify a response without exposing its content in the URL. */
+function useResponseAnchor(id: string) {
+  useEffect(() => {
+    const reveal = () => {
+      if (window.location.hash !== `#${id}`) return;
+      const target = document.getElementById(id);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView?.({ block: "center" });
+    };
+    reveal();
+    window.addEventListener("hashchange", reveal);
+    return () => window.removeEventListener("hashchange", reveal);
+  }, [id]);
+}
 
 function applyAnswerProjection(
   current: Answer,
@@ -211,6 +231,12 @@ function TextComposer({
       setError("Write 1 to 100,000 characters before posting.");
       return;
     }
+    if (!createdId && anonymous && !anonymousAllowed) {
+      setError(
+        "Anonymous posting is disabled for this course. Switch to a named response before posting.",
+      );
+      return;
+    }
     const payload = JSON.stringify({ body, anonymous });
     if (attempt.current?.payload !== payload)
       attempt.current = { payload, key: crypto.randomUUID() };
@@ -273,6 +299,18 @@ function TextComposer({
           />
           Post anonymously
         </label>
+      )}
+      {!anonymousAllowed && anonymous && !createdId && (
+        <p className="form-message error">
+          Anonymous posting is now disabled. Your draft is unchanged.{" "}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setAnonymous(false)}
+          >
+            Switch to named response
+          </button>
+        </p>
       )}
       {error && (
         <p role="alert" className="form-message error">
@@ -516,6 +554,7 @@ function AnswerCard({
   onReplace: (next: Answer | ((current: Answer) => Answer)) => void;
   onRemove: (id: string) => void;
 }) {
+  useResponseAnchor(`answer-${answer.id}`);
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -588,6 +627,8 @@ function AnswerCard({
   }
   return (
     <section
+      id={`answer-${answer.id}`}
+      tabIndex={-1}
       className="answer-card"
       role="region"
       aria-label={`Answer by ${names}`}
@@ -648,7 +689,7 @@ function AnswerCard({
           kind="answer"
           count={answer.upvoteCount}
           voted={answer.viewerUpvoted}
-          disabled={!canWrite(props) || pending}
+          disabled={!canParticipate(props) || pending}
           onClick={() => void act("vote")}
         />
         {canWrite(props) && answer.canEdit && !editing && (
@@ -710,7 +751,7 @@ export function AnswerSections(props: Props) {
     return () => controller.abort();
   }, [props.postId, cycle]);
   const canCreate = (kind: Answer["kind"]) =>
-    canWrite(props) &&
+    canParticipate(props) &&
     (kind === "student" ? props.role === "student" : staff(props.role));
   return (
     <section className="answer-sections" aria-label="Answers">
@@ -786,7 +827,7 @@ export function AnswerSections(props: Props) {
                 key={kind}
                 label="Your answer"
                 submitLabel="Post answer"
-                anonymousAllowed
+                anonymousAllowed={props.allowAnonymousPosting !== false}
                 attachmentKind="answer"
                 csrfToken={props.csrfToken}
                 onComplete={() => {
@@ -884,6 +925,7 @@ function FollowupItem({
   onReplace,
   onDelete,
   onThreadReply,
+  linkedChildren,
 }: {
   item: Followup;
   props: Props;
@@ -891,13 +933,28 @@ function FollowupItem({
   onDelete: (id: string, hasReplies: boolean) => void;
   /** Tells the discussion's root that a reply landed somewhere beneath it. */
   onThreadReply?: () => void;
+  /** Authorized direct-descendant path to a URL-linked nested reply. */
+  linkedChildren?: Followup[];
 }) {
+  useResponseAnchor(`followup-${item.id}`);
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
   const [children, setChildren] = useState<FollowupPage>();
   const [repliesLoaded, setRepliesLoaded] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const linkedChild = linkedChildren?.[0];
+  useEffect(() => {
+    if (!linkedChild || linkedChild.parentId !== item.id) return;
+    setChildren((current) => {
+      if (current?.data.some((child) => child.id === linkedChild.id))
+        return current;
+      return {
+        data: [...(current?.data ?? []), linkedChild].sort(followupOrder),
+        meta: current?.meta ?? { total: item.replyCount, nextCursor: null },
+      };
+    });
+  }, [item.id, item.replyCount, linkedChild]);
   const reconcile = useAuthoritativeRefresh(
     item.id,
     getFollowup,
@@ -994,12 +1051,21 @@ function FollowupItem({
     }
   }
   return (
-    <article className="followup-item" aria-label={`Followup by ${name}`}>
+    <article
+      id={`followup-${item.id}`}
+      tabIndex={-1}
+      className="followup-item"
+      aria-label={`Followup by ${name}`}
+    >
       <div className="followup-head">
         <p className="response-byline">{name}</p>
         {item.parentId === null && !item.deleted && (
           <DiscussionStatus
-            item={item}
+            item={{
+              ...item,
+              canResolve:
+                item.canResolve && props.allowFollowupResolution !== false,
+            }}
             disabled={pending || !canWrite(props)}
             onChange={(resolved) => void resolve(resolved)}
           />
@@ -1056,10 +1122,10 @@ function FollowupItem({
             kind="followup"
             count={item.upvoteCount}
             voted={item.viewerUpvoted}
-            disabled={!canWrite(props) || pending}
+            disabled={!canParticipate(props) || pending}
             onClick={() => void act("vote")}
           />
-          {canWrite(props) && (
+          {canParticipate(props) && (
             <button
               className="text-button"
               type="button"
@@ -1094,11 +1160,11 @@ function FollowupItem({
           {error}
         </p>
       )}
-      {replying && (
+      {replying && canParticipate(props) && (
         <TextComposer
           label="Followup"
           submitLabel="Post reply"
-          anonymousAllowed
+          anonymousAllowed={props.allowAnonymousPosting !== false}
           attachmentKind="followup"
           csrfToken={props.csrfToken}
           onComplete={() => setReplying(false)}
@@ -1167,6 +1233,11 @@ function FollowupItem({
                 key={child.id}
                 item={child}
                 props={props}
+                linkedChildren={
+                  linkedChild?.id === child.id
+                    ? linkedChildren?.slice(1)
+                    : undefined
+                }
                 onThreadReply={threadReply}
                 onReplace={(next) =>
                   setChildren(
@@ -1260,9 +1331,52 @@ function FollowupItem({
 
 export function FollowupSections(props: Props) {
   const [page, setPage] = useState<FollowupPage>();
+  const [linkedPath, setLinkedPath] = useState<Followup[]>([]);
   const [error, setError] = useState("");
   const [cycle, setCycle] = useState(0);
   const [composing, setComposing] = useState(false);
+  const linkedTarget = linkedPath.at(-1);
+  const visibleLinkedPath =
+    linkedTarget?.postId === props.postId &&
+    window.location.hash === `#followup-${linkedTarget.id}`
+      ? linkedPath
+      : [];
+  useEffect(() => {
+    let active = true;
+    let request = 0;
+    const load = async () => {
+      const current = ++request;
+      setLinkedPath([]);
+      const match = /^#followup-([A-Za-z0-9_-]+)$/.exec(window.location.hash);
+      if (!match) return;
+      const path: Followup[] = [];
+      const seen = new Set<string>();
+      let next: string | null = match[1]!;
+      try {
+        while (next && !seen.has(next)) {
+          seen.add(next);
+          const item: Followup = await getFollowup(next);
+          if (
+            item.postId !== props.postId ||
+            (path.length === 0 && item.deleted)
+          )
+            return;
+          path.unshift(item);
+          next = item.parentId;
+        }
+        if (active && request === current && path[0]?.parentId === null)
+          setLinkedPath(path);
+      } catch {
+        if (active && request === current) setLinkedPath([]);
+      }
+    };
+    void load();
+    window.addEventListener("hashchange", load);
+    return () => {
+      active = false;
+      window.removeEventListener("hashchange", load);
+    };
+  }, [props.postId]);
   useEffect(() => {
     let active = true;
     setPage(undefined);
@@ -1297,54 +1411,92 @@ export function FollowupSections(props: Props) {
         </p>
       )}
       {!page && !error && <p role="status">Loading followups…</p>}
-      {page?.data
-        .filter((item) => !item.deleted || item.replyCount > 0)
-        .map((item) => (
-          <FollowupItem
-            key={item.id}
-            item={item}
-            props={props}
-            onReplace={(next) =>
-              setPage(
-                (current) =>
-                  current && {
-                    ...current,
-                    data: current.data.map((entry) =>
-                      typeof next === "function"
-                        ? entry.id === item.id
-                          ? next(entry)
-                          : entry
-                        : entry.id === next.id && next.version >= entry.version
-                          ? next
-                          : entry,
-                    ),
-                  },
-              )
-            }
-            onDelete={(id, hasReplies) =>
-              setPage(
-                (current) =>
-                  current && {
-                    ...current,
-                    data: current.data.map((entry) =>
-                      entry.id === id
-                        ? {
-                            ...entry,
-                            bodyMarkdown: null,
-                            deleted: true,
-                            version: entry.version + 1,
-                          }
-                        : entry,
-                    ),
-                    meta: {
-                      ...current.meta,
-                      total: current.meta.total - (hasReplies ? 0 : 1),
+      {page &&
+        [
+          ...page.data,
+          ...(visibleLinkedPath[0] &&
+          !page.data.some((item) => item.id === visibleLinkedPath[0]!.id)
+            ? [visibleLinkedPath[0]]
+            : []),
+        ]
+          .filter((item) => !item.deleted || item.replyCount > 0)
+          .map((item) => (
+            <FollowupItem
+              key={item.id}
+              item={item}
+              props={props}
+              linkedChildren={
+                visibleLinkedPath[0]?.id === item.id
+                  ? visibleLinkedPath.slice(1)
+                  : undefined
+              }
+              onReplace={(next) => {
+                setPage(
+                  (current) =>
+                    current && {
+                      ...current,
+                      data: current.data.map((entry) =>
+                        typeof next === "function"
+                          ? entry.id === item.id
+                            ? next(entry)
+                            : entry
+                          : entry.id === next.id &&
+                              next.version >= entry.version
+                            ? next
+                            : entry,
+                      ),
                     },
-                  },
-              )
-            }
-          />
-        ))}
+                );
+                setLinkedPath((current) =>
+                  current[0]?.id === item.id
+                    ? [
+                        typeof next === "function"
+                          ? next(current[0])
+                          : next.version >= current[0].version
+                            ? next
+                            : current[0],
+                        ...current.slice(1),
+                      ]
+                    : current,
+                );
+              }}
+              onDelete={(id, hasReplies) => {
+                setPage(
+                  (current) =>
+                    current && {
+                      ...current,
+                      data: current.data.map((entry) =>
+                        entry.id === id
+                          ? {
+                              ...entry,
+                              bodyMarkdown: null,
+                              deleted: true,
+                              version: entry.version + 1,
+                            }
+                          : entry,
+                      ),
+                      meta: {
+                        ...current.meta,
+                        total: current.meta.total - (hasReplies ? 0 : 1),
+                      },
+                    },
+                );
+                setLinkedPath((current) =>
+                  current[0]?.id === id
+                    ? [
+                        {
+                          ...current[0],
+                          bodyMarkdown: null,
+                          deleted: true,
+                          version: current[0].version + 1,
+                        },
+                        ...current.slice(1),
+                      ]
+                    : current,
+                );
+              }}
+            />
+          ))}
       {page?.meta.nextCursor && (
         <button
           className="text-button"
@@ -1378,7 +1530,7 @@ export function FollowupSections(props: Props) {
           Load more discussions
         </button>
       )}
-      {canWrite(props) && !composing && (
+      {canParticipate(props) && !composing && (
         <button
           className="followup-prompt"
           type="button"
@@ -1387,11 +1539,11 @@ export function FollowupSections(props: Props) {
           Compose a new followup discussion
         </button>
       )}
-      {composing && (
+      {composing && canParticipate(props) && (
         <TextComposer
           label="Followup"
           submitLabel="Post followup"
-          anonymousAllowed
+          anonymousAllowed={props.allowAnonymousPosting !== false}
           attachmentKind="followup"
           csrfToken={props.csrfToken}
           onComplete={() => setComposing(false)}

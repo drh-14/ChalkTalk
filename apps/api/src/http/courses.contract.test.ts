@@ -20,6 +20,9 @@ const user = {
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
   version: 1,
+  allowAnonymousPosting: true,
+  allowPrivatePosting: true,
+  allowFollowupResolution: true,
 };
 const course = {
   id: "01a0e5cc-58ae-7009-9f43-cd86eb2ae79c",
@@ -126,6 +129,39 @@ function app(courseOverrides: Partial<CourseService> = {}) {
 const cookie = "__Host-chalktalk_session=opaque";
 
 describe("course HTTP contract", () => {
+  it("validates policy switches as booleans and forwards conditional updates", async () => {
+    const received: unknown[] = [];
+    const testApp = app({
+      update: async (_courseId, _userId, etag, body) => {
+        received.push({ etag, body });
+        return { ...course, allowAnonymousPosting: false, version: 2 };
+      },
+    });
+    const path = `/api/v1/courses/${course.id}`;
+    const headers = {
+      Cookie: cookie,
+      Origin: environment.frontendBaseUrl,
+      "X-CSRF-Token": "csrf",
+      "If-Match": '"v1"',
+    };
+    const invalid = await request(testApp)
+      .patch(path)
+      .set(headers)
+      .send({ allowAnonymousPosting: "false" });
+    expect(invalid.status).toBe(422);
+    expect(invalid.body.error.code).toBe("validation_failed");
+    expect(received).toHaveLength(0);
+    const updated = await request(testApp)
+      .patch(path)
+      .set(headers)
+      .send({ allowAnonymousPosting: false });
+    expect(updated.status).toBe(200);
+    expect(updated.headers.etag).toBe('"v2"');
+    expect(updated.body.data.allowAnonymousPosting).toBe(false);
+    expect(received).toEqual([
+      { etag: '"v1"', body: { allowAnonymousPosting: false } },
+    ]);
+  });
   it("lists the direct organization and authenticated courses", async () => {
     const organization = await request(app())
       .get("/api/v1/organizations")

@@ -1208,15 +1208,16 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         bodyMarkdown: "Which comes first?",
       });
       const postId = post.value.id;
-      await new AnswerService(pool).create(postId, taId, {
-        bodyMarkdown: "Prophase.",
+      const answer = await new AnswerService(pool).create(postId, taId, {
+        bodyMarkdown:
+          "First line.\nSecond line.\nThird line.\nFourth line must not appear.",
       });
-      return { courseId, studentId, taId, postId };
+      return { courseId, studentId, taId, postId, answerId: answer.value.id };
     }
 
-    it("emails the follower who opted in, naming the actor and linking the post", async () => {
+    it("emails the follower a bounded answer preview and an exact-response link", async () => {
       await fresh();
-      const { courseId, postId } = await seedAnswered();
+      const { courseId, postId, answerId } = await seedAnswered();
       while (await worker.runOnce());
       expect(delivered).toEqual([
         {
@@ -1224,7 +1225,11 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           subject: `[Biology ${sequence}] New answer on "Mitosis phases"`,
           text: `Tara TA answered "Mitosis phases" in Biology ${sequence}.
 
-https://app.example.edu/courses/${courseId}/posts/${postId}
+First line.
+Second line.
+Third line.
+
+https://app.example.edu/courses/${courseId}/posts/${postId}#answer-${answerId}
 
 To stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
         },
@@ -1284,6 +1289,87 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
       expect(delivered).toEqual([]);
     });
 
+    it("does not email a follower who explicitly unfollowed before delivery", async () => {
+      await fresh();
+      const { postId, studentId } = await seedAnswered();
+      await pool.query(
+        "UPDATE post_follows SET following=false WHERE post_id=$1 AND user_id=$2",
+        [postId, studentId],
+      );
+      while (await worker.runOnce());
+      expect(delivered).toEqual([]);
+    });
+
+    it("still emails a direct mention after the recipient unfollows", async () => {
+      await fresh();
+      const { postId, studentId, taId } = await seedAnswered();
+      while (await worker.runOnce());
+      delivered.length = 0;
+      await pool.query(
+        "UPDATE post_follows SET following=false WHERE post_id=$1 AND user_id=$2",
+        [postId, studentId],
+      );
+      const reply = await new FollowupService(pool).create(postId, taId, {
+        bodyMarkdown: `[@Sam](mention:${studentId}) one line.`,
+      });
+      while (await worker.runOnce());
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]!.text).toContain(`#followup-${reply.id}`);
+    });
+
+    it("sends no excerpt when the response was deleted before delivery", async () => {
+      await fresh();
+      const { answerId } = await seedAnswered();
+      await pool.query(
+        "UPDATE answers SET body_markdown=NULL,deleted_at=clock_timestamp() WHERE id=$1",
+        [answerId],
+      );
+      while (await worker.runOnce());
+      expect(delivered).toEqual([]);
+    });
+
+    it("safely delivers a legacy notification job without a response reference", async () => {
+      await fresh();
+      const { courseId, postId } = await seedAnswered();
+      await pool.query(
+        `UPDATE jobs SET payload=jsonb_build_object('notificationId',payload->>'notificationId')
+         WHERE kind='send_notification_email' AND payload->>'responseKind'='answer'`,
+      );
+      while (await worker.runOnce());
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]!.text).toContain(
+        `https://app.example.edu/courses/${courseId}/posts/${postId}\n`,
+      );
+      expect(delivered[0]!.text).not.toContain("First line.");
+    });
+
+    it("links to a nested reply rather than its root discussion", async () => {
+      await fresh();
+      const { postId, courseId, studentId, taId } = await seedAnswered();
+      while (await worker.runOnce());
+      delivered.length = 0;
+      const root = await new FollowupService(pool).create(postId, taId, {
+        bodyMarkdown: "Root discussion",
+      });
+      while (await worker.runOnce());
+      delivered.length = 0;
+      const reply = await new FollowupService(pool).create(
+        postId,
+        taId,
+        { bodyMarkdown: "A nested reply." },
+        root.id,
+      );
+      while (await worker.runOnce());
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]!.to).toBe(`sam-n-${sequence}@jobs.example.edu`);
+      expect(delivered[0]!.text).toContain("A nested reply.");
+      expect(delivered[0]!.text).toContain(
+        `https://app.example.edu/courses/${courseId}/posts/${postId}#followup-${reply.id}`,
+      );
+      expect(delivered[0]!.text).not.toContain(`#followup-${root.id}`);
+      expect(studentId).toBeTruthy();
+    });
+
     it("hides an anonymous actor and words each kind", async () => {
       await fresh();
       const { postId, taId, studentId } = await seedAnswered();
@@ -1313,7 +1399,7 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
       const { courseId, postId, studentId, taId } = await seedAnswered();
       while (await worker.runOnce());
       delivered.length = 0;
-      await new FollowupService(pool).create(postId, taId, {
+      const followup = await new FollowupService(pool).create(postId, taId, {
         bodyMarkdown: `[@Sam](mention:${studentId}) does this help?`,
       });
       while (await worker.runOnce());
@@ -1323,7 +1409,9 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
           subject: `[Biology ${sequence}] You were mentioned on "Mitosis phases"`,
           text: `Tara TA mentioned you on "Mitosis phases" in Biology ${sequence}.
 
-https://app.example.edu/courses/${courseId}/posts/${postId}
+[@Sam](mention:${studentId}) does this help?
+
+https://app.example.edu/courses/${courseId}/posts/${postId}#followup-${followup.id}
 
 To stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
         },

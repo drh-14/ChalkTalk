@@ -5,11 +5,21 @@ import type { Attachment } from "../attachments/client.js";
 export type PollOption = {
   id: string;
   label: string;
-  voteCount: number;
+  voteCount?: number;
   /** Whether the viewer chose this option. */
   selected: boolean;
 };
-export type PollState = { options: PollOption[]; totalVotes: number };
+export type PollState = {
+  options: PollOption[];
+  totalVotes?: number;
+  selectionMode?: "single" | "multiple";
+  maxSelections?: number;
+  closesAt?: string | null;
+  closed?: boolean;
+  releaseMode?: "live" | "manual" | "automatic";
+  resultsReleased?: boolean;
+  explanation?: string | null;
+};
 export type Post = {
   id: string;
   courseId: string;
@@ -35,6 +45,7 @@ export type Post = {
   pinned?: boolean;
   /** Staff notes pinned and emailed to the course. */
   announcement?: boolean;
+  discussionLocked?: boolean;
   /** Readable only by the author and course staff. */
   private?: boolean;
   answered?: boolean;
@@ -47,6 +58,13 @@ export type Post = {
   /** Present on polls. */
   options?: PollOption[];
   totalVotes?: number;
+  selectionMode?: PollState["selectionMode"];
+  maxSelections?: number;
+  closesAt?: string | null;
+  closed?: boolean;
+  releaseMode?: PollState["releaseMode"];
+  resultsReleased?: boolean;
+  explanation?: string | null;
 };
 export type PostDetail = Post | { id: string; courseId: string; deleted: true };
 export type MergedPost = {
@@ -68,9 +86,32 @@ export type CreatePostInput = {
   tags: string[];
   folderId?: string | null;
   options?: { label: string }[];
+  selectionMode?: PollState["selectionMode"];
+  maxSelections?: number;
+  closesAt?: string | null;
+  releaseMode?: PollState["releaseMode"];
+  explanation?: string;
+  announcement?: boolean;
+  private?: boolean;
+  draftVersion?: number;
+};
+export type PostDraftContent = {
+  type: "question" | "note" | "poll";
+  title: string;
+  bodyMarkdown: string;
+  anonymous: boolean;
+  tags: string[];
+  options?: string[];
   announcement?: boolean;
   private?: boolean;
 };
+export type PostDraft = {
+  courseId: string;
+  content: PostDraftContent | null;
+  updatedAt: string | null;
+  version: number;
+};
+export type DraftRevision = { draft: PostDraft; etag: string };
 export type PostSort = "relevance" | "newest" | "oldest" | "recent_activity";
 export type PostListOptions = {
   q?: string;
@@ -109,10 +150,7 @@ async function receive<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-export async function listPosts(
-  courseId: string,
-  options: PostListOptions = {},
-): Promise<Page<Post>> {
+function postListParams(options: PostListOptions): URLSearchParams {
   const query = new URLSearchParams();
   if (options.q) query.set("q", options.q);
   if (options.semanticQuery) query.set("semanticQuery", options.semanticQuery);
@@ -132,17 +170,27 @@ export async function listPosts(
   for (const tag of tags) query.append("tag", tag);
   if (tags.length > 1) query.set("tagMatch", options.tagMatch ?? "all");
   if (options.limit) query.set("limit", String(options.limit));
+  return query;
+}
+
+export async function listPosts(
+  courseId: string,
+  options: PostListOptions = {},
+): Promise<Page<Post> & { snapshot?: string }> {
+  const query = postListParams(options);
   const suffix = query.size ? `?${query}` : "";
-  return receive<Page<Post>>(
-    await fetch(
-      `/api/v1/courses/${encodeURIComponent(courseId)}/posts${suffix}`,
-      {
-        credentials: "include",
-        headers: { Accept: "application/json" },
-        signal: options.signal,
-      },
-    ),
+  const response = await fetch(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/posts${suffix}`,
+    {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      signal: options.signal,
+    },
   );
+  return {
+    ...(await receive<Page<Post>>(response)),
+    snapshot: response.headers.get("X-Feed-Snapshot") ?? undefined,
+  };
 }
 
 export type PostFolder = { id: string; name: string };
@@ -275,6 +323,23 @@ export async function updatePost(
   return result.data;
 }
 
+/** Deletes an authorized post using the version last shown to the viewer. */
+export async function deletePost(
+  post: Pick<Post, "id" | "version">,
+  csrfToken: string,
+): Promise<void> {
+  const response = await fetch(`/api/v1/posts/${encodeURIComponent(post.id)}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+      "If-Match": `"v${post.version}"`,
+    },
+  });
+  if (!response.ok) await receive<never>(response);
+}
+
 export async function unmergePost(
   post: MergedPost,
   csrfToken: string,
@@ -320,6 +385,30 @@ export async function confirmMergePost(
   );
 }
 
+export async function setPostDiscussionLocked(
+  post: Post,
+  locked: boolean,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(
+      `/api/v1/posts/${encodeURIComponent(post.id)}/discussion-lock`,
+      {
+        method: "PUT",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+          "If-Match": `"v${post.version}"`,
+        },
+        body: JSON.stringify({ locked }),
+      },
+    ),
+  );
+  return payload.data;
+}
+
 export async function setPostPinned(
   post: Post,
   pinned: boolean,
@@ -362,6 +451,27 @@ export async function makePostPublic(
   return payload.data;
 }
 
+export async function countNewPosts(
+  courseId: string,
+  snapshot: string,
+  options: PostListOptions = {},
+): Promise<number> {
+  const query = new URLSearchParams();
+  query.set("snapshot", snapshot);
+  for (const [key, value] of postListParams(options)) query.append(key, value);
+  const payload = await receive<{ data: { count: number } }>(
+    await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/posts/new-count?${query}`,
+      {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+        signal: options.signal,
+      },
+    ),
+  );
+  return payload.data.count;
+}
+
 /** Follows or unfollows a post for the viewer. */
 export async function setFollowing(
   postId: string,
@@ -394,10 +504,10 @@ export async function markCourseRead(
   if (!response.ok) await receive<never>(response);
 }
 
-/** Casts or changes the viewer's single vote on a poll. */
+/** Replaces the viewer's ballot on a poll. */
 export async function votePoll(
   postId: string,
-  optionId: string,
+  optionIds: string | string[],
   csrfToken: string,
 ): Promise<PollState & { postId: string }> {
   const payload = await receive<{ data: PollState & { postId: string } }>(
@@ -409,10 +519,58 @@ export async function votePoll(
         "Content-Type": "application/json",
         "X-CSRF-Token": csrfToken,
       },
-      body: JSON.stringify({ optionId }),
+      body: JSON.stringify(
+        typeof optionIds === "string" ? { optionId: optionIds } : { optionIds },
+      ),
     }),
   );
   return payload.data;
+}
+
+export async function changePollLifecycle(
+  postId: string,
+  action: "close" | "reopen" | "release",
+  version: number,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/${action}`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": `"v${version}"`,
+      },
+    }),
+  );
+  return payload.data;
+}
+
+export async function clonePoll(
+  postId: string,
+  csrfToken: string,
+): Promise<Post> {
+  const payload = await receive<{ data: Post }>(
+    await fetch(`/api/v1/posts/${encodeURIComponent(postId)}/clone`, {
+      method: "POST",
+      credentials: "include",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    }),
+  );
+  return payload.data;
+}
+
+export async function exportPollResults(postId: string): Promise<Blob> {
+  const response = await fetch(
+    `/api/v1/posts/${encodeURIComponent(postId)}/poll-results.csv`,
+    {
+      credentials: "include",
+      headers: { Accept: "text/csv" },
+    },
+  );
+  if (!response.ok) await receive<never>(response);
+  return response.blob();
 }
 
 export async function retractVote(
@@ -450,4 +608,62 @@ export async function createPost(
     }),
   );
   return payload.data;
+}
+
+const draftPath = (courseId: string) =>
+  `/api/v1/courses/${encodeURIComponent(courseId)}/post-draft`;
+
+async function draftRevision(response: Response): Promise<DraftRevision> {
+  const payload = await receive<{ data: PostDraft }>(response);
+  const etag = response.headers.get("ETag");
+  if (!etag) throw new Error("Draft response has no version.");
+  return { draft: payload.data, etag };
+}
+
+export async function getPostDraft(courseId: string): Promise<DraftRevision> {
+  return draftRevision(
+    await fetch(draftPath(courseId), {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    }),
+  );
+}
+
+export async function updatePostDraft(
+  courseId: string,
+  etag: string,
+  content: PostDraftContent,
+  csrfToken: string,
+): Promise<DraftRevision> {
+  return draftRevision(
+    await fetch(draftPath(courseId), {
+      method: "PUT",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": etag,
+      },
+      body: JSON.stringify({ content }),
+    }),
+  );
+}
+
+export async function deletePostDraft(
+  courseId: string,
+  etag: string,
+  csrfToken: string,
+): Promise<DraftRevision> {
+  return draftRevision(
+    await fetch(draftPath(courseId), {
+      method: "DELETE",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "X-CSRF-Token": csrfToken,
+        "If-Match": etag,
+      },
+    }),
+  );
 }

@@ -11,7 +11,7 @@ The user decided:
 
 ## What Changes
 
-- **Posting privately.** The composer offers **Post to: Entire class** or **Instructors and TAs** for questions and notes. Any member can post privately. Announcements and polls cannot be private, because both are addressed to the whole class.
+- **Posting privately.** The current composer choices are specified in [course discussion frontend](../../specs/course-discussion-frontend/spec.md). Any member can post privately. Announcements and polls cannot be private, because both are addressed to the whole class.
 - **Who sees it.** Only the author and the course's current TAs and instructors can read a private post, its answers, followups, replies, attachments, and live sessions. Everyone else gets `404 not_found`, exactly as for a post that does not exist. It never appears in their feed, search, related questions, digest, or notifications.
 - **Making it public.** The author or any staff member can make a private post public. A public post cannot be made private again, since classmates may already have read it. When staff make it public, the author is notified, and is emailed if they opted in to activity emails.
 - **In the feed.** Private posts carry a **Private** badge, the post detail says "Only you and course staff can see this", and a **Private** filter lists them. Students see only their own private posts there; staff see all of them.

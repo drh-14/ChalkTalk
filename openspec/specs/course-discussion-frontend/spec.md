@@ -79,12 +79,22 @@ The feed SHALL append subsequent cursor pages without duplicate cards and SHALL 
 
 ### Requirement: A member can create a question or note
 
-The accessible create control SHALL open a composer for type, title, Markdown body, anonymity, and optional tags. The browser SHALL require a trimmed nonempty title of at most 200 characters and a trimmed nonempty body of at most 100,000 characters, matching the existing API limits. It SHALL submit JSON with credentials, CSRF token, and an idempotency key, disable repeat submission while pending, preserve the draft on failure, and navigate to the server-returned post on success. It SHALL reuse a key only for a retry of the same payload. Creation SHALL not be enabled for an archived or deleting course.
+The accessible create control SHALL open a composer for type, title, Markdown body, anonymity, optional tags, and an explicit Visibility choice for questions and ordinary notes. Visibility SHALL default to **Public — everyone in course** and SHALL offer **Private — only you and current instructors/TAs** when the course permits private posting. Selecting Private SHALL send the existing `private: true` create field; Public SHALL not set it. Polls and announcements SHALL be public-only. The browser SHALL require a trimmed nonempty title of at most 200 characters and a trimmed nonempty body of at most 100,000 characters, matching the existing API limits. It SHALL submit JSON with credentials, CSRF token, and an idempotency key, disable repeat submission while pending, preserve the draft on failure, and navigate to the server-returned post on success. It SHALL reuse a key only for a retry of the same payload. Creation SHALL not be enabled for an archived or deleting course.
 
 #### Scenario: A member creates a question
 
-- **WHEN** a member submits a valid question from the course page
-- **THEN** the browser sends the documented create request and opens the created post using the ID returned by the server
+- **WHEN** a member submits a valid question from the course page with Public visibility
+- **THEN** the browser sends the documented create request without `private: true` and opens the created post using the ID returned by the server
+
+#### Scenario: A member asks staff privately
+
+- **WHEN** a member selects Private visibility and submits a question or ordinary note
+- **THEN** the browser sends the documented create request with `private: true` and identifies the intended readers as the author and current course instructors/TAs
+
+#### Scenario: A poll or announcement cannot be private
+
+- **WHEN** a staff member composes a poll or an announcement
+- **THEN** the composer permits only public posting
 
 #### Scenario: Creation fails
 
@@ -157,7 +167,7 @@ Search SHALL update after approximately 300 ms without input changes, with no Se
 
 ### Requirement: Course discussion and settings share a stable frame
 
-The protected Discussion, Course resources, and Course settings routes for the same course SHALL render one persistent course header in the app bar. From the start of the bar, it shows the ChalkTalk logo and an "All courses" link followed by the course name, as a breadcrumb; the course name SHALL be the page's top-level heading, and a course that is not active SHALL also show its status. A "Switch course" control SHALL follow the course name. It SHALL load the member's courses only when first opened, mark the current course, link to each course and to All courses, and close on Escape or an outside click. Discussion, Course resources, and Course settings tabs SHALL be centered in the bar, in that order, with the account controls at the end. Switching between the three routes SHALL use same-document navigation, not reload the application or re-run session restoration. The active tab SHALL be identifiable visually and to assistive technology. When the route changes, focus SHALL move to the course heading for screen-reader announcement without a visible focus ring. Following a tab, All courses, the logo, a course in the switcher, or Sign out SHALL ask before discarding an unsent post draft. When the bar is too narrow for one row, the tabs SHALL move to their own centered row; at phone widths, the logo and account controls, the breadcrumb, and the tabs SHALL each take a row without horizontal scrolling, and the switcher list SHALL fit within the screen. Settings content MAY remain narrower than the discussion content.
+The protected Discussion, Course resources, and Course settings routes for the same course SHALL render one persistent course header in the app bar. From the start of the bar, it shows the ChalkTalk logo and an "All courses" link followed by the course name, as a breadcrumb; the course name SHALL be the page's top-level heading, and a course that is not active SHALL also show its status. A "Switch course" control SHALL follow the course name. It SHALL load the member's courses only when first opened, mark the current course, link to each course and to All courses, and close on Escape or an outside click. Discussion, Course resources, and Course settings tabs SHALL be centered in the bar, in that order, with the account controls at the end. Switching between the three routes SHALL use same-document navigation, not reload the application or re-run session restoration. The active tab SHALL be identifiable visually and to assistive technology. When the route changes, focus SHALL move to the course heading for screen-reader announcement without a visible focus ring. Leaving an open new-post composer SHALL follow the [post-drafts save-before-leave and attachment rules](../post-drafts/spec.md). When the bar is too narrow for one row, the tabs SHALL move to their own centered row; at phone widths, the logo and account controls, the breadcrumb, and the tabs SHALL each take a row without horizontal scrolling, and the switcher list SHALL fit within the screen. Settings content MAY remain narrower than the discussion content.
 
 #### Scenario: A member opens Course settings from Discussion
 
@@ -176,8 +186,8 @@ The protected Discussion, Course resources, and Course settings routes for the s
 
 #### Scenario: A member leaves with an unsent draft
 
-- **WHEN** a member with an unsent post draft follows a tab, All courses, the logo, or Sign out and declines the discard prompt
-- **THEN** the draft, route, and session remain unchanged
+- **WHEN** a member with an unsaved new-post revision follows a tab, All courses, the logo, or Sign out
+- **THEN** the attempted navigation is held until the revision is saved, as specified for post drafts
 
 #### Scenario: A member switches course
 
@@ -186,8 +196,8 @@ The protected Discussion, Course resources, and Course settings routes for the s
 
 #### Scenario: A member with a draft declines to switch course
 
-- **WHEN** a member with an unsent post draft selects another course in the switcher and declines the discard prompt
-- **THEN** the course, route, and draft remain unchanged
+- **WHEN** a member with queued attachments selects another course in the switcher and declines their discard confirmation
+- **THEN** the course, route, and attachment queue remain unchanged
 
 ### Requirement: Settings load and fail inside the shared course frame
 
@@ -697,3 +707,41 @@ An authorized question or note view SHALL place its existing Edit action below t
 
 - **WHEN** an authorized member reads the post
 - **THEN** its Edit action follows the body and attachment display instead of preceding the title
+
+### Requirement: Course policy is visible and controls future composers
+
+Course settings SHALL show all three effective discussion switches to members; current instructors SHALL be able to change each one with the existing conditional update and conflict-refresh behavior. New post, answer, followup, and reply composers SHALL omit or disable anonymity controls when disallowed; the new-post composer SHALL not offer a private audience when private posting is disallowed. Existing content and edit controls SHALL remain visible according to their existing authorization. Resolution controls SHALL not offer marker mutation while disabled, while still displaying current marker state. Server rejection SHALL still be presented if policy changes while a composer is open.
+
+#### Scenario: Student views restricted course
+
+- **WHEN** a student opens a course where all three switches are disabled
+- **THEN** settings show the effective policy without editable controls, new composers omit disallowed options, and a resolved discussion remains visibly resolved without a resolve action
+
+#### Scenario: Instructor changes policy
+
+- **WHEN** an instructor changes a switch in course settings
+- **THEN** the setting saves conditionally and the page shows the server-confirmed value, or refreshes on an ETag conflict
+
+### Requirement: New-post count is passive and does not interrupt the feed
+
+While a member views the course feed, the browser SHALL periodically check for newly created posts matching the active filters against a server-issued snapshot. When the count is positive it SHALL show a passive accessible status whose text is exactly `1 new post` or `<count> new posts`. The status SHALL occupy a stable position above, not within, the scrolling card list and SHALL NOT be a button, link, or other refresh control. The existing cards, order, page cursor, selected detail, and unsent composer SHALL remain unchanged as the count changes. A normal browser refresh MAY load the new posts. Changing filters or course SHALL discard the old count and baseline. Failed checks SHALL not replace the visible feed or falsely report zero new posts.
+
+#### Scenario: Matching new posts
+
+- **WHEN** two new posts match the active filters while a member reads the feed
+- **THEN** an accessible status reads exactly `2 new posts`, offers no click action, and the existing list and selected detail do not move
+
+#### Scenario: Nonmatching new post
+
+- **WHEN** a newly created post does not match the active filters
+- **THEN** no new-post status appears
+
+#### Scenario: Member refreshes the browser
+
+- **WHEN** the member refreshes the browser normally after seeing a positive count
+- **THEN** the feed retrieves a fresh first page under the current filters; the status itself does not perform this action
+
+#### Scenario: Composer remains undisturbed
+
+- **WHEN** the new-post count changes while a member has unsent composer text
+- **THEN** the text remains intact and no navigation or feed reload occurs

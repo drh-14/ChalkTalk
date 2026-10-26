@@ -34,9 +34,13 @@ export function Fixture() {
           createdAt: "2026-10-01T00:00:00Z",
           updatedAt: "2026-10-01T00:00:00Z",
           version: 1,
+          allowAnonymousPosting: true,
+          allowPrivatePosting: true,
+          allowFollowupResolution: true,
         }}
         csrfToken="fixture-csrf"
         userId="u1"
+        query={new URLSearchParams(location.search).get("q") ?? undefined}
         postId={postId}
         filters={sharedFilters ? filters : undefined}
         onFiltersChange={

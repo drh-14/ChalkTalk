@@ -145,6 +145,64 @@ integration("followup triage HTTP contract", () => {
     await admin?.end();
   });
 
+  it("freezes existing resolution and rejects new anonymous followups while disabled", async () => {
+    const postId = await question();
+    const root = await followup(ids.classmate, postId);
+    expect((await resolve(ids.asker, root.id)).status).toBe(200);
+    const priorAnonymous = await unsafe(
+      request(app(ids.asker)).post(`/api/v1/posts/${postId}/followups`),
+    )
+      .set("Idempotency-Key", "followup-before-policy")
+      .send({ bodyMarkdown: "Prior anonymous", anonymous: true });
+    expect(priorAnonymous.status).toBe(201);
+    await pool.query(
+      "UPDATE courses SET allow_anonymous_posting=false,allow_followup_resolution=false WHERE id=$1",
+      [ids.course],
+    );
+    try {
+      const viewed = await get(ids.asker, `/api/v1/followups/${root.id}`);
+      expect(viewed.body.data).toMatchObject({
+        resolved: true,
+        canResolve: false,
+      });
+      const blocked = await unsafe(
+        request(app(ids.asker)).post(`/api/v1/posts/${postId}/followups`),
+      ).send({ bodyMarkdown: "Anonymous followup", anonymous: true });
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.error.code).toBe("anonymous_posting_disabled");
+      const blockedReply = await unsafe(
+        request(app(ids.asker)).post(`/api/v1/followups/${root.id}/replies`),
+      ).send({ bodyMarkdown: "Anonymous reply", anonymous: true });
+      expect(blockedReply.status).toBe(409);
+      expect(blockedReply.body.error.code).toBe("anonymous_posting_disabled");
+      const replay = await unsafe(
+        request(app(ids.asker)).post(`/api/v1/posts/${postId}/followups`),
+      )
+        .set("Idempotency-Key", "followup-before-policy")
+        .send({ bodyMarkdown: "Prior anonymous", anonymous: true });
+      expect(replay.status).toBe(201);
+      expect(replay.body.data.id).toBe(priorAnonymous.body.data.id);
+      expect(replay.body.data.canResolve).toBe(false);
+      const reopen = await resolve(ids.asker, root.id, false);
+      expect(reopen.status).toBe(409);
+      expect(reopen.body.error.code).toBe("followup_resolution_disabled");
+      const reply = await followup(ids.asker, postId, root.id);
+      expect(reply.resolved).toBe(false);
+      const unchanged = await get(ids.asker, `/api/v1/followups/${root.id}`);
+      expect(unchanged.body.data.resolved).toBe(true);
+    } finally {
+      await pool.query(
+        "UPDATE courses SET allow_anonymous_posting=true,allow_followup_resolution=true WHERE id=$1",
+        [ids.course],
+      );
+    }
+    const afterReenable = await get(ids.asker, `/api/v1/followups/${root.id}`);
+    expect(afterReenable.body.data.canResolve).toBe(true);
+    await followup(ids.asker, postId, root.id);
+    const reopened = await get(ids.asker, `/api/v1/followups/${root.id}`);
+    expect(reopened.body.data.resolved).toBe(false);
+  });
+
   it("allows resolution only on root followups, with both columns together", async () => {
     const postId = await question();
     const root = await followup(ids.classmate, postId);

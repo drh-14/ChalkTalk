@@ -149,3 +149,6 @@ vite.config.ts.timestamp-*
 .agents
 .cert/
 /test-results/.last-run.json
+
+# Saved Piazza exports contain real class data
+piazza-*.json

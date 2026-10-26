@@ -100,7 +100,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `attempts`, `max_attempts`: `integer`.
 - `available_at`, `locked_until`, `finished_at`, `created_at`, `updated_at`: `timestamptz`; lock and completion times are nullable.
 - `locked_by`, `last_error`: `text`, nullable.
-- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `send_notification_email` jobs, queued for recipients who opted in to activity emails and never for announcements, use the notification ID as deduplication key and a payload containing it. `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
+- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `send_notification_email` jobs, queued for recipients who opted in to activity emails and never for announcements, use the notification ID as deduplication key and a payload containing it. New answer/followup/reply jobs also carry optional `responseKind` (`answer` or `followup`) and `responseId` fields so the worker can recheck and link the current response; older payloads without those fields remain valid. `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
 
 ## Courses and membership
 
@@ -111,6 +111,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `created_by_user_id`: `uuid_v7`; foreign key to `users.id`.
 - `name`: `varchar(200)`.
 - `status`: `text`; `active`, `archived`, or `deleting`.
+- `allow_anonymous_posting`, `allow_private_posting`, `allow_followup_resolution`: non-null booleans, default `true`; instructor-managed policy for future discussion actions. Existing content is not rewritten when a switch changes.
 - `join_code`: `char(8)`.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
@@ -130,6 +131,13 @@ Account deletion locks each affected `courses` row before testing instructor car
 
 ## Posts, answers, and polls
 
+### `post_drafts`
+
+- `(course_id,user_id)`: composite primary key and foreign key to `course_memberships(course_id,user_id)` with `ON DELETE CASCADE`; there is at most one draft per current member per course.
+- `content`: nullable JSONB object of validated partial new-post text and metadata, never attachments. NULL is a content-free revision marker after discard or publication, not a visible draft.
+- `created_at`, `updated_at`: `timestamptz`; saved content has no expiry.
+- `version`: nonnegative `bigint`, starting at 0 and incremented on every save, discard, and successful publication; `If-Match` prevents a stale device from recreating cleared content.
+
 ### `posts`
 
 - `id`: `uuid_v7`; primary key.
@@ -141,6 +149,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `title`: `varchar(200)`, nullable.
 - `body_markdown`: `text`, nullable.
 - `anonymous`, `pinned`: `boolean`.
+- `discussion_locked`: `boolean NOT NULL DEFAULT false`; staff-controlled participation gate. Lock changes advance `version` and `updated_at`, not `last_activity_at`. New answers, followups, replies and all vote changes acquire the parent post row lock and fail while set.
 - `announcement`: `boolean`, default false; only a non-anonymous note can be an announcement (`posts_announcement_check`). Announcements are created pinned by staff and emailed to current members who enable announcement emails; see [Create post](api/posts.md#createPost).
 - `private`: `boolean`, default false; readable only by the author and course staff. Announcements and polls are never private (`posts_private_check`), and a private post can become public but never the reverse. A partial index on `(course_id, last_activity_at DESC)` for active private posts serves the private filter.
 - `duplicate_of_post_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `posts(course_id, id)`.
@@ -149,6 +158,7 @@ Account deletion locks each affected `courses` row before testing instructor car
 - `last_activity_at`, `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `version`: `bigint`.
 - `search_vector`: generated `tsvector`, nullable.
+- The `(course_id, created_at DESC, id DESC)` index supports new-post counting by creation time; see [New-post notice endpoint](api/posts.md#new-post-notice-endpoint).
 - Active post titles and bodies have separate GIN trigram indexes (`posts_title_trgm_idx`, `posts_body_trgm_idx`) for ordinary fuzzy search. Migration `007_post_fuzzy_search.sql` installs `pg_trgm` in `public` and qualifies its functions, operators, and operator classes because API tests use isolated schemas in their search paths. The extension must be available and installable in each deployment database; the migration fails if it is not.
 
 ### Optional semantic post embeddings
@@ -233,9 +243,17 @@ The application must verify that a post and tag belong to the same course before
 - `course_id`: `uuid_v7`.
 - `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`; part of the primary key.
 - `user_id`: `uuid_v7`; foreign key to `users.id`; part of the primary key.
-- `option_id`: `uuid_v7`; with `course_id` and `post_id`, foreign key to `poll_options(course_id, post_id, id)`.
+- `option_id`: `uuid_v7`; with `course_id` and `post_id`, foreign key to `poll_options(course_id, post_id, id)`; part of the primary key.
 - `created_at`, `updated_at`: `timestamptz`; `updated_at` changes when a member changes their vote.
-- One vote per member per poll; votes are deleted with their poll. Counts are public within the course, while individual votes are never exposed.
+- One row per selected option, with a `(post_id, user_id, option_id)` primary key. A member's rows form one editable ballot. Votes are deleted with their poll. Counts and ballot totals are visible to staff and to students after release; identities and choice mappings are never exposed.
+
+### `poll_settings`
+
+- `post_id`: primary key and foreign key to `posts.id`; one settings row per poll, deleted with the post. Existing polls were backfilled with single-select, live results. A missing row is an API invariant failure, not a live/open fallback.
+- `selection_mode`: `single` or `multiple`; `max_selections` is one for single-select and 2–10 for multi-select (the service also bounds it by the number of options).
+- `closes_at`: optional deadline; `closed_at`: optional manual close time. An elapsed deadline closes the poll even without a worker.
+- `release_mode`: `live` for existing and basic single-select polls, `manual`, or `automatic` on close. New multi-select polls require `manual` or `automatic` at the API boundary. `results_released_at` records an irreversible release; automatic release at the deadline is also inferred before the next write materializes it.
+- `explanation`: optional staff-authored text (up to 10,000 characters), exposed to students only with released results.
 
 ### `answers`
 
