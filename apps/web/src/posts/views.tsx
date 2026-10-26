@@ -757,16 +757,18 @@ function Composer({
             </label>
             {type !== "poll" && (
               <label>
-                Post to
+                Visibility
                 <select
                   value={audience}
                   onChange={(event) =>
                     setAudience(event.target.value as "course" | "staff")
                   }
                 >
-                  <option value="course">Entire class</option>
+                  <option value="course">Public — everyone in course</option>
                   {allowPrivatePosting && (
-                    <option value="staff">Instructors and TAs</option>
+                    <option value="staff">
+                      Private — only you and current instructors/TAs
+                    </option>
                   )}
                 </select>
               </label>

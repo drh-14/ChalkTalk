@@ -76,6 +76,8 @@ None.
 
 Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePollPostRequest.
 
+For the `private` field on question and note requests, see the [OpenAPI request schemas](../openapi.yaml).
+
 ###### `CreateQuestionPostRequest` fields
 
 `type` (literal question, required): See the named shape.
@@ -101,8 +103,6 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `tags` (list of string, optional): Post tags.
 
 `announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to members who enable announcement emails; cannot be combined with `anonymous`.
-
-`private` (boolean, optional; default false): Questions and notes only. Makes the post readable only by its author and course staff.
 
 ###### `CreatePollPostRequest` fields
 
