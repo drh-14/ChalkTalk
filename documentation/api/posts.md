@@ -2,19 +2,31 @@
 
 **Implementation status:** JSON question, note, and poll creation, listing/search, retrieval, update, deletion, poll voting, announcements, and daily deduplicated post views are implemented. Active questions and notes can have files uploaded separately after saving; see the [OpenAPI attachment contract](../openapi.yaml) for current parent-scoped upload, download, and removal routes. Questions return `answered: true` when an active student or staff answer exists, and the `answered` list filter uses the same rule. The multipart post create/update shapes and attachment-processing/download-refresh fields below remain future targets and are not live; multipart create/update returns `422 validation_failed`. Deleted posts never appear in course lists; direct member GET by ID returns a tombstone. PATCH or DELETE of a tombstone returns `404 not_found`.
 
-**Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 options of 1–200 characters, trimmed and distinct ignoring case, fixed after creation. Every member sees each option's `voteCount` and whether they `selected` it; who voted for what is never exposed. Each member has one vote, which `PUT /posts/{postId}/vote` sets or changes and `DELETE` retracts. Votes do not change the post's `version` or activity time. Polls take no answers or followups.
+### Private new-post drafts
+
+Each current course member has one private, server-backed new-post draft per course. Opening New post automatically restores saved text and metadata; saved content overrides a search title prefill with a visible notice. A draft is never a post, feed item, activity, notification, or digest entry. It has no expiry and is invisible to other members, including staff. Unsent attachments are device-local and are not restored. Leaving the course or deleting its membership removes the draft.
+
+`GET /courses/{courseId}/post-draft` returns the owner’s content (or null) and an ETag. An unused resource has version 0. `PUT` saves partial text and metadata, and `DELETE` discards it; both require the current `If-Match` and return a new ETag. A `412 version_conflict` keeps local text and offers Reload saved draft or an explicitly confirmed conditional overwrite. An archived course permits read/discard but not save/publish (`409 course_archived`). The [OpenAPI contract](../openapi.yaml) documents validation and headers.
+
+The JSON post-create request optionally accepts `draftVersion`. The complete submitted post body remains authoritative and passes ordinary post validation. A successful creation clears the owner’s course draft content and advances a content-free version marker atomically with the post, whether or not the client supplied a draft version. This prevents a stale tab from recreating the published draft. Failed creation leaves draft state unchanged, and an idempotent retry returns the original post without advancing the marker again. The composer debounces saves, blocks close or navigation while the latest revision remains unsaved, and offers Retry or explicit Discard local changes after failure.
+
+**Polls:** only TAs and instructors create polls (`403 permission_denied` for students). A poll has 2–10 fixed options of 1–200 characters, trimmed and distinct ignoring case. Omitted advanced fields preserve the basic poll: single-select, no deadline, live aggregates. Staff may instead configure `selectionMode: "single" | "multiple"`, `maxSelections` (one for single, 2 through the option count for multiple), future ISO `closesAt` with `Z` or a numeric offset, `releaseMode: "manual" | "automatic"`, and optional `explanation` (up to 10,000 characters). Multi-select creation requires an explicit manual or automatic release mode; omission is valid only for basic single-select live results. Members may replace a whole ballot with `{ "optionIds": ["..."] }`; legacy `{ "optionId": "..." }` remains valid for single-select. `DELETE` retracts before close. A deadline or staff close rejects all ballot changes with `409 poll_closed`; archive has the same effect. Staff may `POST /posts/{postId}/close`, `/reopen`, or `/release` with `If-Match`; each returns the updated post and advances its ETag. Release is irreversible, and reopening an expired poll clears its deadline. Poll projections include `selectionMode`, `maxSelections`, `closesAt`, `closed`, `releaseMode`, `resultsReleased`, and each option's `selected` flag. Option `voteCount`, aggregate `totalVotes` (distinct member ballots, not selections), and `explanation` are **absent**, not zero, for students before release; staff always see aggregates. Ballot identities are never exposed. Staff may GET `/posts/{postId}/poll-results.csv` (aggregate-only CSV) or POST `/posts/{postId}/clone` (new, open poll without ballots/deadline/release). A legacy live-results source clones to manual release so the new results start hidden; other stable settings and options copy. Votes do not change post `version` or activity time. Polls take no answers or followups. All member-specific poll responses use `Cache-Control: private, no-store`.
+
+**Discussion locks:** Every active post list and detail projection includes `discussionLocked: boolean` (default `false`; always `false` for notes and announcements). Staff can conditionally lock or unlock a question or poll with `PUT /posts/{postId}/discussion-lock`; notes and announcements return `422 validation_failed`. A lock prevents new answers, followups, replies, poll votes and retractions, and answer/followup upvote changes; each returns `409 discussion_locked`. Existing content remains readable and editable/deletable according to ordinary permissions, and staff can change existing followup resolution markers. Toggling the lock advances the post version without changing `lastActivityAt`, so it does not reorder the recent-activity feed.
 
 **Following and unread:** Every active post projection includes `following` and `unread` for the viewer. Members follow a post automatically when they create it, answer it, edit an answer on it, or post a followup or reply on it, unless they unfollowed it; see [Notifications](notifications.md). A post is `unread` when its last activity is later than both the viewer's last opening of it and their course read mark, or neither exists. Retrieving a post records it, and the caller's notifications for it, as read, so its own response reports `unread: false`.
 
-**Private posts:** Any member may create a question or note with `private: true`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
+**Private posts:** Any member may create a question or note with `private: true` while the course permits private posting; otherwise new private posts return `409 private_posting_disabled`. Only its author and the course's current TAs and instructors can read it. To every other member a private post, and its answers, followups, replies, attachments, upvotes, and live sessions, behaves exactly like a post that does not exist: requests return `404 not_found`, and it is left out of lists, search, related questions, notifications, and the daily digest (which omits private posts for every recipient). A deleted private post also returns `404 not_found` to its former author, because the tombstone keeps no author. The author or any TA or instructor may make a private post public with `PATCH` and `private: false`. That cannot be undone, and when staff do it the author receives a `post_published` notification. Announcements and polls cannot be private, and no post can be marked as a duplicate of a private post. List with `private=true` to see only the private posts you can read.
 
 **Announcements:** TAs and instructors may create a note with `announcement: true`. It is pinned on creation, cannot be anonymous, and queues one email per other current course member with announcement emails enabled, which the job worker sends only while the announcement, the course, the membership, and that preference still stand. Students receive `403 permission_denied`; `announcement` on a question or poll returns `422 validation_failed`. Staff may later unpin an announcement. List with `announcement=true` to see only announcements.
+
+New posts requesting `anonymous: true` return `409 anonymous_posting_disabled` if the course disallows anonymity. Existing anonymous or private posts remain available to authorized readers and editable after a policy change; changing a named existing post to anonymous returns the same `409` while anonymity is disabled. Matching successful idempotent creation retries still replay.
 
 Author fields and anonymous-content filtering follow the shared [identity visibility policy](identity-visibility.md). Post bodies may [mention](notifications.md) course members; creating or editing a body that mentions more than 20 people returns `422 too_many_mentions`.
 
 ## Retained deleted posts
 
-Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false` and includes the content fields documented below. A tombstone sets it to `true` and contains only `id`, `courseId`, `type`, `deleted`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and ordinary update responses contain an active post; merge confirmation is the exception described below.
+Post read responses can contain either an active post or a retained tombstone. `data.deleted` is the required discriminator. An active post sets `deleted` to `false`; the field inventories and examples below are illustrative, while the [OpenAPI post schemas](../openapi.yaml) define the complete current response shape. A tombstone sets `deleted` to `true` and contains only `id`, `courseId`, `type`, `deleted`, `createdAt`, `updatedAt`, and `version`. It omits the title, body, identity and anonymity projections, attachments, tags, poll state, duplicate state, endorsement state, and other content projections. The type remains `question`, `note`, or `poll` to preserve the original post kind. Create and ordinary update responses contain an active post; merge confirmation is the exception described below.
 
 Confirmed duplicates are retained in storage but removed from ordinary lists, search, and Related questions. The old direct URL returns `303 See Other` to the canonical post for a current course member; it never returns the duplicate's content. Staff can retrieve a restricted duplicate-review list, read the retained source through a staff-only review endpoint, and unmerge it. Confirming a merge returns a minimal canonical reference rather than an active post.
 
@@ -54,7 +66,7 @@ Creates a post in a course.
 
 `Content-Type` (required): Selects one documented request media type.
 
-`Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries; keys are retained for 24 hours.
+`Idempotency-Key` (optional, string, 1–255 characters): Reuses the original result for matching retries, including after a poll deadline passes; keys are retained for 24 hours. A new poll create with a past deadline is rejected.
 
 `X-CSRF-Token` (required, string): Stable opaque token bound to the current session.
 
@@ -71,6 +83,8 @@ None.
 ##### `CreatePostRequest` (required)
 
 Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePollPostRequest.
+
+For the `private` field on question and note requests, see the [OpenAPI request schemas](../openapi.yaml).
 
 ###### `CreateQuestionPostRequest` fields
 
@@ -98,8 +112,6 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 
 `announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to members who enable announcement emails; cannot be combined with `anonymous`.
 
-`private` (boolean, optional; default false): Questions and notes only. Makes the post readable only by its author and course staff.
-
 ###### `CreatePollPostRequest` fields
 
 `type` (literal poll, required): See the named shape.
@@ -115,6 +127,16 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `options` (list of PollOptionInput, required): Poll choices.
 
 `options[].label` (string, required): Visible poll choice label.
+
+`selectionMode` (enum: single, multiple, optional; default single): Ballot mode.
+
+`maxSelections` (integer, optional; default 1 for single): Maximum choices; required as 2 through option count for multiple.
+
+`closesAt` (ISO date-time, optional): Future deadline with a real calendar date and explicit `Z` or `±HH:MM` offset. Offset-free and nonexistent dates return `422 validation_failed`; accepted instants are normalized to UTC.
+
+`releaseMode` (enum: manual, automatic): Required for multi-select; omit only for basic single-select live-results behavior.
+
+`explanation` (string, optional): Staff-authored results explanation, visible to students only after release.
 
 #### Multipart parts
 
@@ -232,11 +254,11 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.options[].label` (string, required): Visible choice label.
 
-`data.options[].voteCount` (integer, required): Votes currently cast for the option.
+`data.options[].voteCount` (integer, conditional): Selected-option count; omitted for students before release.
 
 `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
 
-`data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
+`data.totalVotes` (integer, conditional): Distinct member ballots; omitted for students before release.
 
 #### Example request
 
@@ -300,6 +322,10 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 `idempotency_key_reused`: The idempotency key was already used with a different request body.
 
 `course_archived`: The course is archived.
+
+`anonymous_posting_disabled`: New anonymous posts are disabled for this course.
+
+`private_posting_disabled`: New private posts are disabled for this course.
 
 ##### `413 Content Too Large`
 
@@ -403,7 +429,9 @@ None.
 
 #### Response headers
 
-None specific to this operation.
+`X-Feed-Snapshot` (string): A base64url-encoded course- and viewer-bound server timestamp from the list query, for the newly created post count. It contains the course and viewer IDs but no post IDs; clients must treat it as an opaque token, not a secret. The encoding is unsigned and is not authentication or authorization: a caller can supply a different timestamp, but every count still requires a current session and applies course membership and post visibility. The client must not derive a watermark from its clock or the first result page. The notice is best-effort: a creation transaction that began before the watermark but committed afterward can be missed; manually refreshing the feed still shows it.
+
+`Cache-Control`: `private, no-store`.
 
 #### Response body
 
@@ -463,11 +491,11 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data[].options[].label` (string, required): Visible choice label.
 
-`data[].options[].voteCount` (integer, required): Votes currently cast for the option.
+`data[].options[].voteCount` (integer, conditional): Selected-option count; omitted for students before release.
 
 `data[].options[].selected` (boolean, required): Whether the authenticated user selected the option.
 
-`data[].totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
+`data[].totalVotes` (integer, conditional): Distinct member ballots; omitted for students before release.
 
 `page` (object, required): Pagination details for the current result set.
 
@@ -657,11 +685,11 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.options[].label` (string, required): Visible choice label.
 
-`data.options[].voteCount` (integer, required): Votes currently cast for the option.
+`data.options[].voteCount` (integer, conditional): Selected-option count; omitted for students before release.
 
 `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
 
-`data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
+`data.totalVotes` (integer, conditional): Distinct member ballots; omitted for students before release.
 
 #### Example request
 
@@ -753,7 +781,7 @@ Staff confirmation retains the source text in storage but hides it from readers.
 
 When a TA or instructor confirms a **question** duplicate, the same transaction queues an email to its author. The email subject is `Your post has been marked as a duplicate`; for an active confirming staff account, the plain-text body says `Your question "<question>" was marked as a duplicate by <staff name> (<instructor or TA>).` If that staff account is deleted before delivery, it instead says `Your question "<question>" was marked as a duplicate by a TA.` or `Your question "<question>" was marked as a duplicate by an instructor.`, as appropriate. The job does not retain the staff display name, and both forms include an absolute link to the canonical post. SMTP delivery occurs asynchronously with retries, so mail failure does not change the PATCH response or undo the merge. A suggestion, note confirmation, failed update, and unmerge do not queue this email. Before delivery, the worker cancels a stale notification if the question is no longer merged to that canonical post or the author no longer has active course access. SMTP acceptance followed by a worker crash may rarely result in a repeated email.
 
-Every successful update, including pin, unpin, merge, and unmerge, advances `lastActivityAt`. An unpinned post returns to its normal sort position; in `recent_activity` that position reflects the update time.
+Every successful PATCH update, including pin, unpin, merge, and unmerge, advances `lastActivityAt`. An unpinned post returns to its normal sort position; in `recent_activity` that position reflects the update time. Discussion-lock changes use a [separate endpoint](#discussionLock) and preserve `lastActivityAt`.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -893,11 +921,11 @@ See the [OpenAPI Attachment schema](../openapi.yaml) for live file fields.
 
 `data.options[].label` (string, required): Visible choice label.
 
-`data.options[].voteCount` (integer, required): Votes currently cast for the option.
+`data.options[].voteCount` (integer, conditional): Selected-option count; omitted for students before release.
 
 `data.options[].selected` (boolean, required): Whether the authenticated user selected the option.
 
-`data.totalVotes` (integer, required when `type` is `poll`): Total votes cast in the poll.
+`data.totalVotes` (integer, conditional): Distinct member ballots; omitted for students before release.
 
 #### Example request
 
@@ -964,6 +992,8 @@ curl --request PATCH '/api/v1/posts/post_123' \
 
 `course_archived`: The course is archived.
 
+`anonymous_posting_disabled`: A named post cannot become anonymous while the course disallows it.
+
 `post_merged`: The confirmed source must be unmerged before it can be edited.
 
 `canonical_has_duplicates`: Confirmed sources must be unmerged before their canonical post can be merged.
@@ -999,6 +1029,16 @@ curl --request PATCH '/api/v1/posts/post_123' \
 ##### `503 Service Unavailable`
 
 `service_unavailable`: A required service is temporarily unavailable.
+
+---
+
+<a id="discussionLock"></a>
+
+### **`PUT /api/v1/posts/{postId}/discussion-lock`**
+
+Current course TAs and instructors set an individual question's or poll's discussion lock with JSON `{ "locked": true }` or `{ "locked": false }`. This route requires the session cookie, valid Origin and CSRF token, `Content-Type: application/json`, and `If-Match: "v{version}"`. It returns `200` with `{ "data": Post }` and the current ETag. A state change increments the post version and update time; repeating the current state retains both version and last-activity time. Lock changes never move a post in the recent-activity feed.
+
+The request body must contain only the boolean `locked` field. Invalid shapes, unknown fields, non-boolean values, and attempts to lock or unlock notes (including announcements) return `422 validation_failed`; rejected note requests leave version and activity unchanged. Missing and stale `If-Match` return `428 precondition_required` and `412 version_conflict`; students receive `403 permission_denied`, while nonmembers, deleted posts, and confirmed duplicate sources return `404 not_found`. Archived courses return `409 course_archived`.
 
 ---
 
@@ -1113,11 +1153,19 @@ curl --request DELETE '/api/v1/posts/post_123' \
 
 ---
 
+### Poll lifecycle, export, and clone
+
+`POST /api/v1/posts/{postId}/close`, `/reopen`, and `/release` require a current TA or instructor, session cookie, allowed Origin, CSRF token, and current `If-Match: "vN"`. They return `200 {"data": <viewer-aware poll post>}` with the next `ETag` and `Cache-Control: private, no-store`. Missing/stale ETags return `428 precondition_required`/`412 version_conflict`; students receive `403 permission_denied`; missing, deleted, hidden, or unrelated polls return `404 not_found`; a non-poll returns `422 not_a_poll`; an inactive course or already reached close/open state returns `409`. Closing an automatic-release poll exposes aggregates; reopening never hides them and removes an elapsed deadline. Manual release is irreversible.
+
+`GET /api/v1/posts/{postId}/poll-results.csv` requires staff membership and returns `200 text/csv; charset=utf-8`, an attachment filename, and `Cache-Control: private, no-store`. Its columns are `option,count,ballots`; counts are selections, ballots are distinct members. Labels are CSV-quoted and spreadsheet-formula escaped. No voter IDs, names, or per-ballot rows are included. Students receive `403 permission_denied`.
+
+`POST /api/v1/posts/{postId}/clone` requires staff membership and the usual unsafe-request CSRF protections. It returns `201 {"data": <new poll>}`, `Location`, and `ETag`. Title, body, option labels, selection mode, maximum, explanation, and nonlegacy release mode copy; ballots, deadline, closed state, and release state reset. A legacy live-results source becomes manual-release on its clone. Students receive `403 permission_denied`; inactive courses return `409 course_archived`.
+
 <a id="putPostVote"></a>
 
 ### **`PUT /api/v1/posts/{postId}/vote`**
 
-Casts or changes the authenticated user’s vote on a poll. Each user has one selected option; another PUT changes the vote.
+Casts or replaces the authenticated user’s entire ballot on an open poll. Use legacy `optionId` for single-select or `optionIds` for an array of distinct selections (one through the configured maximum).
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -1149,7 +1197,7 @@ None.
 
 ##### `VoteRequest` (required)
 
-`optionId` (string, required): Opaque stable identifier.
+Exactly one of `optionId` (single-select legacy ballot) or `optionIds` (array of one through `maxSelections` distinct option IDs) is required; see the [VoteRequest schema](../openapi.yaml).
 
 #### Multipart parts
 
@@ -1165,13 +1213,13 @@ None specific to this operation.
 
 #### Response body
 
-##### `data` (object, required): The caller's vote and the updated poll totals.
+##### `data` (object, required): The caller's selected choices and viewer-visible poll results.
 
 `data.postId` (string, required): Opaque stable identifier.
 
 `data.options` (list of objects, required): Updated poll choices.
 
-`data.totalVotes` (integer, required): Total votes cast.
+`data.totalVotes` (integer, conditional): Distinct member ballots, omitted for unreleased student results.
 
 #### Example request
 
@@ -1244,7 +1292,7 @@ curl --request PUT '/api/v1/posts/post_123/vote' \
 
 ### **`DELETE /api/v1/posts/{postId}/vote`**
 
-Retracts the authenticated user’s vote from a poll. Returns 204 even when the caller has no vote.
+Retracts the authenticated user’s ballot from an open, unlocked poll. Returns 204 even when the caller has no ballot; a closed or locked poll rejects the change.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -1588,3 +1636,7 @@ curl --request POST '/api/v1/courses/course_123/read-marks' \
 ##### `503 Service Unavailable`
 
 `service_unavailable`: A required service is temporarily unavailable.
+
+### New-post notice endpoint
+
+**`GET /api/v1/courses/{courseId}/posts/new-count?snapshot=<token>`** returns `{ "data": { "count": number } }` and `Cache-Control: private, no-store`. It accepts the same list filters except `cursor` and `duplicateStatus=confirmed`, and counts active, unmerged, currently readable posts created after the supplied watermark and matching the supplied filters. Edits and new activity on old posts do not count. The unsigned token includes course and viewer IDs, which are checked against the request; missing, malformed, or cross-course/viewer tokens return `400 invalid_request`. Its encoding does not prove issuance, so the timestamp is not a security boundary. A nonmember receives `404 not_found`; an unauthenticated caller receives `401`. This check never marks posts read or moves an existing feed. The count is best-effort for a creation transaction that began before the original list snapshot but committed afterward.

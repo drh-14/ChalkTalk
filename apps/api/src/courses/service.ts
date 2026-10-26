@@ -16,6 +16,9 @@ export type Course = {
   name: string;
   status: "active" | "archived" | "deleting";
   joinCode: string | null;
+  allowAnonymousPosting: boolean;
+  allowPrivatePosting: boolean;
+  allowFollowupResolution: boolean;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -36,6 +39,9 @@ type CourseRow = {
   name: string;
   status: Course["status"];
   join_code: string;
+  allow_anonymous_posting: boolean;
+  allow_private_posting: boolean;
+  allow_followup_resolution: boolean;
   created_at: Date;
   updated_at: Date;
   version: number;
@@ -64,6 +70,9 @@ const course = (row: CourseRow, instructor = false): Course => ({
   name: row.name,
   status: row.status,
   joinCode: instructor ? row.join_code.trim() : null,
+  allowAnonymousPosting: row.allow_anonymous_posting,
+  allowPrivatePosting: row.allow_private_posting,
+  allowFollowupResolution: row.allow_followup_resolution,
   createdAt: row.created_at.toISOString(),
   updatedAt: row.updated_at.toISOString(),
   version: jsonVersion(row.version),
@@ -236,7 +245,7 @@ export class CourseService {
       if (!allowed.rowCount)
         throw new AuthError(404, "not_found", "Organization is not found");
       const result = await client.query<CourseRow>(
-        "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,$5) RETURNING id,organization_id,name,status,join_code,created_at,updated_at,version",
+        "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,$5) RETURNING id,organization_id,name,status,join_code,allow_anonymous_posting,allow_private_posting,allow_followup_resolution,created_at,updated_at,version",
         [uuidv7(), organizationId, userId, name, joinCode()],
       );
       const row = result.rows[0]!;
@@ -308,7 +317,7 @@ export class CourseService {
       if (!allowed.rowCount)
         throw new AuthError(404, "not_found", "Organization is not found");
       const inserted = await client.query<CourseRow>(
-        "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,$5) RETURNING id,organization_id,name,status,join_code,created_at,updated_at,version",
+        "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,$5) RETURNING id,organization_id,name,status,join_code,allow_anonymous_posting,allow_private_posting,allow_followup_resolution,created_at,updated_at,version",
         [uuidv7(), organizationId, userId, name, joinCode()],
       );
       const value = course(inserted.rows[0]!, true);
@@ -325,7 +334,7 @@ export class CourseService {
   }
   async list(userId: string, status?: string, limit = 25) {
     const result = await this.pool.query<CourseRow>(
-      "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.created_at,c.updated_at,c.version FROM courses c JOIN course_memberships m ON m.course_id=c.id WHERE m.user_id=$1 AND ($2::text IS NULL OR c.status=$2) ORDER BY c.created_at DESC LIMIT $3",
+      "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.allow_anonymous_posting,c.allow_private_posting,c.allow_followup_resolution,c.created_at,c.updated_at,c.version FROM courses c JOIN course_memberships m ON m.course_id=c.id WHERE m.user_id=$1 AND ($2::text IS NULL OR c.status=$2) ORDER BY c.created_at DESC LIMIT $3",
       [userId, status ?? null, limit],
     );
     return result.rows.map((row) => course(row, false));
@@ -339,7 +348,7 @@ export class CourseService {
     const scope = `user-courses:${userId}`;
     const cursor = decodeCursor(cursorValue, status, scope);
     const result = await this.pool.query<CourseRow>(
-      "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.created_at,c.updated_at,c.version FROM courses c JOIN course_memberships m ON m.course_id=c.id WHERE m.user_id=$1 AND ($2::text IS NULL OR c.status=$2) AND ($3::timestamptz IS NULL OR (c.created_at,c.id) < ($3::timestamptz,$4::uuid)) ORDER BY c.created_at DESC,c.id DESC LIMIT $5",
+      "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.allow_anonymous_posting,c.allow_private_posting,c.allow_followup_resolution,c.created_at,c.updated_at,c.version FROM courses c JOIN course_memberships m ON m.course_id=c.id WHERE m.user_id=$1 AND ($2::text IS NULL OR c.status=$2) AND ($3::timestamptz IS NULL OR (c.created_at,c.id) < ($3::timestamptz,$4::uuid)) ORDER BY c.created_at DESC,c.id DESC LIMIT $5",
       [
         userId,
         status ?? null,
@@ -368,7 +377,7 @@ export class CourseService {
     if (!allowed.rowCount)
       throw new AuthError(404, "not_found", "Organization is not found");
     const result = await this.pool.query<CourseRow>(
-      "SELECT id,organization_id,name,status,join_code,created_at,updated_at,version FROM courses WHERE organization_id=$1 AND ($2::text IS NULL OR status=$2) ORDER BY created_at DESC LIMIT $3",
+      "SELECT id,organization_id,name,status,join_code,allow_anonymous_posting,allow_private_posting,allow_followup_resolution,created_at,updated_at,version FROM courses WHERE organization_id=$1 AND ($2::text IS NULL OR status=$2) ORDER BY created_at DESC LIMIT $3",
       [organizationId, status ?? null, limit],
     );
     return result.rows.map((row) => course(row, false));
@@ -389,7 +398,7 @@ export class CourseService {
     if (!allowed.rowCount)
       throw new AuthError(404, "not_found", "Organization is not found");
     const result = await this.pool.query<CourseRow>(
-      "SELECT id,organization_id,name,status,join_code,created_at,updated_at,version FROM courses WHERE organization_id=$1 AND ($2::text IS NULL OR status=$2) AND ($3::timestamptz IS NULL OR (created_at,id)<($3::timestamptz,$4::uuid)) ORDER BY created_at DESC,id DESC LIMIT $5",
+      "SELECT id,organization_id,name,status,join_code,allow_anonymous_posting,allow_private_posting,allow_followup_resolution,created_at,updated_at,version FROM courses WHERE organization_id=$1 AND ($2::text IS NULL OR status=$2) AND ($3::timestamptz IS NULL OR (created_at,id)<($3::timestamptz,$4::uuid)) ORDER BY created_at DESC,id DESC LIMIT $5",
       [
         organizationId,
         status ?? null,
@@ -407,7 +416,7 @@ export class CourseService {
   }
   async get(courseId: string, userId: string): Promise<Course> {
     const result = await this.pool.query<CourseRow & { instructor: boolean }>(
-      "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.created_at,c.updated_at,c.version, (m.role='instructor') AS instructor FROM courses c JOIN course_memberships m ON m.course_id=c.id WHERE c.id=$1 AND m.user_id=$2",
+      "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.allow_anonymous_posting,c.allow_private_posting,c.allow_followup_resolution,c.created_at,c.updated_at,c.version, (m.role='instructor') AS instructor FROM courses c JOIN course_memberships m ON m.course_id=c.id WHERE c.id=$1 AND m.user_id=$2",
       [courseId, userId],
     );
     if (!result.rows[0])
@@ -425,7 +434,7 @@ export class CourseService {
       throw new AuthError(422, "invalid_join_code", "Join code is invalid");
     return this.tx(async (client) => {
       const found = await client.query<CourseRow>(
-        "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.created_at,c.updated_at,c.version FROM courses c WHERE c.id=$1 FOR UPDATE",
+        "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.allow_anonymous_posting,c.allow_private_posting,c.allow_followup_resolution,c.created_at,c.updated_at,c.version FROM courses c WHERE c.id=$1 FOR UPDATE",
         [courseId],
       );
       const row = found.rows[0];
@@ -514,7 +523,7 @@ export class CourseService {
       if (!UUID_PATTERN.test(courseId))
         throw new AuthError(422, "invalid_join_code", "Join code is invalid");
       const found = await client.query<CourseRow>(
-        "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.created_at,c.updated_at,c.version FROM courses c WHERE c.id=$1 FOR UPDATE",
+        "SELECT c.id,c.organization_id,c.name,c.status,c.join_code,c.allow_anonymous_posting,c.allow_private_posting,c.allow_followup_resolution,c.created_at,c.updated_at,c.version FROM courses c WHERE c.id=$1 FOR UPDATE",
         [courseId],
       );
       const row = found.rows[0];
@@ -684,11 +693,17 @@ export class CourseService {
     courseId: string,
     userId: string,
     ifMatch: string | undefined,
-    input: { name?: unknown; status?: unknown },
+    input: {
+      name?: unknown;
+      status?: unknown;
+      allowAnonymousPosting?: unknown;
+      allowPrivatePosting?: unknown;
+      allowFollowupResolution?: unknown;
+    },
   ): Promise<Course> {
     return this.tx(async (client) => {
       const found = await client.query<CourseRow>(
-        "SELECT id,organization_id,name,status,join_code,created_at,updated_at,version FROM courses WHERE id=$1 FOR UPDATE",
+        "SELECT id,organization_id,name,status,join_code,allow_anonymous_posting,allow_private_posting,allow_followup_resolution,created_at,updated_at,version FROM courses WHERE id=$1 FOR UPDATE",
         [courseId],
       );
       const existing = found.rows[0];
@@ -722,10 +737,20 @@ export class CourseService {
           : input.status === "active" || input.status === "archived"
             ? input.status
             : null;
+      const switches = [
+        input.allowAnonymousPosting,
+        input.allowPrivatePosting,
+        input.allowFollowupResolution,
+      ];
       if (
         !name ||
         !status ||
-        (input.name === undefined && input.status === undefined)
+        switches.some(
+          (value) => value !== undefined && typeof value !== "boolean",
+        ) ||
+        (input.name === undefined &&
+          input.status === undefined &&
+          switches.every((value) => value === undefined))
       )
         throw new AuthError(
           422,
@@ -733,8 +758,15 @@ export class CourseService {
           "Course update is invalid",
         );
       const result = await client.query<CourseRow>(
-        "UPDATE courses SET name=$1,status=$2,version=version+1,updated_at=now() WHERE id=$3 RETURNING id,organization_id,name,status,join_code,created_at,updated_at,version",
-        [name, status, courseId],
+        "UPDATE courses SET name=$1,status=$2,allow_anonymous_posting=$3,allow_private_posting=$4,allow_followup_resolution=$5,version=version+1,updated_at=now() WHERE id=$6 RETURNING id,organization_id,name,status,join_code,allow_anonymous_posting,allow_private_posting,allow_followup_resolution,created_at,updated_at,version",
+        [
+          name,
+          status,
+          input.allowAnonymousPosting ?? existing.allow_anonymous_posting,
+          input.allowPrivatePosting ?? existing.allow_private_posting,
+          input.allowFollowupResolution ?? existing.allow_followup_resolution,
+          courseId,
+        ],
       );
       if (status !== "active")
         await endCollaborationSessions(client, { courseId });
@@ -879,7 +911,7 @@ export class CourseService {
   ): Promise<Course> {
     return this.tx(async (client) => {
       const found = await client.query<CourseRow>(
-        "SELECT id,organization_id,name,status,join_code,created_at,updated_at,version FROM courses WHERE id=$1 FOR UPDATE",
+        "SELECT id,organization_id,name,status,join_code,allow_anonymous_posting,allow_private_posting,allow_followup_resolution,created_at,updated_at,version FROM courses WHERE id=$1 FOR UPDATE",
         [courseId],
       );
       const existing = found.rows[0];
@@ -900,7 +932,7 @@ export class CourseService {
       if (ifMatch !== courseEtag(existing))
         throw new AuthError(412, "version_conflict", "Course has changed");
       const result = await client.query<CourseRow>(
-        "UPDATE courses SET status='deleting',version=version+1,updated_at=now() WHERE id=$1 RETURNING id,organization_id,name,status,join_code,created_at,updated_at,version",
+        "UPDATE courses SET status='deleting',version=version+1,updated_at=now() WHERE id=$1 RETURNING id,organization_id,name,status,join_code,allow_anonymous_posting,allow_private_posting,allow_followup_resolution,created_at,updated_at,version",
         [courseId],
       );
       await endCollaborationSessions(client, { courseId });

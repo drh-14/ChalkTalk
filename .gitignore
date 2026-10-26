@@ -148,3 +148,6 @@ vite.config.ts.timestamp-*
 !.env.example
 .agents
 .cert/
+
+# Saved Piazza exports contain real class data
+piazza-*.json

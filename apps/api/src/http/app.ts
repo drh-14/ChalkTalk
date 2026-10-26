@@ -30,8 +30,10 @@ import type { Environment } from "../config/environment.js";
 import { CourseService, courseEtag } from "../courses/service.js";
 import {
   PostService,
+  draftEtag,
   postEtag,
   type CreatePost,
+  type DraftContent,
   type ListPosts,
   type UpdatePost,
 } from "../posts/service.js";
@@ -82,6 +84,7 @@ function testEnvironment(): Environment {
   return {
     databaseUrl: undefined,
     port: 3000,
+    trustProxyHops: 0,
     frontendOrigins: new Set(["https://localhost:5173"]),
     frontendBaseUrl: "https://localhost:5173",
     authTokenSecret: "test-secret-that-is-longer-than-thirty-two-characters",
@@ -355,14 +358,29 @@ function joinCourseBody(input: unknown): JsonObject {
   return body;
 }
 function courseUpdateBody(input: unknown): JsonObject {
-  const body = strictBody(input, ["name", "status"]);
-  if (body.name === undefined && body.status === undefined)
+  const switches = [
+    "allowAnonymousPosting",
+    "allowPrivatePosting",
+    "allowFollowupResolution",
+  ];
+  const body = strictBody(input, ["name", "status", ...switches]);
+  if (
+    body.name === undefined &&
+    body.status === undefined &&
+    switches.every((key) => body[key] === undefined)
+  )
     throw validationError();
   if (body.name !== undefined) stringWithin(body.name, "Course name", 1, 200);
   if (
     body.status !== undefined &&
     body.status !== "active" &&
     body.status !== "archived"
+  )
+    throw validationError();
+  if (
+    switches.some(
+      (key) => body[key] !== undefined && typeof body[key] !== "boolean",
+    )
   )
     throw validationError();
   return body;
@@ -453,6 +471,12 @@ function postCreateBody(value: unknown): CreatePost {
       "options",
       "announcement",
       "private",
+      "draftVersion",
+      "selectionMode",
+      "maxSelections",
+      "closesAt",
+      "releaseMode",
+      "explanation",
     ],
     ["type", "title", "bodyMarkdown"],
   );
@@ -468,6 +492,7 @@ function postCreateBody(value: unknown): CreatePost {
       : body.options !== undefined
   )
     throw validationError("Only polls have options");
+  const options = body.type === "poll" ? pollOptions(body.options) : undefined;
   if (body.announcement !== undefined && typeof body.announcement !== "boolean")
     throw validationError("Announcement is invalid");
   if (body.announcement && body.type !== "note")
@@ -476,16 +501,192 @@ function postCreateBody(value: unknown): CreatePost {
     throw validationError("Announcements cannot be anonymous");
   if (body.private !== undefined && typeof body.private !== "boolean")
     throw validationError("Private is invalid");
+  if (
+    body.draftVersion !== undefined &&
+    (typeof body.draftVersion !== "number" ||
+      !Number.isSafeInteger(body.draftVersion) ||
+      body.draftVersion < 0)
+  )
+    throw validationError("Draft version is invalid");
+  const advanced = [
+    "selectionMode",
+    "maxSelections",
+    "closesAt",
+    "releaseMode",
+    "explanation",
+  ] as const;
+  if (body.type !== "poll" && advanced.some((key) => body[key] !== undefined))
+    throw validationError("Only polls have poll settings");
+  const selectionMode = body.selectionMode ?? "single";
+  if (body.type === "poll") {
+    if (selectionMode !== "single" && selectionMode !== "multiple")
+      throw validationError("Selection mode is invalid");
+    const optionCount = options!.length;
+    const max =
+      body.maxSelections ?? (selectionMode === "single" ? 1 : undefined);
+    if (
+      !Number.isInteger(max) ||
+      (selectionMode === "single"
+        ? max !== 1
+        : (max as number) < 2 || (max as number) > optionCount)
+    )
+      throw validationError("Maximum selections is invalid");
+    if (
+      body.releaseMode !== undefined &&
+      body.releaseMode !== "manual" &&
+      body.releaseMode !== "automatic"
+    )
+      throw validationError("Release mode is invalid");
+    if (selectionMode === "multiple" && body.releaseMode === undefined)
+      throw validationError("Release mode is required for multi-select polls");
+    if (
+      body.closesAt !== undefined &&
+      (typeof body.closesAt !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+          body.closesAt,
+        ) ||
+        !Number.isFinite(Date.parse(body.closesAt)) ||
+        new Date(`${body.closesAt.slice(0, 10)}T00:00:00Z`)
+          .toISOString()
+          .slice(0, 10) !== body.closesAt.slice(0, 10))
+    )
+      throw validationError("Close time must be in the future");
+    if (
+      body.explanation !== undefined &&
+      (typeof body.explanation !== "string" || body.explanation.length > 10000)
+    )
+      throw validationError("Explanation is invalid");
+  }
   return {
     type: body.type,
     title,
     bodyMarkdown,
     anonymous: body.anonymous as boolean | undefined,
     tags: postTags(body.tags),
-    ...(body.type === "poll" ? { options: pollOptions(body.options) } : {}),
+    ...(body.type === "poll" ? { options } : {}),
+    ...(body.type === "poll"
+      ? {
+          selectionMode: selectionMode as "single" | "multiple",
+          maxSelections: (body.maxSelections ?? 1) as number,
+          ...(body.closesAt
+            ? { closesAt: new Date(body.closesAt as string).toISOString() }
+            : {}),
+          releaseMode: (body.releaseMode ?? "live") as
+            "live" | "manual" | "automatic",
+          ...(body.explanation
+            ? { explanation: body.explanation as string }
+            : {}),
+        }
+      : {}),
     ...(body.announcement ? { announcement: true } : {}),
     ...(body.private ? { private: true } : {}),
+    ...(body.draftVersion !== undefined
+      ? {
+          draftVersion: body.draftVersion as number,
+        }
+      : {}),
   };
+}
+function validDraftJsonbText(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code === 0) return false;
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(++index);
+      if (next < 0xdc00 || next > 0xdfff || Number.isNaN(next)) return false;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function draftContentBody(value: unknown): DraftContent {
+  const wrapper = strictBody(value, ["content"], ["content"]);
+  const content = strictBody(
+    wrapper.content,
+    [
+      "type",
+      "title",
+      "bodyMarkdown",
+      "anonymous",
+      "tags",
+      "options",
+      "announcement",
+      "private",
+    ],
+    ["type"],
+  );
+  if (
+    content.type !== "question" &&
+    content.type !== "note" &&
+    content.type !== "poll"
+  )
+    throw validationError("Draft post type is invalid");
+  if (
+    content.title !== undefined &&
+    (typeof content.title !== "string" || content.title.length > 200)
+  )
+    throw validationError("Draft title is invalid");
+  if (
+    content.bodyMarkdown !== undefined &&
+    (typeof content.bodyMarkdown !== "string" ||
+      content.bodyMarkdown.length > 100000)
+  )
+    throw validationError("Draft body is invalid");
+  if (content.anonymous !== undefined && typeof content.anonymous !== "boolean")
+    throw validationError("Draft anonymity is invalid");
+  if (
+    content.announcement !== undefined &&
+    typeof content.announcement !== "boolean"
+  )
+    throw validationError("Draft announcement is invalid");
+  if (content.private !== undefined && typeof content.private !== "boolean")
+    throw validationError("Draft privacy is invalid");
+  if (
+    content.tags !== undefined &&
+    (!Array.isArray(content.tags) ||
+      content.tags.length > 10 ||
+      content.tags.some(
+        (tag: unknown) => typeof tag !== "string" || tag.length > 40,
+      ))
+  )
+    throw validationError("Draft tags are invalid");
+  if (
+    content.options !== undefined &&
+    (!Array.isArray(content.options) ||
+      content.options.length > 10 ||
+      content.options.some(
+        (option: unknown) => typeof option !== "string" || option.length > 200,
+      ))
+  )
+    throw validationError("Draft poll options are invalid");
+  const draft: DraftContent = {
+    type: content.type,
+    title: (content.title as string | undefined) ?? "",
+    bodyMarkdown: (content.bodyMarkdown as string | undefined) ?? "",
+    anonymous: (content.anonymous as boolean | undefined) ?? false,
+    tags: (content.tags as string[] | undefined) ?? [],
+    ...(content.options !== undefined
+      ? { options: content.options as string[] }
+      : {}),
+    ...(content.announcement !== undefined
+      ? { announcement: content.announcement as boolean }
+      : {}),
+    ...(content.private !== undefined
+      ? { private: content.private as boolean }
+      : {}),
+  };
+  if (
+    [
+      draft.title,
+      draft.bodyMarkdown,
+      ...draft.tags,
+      ...(draft.options ?? []),
+    ].some((text) => !validDraftJsonbText(text))
+  )
+    throw validationError("Draft text contains unsupported Unicode");
+  return draft;
 }
 function answerCreateBody(value: unknown): CreateAnswer {
   const body = strictBody(
@@ -514,6 +715,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "announcement",
     "private",
     "unresolvedFollowups",
+    "snapshot",
     "authorRole",
     "duplicateStatus",
     "sort",
@@ -602,6 +804,9 @@ function postListQuery(query: Request["query"]): ListPosts {
       "invalid_request",
       "Unresolved followups filter is invalid",
     );
+  const snapshot = one("snapshot");
+  if (snapshot !== undefined && (snapshot.length < 1 || snapshot.length > 2048))
+    throw new AuthError(400, "invalid_request", "Feed snapshot is invalid");
   const authorRole = one("authorRole");
   if (
     authorRole !== undefined &&
@@ -643,6 +848,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     announcement: rawAnnouncement === "true" ? true : undefined,
     private: rawPrivate === "true" ? true : undefined,
     unresolvedFollowups: rawUnresolved === "true" ? true : undefined,
+    newSince: snapshot,
     authorRole: authorRole as ListPosts["authorRole"],
     duplicateStatus: duplicateStatus as ListPosts["duplicateStatus"],
     sort: sort as ListPosts["sort"],
@@ -780,6 +986,7 @@ export function createApp(
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
+  if (environment.trustProxyHops === 1) app.set("trust proxy", 1);
   app.use((_request, response, next) => {
     response.locals.requestId = randomUUID();
     response.set("X-Request-Id", response.locals.requestId);
@@ -955,6 +1162,42 @@ export function createApp(
       }
     },
   );
+  for (const kind of ["daily", "students"] as const) {
+    app.get(
+      `/api/v1/courses/:courseId/statistics/export/${kind}`,
+      optionalReadOrigin,
+      async (request, response, next) => {
+        try {
+          const current = await requireSession(request);
+          const period = StatisticsService.period(request.query.period);
+          const courseId = param(request.params.courseId);
+          const body =
+            kind === "daily"
+              ? await statistics().exportDaily(
+                  courseId,
+                  current.session.user.id,
+                  period,
+                )
+              : await statistics().exportStudents(
+                  courseId,
+                  current.session.user.id,
+                  period,
+                );
+          response
+            .set("Cache-Control", "private, no-store")
+            .set("X-Content-Type-Options", "nosniff")
+            .set(
+              "Content-Disposition",
+              `attachment; filename="chalktalk-${courseId}-${period}-${kind}.csv"`,
+            )
+            .type("text/csv; charset=utf-8")
+            .send(body);
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  }
   app.post(
     "/api/v1/account-verification-requests",
     publicOrigin,
@@ -2168,6 +2411,65 @@ export function createApp(
       }
     },
   );
+  app.get(
+    "/api/v1/courses/:courseId/post-draft",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await posts().getDraft(
+          param(request.params.courseId),
+          current.session.user.id,
+        );
+        response
+          .set({ ETag: draftEtag(data), "Cache-Control": "private, no-store" })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/courses/:courseId/post-draft",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const data = await posts().updateDraft(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          draftContentBody(request.body),
+        );
+        response
+          .set({
+            ETag: draftEtag(data),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/post-draft",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const data = await posts().deleteDraft(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response
+          .set({ ETag: draftEtag(data), "Cache-Control": "private, no-store" })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.post(
     "/api/v1/courses/:courseId/posts",
     ...authenticatedUnsafe,
@@ -2186,6 +2488,7 @@ export function createApp(
           .set({
             Location: `/api/v1/posts/${result.value.id}`,
             ETag: postEtag(result.value),
+            "Cache-Control": "private, no-store",
           })
           .json({ data: result.value });
       } catch (error) {
@@ -2200,13 +2503,52 @@ export function createApp(
       try {
         const current = await requireSession(request);
         const options = postListQuery(request.query);
+        if (options.newSince)
+          throw new AuthError(400, "invalid_request", "Filter is invalid");
         const result = await posts().list(
           param(request.params.courseId),
           current.session.user.id,
           options,
         );
         response.locals.safeResultCount = result.data.length;
-        response.json(result);
+        const { snapshot, ...body } = result;
+        response.set("Cache-Control", "private, no-store");
+        if (snapshot)
+          response.set({
+            "X-Feed-Snapshot": snapshot,
+            "Access-Control-Expose-Headers": "X-Feed-Snapshot",
+          });
+        response.json(body);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/posts/new-count",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const options = postListQuery(request.query);
+        if (
+          !options.newSince ||
+          options.cursor ||
+          options.duplicateStatus === "confirmed"
+        )
+          throw new AuthError(
+            400,
+            "invalid_request",
+            "Feed snapshot or filter is invalid",
+          );
+        const result = await posts().list(
+          param(request.params.courseId),
+          current.session.user.id,
+          options,
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: { count: result.newCount } });
       } catch (error) {
         next(error);
       }
@@ -2271,6 +2613,31 @@ export function createApp(
           auth(response).session.user.id,
           request.header("if-match"),
           body,
+        );
+        response.set("ETag", postEtag(value)).json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/posts/:postId/discussion-lock",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["locked"], ["locked"]);
+        if (typeof body.locked !== "boolean")
+          throw new AuthError(
+            422,
+            "validation_failed",
+            "Locked must be a boolean",
+          );
+        const value = await posts().setDiscussionLocked(
+          param(request.params.postId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body.locked,
         );
         response.set("ETag", postEtag(value)).json({ data: value });
       } catch (error) {
@@ -2362,13 +2729,28 @@ export function createApp(
     async (request, response, next) => {
       try {
         requireJsonRequest(request);
-        const body = strictBody(request.body, ["optionId"], ["optionId"]);
+        const body = strictBody(request.body, ["optionId", "optionIds"]);
+        if ((body.optionId === undefined) === (body.optionIds === undefined))
+          throw validationError("Provide one ballot format");
+        const choice =
+          body.optionIds === undefined
+            ? stringWithin(body.optionId, "Option", 1, 255)
+            : body.optionIds;
+        if (
+          Array.isArray(choice) &&
+          (!choice.length || choice.some((id) => typeof id !== "string"))
+        )
+          throw validationError("Ballot choices are invalid");
+        if (typeof choice !== "string" && !Array.isArray(choice))
+          throw validationError("Ballot choices are invalid");
         const value = await posts().vote(
           param(request.params.postId),
           auth(response).session.user.id,
-          stringWithin(body.optionId, "Option", 1, 255),
+          choice as string | string[],
         );
-        response.json({ data: value });
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
       } catch (error) {
         next(error);
       }
@@ -2384,6 +2766,74 @@ export function createApp(
           auth(response).session.user.id,
         );
         response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const action of ["close", "reopen", "release"] as const)
+    app.post(
+      `/api/v1/posts/:postId/${action}`,
+      ...authenticatedUnsafe,
+      async (request, response, next) => {
+        try {
+          const value = await posts().transitionPoll(
+            param(request.params.postId),
+            auth(response).session.user.id,
+            request.header("if-match"),
+            action,
+          );
+          response
+            .set({
+              ETag: postEtag(value),
+              "Cache-Control": "private, no-store",
+            })
+            .json({ data: value });
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  app.get(
+    "/api/v1/posts/:postId/poll-results.csv",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const csv = await posts().pollCsv(
+          param(request.params.postId),
+          current.session.user.id,
+        );
+        response
+          .set({
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition": `attachment; filename="poll-${param(request.params.postId)}-results.csv"`,
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+          })
+          .send(csv);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/posts/:postId/clone",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        const value = await posts().clonePoll(
+          param(request.params.postId),
+          auth(response).session.user.id,
+        );
+        response
+          .status(201)
+          .set({
+            Location: `/api/v1/posts/${value.id}`,
+            ETag: postEtag(value),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data: value });
       } catch (error) {
         next(error);
       }

@@ -33,6 +33,9 @@ type Props = {
   postId: string;
   role?: Role;
   courseStatus?: "active" | "archived" | "deleting";
+  allowAnonymousPosting?: boolean;
+  allowFollowupResolution?: boolean;
+  discussionLocked?: boolean;
   csrfToken: string;
   /**
    * Called after the viewer answers, edits an answer, posts, deletes, or
@@ -46,6 +49,8 @@ const message = (error: unknown) =>
     : "Something went wrong. Please try again.";
 const canWrite = (props: Props) =>
   !!props.role && props.courseStatus === "active";
+const canParticipate = (props: Props) =>
+  canWrite(props) && !props.discussionLocked;
 const staff = (role?: Role) => role === "ta" || role === "instructor";
 const labels = {
   student: "Students' answer",
@@ -226,6 +231,12 @@ function TextComposer({
       setError("Write 1 to 100,000 characters before posting.");
       return;
     }
+    if (!createdId && anonymous && !anonymousAllowed) {
+      setError(
+        "Anonymous posting is disabled for this course. Switch to a named response before posting.",
+      );
+      return;
+    }
     const payload = JSON.stringify({ body, anonymous });
     if (attempt.current?.payload !== payload)
       attempt.current = { payload, key: crypto.randomUUID() };
@@ -288,6 +299,18 @@ function TextComposer({
           />
           Post anonymously
         </label>
+      )}
+      {!anonymousAllowed && anonymous && !createdId && (
+        <p className="form-message error">
+          Anonymous posting is now disabled. Your draft is unchanged.{" "}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setAnonymous(false)}
+          >
+            Switch to named response
+          </button>
+        </p>
       )}
       {error && (
         <p role="alert" className="form-message error">
@@ -666,7 +689,7 @@ function AnswerCard({
           kind="answer"
           count={answer.upvoteCount}
           voted={answer.viewerUpvoted}
-          disabled={!canWrite(props) || pending}
+          disabled={!canParticipate(props) || pending}
           onClick={() => void act("vote")}
         />
         {canWrite(props) && answer.canEdit && !editing && (
@@ -728,7 +751,7 @@ export function AnswerSections(props: Props) {
     return () => controller.abort();
   }, [props.postId, cycle]);
   const canCreate = (kind: Answer["kind"]) =>
-    canWrite(props) &&
+    canParticipate(props) &&
     (kind === "student" ? props.role === "student" : staff(props.role));
   return (
     <section className="answer-sections" aria-label="Answers">
@@ -804,7 +827,7 @@ export function AnswerSections(props: Props) {
                 key={kind}
                 label="Your answer"
                 submitLabel="Post answer"
-                anonymousAllowed
+                anonymousAllowed={props.allowAnonymousPosting !== false}
                 attachmentKind="answer"
                 csrfToken={props.csrfToken}
                 onComplete={() => {
@@ -1038,7 +1061,11 @@ function FollowupItem({
         <p className="response-byline">{name}</p>
         {item.parentId === null && !item.deleted && (
           <DiscussionStatus
-            item={item}
+            item={{
+              ...item,
+              canResolve:
+                item.canResolve && props.allowFollowupResolution !== false,
+            }}
             disabled={pending || !canWrite(props)}
             onChange={(resolved) => void resolve(resolved)}
           />
@@ -1095,10 +1122,10 @@ function FollowupItem({
             kind="followup"
             count={item.upvoteCount}
             voted={item.viewerUpvoted}
-            disabled={!canWrite(props) || pending}
+            disabled={!canParticipate(props) || pending}
             onClick={() => void act("vote")}
           />
-          {canWrite(props) && (
+          {canParticipate(props) && (
             <button
               className="text-button"
               type="button"
@@ -1133,11 +1160,11 @@ function FollowupItem({
           {error}
         </p>
       )}
-      {replying && (
+      {replying && canParticipate(props) && (
         <TextComposer
           label="Followup"
           submitLabel="Post reply"
-          anonymousAllowed
+          anonymousAllowed={props.allowAnonymousPosting !== false}
           attachmentKind="followup"
           csrfToken={props.csrfToken}
           onComplete={() => setReplying(false)}
@@ -1503,7 +1530,7 @@ export function FollowupSections(props: Props) {
           Load more discussions
         </button>
       )}
-      {canWrite(props) && !composing && (
+      {canParticipate(props) && !composing && (
         <button
           className="followup-prompt"
           type="button"
@@ -1512,11 +1539,11 @@ export function FollowupSections(props: Props) {
           Compose a new followup discussion
         </button>
       )}
-      {composing && (
+      {composing && canParticipate(props) && (
         <TextComposer
           label="Followup"
           submitLabel="Post followup"
-          anonymousAllowed
+          anonymousAllowed={props.allowAnonymousPosting !== false}
           attachmentKind="followup"
           csrfToken={props.csrfToken}
           onComplete={() => setComposing(false)}

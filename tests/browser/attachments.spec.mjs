@@ -107,6 +107,8 @@ test.describe("rendered discussion attachments", () => {
   });
 
   async function mockApi(page, options = {}) {
+    let draftVersion = 0;
+    let draftContent = null;
     await page.route("**/api/v1/**", async (route) => {
       const url = new URL(route.request().url());
       const path = url.pathname;
@@ -148,6 +150,36 @@ test.describe("rendered discussion attachments", () => {
             page: { nextCursor: null, hasMore: false },
           },
         });
+      if (path === "/api/v1/courses/course-1/post-draft") {
+        const draft = () => ({
+          courseId: "course-1",
+          content: draftContent,
+          updatedAt: draftVersion ? "2026-10-25T00:00:00Z" : null,
+          version: draftVersion,
+        });
+        const reply = () =>
+          route.fulfill({
+            json: { data: draft() },
+            headers: { ETag: `"v${draftVersion}"` },
+          });
+        if (method === "GET") return reply();
+        if (method === "PUT" || method === "DELETE") {
+          if (route.request().headers()["if-match"] !== `"v${draftVersion}"`)
+            return route.fulfill({
+              status: 412,
+              json: {
+                error: {
+                  code: "version_conflict",
+                  message: "Changed elsewhere",
+                },
+              },
+            });
+          draftContent =
+            method === "PUT" ? route.request().postDataJSON().content : null;
+          draftVersion++;
+          return reply();
+        }
+      }
       if (path === "/api/v1/posts/p1" && method === "GET")
         return json(post("p1", "question", [picture]));
       if (path === "/api/v1/posts/p2" && method === "GET")

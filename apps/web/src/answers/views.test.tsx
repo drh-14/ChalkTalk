@@ -232,6 +232,53 @@ it("does not reveal a linked reply when its authorized lookup is denied", async 
   expect(screen.queryByText("Private reply")).toBeNull();
 });
 
+it("hides anonymous choices in new answer and followup composers when course policy disallows them", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/answers") ? answers([]) : discussions([]),
+    ),
+  );
+  const user = userEvent.setup();
+  render(<QuestionResponses {...props} allowAnonymousPosting={false} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Start students' answer" }),
+  );
+  expect(
+    screen.queryByRole("checkbox", { name: "Post anonymously" }),
+  ).toBeNull();
+  await user.click(
+    await screen.findByRole("button", {
+      name: "Compose a new followup discussion",
+    }),
+  );
+  expect(
+    screen.queryByRole("checkbox", { name: "Post anonymously" }),
+  ).toBeNull();
+});
+
+it("keeps an open anonymous answer draft recoverable when policy changes", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/answers") ? answers([]) : discussions([]),
+    ),
+  );
+  const user = userEvent.setup();
+  const { rerender } = render(<AnswerSections {...props} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Start students' answer" }),
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Post anonymously" }));
+  rerender(<AnswerSections {...props} allowAnonymousPosting={false} />);
+  await user.click(
+    screen.getByRole("button", { name: "Switch to named response" }),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Switch to named response" }),
+  ).toBeNull();
+});
+
 it("shows two fixed colored slots, formatted answer content, and an upvote beneath it", async () => {
   const calls: { url: string; method?: string }[] = [];
   vi.stubGlobal(
@@ -2633,5 +2680,41 @@ it("shows a resolved discussion as unresolved after a nested reply", async () =>
         .getByRole("button", { name: "Unresolved" })
         .getAttribute("aria-pressed"),
     ).toBe("true"),
+  );
+});
+
+it("shows locked discussion read-only participation while preserving edit and staff resolution", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.includes("/answers")) return answers([answer()]);
+      return discussions([followup({ canResolve: true })]);
+    }),
+  );
+  render(<QuestionResponses {...props} role="ta" discussionLocked />);
+  await screen.findByText(/Use/);
+  expect(screen.queryByRole("button", { name: /write.*answer/i })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Compose a new followup discussion" }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: "Upvote answer" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+  expect(
+    screen.getByRole("button", { name: "Upvote followup" }),
+  ).toHaveProperty("disabled", true);
+  expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Edit answer" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+  expect(screen.getByRole("button", { name: "Edit followup" })).toHaveProperty(
+    "disabled",
+    false,
+  );
+  expect(screen.getByRole("button", { name: "Resolved" })).toHaveProperty(
+    "disabled",
+    false,
   );
 });

@@ -26,20 +26,28 @@ import { getCourse, getMembership, type Course } from "../courses/client.js";
 import {
   confirmMergePost,
   createPost,
+  deletePostDraft,
+  getPostDraft,
+  deletePost,
   getDuplicateReview,
   getPost,
+  countNewPosts,
   listMergedPosts,
   listPosts,
   makePostPublic,
   markCourseRead,
   setFollowing,
   setPostPinned,
+  setPostDiscussionLocked,
   unmergePost,
   updatePost,
+  updatePostDraft,
   type CreatePostInput,
   type MergedPost,
   type Post,
   type PostDetail,
+  type PostDraftContent,
+  type DraftRevision,
   type PostListOptions,
   type PostSort,
 } from "./client.js";
@@ -90,6 +98,14 @@ const message = (error: unknown) =>
   error instanceof Error
     ? error.message
     : "Something went wrong. Please try again.";
+const validCloseDate = (value: string) => {
+  const date = value.slice(0, 10);
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  return (
+    Number.isFinite(parsed) &&
+    new Date(parsed).toISOString().slice(0, 10) === date
+  );
+};
 const discussionPath = (courseId: string, search = "") =>
   `/courses/${encodeURIComponent(courseId)}${search}`;
 const postPath = (courseId: string, postId: string, search = "") =>
@@ -443,13 +459,153 @@ function relatedSemanticQuery(title: string, body: string): string {
   return [heading, sample].filter(Boolean).join(" ");
 }
 const MAX_POLL_OPTIONS = 10;
+const MAX_DRAFT_FIELD_LENGTH = 200;
+
+function draftFingerprint(content: PostDraftContent) {
+  return JSON.stringify({
+    type: content.type,
+    title: content.title,
+    bodyMarkdown: content.bodyMarkdown,
+    anonymous: content.anonymous,
+    tags: content.tags,
+    ...(content.type === "poll" ? { options: content.options ?? [] } : {}),
+    ...(content.announcement ? { announcement: true } : {}),
+    ...(content.private ? { private: true } : {}),
+  });
+}
+
+function parseComposerTags(value: string): string[] {
+  const result: string[] = [];
+  let field = "";
+  let quoted = false;
+  let wasQuoted = false;
+  let closedQuote = false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (character === "\\" && quoted && value[index + 1] === "\\") {
+      field += "\\";
+      index++;
+    } else if (
+      character === "\\" &&
+      quoted &&
+      value[index + 1] === "u" &&
+      /^[0-9a-fA-F]{4}$/.test(value.slice(index + 2, index + 6))
+    ) {
+      field += String.fromCharCode(
+        parseInt(value.slice(index + 2, index + 6), 16),
+      );
+      index += 5;
+    } else if (character === '"' && quoted && value[index + 1] === '"') {
+      field += '"';
+      index++;
+    } else if (character === '"' && quoted) {
+      quoted = false;
+      closedQuote = true;
+    } else if (character === '"' && !field.trim()) {
+      field = "";
+      quoted = true;
+      wasQuoted = true;
+    } else if (character === "," && !quoted) {
+      if (wasQuoted || field.trim())
+        result.push(wasQuoted ? field : field.trim());
+      field = "";
+      wasQuoted = false;
+      closedQuote = false;
+    } else if (closedQuote && /\s/.test(character)) {
+      continue;
+    } else {
+      field += character;
+    }
+  }
+  if (wasQuoted || field.trim()) result.push(wasQuoted ? field : field.trim());
+  return result;
+}
+
+function formatComposerTags(tags: string[]): string {
+  return tags
+    .map((tag) => {
+      const quoted =
+        tag === "" ||
+        tag !== tag.trim() ||
+        [...tag].some((character) => {
+          const code = character.charCodeAt(0);
+          return (
+            character === "," || character === '"' || code < 32 || code === 127
+          );
+        });
+      if (!quoted) return tag;
+      const encoded = [...tag]
+        .map((character) => {
+          if (character === "\\") return "\\\\";
+          if (character === '"') return '""';
+          const code = character.charCodeAt(0);
+          return code < 32 || code === 127
+            ? `\\u${code.toString(16).padStart(4, "0")}`
+            : character;
+        })
+        .join("");
+      return `"${encoded}"`;
+    })
+    .join(", ");
+}
+
+function editDraftMetadataText(
+  original: string,
+  edited: string,
+  caret: number,
+): string {
+  if (!original.includes("\r"))
+    return edited.length <= MAX_DRAFT_FIELD_LENGTH ? edited : original;
+  let displayed = "";
+  const offsets = [0];
+  for (let index = 0; index < original.length; index++) {
+    if (original[index] === "\r") {
+      if (original[index + 1] === "\n") index++;
+      displayed += "\n";
+    } else {
+      displayed += original[index];
+    }
+    offsets.push(index + 1);
+  }
+  if (displayed === edited) return original;
+  const prefixLimit = Math.max(
+    0,
+    caret - Math.max(0, edited.length - displayed.length),
+  );
+  let prefix = 0;
+  while (
+    prefix < prefixLimit &&
+    prefix < displayed.length &&
+    prefix < edited.length &&
+    displayed[prefix] === edited[prefix]
+  )
+    prefix++;
+  let suffix = 0;
+  while (
+    suffix < displayed.length - prefix &&
+    suffix < edited.length - prefix &&
+    displayed[displayed.length - suffix - 1] ===
+      edited[edited.length - suffix - 1]
+  )
+    suffix++;
+  const translated =
+    original.slice(0, offsets[prefix]) +
+    edited.slice(prefix, edited.length - suffix) +
+    original.slice(offsets[displayed.length - suffix]);
+  return translated.length <= MAX_DRAFT_FIELD_LENGTH ? translated : original;
+}
 
 function Composer({
   courseId,
   csrfToken,
   staff = false,
+  archived = false,
+  allowAnonymousPosting = true,
+  allowPrivatePosting = true,
   onCreated,
   onClose,
+  onDiscardLocalChanges,
+  onLeaveRequestChange,
   onStateChange,
   initialTitle = "",
 }: {
@@ -457,14 +613,28 @@ function Composer({
   csrfToken: string;
   /** TAs and instructors may post polls and announcements. */
   staff?: boolean;
+  archived?: boolean;
+  allowAnonymousPosting?: boolean;
+  allowPrivatePosting?: boolean;
   onCreated: (post: Post) => void;
   onClose: () => void;
+  onDiscardLocalChanges: () => void;
+  onLeaveRequestChange: (guard: () => boolean) => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
   /** A starting title, such as a search the reader chose to ask as a question. */
   initialTitle?: string;
 }) {
   const [type, setType] = useState<"question" | "note" | "poll">("question");
   const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [selectionMode, setSelectionMode] = useState<"single" | "multiple">(
+    "single",
+  );
+  const [maxSelections, setMaxSelections] = useState(2);
+  const [closesAt, setClosesAt] = useState("");
+  const [releaseMode, setReleaseMode] = useState<
+    "live" | "manual" | "automatic"
+  >("live");
+  const [explanation, setExplanation] = useState("");
   const [announcement, setAnnouncement] = useState(false);
   const [audience, setAudience] = useState<"course" | "staff">("course");
   const [title, setTitle] = useState(initialTitle);
@@ -476,10 +646,25 @@ function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [body, setBody] = useState("");
+  const [editorGeneration, setEditorGeneration] = useState(0);
   const [anonymous, setAnonymous] = useState(false);
   const [tags, setTags] = useState("");
   const [pending, setPending] = useState(false);
+  const [switchingDraft, setSwitchingDraft] = useState(false);
   const [error, setError] = useState("");
+  const [loadingDraft, setLoadingDraft] = useState(true);
+  const [draftLoadPending, setDraftLoadPending] = useState(true);
+  const [restoredDraft, setRestoredDraft] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<
+    "idle" | "saving" | "saved" | "error" | "conflict"
+  >("idle");
+  const [draftError, setDraftError] = useState("");
+  const [leaveNotice, setLeaveNotice] = useState("");
+  const [revision, setRevision] = useState<DraftRevision>();
+  const revisionRef = useRef<DraftRevision | undefined>(undefined);
+  const savePromise = useRef<Promise<boolean> | undefined>(undefined);
+  const saveTimer = useRef<number | undefined>(undefined);
+  const conflictRef = useRef(false);
   const [published, setPublished] = useState<Post>();
   const attachmentQueue = useAttachmentQueue();
   const [suggestions, setSuggestions] = useState<Post[]>([]);
@@ -490,31 +675,334 @@ function Composer({
     undefined,
   );
   const query = relatedQuery(title, body);
+  const draftContent = useMemo<PostDraftContent>(
+    () => ({
+      type,
+      title,
+      bodyMarkdown: body,
+      anonymous,
+      tags: parseComposerTags(tags),
+      ...(type === "poll" ? { options: pollOptions } : {}),
+      ...(type === "note" && announcement ? { announcement: true } : {}),
+      ...(type !== "poll" && audience === "staff" ? { private: true } : {}),
+    }),
+    [type, title, body, anonymous, tags, pollOptions, announcement, audience],
+  );
+  const contentRef = useRef(draftContent);
+  contentRef.current = draftContent;
+  const savedContent = useRef(
+    draftFingerprint({
+      type: "question",
+      title: "",
+      bodyMarkdown: "",
+      anonymous: false,
+      tags: [],
+    }),
+  );
+  const applyDraft = useCallback((next: DraftRevision) => {
+    const content = next.draft.content;
+    if (
+      !next.draft ||
+      !Number.isSafeInteger(next.draft.version) ||
+      (content !== null &&
+        (!["question", "note", "poll"].includes(content.type) ||
+          typeof content.title !== "string" ||
+          typeof content.bodyMarkdown !== "string" ||
+          typeof content.anonymous !== "boolean" ||
+          !Array.isArray(content.tags)))
+    )
+      throw new Error("Invalid saved draft response.");
+    revisionRef.current = next;
+    setRevision(next);
+    if (content) {
+      savedContent.current = draftFingerprint(content);
+      setRestoredDraft(true);
+      setType(content.type);
+      setTitle(content.title);
+      setBody(content.bodyMarkdown);
+      setEditorGeneration((generation) => generation + 1);
+      setAnonymous(content.anonymous);
+      setTags(formatComposerTags(content.tags));
+      setPollOptions(content.options ?? ["", ""]);
+      setAnnouncement(Boolean(content.announcement));
+      setAudience(content.private ? "staff" : "course");
+    } else {
+      savedContent.current = draftFingerprint({
+        type: "question",
+        title: "",
+        bodyMarkdown: "",
+        anonymous: false,
+        tags: [],
+      });
+      setRestoredDraft(false);
+    }
+  }, []);
+  const loadDraft = useCallback(
+    async (isActive: () => boolean) => {
+      setDraftLoadPending(true);
+      try {
+        const next = await getPostDraft(courseId);
+        if (!isActive()) return;
+        applyDraft(next);
+        setDraftStatus(next.draft.content ? "saved" : "idle");
+        setLoadingDraft(false);
+        setDraftError("");
+      } catch (caught) {
+        if (isActive()) setDraftError(`Draft not loaded: ${message(caught)}`);
+      } finally {
+        if (isActive()) setDraftLoadPending(false);
+      }
+    },
+    [applyDraft, courseId],
+  );
+  useEffect(() => {
+    let active = true;
+    void loadDraft(() => active);
+    return () => {
+      active = false;
+    };
+  }, [loadDraft]);
+
+  const saveDraft = useCallback(async (): Promise<boolean> => {
+    if (archived || loadingDraft || conflictRef.current || !revisionRef.current)
+      return false;
+    if (savePromise.current) return savePromise.current;
+    const snapshot = draftFingerprint(contentRef.current);
+    if (snapshot === savedContent.current) return true;
+    setDraftStatus("saving");
+    setDraftError("");
+    const request = updatePostDraft(
+      courseId,
+      revisionRef.current.etag,
+      contentRef.current,
+      csrfToken,
+    );
+    const pendingSave = request
+      .then((next) => {
+        revisionRef.current = next;
+        setRevision(next);
+        savedContent.current = snapshot;
+        const changedDuringSave =
+          draftFingerprint(contentRef.current) !== snapshot;
+        setDraftStatus(changedDuringSave ? "idle" : "saved");
+        setLeaveNotice((current) =>
+          current && !changedDuringSave
+            ? "Draft saved. You can leave now."
+            : current,
+        );
+        if (changedDuringSave) {
+          window.clearTimeout(saveTimer.current);
+          saveTimer.current = window.setTimeout(() => void saveDraft(), 700);
+        }
+        return true;
+      })
+      .catch((caught) => {
+        if (caught instanceof ApiError && caught.status === 412) {
+          conflictRef.current = true;
+          setDraftStatus("conflict");
+          setDraftError(
+            "This draft changed elsewhere. Your local text is still here.",
+          );
+        } else {
+          setDraftStatus("error");
+          setDraftError(`Draft not saved: ${message(caught)}`);
+        }
+        setLeaveNotice((current) =>
+          current
+            ? "Draft was not saved. Retry or discard unsaved changes to leave."
+            : current,
+        );
+        return false;
+      })
+      .finally(() => {
+        savePromise.current = undefined;
+      });
+    savePromise.current = pendingSave;
+    return pendingSave;
+  }, [archived, courseId, csrfToken, loadingDraft]);
+
+  useEffect(() => {
+    if (
+      archived ||
+      published ||
+      conflictRef.current ||
+      loadingDraft ||
+      switchingDraft
+    )
+      return;
+    if (draftFingerprint(draftContent) === savedContent.current) return;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      void saveDraft();
+    }, 700);
+    return () => window.clearTimeout(saveTimer.current);
+  }, [
+    archived,
+    draftContent,
+    published,
+    saveDraft,
+    loadingDraft,
+    switchingDraft,
+  ]);
+
+  function prepareToLeave() {
+    if (switchingDraft || loadingDraft) return false;
+    if (archived || published) return true;
+    if (savePromise.current) {
+      setLeaveNotice(
+        "Saving latest draft before leaving. Try again when saved.",
+      );
+      return false;
+    }
+    if (conflictRef.current) {
+      setLeaveNotice(
+        "This draft changed elsewhere. Reload or confirm overwrite before leaving.",
+      );
+      return false;
+    }
+    if (draftFingerprint(contentRef.current) === savedContent.current)
+      return true;
+    if (draftStatus === "error") {
+      setLeaveNotice(
+        "Draft was not saved. Retry or discard unsaved changes to leave.",
+      );
+      return false;
+    }
+    window.clearTimeout(saveTimer.current);
+    setLeaveNotice("Saving latest draft before leaving. Try again when saved.");
+    void saveDraft();
+    return false;
+  }
+  useEffect(() => {
+    onLeaveRequestChange(prepareToLeave);
+  });
+
+  async function reloadDraft() {
+    if (switchingDraft || savePromise.current) return;
+    if (!window.confirm("Replace local changes with the saved draft?")) return;
+    setSwitchingDraft(true);
+    window.clearTimeout(saveTimer.current);
+    try {
+      const next = await getPostDraft(courseId);
+      if (next.draft.content === null) {
+        setType("question");
+        setTitle("");
+        setBody("");
+        setEditorGeneration((generation) => generation + 1);
+        setAnonymous(false);
+        setTags("");
+        setPollOptions(["", ""]);
+        setAnnouncement(false);
+        setAudience("course");
+      }
+      applyDraft(next);
+      conflictRef.current = false;
+      setDraftStatus(next.draft.content ? "saved" : "idle");
+      setDraftError("");
+    } catch (caught) {
+      setDraftError(message(caught));
+    } finally {
+      setSwitchingDraft(false);
+    }
+  }
+
+  async function overwriteDraft() {
+    if (switchingDraft || savePromise.current) return;
+    if (!window.confirm("Overwrite the saved draft with your local changes?"))
+      return;
+    setSwitchingDraft(true);
+    const local = contentRef.current;
+    const snapshot = draftFingerprint(local);
+    try {
+      const current = await getPostDraft(courseId);
+      const next = await updatePostDraft(
+        courseId,
+        current.etag,
+        local,
+        csrfToken,
+      );
+      revisionRef.current = next;
+      setRevision(next);
+      savedContent.current = snapshot;
+      conflictRef.current = false;
+      setDraftStatus(
+        draftFingerprint(contentRef.current) === snapshot ? "saved" : "idle",
+      );
+      setDraftError("");
+    } catch (caught) {
+      setDraftStatus("conflict");
+      setDraftError(`Draft not saved: ${message(caught)}`);
+    } finally {
+      setSwitchingDraft(false);
+    }
+  }
+
+  async function discardDraft() {
+    if (!revisionRef.current || switchingDraft || savePromise.current) return;
+    if (!window.confirm("Discard this saved draft?")) return;
+    if (
+      attachmentQueue.files.length > 0 &&
+      !window.confirm("Queued attachments are not saved. Discard them too?")
+    )
+      return;
+    setSwitchingDraft(true);
+    window.clearTimeout(saveTimer.current);
+    try {
+      const next = await deletePostDraft(
+        courseId,
+        revisionRef.current.etag,
+        csrfToken,
+      );
+      attachmentQueue.files.forEach((item) => attachmentQueue.remove(item.key));
+      revisionRef.current = next;
+      setRevision(next);
+      savedContent.current = draftFingerprint({
+        type: "question",
+        title: "",
+        bodyMarkdown: "",
+        anonymous: false,
+        tags: [],
+      });
+      conflictRef.current = false;
+      setRestoredDraft(false);
+      setType("question");
+      setTitle("");
+      setBody("");
+      setEditorGeneration((generation) => generation + 1);
+      setAnonymous(false);
+      setTags("");
+      setPollOptions(["", ""]);
+      setAnnouncement(false);
+      setAudience("course");
+      setDraftStatus("idle");
+      setDraftError("");
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 412) {
+        conflictRef.current = true;
+        setDraftStatus("conflict");
+        setDraftError(
+          "This draft changed elsewhere. Your local text is still here.",
+        );
+      } else {
+        setDraftError(message(caught));
+      }
+    } finally {
+      setSwitchingDraft(false);
+    }
+  }
+  const privately = type !== "poll" && audience === "staff";
+  const announcing = type === "note" && announcement && !privately;
+  const submittedAnonymous = announcing ? false : anonymous;
 
   useEffect(() => {
     onStateChange(
-      Boolean(
-        title !== initialTitle ||
-        body ||
-        tags ||
-        anonymous ||
-        audience !== "course" ||
-        type !== "question" ||
-        attachmentQueue.files.length > 0 ||
-        published,
-      ),
-      pending,
+      Boolean(attachmentQueue.files.length > 0 || published),
+      pending || switchingDraft,
     );
   }, [
-    anonymous,
-    audience,
-    body,
-    initialTitle,
     onStateChange,
     pending,
-    tags,
-    title,
-    type,
+    switchingDraft,
     attachmentQueue.files.length,
     published,
   ]);
@@ -557,7 +1045,7 @@ function Composer({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) return;
+    if (pending || switchingDraft || loadingDraft || archived) return;
     if (published) {
       setPending(true);
       const complete = await attachmentQueue.upload(
@@ -569,24 +1057,47 @@ function Composer({
       if (complete) onCreated(published);
       return;
     }
-    const privately = type !== "poll" && audience === "staff";
-    const announcing = type === "note" && announcement && !privately;
+    if (submittedAnonymous && !allowAnonymousPosting) {
+      setError(
+        "Anonymous posting is disabled for this course. Choose a named post before publishing.",
+      );
+      return;
+    }
+    if (privately && !allowPrivatePosting) {
+      setError(
+        "Private posting is disabled for this course. Choose the entire class before publishing.",
+      );
+      return;
+    }
     const labels = pollOptions.map((label) => label.trim());
     const input: CreatePostInput = {
       type,
       title: title.trim(),
       bodyMarkdown: body,
-      anonymous: announcing ? false : anonymous,
-      tags: tags
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean),
+      anonymous: submittedAnonymous,
+      tags: parseComposerTags(tags),
       ...(type === "poll"
-        ? { options: labels.filter(Boolean).map((label) => ({ label })) }
+        ? {
+            options: labels.filter(Boolean).map((label) => ({ label })),
+            selectionMode,
+            ...(selectionMode === "multiple" ? { maxSelections } : {}),
+            ...(closesAt &&
+            validCloseDate(closesAt) &&
+            !Number.isNaN(Date.parse(closesAt))
+              ? { closesAt: new Date(closesAt).toISOString() }
+              : {}),
+            ...(releaseMode === "live" ? {} : { releaseMode }),
+            ...(explanation.trim() ? { explanation: explanation.trim() } : {}),
+          }
         : {}),
       ...(announcing ? { announcement: true } : {}),
       ...(privately ? { private: true } : {}),
     };
+    // Matches the published body below, so a retry keeps its original deadline.
+    const payload = JSON.stringify({
+      ...input,
+      draftVersion: revisionRef.current?.draft.version,
+    });
     if (type === "poll") {
       const filled = labels.filter(Boolean);
       if (filled.length < 2) {
@@ -604,6 +1115,25 @@ function Composer({
         setError("Poll options must be different from each other.");
         return;
       }
+      if (
+        selectionMode === "multiple" &&
+        (!Number.isInteger(maxSelections) ||
+          maxSelections < 2 ||
+          maxSelections > filled.length)
+      ) {
+        setError(`Maximum selections must be between 2 and ${filled.length}.`);
+        return;
+      }
+      if (
+        closesAt &&
+        (!validCloseDate(closesAt) ||
+          Number.isNaN(Date.parse(closesAt)) ||
+          (Date.parse(closesAt) <= Date.now() &&
+            lastAttempt.current?.body !== payload))
+      ) {
+        setError("Choose a future poll close time.");
+        return;
+      }
     }
     if (!input.title || input.title.length > 200) {
       setError("Post title must be between 1 and 200 characters.");
@@ -617,16 +1147,25 @@ function Composer({
       setError("Use at most 10 tags of 40 characters each.");
       return;
     }
-    const payload = JSON.stringify(input);
-    const key =
-      lastAttempt.current?.body === payload
-        ? lastAttempt.current.key
-        : crypto.randomUUID();
-    lastAttempt.current = { body: payload, key };
+    window.clearTimeout(saveTimer.current);
     setPending(true);
     setError("");
+    let postCreated = false;
     try {
+      if (savePromise.current && !(await savePromise.current)) return;
+      if (draftFingerprint(contentRef.current) !== savedContent.current) {
+        if (!(await saveDraft())) return;
+      }
+      if (conflictRef.current) return;
+      input.draftVersion = revisionRef.current?.draft.version;
+      const payload = JSON.stringify(input);
+      const key =
+        lastAttempt.current?.body === payload
+          ? lastAttempt.current.key
+          : crypto.randomUUID();
+      lastAttempt.current = { body: payload, key };
       const created = await createPost(courseId, input, csrfToken, key);
+      postCreated = true;
       setPublished(created);
       const complete = await attachmentQueue.upload(
         "post",
@@ -635,7 +1174,15 @@ function Composer({
       );
       if (complete) onCreated(created);
     } catch (caught) {
-      setError(message(caught));
+      if (!postCreated && caught instanceof ApiError && caught.status === 412) {
+        conflictRef.current = true;
+        setDraftStatus("conflict");
+        setDraftError(
+          "This draft changed elsewhere. Your local text is still here.",
+        );
+      } else {
+        setError(message(caught));
+      }
     } finally {
       setPending(false);
     }
@@ -648,6 +1195,88 @@ function Composer({
           Close composer
         </button>
       </div>
+      {restoredDraft && (
+        <p role="status">Saved draft restored for this course.</p>
+      )}
+      {loadingDraft && <p role="status">Loading saved draft…</p>}
+      {loadingDraft && draftError && (
+        <button
+          type="button"
+          className="text-button"
+          disabled={draftLoadPending}
+          onClick={() => void loadDraft(() => true)}
+        >
+          Retry loading draft
+        </button>
+      )}
+      {!loadingDraft && revision?.draft.content && !published && (
+        <button
+          type="button"
+          className="text-button"
+          disabled={pending || switchingDraft}
+          onClick={() => void discardDraft()}
+        >
+          Discard draft
+        </button>
+      )}
+      {archived && (
+        <p role="status">
+          This course is archived. Drafts can be read or discarded, but not
+          edited or published.
+        </p>
+      )}
+      {draftStatus === "saving" && <p role="status">Saving draft…</p>}
+      {draftStatus === "saved" && <p role="status">Draft saved.</p>}
+      {leaveNotice && <p role="status">{leaveNotice}</p>}
+      {draftError && (
+        <p className="form-message error" role="alert">
+          {draftError}
+        </p>
+      )}
+      {draftStatus === "error" && (
+        <button
+          type="button"
+          className="text-button"
+          disabled={pending || switchingDraft}
+          onClick={() => void saveDraft()}
+        >
+          Retry draft save
+        </button>
+      )}
+      {(draftStatus === "error" || draftStatus === "conflict") && (
+        <button
+          type="button"
+          className="text-button"
+          disabled={pending || switchingDraft}
+          onClick={onDiscardLocalChanges}
+        >
+          Discard unsaved changes and close
+        </button>
+      )}
+      {draftStatus === "conflict" && (
+        <div>
+          <button
+            type="button"
+            className="text-button"
+            disabled={pending || switchingDraft}
+            onClick={() => void reloadDraft()}
+          >
+            Reload saved draft
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={pending || switchingDraft}
+            onClick={() => void overwriteDraft()}
+          >
+            Overwrite saved draft
+          </button>
+        </div>
+      )}
+      <p>
+        Attachments are not saved with drafts and will not return after a
+        reload.
+      </p>
       <form onSubmit={submit} noValidate>
         {published ? (
           <p role="status">
@@ -659,6 +1288,7 @@ function Composer({
               Post type
               <select
                 value={type}
+                disabled={archived || pending || switchingDraft || loadingDraft}
                 onChange={(event) =>
                   setType(event.target.value as "question" | "note" | "poll")
                 }
@@ -670,16 +1300,29 @@ function Composer({
             </label>
             <label>
               Post title
-              <input
+              <textarea
                 aria-label="Post title"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                maxLength={201}
+                className="post-title-input"
+                rows={1}
+                disabled={archived || pending || switchingDraft || loadingDraft}
+                value={title.replace(/\r\n?/g, "\n")}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  const caret = event.currentTarget.selectionStart;
+                  setTitle((current) =>
+                    editDraftMetadataText(current, value, caret),
+                  );
+                }}
+                maxLength={
+                  MAX_DRAFT_FIELD_LENGTH - (title.match(/\r\n/g)?.length ?? 0)
+                }
                 required
               />
             </label>
             <MarkdownEditorField
+              key={editorGeneration}
               label="Post body"
+              disabled={archived || pending || switchingDraft || loadingDraft}
               value={body}
               onChange={setBody}
               containerRef={bodyField}
@@ -689,23 +1332,37 @@ function Composer({
                 <legend>Poll options</legend>
                 {pollOptions.map((label, index) => (
                   <div key={index} className="poll-option-row">
-                    <input
+                    <textarea
                       aria-label={`Option ${index + 1}`}
-                      value={label}
-                      maxLength={201}
-                      onChange={(event) =>
-                        setPollOptions((current) =>
-                          current.map((value, position) =>
-                            position === index ? event.target.value : value,
-                          ),
-                        )
+                      rows={1}
+                      value={label.replace(/\r\n?/g, "\n")}
+                      disabled={
+                        archived || pending || switchingDraft || loadingDraft
                       }
+                      maxLength={
+                        MAX_DRAFT_FIELD_LENGTH -
+                        (label.match(/\r\n/g)?.length ?? 0)
+                      }
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        const caret = event.currentTarget.selectionStart;
+                        setPollOptions((current) =>
+                          current.map((option, position) =>
+                            position === index
+                              ? editDraftMetadataText(option, value, caret)
+                              : option,
+                          ),
+                        );
+                      }}
                     />
                     {pollOptions.length > 2 && (
                       <button
                         type="button"
                         className="text-button"
                         aria-label={`Remove option ${index + 1}`}
+                        disabled={
+                          archived || pending || switchingDraft || loadingDraft
+                        }
                         onClick={() =>
                           setPollOptions((current) =>
                             current.filter((_, position) => position !== index),
@@ -721,6 +1378,9 @@ function Composer({
                   <button
                     type="button"
                     className="text-button"
+                    disabled={
+                      archived || pending || switchingDraft || loadingDraft
+                    }
                     onClick={() =>
                       setPollOptions((current) => [...current, ""])
                     }
@@ -730,24 +1390,99 @@ function Composer({
                 )}
               </fieldset>
             )}
+            {type === "poll" && (
+              <div className="poll-settings">
+                <label>
+                  Selection mode
+                  <select
+                    value={selectionMode}
+                    onChange={(event) => {
+                      const mode = event.target.value as "single" | "multiple";
+                      setSelectionMode(mode);
+                      if (mode === "multiple")
+                        setReleaseMode((current) =>
+                          current === "live" ? "manual" : current,
+                        );
+                    }}
+                  >
+                    <option value="single">Choose one</option>
+                    <option value="multiple">Choose multiple</option>
+                  </select>
+                </label>
+                {selectionMode === "multiple" && (
+                  <label>
+                    Maximum selections
+                    <input
+                      type="number"
+                      min={2}
+                      max={MAX_POLL_OPTIONS}
+                      value={maxSelections}
+                      onChange={(event) =>
+                        setMaxSelections(Number(event.target.value))
+                      }
+                    />
+                  </label>
+                )}
+                <label>
+                  Close time (optional)
+                  <input
+                    type="datetime-local"
+                    value={closesAt}
+                    onChange={(event) => setClosesAt(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Results release
+                  <select
+                    value={releaseMode}
+                    onChange={(event) =>
+                      setReleaseMode(
+                        event.target.value as "live" | "manual" | "automatic",
+                      )
+                    }
+                  >
+                    {selectionMode === "single" && (
+                      <option value="live">Live</option>
+                    )}
+                    <option value="manual">Staff release</option>
+                    <option value="automatic">Automatically when closed</option>
+                  </select>
+                </label>
+                <label>
+                  Results explanation (optional)
+                  <textarea
+                    value={explanation}
+                    onChange={(event) => setExplanation(event.target.value)}
+                  />
+                </label>
+              </div>
+            )}
             <label>
               Tags (comma-separated)
               <input
                 value={tags}
+                disabled={archived || pending || switchingDraft || loadingDraft}
                 onChange={(event) => setTags(event.target.value)}
               />
             </label>
             {type !== "poll" && (
               <label>
-                Post to
+                Visibility
                 <select
                   value={audience}
+                  disabled={
+                    archived || pending || switchingDraft || loadingDraft
+                  }
                   onChange={(event) =>
                     setAudience(event.target.value as "course" | "staff")
                   }
                 >
-                  <option value="course">Entire class</option>
-                  <option value="staff">Instructors and TAs</option>
+                  <option value="course">Public — everyone in course</option>
+                  {allowPrivatePosting && (
+                    <option value="staff">
+                      Private — only you and current instructors/TAs
+                    </option>
+                  )}
                 </select>
               </label>
             )}
@@ -755,36 +1490,68 @@ function Composer({
               <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={announcement && audience !== "staff"}
-                  disabled={audience === "staff"}
+                  checked={announcing}
+                  disabled={archived || pending || switchingDraft || privately}
                   onChange={(event) => setAnnouncement(event.target.checked)}
                 />
                 Post as announcement (pinned; email sent to subscribers)
               </label>
             )}
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={
-                  anonymous &&
-                  !(type === "note" && announcement && audience !== "staff")
-                }
-                disabled={
-                  type === "note" && announcement && audience !== "staff"
-                }
-                onChange={(event) => setAnonymous(event.target.checked)}
-              />
-              Post anonymously
-            </label>
+            {allowAnonymousPosting && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={submittedAnonymous}
+                  disabled={archived || pending || switchingDraft || announcing}
+                  onChange={(event) => setAnonymous(event.target.checked)}
+                />
+                Post anonymously
+              </label>
+            )}
           </>
         )}
-        <AttachmentSelection queue={attachmentQueue} disabled={pending} />
+        {!archived && (
+          <AttachmentSelection
+            queue={attachmentQueue}
+            disabled={pending || switchingDraft}
+          />
+        )}
+        {!allowAnonymousPosting && submittedAnonymous && !published && (
+          <p className="form-message error">
+            Anonymous posting is now disabled. Your draft is unchanged.{" "}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setAnonymous(false)}
+            >
+              Switch to named post
+            </button>
+          </p>
+        )}
+        {!allowPrivatePosting && privately && !published && (
+          <p className="form-message error">
+            Private posting is now disabled. Your draft is unchanged.{" "}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setAudience("course")}
+            >
+              Switch to entire class
+            </button>
+          </p>
+        )}
         {error && (
           <p className="form-message error" role="alert">
             {error}
           </p>
         )}
-        <button className="button primary" type="submit" disabled={pending}>
+        <button
+          className="button primary"
+          type="submit"
+          disabled={
+            pending || switchingDraft || archived || draftStatus === "conflict"
+          }
+        >
           {pending
             ? "Publishing…"
             : published
@@ -1266,6 +2033,10 @@ function DiscussionContent({
   const [localSortQuery, setLocalSortQuery] = useState<string>();
   const [pinPending, setPinPending] = useState(false);
   const [pinError, setPinError] = useState("");
+  const [lockPending, setLockPending] = useState(false);
+  const [lockError, setLockError] = useState("");
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [readError, setReadError] = useState("");
   const [detailCycle, setDetailCycle] = useState(0);
   const [reviewError, setReviewError] = useState("");
@@ -1275,9 +2046,13 @@ function DiscussionContent({
   const [pageError, setPageError] = useState("");
   const [pagePending, setPagePending] = useState(false);
   const [feedCycle, setFeedCycle] = useState(0);
+  const [feedSnapshot, setFeedSnapshot] = useState<string | null>(null);
+  const [newPostCount, setNewPostCount] = useState(0);
   const [composerOpen, setComposerOpen] = useState(false);
   const [detail, setDetail] = useState<PostDetail>();
   const [detailError, setDetailError] = useState("");
+  const currentPostRoute = useRef({ courseId, postId });
+  currentPostRoute.current = { courseId, postId };
   const canEditDetail =
     !!detail &&
     !detail.deleted &&
@@ -1299,6 +2074,7 @@ function DiscussionContent({
     id: number;
   }>();
   const composerState = useRef({ dirty: false, pending: false });
+  const composerLeaveRequest = useRef<() => boolean>(() => true);
   const editorState = useRef({ dirty: false, pending: false });
   const listScroll = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -1337,6 +2113,7 @@ function DiscussionContent({
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   const currentFeed = useRef(0);
+  const deletedPostIds = useRef(new Set<string>());
 
   useEffect(() => {
     if (!userId) return;
@@ -1394,8 +2171,12 @@ function DiscussionContent({
     else setLocalFilters(next);
   }
   const filterOptions = feedFilters(userId, staff);
-  const activeFilter = filterOptions.find(
-    (item) => item.key === activeFilters.filter,
+  const activeFilter = useMemo(
+    () =>
+      feedFilters(userId, staff).find(
+        (item) => item.key === activeFilters.filter,
+      ),
+    [userId, staff, activeFilters.filter],
   );
   const filter = activeFilter?.key ?? "all";
   // Filters may arrive as fresh objects on each render, so tags keep their identity by content.
@@ -1445,6 +2226,8 @@ function DiscussionContent({
     setCursor(null);
     setFeedError("");
     setPageError("");
+    setFeedSnapshot(null);
+    setNewPostCount(0);
     setLoading(true);
     setPagePending(false);
     pageBusy.current = false;
@@ -1469,19 +2252,24 @@ function DiscussionContent({
         : listPosts(courseId, options)
     )
       .then((page) => {
-        if (currentFeed.current === generation) {
-          if (postView === "duplicates")
-            setMergedItems(page.data as MergedPost[]);
-          else setItems(page.data as Post[]);
-          setCursor(page.page.nextCursor);
-          setLoading(false);
+        if (currentFeed.current !== generation) return;
+        if (postView === "duplicates")
+          setMergedItems(page.data as MergedPost[]);
+        else {
+          setItems(
+            (page.data as Post[]).filter(
+              (post) => !deletedPostIds.current.has(post.id),
+            ),
+          );
+          setFeedSnapshot("snapshot" in page ? (page.snapshot ?? null) : null);
         }
+        setCursor(page.page.nextCursor);
+        setLoading(false);
       })
       .catch((caught) => {
-        if (currentFeed.current === generation) {
-          setFeedError(message(caught));
-          setLoading(false);
-        }
+        if (currentFeed.current !== generation) return;
+        setFeedError(message(caught));
+        setLoading(false);
       });
     return () => {
       controller.abort();
@@ -1500,6 +2288,43 @@ function DiscussionContent({
     userId,
   ]);
   useEffect(() => {
+    if (!feedSnapshot || postView !== "posts" || loading) return;
+    let active = true;
+    let pending = false;
+    const options = feedOptions(query, activeFilter, sort, tags, tagMatch);
+    const check = () => {
+      if (document.visibilityState === "hidden" || pending) return;
+      pending = true;
+      void countNewPosts(courseId, feedSnapshot, options)
+        .then((count) => {
+          if (active) setNewPostCount(count);
+        })
+        .catch(() => {
+          /* Keep the current feed and last known count on polling failure. */
+        })
+        .finally(() => {
+          pending = false;
+        });
+    };
+    check();
+    const timer = window.setInterval(check, 20_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [
+    courseId,
+    feedSnapshot,
+    postView,
+    loading,
+    query,
+    filter,
+    activeFilter,
+    sort,
+    tags,
+    tagMatch,
+  ]);
+  useEffect(() => {
     if (!postId) {
       setDetail(undefined);
       setDetailError("");
@@ -1509,6 +2334,7 @@ function DiscussionContent({
     const controller = new AbortController();
     setDetail(undefined);
     setDetailError("");
+    setDeleteError("");
     void getPost(postId, controller.signal)
       .then((next) => {
         if (active) {
@@ -1600,7 +2426,10 @@ function DiscussionContent({
             const known = new Set(prior.map((post) => post.id));
             return [
               ...prior,
-              ...(page.data as Post[]).filter((post) => !known.has(post.id)),
+              ...(page.data as Post[]).filter(
+                (post) =>
+                  !known.has(post.id) && !deletedPostIds.current.has(post.id),
+              ),
             ];
           });
         setCursor(page.page.nextCursor);
@@ -1623,7 +2452,7 @@ function DiscussionContent({
       });
   }
   function leaveComposer() {
-    if (mergePending) return false;
+    if (mergePending || deletePending) return false;
     if (editingPostId) {
       if (editorState.current.pending) return false;
       if (
@@ -1636,9 +2465,10 @@ function DiscussionContent({
     }
     if (!composerOpen) return true;
     if (composerState.current.pending) return false;
+    if (!composerLeaveRequest.current()) return false;
     if (
       composerState.current.dirty &&
-      !window.confirm("Discard your unsaved post draft?")
+      !window.confirm("Discard queued attachments before leaving?")
     )
       return false;
     composerState.current = { dirty: false, pending: false };
@@ -1646,7 +2476,11 @@ function DiscussionContent({
     return true;
   }
   function beforeMerge() {
-    if (editorState.current.pending || composerState.current.pending)
+    if (
+      deletePending ||
+      editorState.current.pending ||
+      composerState.current.pending
+    )
       return false;
     if (editingPostId && editorState.current.dirty)
       return window.confirm("Discard your unsaved post edits?");
@@ -1662,6 +2496,47 @@ function DiscussionContent({
   );
   function navigate(path: string) {
     if (leaveComposer()) onNavigate(path);
+  }
+  async function deleteCurrentPost(post: Post) {
+    if (
+      deletePending ||
+      mergePending ||
+      editorState.current.pending ||
+      !window.confirm(`Delete “${post.title}”? This cannot be undone.`)
+    )
+      return;
+    setDeletePending(true);
+    setDeleteError("");
+    try {
+      await deletePost(post, csrfToken);
+      deletedPostIds.current.add(post.id);
+      setItems((current) => current.filter((item) => item.id !== post.id));
+      setDetail(undefined);
+      setEditingPostId(undefined);
+      editorState.current = { dirty: false, pending: false };
+      onNavigate(discussionPath(courseId, search));
+    } catch (caught) {
+      setDeleteError(message(caught));
+      if (caught instanceof ApiError && caught.status === 412) {
+        try {
+          const latest = await getPost(post.id);
+          if (
+            !("redirectToPostId" in latest) &&
+            !latest.deleted &&
+            latest.courseId === courseId
+          ) {
+            setDetail(latest);
+            setItems((current) =>
+              current.map((item) => (item.id === latest.id ? latest : item)),
+            );
+          }
+        } catch {
+          // Keep the API conflict visible and the unsaved editor mounted.
+        }
+      }
+    } finally {
+      setDeletePending(false);
+    }
   }
   function openPost(id: string) {
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
@@ -1761,6 +2636,52 @@ function DiscussionContent({
       setDetailCycle((value) => value + 1);
     } finally {
       setPinPending(false);
+    }
+  }
+  async function toggleDiscussionLock(post: Post) {
+    if (lockPending) return;
+    setLockPending(true);
+    setLockError("");
+    try {
+      const next = await setPostDiscussionLocked(
+        post,
+        !post.discussionLocked,
+        csrfToken,
+      );
+      setDetail((current) =>
+        currentPostRoute.current.courseId === next.courseId &&
+        currentPostRoute.current.postId === next.id &&
+        current?.id === next.id &&
+        !current.deleted &&
+        current.version <= next.version
+          ? {
+              ...current,
+              discussionLocked: next.discussionLocked,
+              version: next.version,
+            }
+          : current,
+      );
+      setItems((current) =>
+        current.map((item) =>
+          item.id === next.id && item.version <= next.version
+            ? {
+                ...item,
+                discussionLocked: next.discussionLocked,
+                version: next.version,
+              }
+            : item,
+        ),
+      );
+    } catch (caught) {
+      if (
+        currentPostRoute.current.courseId === post.courseId &&
+        currentPostRoute.current.postId === post.id
+      ) {
+        setLockError(message(caught));
+        setDetailCycle((value) => value + 1);
+      }
+    } finally {
+      setLockPending(false);
     }
   }
   async function unmerge(post: MergedPost) {
@@ -2041,17 +2962,37 @@ function DiscussionContent({
               <button
                 type="button"
                 className="button primary create-post"
-                disabled={course?.status !== "active"}
+                disabled={!course || course.status === "deleting"}
                 onClick={() => openComposer()}
-                aria-label="Create post"
+                aria-label={
+                  course?.status === "archived"
+                    ? "View saved draft"
+                    : "Create post"
+                }
               >
-                + Create post
+                {course?.status === "archived"
+                  ? "View saved draft"
+                  : "+ Create post"}
               </button>
             </div>
             <p id="post-search-help" className="visually-hidden">
               Search words, "quoted phrases", OR, or -excluded terms.
             </p>
             {reviewError && <p role="alert">{reviewError}</p>}
+            <div className="new-posts-status-slot">
+              {newPostCount > 0 &&
+                postView === "posts" &&
+                !loading &&
+                !feedError && (
+                  <p
+                    role="status"
+                    className="new-posts-notice"
+                    aria-label={`${newPostCount} new ${newPostCount === 1 ? "post" : "posts"}`}
+                  >
+                    {newPostCount} new {newPostCount === 1 ? "post" : "posts"}
+                  </p>
+                )}
+            </div>
             <div
               className="post-list-scroll"
               role="region"
@@ -2269,7 +3210,28 @@ function DiscussionContent({
                       courseId={courseId}
                       csrfToken={csrfToken}
                       staff={staff}
+                      archived={course?.status !== "active"}
+                      allowAnonymousPosting={course?.allowAnonymousPosting}
+                      allowPrivatePosting={course?.allowPrivatePosting}
                       onClose={leaveComposer}
+                      onDiscardLocalChanges={() => {
+                        if (
+                          composerState.current.dirty &&
+                          !window.confirm(
+                            "Discard queued attachments before leaving?",
+                          )
+                        )
+                          return;
+                        composerState.current = {
+                          dirty: false,
+                          pending: false,
+                        };
+                        composerLeaveRequest.current = () => true;
+                        setComposerOpen(false);
+                      }}
+                      onLeaveRequestChange={(guard) => {
+                        composerLeaveRequest.current = guard;
+                      }}
                       onStateChange={(dirty, pending) => {
                         composerState.current = { dirty, pending };
                       }}
@@ -2375,8 +3337,25 @@ function DiscussionContent({
                     <p>This post was deleted.</p>
                   ) : (
                     <article>
+                      {canEditDetail && (
+                        <div className="post-delete-action">
+                          <button
+                            type="button"
+                            className="button danger compact"
+                            disabled={mergePending || deletePending}
+                            onClick={() => void deleteCurrentPost(detail)}
+                          >
+                            {deletePending ? "Deleting…" : "Delete post"}
+                          </button>
+                          {deleteError && (
+                            <p className="form-message error" role="alert">
+                              {deleteError}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       {canEditDetail && editingPostId === detail.id && (
-                        <div inert={mergePending}>
+                        <div inert={mergePending || deletePending}>
                           <PostEditor
                             key={detail.id}
                             post={detail}
@@ -2402,6 +3381,12 @@ function DiscussionContent({
                             {postTypeOf(detail.type).label}
                           </p>
                           <h2>{detail.title}</h2>
+                          {detail.discussionLocked && (
+                            <p className="discussion-lock-notice" role="status">
+                              Discussion locked. Existing content remains
+                              available, but new replies and votes are closed.
+                            </p>
+                          )}
                           {detail.private && (
                             <PrivateNotice
                               post={detail}
@@ -2469,9 +3454,36 @@ function DiscussionContent({
                                 key={detail.id}
                                 postId={detail.id}
                                 options={detail.options}
-                                totalVotes={detail.totalVotes ?? 0}
-                                closed={course?.status !== "active"}
+                                totalVotes={detail.totalVotes}
+                                selectionMode={detail.selectionMode}
+                                maxSelections={detail.maxSelections}
+                                closesAt={detail.closesAt}
+                                releaseMode={detail.releaseMode}
+                                resultsReleased={detail.resultsReleased}
+                                explanation={detail.explanation}
+                                closed={
+                                  course?.status !== "active" ||
+                                  Boolean(detail.closed)
+                                }
+                                discussionLocked={detail.discussionLocked}
                                 csrfToken={csrfToken}
+                                staff={staff}
+                                courseActive={course?.status === "active"}
+                                version={detail.version}
+                                onPostChange={(updated) => {
+                                  setDetail(updated);
+                                  setItems((current) =>
+                                    current.map((item) =>
+                                      item.id === updated.id ? updated : item,
+                                    ),
+                                  );
+                                }}
+                                onCloned={(created) => {
+                                  setItems((current) => [created, ...current]);
+                                  navigate(
+                                    postPath(courseId, created.id, search),
+                                  );
+                                }}
                                 onChange={(state) => {
                                   setDetail((current) =>
                                     current?.id === detail.id &&
@@ -2518,7 +3530,7 @@ function DiscussionContent({
                             <button
                               type="button"
                               className="button secondary edit-button"
-                              disabled={mergePending}
+                              disabled={mergePending || deletePending}
                               onClick={() => setEditingPostId(detail.id)}
                             >
                               Edit post
@@ -2536,7 +3548,7 @@ function DiscussionContent({
                             <button
                               type="button"
                               className="button secondary compact"
-                              disabled={pinPending}
+                              disabled={pinPending || deletePending}
                               onClick={() => void togglePin(detail)}
                             >
                               {pinPending
@@ -2547,6 +3559,31 @@ function DiscussionContent({
                                   ? "Unpin"
                                   : "Pin"}
                             </button>
+                          )}
+                          {course?.status === "active" &&
+                            detail.type !== "note" && (
+                              <button
+                                type="button"
+                                className="button secondary compact"
+                                disabled={lockPending}
+                                aria-pressed={!!detail.discussionLocked}
+                                onClick={() =>
+                                  void toggleDiscussionLock(detail)
+                                }
+                              >
+                                {lockPending
+                                  ? detail.discussionLocked
+                                    ? "Unlocking…"
+                                    : "Locking…"
+                                  : detail.discussionLocked
+                                    ? "Unlock discussion"
+                                    : "Lock discussion"}
+                              </button>
+                            )}
+                          {lockError && (
+                            <p className="form-message error" role="alert">
+                              {lockError}
+                            </p>
                           )}
                           {pinError && (
                             <p className="form-message error" role="alert">
@@ -2576,6 +3613,11 @@ function DiscussionContent({
                           postId={detail.id}
                           role={role}
                           courseStatus={course?.status}
+                          allowAnonymousPosting={course?.allowAnonymousPosting}
+                          allowFollowupResolution={
+                            course?.allowFollowupResolution
+                          }
+                          discussionLocked={detail.discussionLocked}
                           csrfToken={csrfToken}
                           onActivity={() => void refreshFollowing(detail.id)}
                         />

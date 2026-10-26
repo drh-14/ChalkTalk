@@ -20,4 +20,4 @@
 - [x] 3.1 Browser test against the running stack: a TA creates a poll, a student votes and changes their vote and sees the counts, and an instructor's announcement appears pinned with its badge and reaches Mailpit; capture screenshots
 - [x] 3.2 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
   - Local run on Windows, 2026-10-20: format, lint, typecheck, build, the posts, answers, followups, statistics, and worker suites, and the poll component and composer tests pass; the browser test passed three runs in a row. Environment-only failures match `main`: the digest and job process-separation tests, and three worker tests that fail intermittently on unmodified `main` when an earlier test's retried job becomes due mid-run.
-- [ ] 3.3 Archive after merge
+- [x] 3.3 Archive after merge

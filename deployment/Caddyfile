@@ -1,0 +1,23 @@
+{$DOMAIN} {
+	encode zstd gzip
+
+	@apiHealth path /api/health
+	handle @apiHealth {
+		rewrite * /health
+		reverse_proxy api:3000
+	}
+
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	handle /collaboration {
+		reverse_proxy collaboration:3100
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
