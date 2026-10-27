@@ -322,10 +322,14 @@ export function createThreadLiveServer({
             lastTypingAt: 0,
           };
           clients.add(client);
+          let pending = Promise.resolve();
           webSocket.on("message", (data) => {
-            void handle(client, Buffer.from(data.toString())).catch(() =>
-              send(client, { type: "error", code: "service_unavailable" }),
-            );
+            const raw = Buffer.from(data.toString());
+            pending = pending
+              .then(() => handle(client, raw))
+              .catch(() =>
+                send(client, { type: "error", code: "service_unavailable" }),
+              );
           });
           webSocket.on("close", () => {
             clients.delete(client);
