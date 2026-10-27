@@ -39,6 +39,7 @@ import {
   renamePostFolder,
   deletePostFolder,
   makePostPublic,
+  setPostSchedule,
   markCourseRead,
   setFollowing,
   setPostPinned,
@@ -137,6 +138,126 @@ function PostByline({ post }: { post: Post }) {
         </>
       )}
     </>
+  );
+}
+
+/** Tomorrow at 9:00 local time, as a datetime-local value. */
+function defaultPublishAt() {
+  const when = new Date();
+  when.setDate(when.getDate() + 1);
+  when.setHours(9, 0, 0, 0);
+  return localInputValue(when);
+}
+/** A Date as the YYYY-MM-DDTHH:mm text a datetime-local input expects. */
+const localInputValue = (when: Date) => {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`;
+};
+
+/** Notice on a scheduled announcement, with Publish now and Reschedule for staff. */
+function ScheduledNotice({
+  post,
+  canChange,
+  csrfToken,
+  onChanged,
+}: {
+  post: Post;
+  canChange: boolean;
+  csrfToken: string;
+  onChanged: (post: Post) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const [rescheduling, setRescheduling] = useState(false);
+  const [when, setWhen] = useState(() =>
+    localInputValue(new Date(post.scheduledFor!)),
+  );
+  const full = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "full",
+    timeStyle: "short",
+  }).format(new Date(post.scheduledFor!));
+  async function change(scheduledFor: string | null) {
+    if (pending) return;
+    if (
+      scheduledFor === null &&
+      !window.confirm("Publish this announcement now and email the class?")
+    )
+      return;
+    setPending(true);
+    setError("");
+    try {
+      onChanged(await setPostSchedule(post, scheduledFor, csrfToken));
+      setRescheduling(false);
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <div className="scheduled-notice" role="note">
+      <span>
+        Scheduled to publish {full}. Only staff can see it until then.
+      </span>
+      {canChange && !rescheduling && (
+        <span className="scheduled-notice-actions">
+          <button
+            type="button"
+            className="button secondary compact"
+            disabled={pending}
+            onClick={() => void change(null)}
+          >
+            Publish now
+          </button>
+          <button
+            type="button"
+            className="button secondary compact"
+            disabled={pending}
+            onClick={() => setRescheduling(true)}
+          >
+            Reschedule
+          </button>
+        </span>
+      )}
+      {rescheduling && (
+        <form
+          className="scheduled-notice-actions"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void change(new Date(when).toISOString());
+          }}
+        >
+          <label>
+            New time
+            <input
+              type="datetime-local"
+              value={when}
+              onChange={(event) => setWhen(event.target.value)}
+              required
+            />
+          </label>
+          <button
+            type="submit"
+            className="button secondary compact"
+            disabled={pending}
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setRescheduling(false)}
+          >
+            Cancel
+          </button>
+        </form>
+      )}
+      {error && (
+        <p className="form-message error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -647,6 +768,8 @@ function Composer({
   const [explanation, setExplanation] = useState("");
   const [announcement, setAnnouncement] = useState(false);
   const [audience, setAudience] = useState<"course" | "staff">("course");
+  const [publishLater, setPublishLater] = useState(false);
+  const [publishAt, setPublishAt] = useState(defaultPublishAt);
   const [title, setTitle] = useState(initialTitle);
   const bodyField = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1113,6 +1236,9 @@ function Composer({
         : {}),
       ...(announcing ? { announcement: true } : {}),
       ...(privately ? { private: true } : {}),
+      ...(announcing && publishLater
+        ? { scheduledFor: new Date(publishAt).toISOString() }
+        : {}),
     };
     // Matches the published body below, so a retry keeps its original deadline.
     const payload = JSON.stringify({
@@ -1542,6 +1668,43 @@ function Composer({
                 />
                 Post anonymously
               </label>
+            )}
+            {staff && announcing && (
+              <fieldset className="publish-choice">
+                <legend>Publish</legend>
+                <label className="checkbox-label">
+                  <input
+                    type="radio"
+                    name="publish-when"
+                    checked={!publishLater}
+                    disabled={archived || pending || switchingDraft}
+                    onChange={() => setPublishLater(false)}
+                  />
+                  Now
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    type="radio"
+                    name="publish-when"
+                    checked={publishLater}
+                    disabled={archived || pending || switchingDraft}
+                    onChange={() => setPublishLater(true)}
+                  />
+                  Later
+                </label>
+                {publishLater && (
+                  <label>
+                    Publish at
+                    <input
+                      type="datetime-local"
+                      value={publishAt}
+                      disabled={archived || pending || switchingDraft}
+                      onChange={(event) => setPublishAt(event.target.value)}
+                      required
+                    />
+                  </label>
+                )}
+              </fieldset>
             )}
           </>
         )}
@@ -3819,6 +3982,21 @@ function DiscussionContent({
                               Discussion locked. Existing content remains
                               available, but new replies and votes are closed.
                             </p>
+                          )}
+                          {detail.scheduledFor && (
+                            <ScheduledNotice
+                              post={detail}
+                              canChange={staff && course?.status === "active"}
+                              csrfToken={csrfToken}
+                              onChanged={(next) => {
+                                setDetail(next);
+                                setItems((current) =>
+                                  current.map((item) =>
+                                    item.id === next.id ? next : item,
+                                  ),
+                                );
+                              }}
+                            />
                           )}
                           {detail.private && (
                             <PrivateNotice

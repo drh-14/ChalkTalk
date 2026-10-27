@@ -65,11 +65,28 @@ export const FALLBACK_POST_TYPE: PostTypeConfig = {
 export const postTypeOf = (type: string): PostTypeConfig =>
   POST_TYPES[type] ?? FALLBACK_POST_TYPE;
 
+/** A short local date and time, such as "Dec 1, 9:00 AM". */
+export const scheduledLabel = (iso: string) =>
+  new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+
 /** A post's own type statuses followed by statuses every type shares. */
 export function postStatuses(post: Post): PostStatus[] {
   return [
     ...(post.discussionLocked
       ? [{ label: "Discussion locked", tone: "neutral" as const }]
+      : []),
+    ...(post.scheduledFor
+      ? [
+          {
+            label: `Scheduled · ${scheduledLabel(post.scheduledFor)}`,
+            tone: "neutral" as const,
+          },
+        ]
       : []),
     ...(post.private ? [{ label: "Private", tone: "private" as const }] : []),
     ...(post.announcement
