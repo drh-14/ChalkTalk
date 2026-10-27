@@ -303,7 +303,7 @@ export function createThreadLiveServer({
             if (
               (await member(client, event.courseId as string)) &&
               client.viewing?.conversationId === event.conversationId &&
-              client.viewing.courseId === event.courseId
+              client.viewing?.courseId === event.courseId
             )
               send(client, {
                 type: "typing",
