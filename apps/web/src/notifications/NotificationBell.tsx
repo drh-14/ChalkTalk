@@ -273,7 +273,8 @@ export function NotificationBell({
                         ? item.preview
                         : item.preview || item.responseUnavailable) && (
                         <span className="notification-preview">
-                          {item.kind !== "thread_reply_created" && item.responseUnavailable
+                          {item.kind !== "thread_reply_created" &&
+                          item.responseUnavailable
                             ? "Response no longer available"
                             : item.preview}
                         </span>

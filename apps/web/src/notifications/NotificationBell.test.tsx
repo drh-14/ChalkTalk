@@ -229,7 +229,6 @@ describe("notification bell", () => {
     );
   });
 
-
   it("renders a response preview and opens its exact answer anchor", async () => {
     const onOpenPost = vi.fn();
     api(
@@ -248,7 +247,13 @@ describe("notification bell", () => {
       ],
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={onOpenPost} onOpenThread={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={onOpenPost}
+        onOpenThread={vi.fn()}
+      />,
+    );
 
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 1 unread" }),
@@ -289,7 +294,13 @@ describe("notification bell", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} onOpenThread={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 2 unread" }),
     );
@@ -333,7 +344,13 @@ describe("notification bell", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} onOpenThread={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     const bell = await screen.findByRole("button", { name: "Notifications" });
     await user.click(bell);
     expect(
@@ -369,7 +386,13 @@ describe("notification bell", () => {
       ],
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={onOpenPost} onOpenThread={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={onOpenPost}
+        onOpenThread={vi.fn()}
+      />,
+    );
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 1 unread" }),
     );
@@ -400,7 +423,13 @@ describe("notification bell", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} onOpenThread={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 1 unread" }),
     );
@@ -410,10 +439,8 @@ describe("notification bell", () => {
     );
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findAllByRole("listitem")).toHaveLength(1);
-
   });
 
-  it("opens a Thread reply without treating it as a Post notification", async () => {
   it("opens a Thread reply without treating it as a Post notification", async () => {
     const threadReply = {
       id: "0192f7a4-58ae-7009-9f43-d1ba75831d70",
