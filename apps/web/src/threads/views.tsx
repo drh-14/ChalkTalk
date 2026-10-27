@@ -44,6 +44,7 @@ type Props = {
   onNavigate: (path: string) => void;
   onUnreadChange?: (count: number) => void;
   signalVersion: number;
+  onSignalSettled: (version: number, error?: Error) => void;
   live: {
     connected: boolean;
     typing: (active: boolean) => void;
@@ -88,6 +89,7 @@ export function CourseThreads(props: Props) {
     onNavigate,
     onUnreadChange,
     signalVersion,
+    onSignalSettled,
     live,
     typingNames,
   } = props;
@@ -142,7 +144,7 @@ export function CourseThreads(props: Props) {
                   a.createdAt.localeCompare(b.createdAt),
                 ),
           );
-          if (active) {
+          if (active && !item.deleted) {
             void markRead(
               courseId,
               boardId,
@@ -238,20 +240,32 @@ export function CourseThreads(props: Props) {
         setMessages(page.data);
         setMessageCursor(page.page?.nextCursor ?? null);
         setWatch(currentWatch);
-        if (page.data.length && active) {
+        const readableIds = page.data
+          .filter((item) => !item.deleted)
+          .map((item) => item.id);
+        if (readableIds.length && active) {
           await markRead(
             courseId,
             boardId,
             conversationId,
-            page.data.map((item) => item.id),
+            readableIds,
             csrfToken,
           );
           if (!controller.signal.aborted)
             onUnreadChange?.(await unreadCount(courseId));
         }
       })
+      .then(() => {
+        if (!controller.signal.aborted) onSignalSettled(signalVersion);
+      })
       .catch((caught) => {
-        if (!controller.signal.aborted) setError(err(caught));
+        if (!controller.signal.aborted) {
+          setError(err(caught));
+          onSignalSettled(
+            signalVersion,
+            caught instanceof Error ? caught : new Error(err(caught)),
+          );
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -263,6 +277,7 @@ export function CourseThreads(props: Props) {
     conversationId,
     refresh,
     signalVersion,
+    onSignalSettled,
     active,
     csrfToken,
     onUnreadChange,
@@ -303,14 +318,19 @@ export function CourseThreads(props: Props) {
       );
       setMessages((old) => [...page.data, ...old]);
       setMessageCursor(page.page.nextCursor);
-      await markRead(
-        courseId,
-        boardId,
-        conversationId,
-        page.data.map((item) => item.id),
-        csrfToken,
-      );
-      onUnreadChange?.(await unreadCount(courseId));
+      const readableIds = page.data
+        .filter((item) => !item.deleted)
+        .map((item) => item.id);
+      if (active && readableIds.length) {
+        await markRead(
+          courseId,
+          boardId,
+          conversationId,
+          readableIds,
+          csrfToken,
+        );
+        onUnreadChange?.(await unreadCount(courseId));
+      }
     } catch (caught) {
       setError(err(caught));
     }

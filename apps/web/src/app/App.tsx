@@ -936,16 +936,49 @@ function CourseFrame({
   const [threadsUnread, setThreadsUnread] = useState(0);
   const [threadSignalVersion, setThreadSignalVersion] = useState(0);
   const [threadTypingNames, setThreadTypingNames] = useState<string[]>([]);
+  const threadRefreshVersion = useRef(0);
+  const pendingThreadRefresh = useRef<{
+    version: number;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
   const updateThreadsUnread = useCallback(
     (count: number) => setThreadsUnread(count),
     [],
   );
-  const onThreadChange = useCallback(() => {
-    setThreadSignalVersion((value) => value + 1);
-    void threadsUnreadCount(courseId)
-      .then(setThreadsUnread)
-      .catch(() => {});
-  }, [courseId]);
+  const onThreadChange = useCallback(async () => {
+    const count = await threadsUnreadCount(courseId);
+    setThreadsUnread(count);
+    if (
+      route.name !== "course-threads" ||
+      staff === undefined ||
+      course?.data.id !== courseId
+    )
+      return;
+    const version = ++threadRefreshVersion.current;
+    const refreshed = new Promise<void>((resolve, reject) => {
+      pendingThreadRefresh.current = { version, resolve, reject };
+    });
+    setThreadSignalVersion(version);
+    await refreshed;
+  }, [courseId, route.name, staff, course]);
+  const onThreadRefreshSettled = useCallback(
+    (version: number, error?: Error) => {
+      const pending = pendingThreadRefresh.current;
+      if (pending?.version !== version) return;
+      pendingThreadRefresh.current = null;
+      if (error) pending.reject(error);
+      else pending.resolve();
+    },
+    [],
+  );
+  useEffect(
+    () => () => {
+      pendingThreadRefresh.current?.reject(new Error("Thread view changed"));
+      pendingThreadRefresh.current = null;
+    },
+    [courseId, route.name, route.threadId, route.conversationId],
+  );
   const threadLive = useThreadEvents(
     courseId,
     route.name === "course-threads" ? route.conversationId : undefined,
@@ -1175,6 +1208,7 @@ function CourseFrame({
               onNavigate={onNavigate}
               onUnreadChange={updateThreadsUnread}
               signalVersion={threadSignalVersion}
+              onSignalSettled={onThreadRefreshSettled}
               live={threadLive}
               typingNames={threadTypingNames}
             />

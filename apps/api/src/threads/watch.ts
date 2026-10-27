@@ -86,17 +86,19 @@ export class ThreadWatchService {
   constructor(private readonly pool: Pool) {}
 
   private async visible(
+    db: Db,
     courseId: string,
     boardId: string,
     conversationId: string,
     userId: string,
+    write = false,
   ) {
-    const result = await this.pool.query<{ status: string }>(
+    const result = await db.query<{ status: string }>(
       `SELECT course.status FROM thread_conversations c
        JOIN thread_boards b ON b.id=c.board_id AND b.deleted_at IS NULL
        JOIN courses course ON course.id=c.course_id
        JOIN course_memberships m ON m.course_id=c.course_id AND m.user_id=$4
-       WHERE c.course_id=$1 AND c.board_id=$2 AND c.id=$3`,
+       WHERE c.course_id=$1 AND c.board_id=$2 AND c.id=$3${write ? " FOR UPDATE OF course,m" : ""}`,
       [courseId, boardId, conversationId, userId],
     );
     if (!result.rowCount || result.rows[0]?.status === "deleting")
@@ -108,13 +110,28 @@ export class ThreadWatchService {
     return result.rows[0]!.status;
   }
 
+  private async tx<T>(work: (db: PoolClient) => Promise<T>): Promise<T> {
+    const db = await this.pool.connect();
+    try {
+      await db.query("BEGIN");
+      const result = await work(db);
+      await db.query("COMMIT");
+      return result;
+    } catch (error) {
+      await db.query("ROLLBACK");
+      throw error;
+    } finally {
+      db.release();
+    }
+  }
+
   async get(
     courseId: string,
     boardId: string,
     conversationId: string,
     userId: string,
   ): Promise<ThreadWatch> {
-    await this.visible(courseId, boardId, conversationId, userId);
+    await this.visible(this.pool, courseId, boardId, conversationId, userId);
     const result = await this.pool.query<{ notices_enabled: boolean }>(
       "SELECT notices_enabled FROM thread_watches WHERE course_id=$1 AND conversation_id=$2 AND user_id=$3",
       [courseId, conversationId, userId],
@@ -138,19 +155,27 @@ export class ThreadWatchService {
         "validation_failed",
         "Notification preference is invalid",
       );
-    if (
-      (await this.visible(courseId, boardId, conversationId, userId)) !==
-      "active"
-    )
-      throw new AuthError(409, "course_archived", "Course is archived");
-    await this.pool.query(
-      `INSERT INTO thread_watches(course_id,conversation_id,user_id,notices_enabled)
-       VALUES ($1,$2,$3,$4)
-       ON CONFLICT (conversation_id,user_id) DO UPDATE
-         SET notices_enabled=excluded.notices_enabled,updated_at=clock_timestamp()`,
-      [courseId, conversationId, userId, noticesEnabled],
-    );
-    return { watching: true, noticesEnabled };
+    return this.tx(async (db) => {
+      if (
+        (await this.visible(
+          db,
+          courseId,
+          boardId,
+          conversationId,
+          userId,
+          true,
+        )) !== "active"
+      )
+        throw new AuthError(409, "course_archived", "Course is archived");
+      await db.query(
+        `INSERT INTO thread_watches(course_id,conversation_id,user_id,notices_enabled)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (conversation_id,user_id) DO UPDATE
+           SET notices_enabled=excluded.notices_enabled,updated_at=clock_timestamp()`,
+        [courseId, conversationId, userId, noticesEnabled],
+      );
+      return { watching: true, noticesEnabled };
+    });
   }
 
   async markRead(
@@ -167,23 +192,35 @@ export class ThreadWatchService {
       messageIds.some((id) => typeof id !== "string" || !UUID.test(id))
     )
       throw new AuthError(422, "validation_failed", "Message ids are invalid");
-    if (
-      (await this.visible(courseId, boardId, conversationId, userId)) !==
-      "active"
-    )
-      throw new AuthError(409, "course_archived", "Course is archived");
     const unique = [...new Set(messageIds)];
-    const result = await this.pool.query<{ id: string }>(
-      `SELECT id FROM thread_messages WHERE conversation_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL`,
-      [conversationId, unique],
-    );
-    if (result.rows.length !== unique.length)
-      throw new AuthError(422, "validation_failed", "Message ids are invalid");
-    await this.pool.query(
-      `INSERT INTO thread_message_reads(course_id,message_id,user_id)
-       SELECT $3::uuid,unnest($1::uuid[]),$2::uuid ON CONFLICT (message_id,user_id) DO NOTHING`,
-      [unique, userId, courseId],
-    );
+    await this.tx(async (db) => {
+      if (
+        (await this.visible(
+          db,
+          courseId,
+          boardId,
+          conversationId,
+          userId,
+          true,
+        )) !== "active"
+      )
+        throw new AuthError(409, "course_archived", "Course is archived");
+      const result = await db.query<{ id: string }>(
+        `SELECT id FROM thread_messages WHERE conversation_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL`,
+        [conversationId, unique],
+      );
+      if (result.rows.length !== unique.length)
+        throw new AuthError(
+          422,
+          "validation_failed",
+          "Message ids are invalid",
+        );
+      await db.query(
+        `INSERT INTO thread_message_reads(course_id,message_id,user_id)
+         SELECT $3::uuid,unnest($1::uuid[]),$2::uuid ON CONFLICT (message_id,user_id) DO NOTHING`,
+        [unique, userId, courseId],
+      );
+    });
   }
 
   async unreadCount(courseId: string, userId: string) {

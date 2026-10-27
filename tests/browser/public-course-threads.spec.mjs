@@ -339,6 +339,7 @@ async function app(
   return {
     writes,
     reads,
+    messages,
     socketMessages,
     emit: (value) => channel?.send(JSON.stringify(value)),
     enableUploads: () => {
@@ -358,6 +359,68 @@ async function app(
     },
   };
 }
+
+test("deleted placeholders are excluded from initial and earlier read batches", async ({
+  page,
+}) => {
+  const fixture = await app(page);
+  fixture.messages.push({
+    ...fixture.messages[0],
+    id: "message-deleted",
+    deleted: true,
+    bodyMarkdown: "",
+    author: null,
+  });
+  await page.route(
+    "**/conversations/conversation-1/messages**",
+    async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const earlier = new URL(route.request().url()).searchParams.has("cursor");
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: earlier ? [fixture.messages[1]] : fixture.messages,
+          page: { hasMore: !earlier, nextCursor: earlier ? null : "older" },
+        }),
+      });
+    },
+  );
+  await page.goto(
+    `${origin}/courses/course-1/threads/board-1/conversations/conversation-1`,
+  );
+  await expect.poll(() => fixture.reads.length).toBeGreaterThan(0);
+  expect(fixture.reads[0]).toEqual(["message-1"]);
+  await page.getByRole("button", { name: "Load earlier messages" }).click();
+  await expect(page.locator("#thread-message-message-deleted")).toBeVisible();
+  expect(fixture.reads).toEqual([["message-1"]]);
+});
+
+test("archived earlier pages do not write read state", async ({ page }) => {
+  const fixture = await app(page, "student", "archived");
+  await page.route(
+    "**/conversations/conversation-1/messages**",
+    async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      const earlier = new URL(route.request().url()).searchParams.has("cursor");
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: earlier
+            ? [{ ...fixture.messages[0], id: "older-message" }]
+            : fixture.messages,
+          page: { hasMore: !earlier, nextCursor: earlier ? null : "older" },
+        }),
+      });
+    },
+  );
+  await page.goto(
+    `${origin}/courses/course-1/threads/board-1/conversations/conversation-1`,
+  );
+  await page.getByRole("button", { name: "Load earlier messages" }).click();
+  await expect(page.locator("#thread-message-older-message")).toBeVisible();
+  expect(fixture.reads).toEqual([]);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
 
 test("course Threads tab lists public topic boards and lets staff create one", async ({
   page,
@@ -631,6 +694,96 @@ test("a changed signal during in-flight catch-up queues another authoritative re
     path: resolve(evidence, "catch-up-race-recovered.png"),
     fullPage: true,
   });
+});
+
+test("catch-up retries unapplied changes without advancing its durable cursor", async ({
+  page,
+}) => {
+  const live = await app(page);
+  await expect(
+    page.getByRole("heading", { name: "Find a project team" }),
+  ).toBeVisible();
+  const afterValues = [];
+  await page.route("**/threads/changes**", async (route) => {
+    afterValues.push(new URL(route.request().url()).searchParams.get("after"));
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: [
+          {
+            sequence: 1,
+            boardId: "board-1",
+            kind: "message_created",
+            entityId: "message-1",
+          },
+        ],
+        page: { hasMore: false, nextCursor: "cursor-1" },
+      }),
+    });
+  });
+  let failRefresh = true;
+  await page.route("**/courses/course-1/threads", async (route) => {
+    if (route.request().method() !== "GET" || !failRefresh)
+      return route.fallback();
+    failRefresh = false;
+    return route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { message: "Temporarily unavailable" } }),
+    });
+  });
+  live.changeUnread(2);
+  await expect(page.getByRole("alert")).toContainText(
+    "Temporarily unavailable",
+  );
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
+    ),
+  ).toBeNull();
+  live.changeUnread(3);
+  await expect.poll(() => afterValues.length).toBeGreaterThan(1);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
+      ),
+    )
+    .toBe("cursor-1");
+  expect(afterValues.slice(0, 2)).toEqual([null, null]);
+});
+
+test("catch-up consumes all pages before storing the cursor", async ({
+  page,
+}) => {
+  const live = await app(page);
+  let pages = 0;
+  await page.route("**/threads/changes**", async (route) => {
+    pages += 1;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: [
+          {
+            sequence: pages,
+            boardId: "board-1",
+            kind: "message_created",
+            entityId: "message-1",
+          },
+        ],
+        page: { hasMore: pages < 101, nextCursor: `cursor-${pages}` },
+      }),
+    });
+  });
+  live.changeUnread(2);
+  await expect.poll(() => pages).toBe(101);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
+      ),
+    )
+    .toBe("cursor-101");
 });
 
 test("a missing notification target stays unread instead of being silently dismissed", async ({

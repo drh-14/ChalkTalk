@@ -298,6 +298,53 @@ integration("Thread watches, read state, and bell notifications", () => {
     ]);
   });
 
+  it("serializes watch and read writes with course archiving", async () => {
+    const blocker = await pool.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        ids.course,
+      ]);
+      let watchSettled = false;
+      let readSettled = false;
+      const watch = unsafe(ids.other, `${base}/watch`, "put")
+        .send({ noticesEnabled: true })
+        .then((result) => {
+          watchSettled = true;
+          return result;
+        });
+      const read = unsafe(ids.other, `${base}/read`, "post")
+        .send({ messageIds: [ids.opening] })
+        .then((result) => {
+          readSettled = true;
+          return result;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(watchSettled).toBe(false);
+      expect(readSettled).toBe(false);
+      await blocker.query("COMMIT");
+      expect((await watch).status).toBe(409);
+      expect((await read).status).toBe(409);
+      expect((await safe(ids.other, `${base}/watch`)).body.data.watching).toBe(
+        false,
+      );
+      expect(
+        (
+          await pool.query(
+            "SELECT 1 FROM thread_message_reads WHERE message_id=$1 AND user_id=$2",
+            [ids.opening, ids.other],
+          )
+        ).rowCount,
+      ).toBe(0);
+      await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+        ids.course,
+      ]);
+    } finally {
+      await blocker.query("ROLLBACK").catch(() => {});
+      blocker.release();
+    }
+  });
+
   it("paginates post and Thread cards together and marks both kinds read", async () => {
     const postId = uuidv7();
     const postNoticeId = uuidv7();

@@ -23,7 +23,7 @@ export function useThreadEvents(
   courseId: string,
   conversationId: string | undefined,
   userId: string,
-  onChange: () => void,
+  onChange: () => Promise<void>,
   setNames: Dispatch<SetStateAction<string[]>>,
 ) {
   const [connected, setConnected] = useState(false);
@@ -82,12 +82,13 @@ export function useThreadEvents(
       catchingUp.current = true;
       try {
         let changed = false;
-        for (let page = 0; page < 100 && !disposed; page += 1) {
+        let nextCursor = cursor.current;
+        while (!disposed) {
           const url = new URL(
             `/api/v1/courses/${encodeURIComponent(courseId)}/threads/changes`,
             window.location.origin,
           );
-          if (cursor.current) url.searchParams.set("after", cursor.current);
+          if (nextCursor) url.searchParams.set("after", nextCursor);
           const response = await fetch(url, { credentials: "include" });
           if (!response.ok) throw new Error("Thread catch-up unavailable");
           const value = (await response.json()) as {
@@ -95,13 +96,21 @@ export function useThreadEvents(
             page: { hasMore: boolean; nextCursor: string | null };
           };
           changed ||= value.data.length > 0;
-          if (value.page.nextCursor) {
-            cursor.current = value.page.nextCursor;
-            sessionStorage.setItem(key, value.page.nextCursor);
-          }
-          if (!value.page.hasMore || value.data.length === 0) break;
+          const previousCursor = nextCursor;
+          if (value.page.nextCursor) nextCursor = value.page.nextCursor;
+          if (!value.page.hasMore) break;
+          if (
+            !value.data.length ||
+            !value.page.nextCursor ||
+            nextCursor === previousCursor
+          )
+            throw new Error("Thread catch-up did not advance");
         }
-        if (changed && !disposed) change.current();
+        if (changed && !disposed) await change.current();
+        if (!disposed && nextCursor) {
+          cursor.current = nextCursor;
+          sessionStorage.setItem(key, nextCursor);
+        }
       } catch {
         // The manual Refresh control remains available when catch-up fails.
       } finally {
