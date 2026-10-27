@@ -651,6 +651,42 @@ test("a durable WebSocket signal updates the course Threads unread badge", async
   });
 });
 
+test("a live reply remains unread until the conversation is opened again", async ({
+  page,
+}) => {
+  const live = await app(page);
+  const conversationUrl = `${origin}/courses/course-1/threads/board-1/conversations/conversation-1`;
+  await page.goto(conversationUrl);
+  await expect.poll(() => live.reads.length).toBeGreaterThan(0);
+  expect(live.reads).toEqual([["message-1"]]);
+  live.messages.push({
+    ...live.messages[0],
+    id: "message-live-reply",
+    bodyMarkdown: "New reply while this conversation is open",
+    createdAt: "2026-10-27T12:10:00Z",
+    updatedAt: "2026-10-27T12:10:00Z",
+  });
+  live.changeUnread(3);
+  await expect(
+    page.locator("#thread-message-message-live-reply"),
+  ).toContainText("New reply");
+  await expect(
+    page
+      .getByRole("navigation", { name: "Course navigation" })
+      .getByRole("link", { name: /Threads/ }),
+  ).toContainText("3");
+  expect(live.reads).toEqual([["message-1"]]);
+  await page.screenshot({
+    path: resolve(evidence, "live-reply-still-unread.png"),
+    fullPage: true,
+  });
+  await page.goto(`${origin}/courses/course-1/threads`);
+  await page.goto(conversationUrl);
+  await expect
+    .poll(() => live.reads.some((ids) => ids.includes("message-live-reply")))
+    .toBe(true);
+});
+
 test("a changed signal during in-flight catch-up queues another authoritative read", async ({
   page,
 }) => {

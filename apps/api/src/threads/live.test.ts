@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
 import { EventEmitter, once } from "node:events";
 import { AddressInfo } from "node:net";
@@ -10,6 +10,7 @@ import { createThreadLiveServer } from "./live.js";
 const COURSE = "11111111-1111-4111-8111-111111111111";
 const BOARD = "22222222-2222-4222-8222-222222222222";
 const CONVERSATION = "33333333-3333-4333-8333-333333333333";
+const OTHER_CONVERSATION = "44444444-4444-4444-8444-444444444444";
 
 class Listener extends EventEmitter {
   async query() {
@@ -18,7 +19,9 @@ class Listener extends EventEmitter {
   release() {}
 }
 
-function fixture() {
+function fixture(
+  conversationCheck?: (conversationId: string) => Promise<void>,
+) {
   const server = createServer((_request, response) => response.end());
   const listener = new Listener();
   const members = new Set(["alice", "bob"]);
@@ -27,8 +30,10 @@ function fixture() {
     query: async (sql: string, params?: unknown[]) => {
       if (sql.includes("course_memberships"))
         return { rows: members.has(String(params?.[1])) ? [{ ok: 1 }] : [] };
-      if (sql.includes("thread_conversations"))
+      if (sql.includes("thread_conversations")) {
+        await conversationCheck?.(String(params?.[0]));
         return { rows: [{ course_id: COURSE }] };
+      }
       if (sql.includes("pg_notify")) {
         listener.emit("notification", {
           channel: "thread_typing",
@@ -77,6 +82,101 @@ afterEach(async () => {
 });
 
 describe("Thread live WebSocket", () => {
+  it("ignores a stale view after a rapid conversation switch", async () => {
+    let releaseFirst!: () => void;
+    let firstStarted!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const { server, live } = fixture(async (conversationId) => {
+      if (conversationId === CONVERSATION) {
+        firstStarted();
+        await blocked;
+      }
+    });
+    await live.start();
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    cleanups.push(async () => {
+      releaseFirst();
+      await live.stop();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const bob = await connect(server, "bob");
+    const alice = await connect(server, "alice");
+    cleanups.push(async () => {
+      bob.terminate();
+      alice.terminate();
+    });
+    for (const socket of [bob, alice]) {
+      socket.send(JSON.stringify({ type: "subscribe", courseId: COURSE }));
+      expect(await next(socket)).toEqual({
+        type: "subscribed",
+        courseId: COURSE,
+      });
+    }
+    bob.send(
+      JSON.stringify({
+        type: "view",
+        courseId: COURSE,
+        conversationId: OTHER_CONVERSATION,
+      }),
+    );
+    expect(await next(bob)).toEqual({
+      type: "viewing",
+      conversationId: OTHER_CONVERSATION,
+    });
+    const received: unknown[] = [];
+    alice.on("message", (data) => received.push(JSON.parse(data.toString())));
+    alice.send(
+      JSON.stringify({
+        type: "view",
+        courseId: COURSE,
+        conversationId: CONVERSATION,
+      }),
+    );
+    await started;
+    alice.send(
+      JSON.stringify({ type: "unview", conversationId: CONVERSATION }),
+    );
+    alice.send(
+      JSON.stringify({
+        type: "view",
+        courseId: COURSE,
+        conversationId: OTHER_CONVERSATION,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(received).toContainEqual({
+        type: "viewing",
+        conversationId: OTHER_CONVERSATION,
+      }),
+    );
+    releaseFirst();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(received).not.toContainEqual({
+      type: "viewing",
+      conversationId: CONVERSATION,
+    });
+    const typed = next(bob);
+    alice.send(
+      JSON.stringify({
+        type: "typing",
+        conversationId: OTHER_CONVERSATION,
+        active: true,
+      }),
+    );
+    expect(await typed).toEqual({
+      type: "typing",
+      conversationId: OTHER_CONVERSATION,
+      userId: "alice",
+      displayName: "alice",
+      active: true,
+    });
+  });
+
   it("rejects foreign origins and missing sessions before upgrade", async () => {
     const { server, live } = fixture();
     await live.start();

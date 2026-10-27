@@ -21,6 +21,7 @@ type Client = {
   userId: string;
   displayName: string;
   courses: Set<string>;
+  viewVersion: number;
   viewing?: { courseId: string; conversationId: string };
   lastTypingAt: number;
 };
@@ -137,6 +138,7 @@ export function createThreadLiveServer({
     );
     if (result.rowCount ?? result.rows.length) return true;
     client.courses.delete(courseId);
+    client.viewVersion += 1;
     if (client.viewing?.courseId === courseId) client.viewing = undefined;
     send(client, { type: "error", code: "access_revoked", courseId });
     return false;
@@ -182,6 +184,7 @@ export function createThreadLiveServer({
       typeof event.conversationId === "string" &&
       UUID.test(event.conversationId)
     ) {
+      const viewVersion = ++client.viewVersion;
       if (
         !client.courses.has(event.courseId) ||
         !(await member(client, event.courseId)) ||
@@ -191,9 +194,11 @@ export function createThreadLiveServer({
           false,
         ))
       ) {
-        send(client, { type: "error", code: "not_found" });
+        if (viewVersion === client.viewVersion)
+          send(client, { type: "error", code: "not_found" });
         return;
       }
+      if (viewVersion !== client.viewVersion) return;
       client.viewing = {
         courseId: event.courseId,
         conversationId: event.conversationId,
@@ -201,19 +206,29 @@ export function createThreadLiveServer({
       send(client, { type: "viewing", conversationId: event.conversationId });
     } else if (
       event.type === "unview" &&
-      event.conversationId === client.viewing?.conversationId
+      typeof event.conversationId === "string" &&
+      UUID.test(event.conversationId)
     ) {
-      client.viewing = undefined;
+      client.viewVersion += 1;
+      if (event.conversationId === client.viewing?.conversationId)
+        client.viewing = undefined;
     } else if (
       event.type === "typing" &&
       typeof event.active === "boolean" &&
       event.conversationId === client.viewing?.conversationId
     ) {
       const view = client.viewing;
+      const viewVersion = client.viewVersion;
       if (
         !view ||
         !(await member(client, view.courseId)) ||
-        !(await availableConversation(view.courseId, view.conversationId, true))
+        !(await availableConversation(
+          view.courseId,
+          view.conversationId,
+          true,
+        )) ||
+        viewVersion !== client.viewVersion ||
+        client.viewing !== view
       )
         return;
       if (event.active && Date.now() - client.lastTypingAt < TYPING_INTERVAL_MS)
@@ -285,7 +300,11 @@ export function createThreadLiveServer({
               client.id !== event.originSocketId,
           )
           .map(async (client) => {
-            if (await member(client, event.courseId as string))
+            if (
+              (await member(client, event.courseId as string)) &&
+              client.viewing?.conversationId === event.conversationId &&
+              client.viewing.courseId === event.courseId
+            )
               send(client, {
                 type: "typing",
                 conversationId: event.conversationId,
@@ -319,6 +338,7 @@ export function createThreadLiveServer({
             userId: session.user.id,
             displayName: session.user.displayName,
             courses: new Set(),
+            viewVersion: 0,
             lastTypingAt: 0,
           };
           clients.add(client);

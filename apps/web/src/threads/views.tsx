@@ -116,6 +116,7 @@ export function CourseThreads(props: Props) {
   const [editText, setEditText] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const selectedLookup = useRef<string | null>(null);
+  const openedConversation = useRef<string | null>(null);
   const clearedNotice = useRef<string | null>(null);
   const refreshNow = useCallback(() => setRefresh((value) => value + 1), []);
   useEffect(() => {
@@ -240,10 +241,12 @@ export function CourseThreads(props: Props) {
         setMessages(page.data);
         setMessageCursor(page.page?.nextCursor ?? null);
         setWatch(currentWatch);
+        const openingLoad = openedConversation.current !== conversationId;
+        if (openingLoad) openedConversation.current = conversationId;
         const readableIds = page.data
           .filter((item) => !item.deleted)
           .map((item) => item.id);
-        if (readableIds.length && active) {
+        if (openingLoad && readableIds.length && active) {
           await markRead(
             courseId,
             boardId,
