@@ -30,9 +30,6 @@ export function useThreadEvents(
   const socket = useRef<WebSocket | null>(null);
   const viewer = useRef(conversationId);
   const change = useRef(onChange);
-  const cursor = useRef<string | null>(null);
-  const catchingUp = useRef(false);
-  const queuedCatchUp = useRef(false);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPulse = useRef(0);
   const presence = useRef(new Map<string, { name: string; until: number }>());
@@ -68,21 +65,23 @@ export function useThreadEvents(
 
   useEffect(() => {
     const key = `chalktalk-thread-cursor:${courseId}`;
-    cursor.current = sessionStorage.getItem(key);
+    let cursor = sessionStorage.getItem(key);
+    let catchingUp = false;
+    let queuedCatchUp = false;
     let disposed = false;
     let reconnect: ReturnType<typeof setTimeout> | null = null;
     let expiry: ReturnType<typeof setInterval> | null = null;
     let retryMs = 1000;
     async function catchUp() {
       if (disposed) return;
-      if (catchingUp.current) {
-        queuedCatchUp.current = true;
+      if (catchingUp) {
+        queuedCatchUp = true;
         return;
       }
-      catchingUp.current = true;
+      catchingUp = true;
       try {
         let changed = false;
-        let nextCursor = cursor.current;
+        let nextCursor = cursor;
         while (!disposed) {
           const url = new URL(
             `/api/v1/courses/${encodeURIComponent(courseId)}/threads/changes`,
@@ -108,15 +107,15 @@ export function useThreadEvents(
         }
         if (changed && !disposed) await change.current();
         if (!disposed && nextCursor) {
-          cursor.current = nextCursor;
+          cursor = nextCursor;
           sessionStorage.setItem(key, nextCursor);
         }
       } catch {
         // The manual Refresh control remains available when catch-up fails.
       } finally {
-        catchingUp.current = false;
-        if (queuedCatchUp.current && !disposed) {
-          queuedCatchUp.current = false;
+        catchingUp = false;
+        if (queuedCatchUp && !disposed) {
+          queuedCatchUp = false;
           void catchUp();
         }
       }

@@ -176,6 +176,46 @@ integration("Thread watches, read state, and bell notifications", () => {
     });
   });
 
+  it("reads live messages when another loaded message was deleted", async () => {
+    const loaded = await safe(ids.other, `${base}/messages`);
+    expect(loaded.status).toBe(200);
+    expect(
+      loaded.body.data.map((message: { id: string }) => message.id),
+    ).toContain(ids.older);
+    await pool.query(
+      "UPDATE thread_messages SET deleted_at=clock_timestamp() WHERE id=$1",
+      [ids.older],
+    );
+    try {
+      const read = await unsafe(ids.other, `${base}/read`, "post").send({
+        messageIds: [ids.older, ids.opening],
+      });
+      expect(read.status).toBe(204);
+      const recorded = await pool.query<{ message_id: string }>(
+        "SELECT message_id FROM thread_message_reads WHERE user_id=$1 AND message_id=ANY($2::uuid[]) ORDER BY message_id",
+        [ids.other, [ids.older, ids.opening]],
+      );
+      expect(recorded.rows.map((row) => row.message_id)).toEqual([ids.opening]);
+      const foreign = await unsafe(ids.other, `${base}/read`, "post").send({
+        messageIds: [ids.recent, ids.outsider],
+      });
+      expect(foreign.status).toBe(422);
+      expect(
+        (
+          await pool.query(
+            "SELECT 1 FROM thread_message_reads WHERE user_id=$1 AND message_id=$2",
+            [ids.other, ids.recent],
+          )
+        ).rowCount,
+      ).toBe(0);
+    } finally {
+      await pool.query(
+        "UPDATE thread_messages SET deleted_at=NULL WHERE id=$1",
+        [ids.older],
+      );
+    }
+  });
+
   it("keeps an unfollowed watch and unread count but suppresses new reply notices", async () => {
     const unfollowed = await unsafe(ids.watcher, `${base}/watch`, "put").send({
       noticesEnabled: false,

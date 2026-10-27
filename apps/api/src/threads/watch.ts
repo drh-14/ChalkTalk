@@ -206,7 +206,7 @@ export class ThreadWatchService {
       )
         throw new AuthError(409, "course_archived", "Course is archived");
       const result = await db.query<{ id: string }>(
-        `SELECT id FROM thread_messages WHERE conversation_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL`,
+        `SELECT id FROM thread_messages WHERE conversation_id=$1 AND id=ANY($2::uuid[])`,
         [conversationId, unique],
       );
       if (result.rows.length !== unique.length)
@@ -217,8 +217,10 @@ export class ThreadWatchService {
         );
       await db.query(
         `INSERT INTO thread_message_reads(course_id,message_id,user_id)
-         SELECT $3::uuid,unnest($1::uuid[]),$2::uuid ON CONFLICT (message_id,user_id) DO NOTHING`,
-        [unique, userId, courseId],
+         SELECT $3::uuid,m.id,$2::uuid FROM thread_messages m
+         WHERE m.conversation_id=$4 AND m.id=ANY($1::uuid[]) AND m.deleted_at IS NULL
+         ON CONFLICT (message_id,user_id) DO NOTHING`,
+        [unique, userId, courseId, conversationId],
       );
     });
   }
