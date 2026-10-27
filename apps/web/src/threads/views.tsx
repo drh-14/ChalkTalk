@@ -116,11 +116,17 @@ export function CourseThreads(props: Props) {
   const [editText, setEditText] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const selectedLookup = useRef<string | null>(null);
-  const openedConversation = useRef<string | null>(null);
+  const openingRead = useRef<{
+    conversationId: string;
+    messageIds: string[];
+    attemptedRefresh: number | null;
+    complete: boolean;
+  } | null>(null);
   const clearedNotice = useRef<string | null>(null);
   const refreshNow = useCallback(() => setRefresh((value) => value + 1), []);
   useEffect(() => {
     selectedLookup.current = null;
+    openingRead.current = null;
     clearedNotice.current = null;
   }, [conversationId]);
   useEffect(() => {
@@ -241,19 +247,33 @@ export function CourseThreads(props: Props) {
         setMessages(page.data);
         setMessageCursor(page.page?.nextCursor ?? null);
         setWatch(currentWatch);
-        const openingLoad = openedConversation.current !== conversationId;
-        if (openingLoad) openedConversation.current = conversationId;
-        const readableIds = page.data
-          .filter((item) => !item.deleted)
-          .map((item) => item.id);
-        if (openingLoad && readableIds.length && active) {
+        if (openingRead.current?.conversationId !== conversationId) {
+          const readableIds = page.data
+            .filter((item) => !item.deleted)
+            .map((item) => item.id);
+          openingRead.current = {
+            conversationId,
+            messageIds: readableIds,
+            attemptedRefresh: null,
+            complete: !active || !readableIds.length,
+          };
+        }
+        const opening = openingRead.current;
+        if (
+          active &&
+          !opening.complete &&
+          opening.messageIds.length &&
+          opening.attemptedRefresh !== refresh
+        ) {
+          opening.attemptedRefresh = refresh;
           await markRead(
             courseId,
             boardId,
             conversationId,
-            readableIds,
+            opening.messageIds,
             csrfToken,
           );
+          opening.complete = true;
           if (!controller.signal.aborted)
             onUnreadChange?.(await unreadCount(courseId));
         }

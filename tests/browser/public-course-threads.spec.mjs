@@ -687,6 +687,53 @@ test("a live reply remains unread until the conversation is opened again", async
     .toBe(true);
 });
 
+test("Refresh retries a failed opening read without reading a later live reply", async ({
+  page,
+}) => {
+  const live = await app(page);
+  const attempts = [];
+  await page.route("**/conversations/conversation-1/read", async (route) => {
+    attempts.push(route.request().postDataJSON().messageIds);
+    if (attempts.length === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Read state temporarily unavailable" },
+        }),
+      });
+    return route.fallback();
+  });
+  await page.goto(
+    `${origin}/courses/course-1/threads/board-1/conversations/conversation-1`,
+  );
+  await expect(page.getByRole("alert")).toContainText(
+    "Read state temporarily unavailable",
+  );
+  expect(attempts).toEqual([["message-1"]]);
+  live.messages.push({
+    ...live.messages[0],
+    id: "message-after-failure",
+    bodyMarkdown: "Arrived after the opening read failed",
+    createdAt: "2026-10-27T12:15:00Z",
+    updatedAt: "2026-10-27T12:15:00Z",
+  });
+  live.changeUnread(3);
+  await expect(
+    page.locator("#thread-message-message-after-failure"),
+  ).toBeVisible();
+  expect(attempts).toEqual([["message-1"]]);
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect.poll(() => attempts.length).toBe(2);
+  expect(attempts).toEqual([["message-1"], ["message-1"]]);
+  expect(live.reads).toEqual([["message-1"]]);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.screenshot({
+    path: resolve(evidence, "opening-read-retry.png"),
+    fullPage: true,
+  });
+});
+
 test("a changed signal during in-flight catch-up queues another authoritative read", async ({
   page,
 }) => {
