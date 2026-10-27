@@ -25,7 +25,7 @@ A Thread is a public, staff-created topic board for informal course coordination
 | `POST`   | `/api/v1/courses/{courseId}/threads/{threadId}/conversations`                  | Member | `{bodyMarkdown}`                     | `201 {data: Conversation, openingMessage: ThreadMessage}` |
 | `GET`    | `/api/v1/courses/{courseId}/threads/{threadId}/conversations/{conversationId}` | Member | —                                    | `200 {data: Conversation}`                                |
 
-`ThreadBoard` has `id`, `courseId`, `title`, `version`, `createdAt`, `updatedAt`, and a viewer-specific `unreadCount` where listed or retrieved. `Conversation` has `id`, `threadId`, `createdAt`, `updatedAt`, and a viewer-specific `unreadCount`; list and detail responses also include its `openingMessage` (the create response carries that message beside `data`). Creation of a conversation and its opening message is atomic. New conversations do not notify the entire course. Threads remain separate from the Posts feed and daily digest.
+`ThreadBoard` has `id`, `courseId`, `title`, `version`, `createdAt`, `updatedAt`, and a viewer-specific `unreadCount` where listed or retrieved. `Conversation` has `id`, `threadId`, `createdAt`, `updatedAt`, and a viewer-specific `unreadCount`; list and detail responses also include its `openingMessage` (the create response carries that message beside `data`). Creation of a conversation and its opening message is atomic. New conversations emit a course-scoped change signal for authorized list refresh, not a bell or email notice. Threads remain separate from the Posts feed and daily digest.
 
 ## Messages
 

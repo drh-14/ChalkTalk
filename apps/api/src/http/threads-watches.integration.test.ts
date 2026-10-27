@@ -3,7 +3,6 @@ import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthService } from "../auth/service.js";
-import { AuthError } from "../auth/errors.js";
 import { loadEnvironment } from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { NotificationService } from "../notifications/service.js";
@@ -178,7 +177,6 @@ integration("Thread watches, read state, and bell notifications", () => {
       count: 2,
     });
   });
-
 
   it("reads live messages when another loaded message was deleted", async () => {
     const loaded = await safe(ids.other, `${base}/messages`);
@@ -552,19 +550,24 @@ integration("Thread watches, read state, and bell notifications", () => {
     expect(watch.status).toBe(200);
     const loaded = await safe(ids.other, `${base}/messages`);
     expect(loaded.status).toBe(200);
-    const loadedIds = loaded.body.data.map((message: { id: string }) => message.id);
-    const failing = new (class extends ThreadWatchService {
-      override async markRead(): Promise<void> {
-        throw new AuthError(503, "service_unavailable", "Read unavailable");
-      }
-    })(pool);
-    const failed = await request(app(ids.other, failing))
-      .post(`${base}/read`)
-      .set("Cookie", "__Host-chalktalk_session=opaque")
-      .set("Origin", environment.frontendBaseUrl)
-      .set("X-CSRF-Token", "csrf")
-      .send({ messageIds: loadedIds });
-    expect(failed.status).toBe(503);
+    const loadedIds = loaded.body.data.map(
+      (message: { id: string }) => message.id,
+    );
+    await pool.query(`CREATE FUNCTION reject_thread_read() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'read state temporarily unavailable'; END $$`);
+    await pool.query(`CREATE TRIGGER reject_thread_read BEFORE INSERT ON thread_message_reads
+      FOR EACH ROW EXECUTE FUNCTION reject_thread_read()`);
+    try {
+      const failed = await unsafe(ids.other, `${base}/read`, "post").send({
+        messageIds: loadedIds,
+      });
+      expect(failed.status).toBe(500);
+    } finally {
+      await pool.query(
+        "DROP TRIGGER reject_thread_read ON thread_message_reads",
+      );
+      await pool.query("DROP FUNCTION reject_thread_read()");
+    }
     const beforeRetry = await pool.query(
       "SELECT 1 FROM thread_message_reads WHERE user_id=$1 AND message_id=ANY($2::uuid[])",
       [ids.other, loadedIds],
@@ -582,11 +585,16 @@ integration("Thread watches, read state, and bell notifications", () => {
       "SELECT message_id FROM thread_message_reads WHERE user_id=$1 AND message_id=ANY($2::uuid[])",
       [ids.other, [...loadedIds, reply.body.data.id]],
     );
-    expect(reads.rows.map((row) => row.message_id).sort()).toEqual(loadedIds.sort());
+    expect(reads.rows.map((row) => row.message_id).sort()).toEqual(
+      loadedIds.sort(),
+    );
     expect(
-      (await safe(ids.other, `/api/v1/courses/${ids.course}/threads/unread-count`))
-        .body.data.count,
+      (
+        await safe(
+          ids.other,
+          `/api/v1/courses/${ids.course}/threads/unread-count`,
+        )
+      ).body.data.count,
     ).toBe(1);
   });
-
 });

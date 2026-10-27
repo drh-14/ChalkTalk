@@ -828,7 +828,7 @@ test("catch-up retries unapplied changes without advancing its durable cursor", 
   );
   expect(
     await page.evaluate(() =>
-      sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
+      globalThis.sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
     ),
   ).toBeNull();
   live.changeUnread(3);
@@ -836,7 +836,7 @@ test("catch-up retries unapplied changes without advancing its durable cursor", 
   await expect
     .poll(() =>
       page.evaluate(() =>
-        sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
+        globalThis.sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
       ),
     )
     .toBe("cursor-1");
@@ -870,7 +870,7 @@ test("catch-up consumes all pages before storing the cursor", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
+        globalThis.sessionStorage.getItem("chalktalk-thread-cursor:course-1"),
       ),
     )
     .toBe("cursor-101");

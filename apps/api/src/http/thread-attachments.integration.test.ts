@@ -231,11 +231,16 @@ integration("Thread attachment persistence and authorization", () => {
     );
   });
   it("keeps the saved message when object storage rejects an upload", async () => {
-    const failingStore = {
-      send: async () => {
-        throw new Error("Object store unavailable");
+    const failingStore = new S3Client({
+      region: "us-east-1",
+      endpoint: "http://127.0.0.1:1",
+      forcePathStyle: true,
+      maxAttempts: 1,
+      credentials: {
+        accessKeyId: "chalktalk-local",
+        secretAccessKey: "chalktalk-local-secret",
       },
-    } as unknown as S3Client;
+    });
     const failed = await upload(
       ids.author,
       "store-failure",
@@ -253,7 +258,11 @@ integration("Thread attachment persistence and authorization", () => {
       body_markdown: "Another message",
       deleted_at: null,
     });
-    const retried = await upload(ids.author, "independent-retry", ids.archiveMessage);
+    const retried = await upload(
+      ids.author,
+      "independent-retry",
+      ids.archiveMessage,
+    );
     expect(retried.status).toBe(201);
     expect((await get(ids.reader, retried.body.data.id)).text).toBe("hello");
   });

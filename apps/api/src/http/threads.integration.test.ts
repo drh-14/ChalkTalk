@@ -448,7 +448,9 @@ integration("public Threads HTTP contract", () => {
     expect(before.status).toBe(200);
     const cursor = before.body.page.nextCursor as string | null;
     const authService = {
-      session: async () => ({ user: { id: ids.student, displayName: "Member" } }),
+      session: async () => ({
+        user: { id: ids.student, displayName: "Member" },
+      }),
     } as unknown as AuthService;
     const server = createServer((_request, response) => response.end());
     const live = createThreadLiveServer({
@@ -463,15 +465,22 @@ integration("public Threads HTTP contract", () => {
       await new Promise<void>((resolve) => server.listen(0, resolve));
       const port = (server.address() as AddressInfo).port;
       const connect = async () => {
-        const client = new WebSocket(`ws://127.0.0.1:${port}/api/v1/thread-events`, {
-          headers: {
-            Origin: environment.frontendBaseUrl,
-            Cookie: "__Host-chalktalk_session=opaque",
+        const client = new WebSocket(
+          `ws://127.0.0.1:${port}/api/v1/thread-events`,
+          {
+            headers: {
+              Origin: environment.frontendBaseUrl,
+              Cookie: "__Host-chalktalk_session=opaque",
+            },
           },
-        });
+        );
         await once(client, "open");
-        client.send(JSON.stringify({ type: "subscribe", courseId: ids.course }));
-        expect(JSON.parse((await once(client, "message"))[0].toString())).toEqual({
+        client.send(
+          JSON.stringify({ type: "subscribe", courseId: ids.course }),
+        );
+        expect(
+          JSON.parse((await once(client, "message"))[0].toString()),
+        ).toEqual({
           type: "subscribed",
           courseId: ids.course,
         });
@@ -485,7 +494,9 @@ integration("public Threads HTTP contract", () => {
       });
       expect(board.status).toBe(201);
       const conversation = await unsafe(
-        request(app(ids.student)).post(`${root}/${board.body.data.id}/conversations`),
+        request(app(ids.student)).post(
+          `${root}/${board.body.data.id}/conversations`,
+        ),
       ).send({ bodyMarkdown: "Missed opening" });
       expect(conversation.status).toBe(201);
       socket = await connect();
@@ -495,10 +506,9 @@ integration("public Threads HTTP contract", () => {
         ),
       );
       expect(caught.status).toBe(200);
-      expect(caught.body.data.map((change: { kind: string }) => change.kind)).toEqual([
-        "board_created",
-        "conversation_created",
-      ]);
+      expect(
+        caught.body.data.map((change: { kind: string }) => change.kind),
+      ).toEqual(["board_created", "conversation_created"]);
       const repeat = await safe(
         request(app(ids.student)).get(
           `${root}/changes?after=${encodeURIComponent(caught.body.page.nextCursor)}`,

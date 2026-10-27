@@ -6,7 +6,7 @@ Course members need a lightweight place to find teammates and coordinate informa
 
 - Add a **Threads** section beside Course resources with staff-created, course-public topic boards and separate member-started conversations.
 - Add nonanonymous opening messages, chronological replies, edits, tombstones, and documents with current membership authorization.
-- Add conversation watches, reply cards in the existing notification bell, read watermarks, unread badges, and live updates with conversation-local typing presence.
+- Add conversation watches, reply cards in the existing notification bell, per-message read state, unread badges, and live updates with conversation-local typing presence.
 - Let staff rename and delete topic boards, with dependent content and files hidden and cleaned up; keep archived courses readable but not writable.
 - Exclude categories, private membership, invitations, team rosters, search, email, and automatic archiving or deletion.
 
