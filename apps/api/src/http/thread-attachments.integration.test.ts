@@ -253,6 +253,9 @@ integration("Thread attachment persistence and authorization", () => {
       body_markdown: "Another message",
       deleted_at: null,
     });
+    const retried = await upload(ids.author, "independent-retry", ids.archiveMessage);
+    expect(retried.status).toBe(201);
+    expect((await get(ids.reader, retried.body.data.id)).text).toBe("hello");
   });
   it("limits a message to five live files without replacing its text", async () => {
     const before = await pool.query<{ body_markdown: string }>(

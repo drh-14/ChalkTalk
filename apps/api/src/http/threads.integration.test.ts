@@ -1,11 +1,16 @@
 import { Pool } from "pg";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import request from "supertest";
+import WebSocket from "ws";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { ThreadService } from "../threads/service.js";
+import { createThreadLiveServer } from "../threads/live.js";
 import { createApp } from "./app.js";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -438,6 +443,76 @@ integration("public Threads HTTP contract", () => {
     expect(outsider.status).toBe(404);
   });
 
+  it("catches up once after disconnecting before committed signals", async () => {
+    const before = await safe(request(app(ids.student)).get(`${root}/changes`));
+    expect(before.status).toBe(200);
+    const cursor = before.body.page.nextCursor as string | null;
+    const authService = {
+      session: async () => ({ user: { id: ids.student, displayName: "Member" } }),
+    } as unknown as AuthService;
+    const server = createServer((_request, response) => response.end());
+    const live = createThreadLiveServer({
+      server,
+      pool,
+      authService,
+      frontendOrigins: new Set([environment.frontendBaseUrl]),
+    });
+    let socket: WebSocket | undefined;
+    try {
+      await live.start();
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const port = (server.address() as AddressInfo).port;
+      const connect = async () => {
+        const client = new WebSocket(`ws://127.0.0.1:${port}/api/v1/thread-events`, {
+          headers: {
+            Origin: environment.frontendBaseUrl,
+            Cookie: "__Host-chalktalk_session=opaque",
+          },
+        });
+        await once(client, "open");
+        client.send(JSON.stringify({ type: "subscribe", courseId: ids.course }));
+        expect(JSON.parse((await once(client, "message"))[0].toString())).toEqual({
+          type: "subscribed",
+          courseId: ids.course,
+        });
+        return client;
+      };
+      socket = await connect();
+      socket.close();
+      await once(socket, "close");
+      const board = await unsafe(request(app(ids.ta)).post(root)).send({
+        title: "Missed while offline",
+      });
+      expect(board.status).toBe(201);
+      const conversation = await unsafe(
+        request(app(ids.student)).post(`${root}/${board.body.data.id}/conversations`),
+      ).send({ bodyMarkdown: "Missed opening" });
+      expect(conversation.status).toBe(201);
+      socket = await connect();
+      const caught = await safe(
+        request(app(ids.student)).get(
+          `${root}/changes${cursor ? `?after=${encodeURIComponent(cursor)}` : ""}`,
+        ),
+      );
+      expect(caught.status).toBe(200);
+      expect(caught.body.data.map((change: { kind: string }) => change.kind)).toEqual([
+        "board_created",
+        "conversation_created",
+      ]);
+      const repeat = await safe(
+        request(app(ids.student)).get(
+          `${root}/changes?after=${encodeURIComponent(caught.body.page.nextCursor)}`,
+        ),
+      );
+      expect(repeat.body.data).toEqual([]);
+    } finally {
+      socket?.terminate();
+      await live.stop();
+      if (server.listening)
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("replays keyed board, conversation, and reply creates without duplicates", async () => {
     const boardRequest = () =>
       unsafe(request(app(ids.ta)).post(root))
@@ -494,7 +569,8 @@ integration("public Threads HTTP contract", () => {
     ).set("If-Match", '"v1"');
     expect(removed.status).toBe(204);
     const retry = await create();
-    expect(retry.status).toBe(404);
+    expect(retry.status).toBe(409);
+    expect(retry.body.error.code).toBe("idempotency_key_reused");
     expect(JSON.stringify(retry.body)).not.toContain("Private original text");
     const messages = await safe(
       request(app(ids.student)).get(`${path}/${first.body.data.id}/messages`),

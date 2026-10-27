@@ -3,9 +3,11 @@ import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AuthService } from "../auth/service.js";
+import { AuthError } from "../auth/errors.js";
 import { loadEnvironment } from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { NotificationService } from "../notifications/service.js";
+import { ThreadService } from "../threads/service.js";
 import { ThreadWatchService } from "../threads/watch.js";
 import { onThreadMessageCreated } from "../threads/watch.js";
 import { createApp } from "./app.js";
@@ -36,7 +38,7 @@ const environment = loadEnvironment({
 let admin: Pool;
 let pool: Pool;
 const base = `/api/v1/courses/${ids.course}/threads/${ids.board}/conversations/${ids.conversation}`;
-function app(userId: string) {
+function app(userId: string, watches = new ThreadWatchService(pool)) {
   return createApp({
     environment,
     authService: {
@@ -55,7 +57,8 @@ function app(userId: string) {
       }),
     } as AuthService,
     notificationService: new NotificationService(pool),
-    threadWatchService: new ThreadWatchService(pool),
+    threadService: new ThreadService(pool),
+    threadWatchService: watches,
   });
 }
 const safe = (userId: string, path: string) =>
@@ -175,6 +178,7 @@ integration("Thread watches, read state, and bell notifications", () => {
       count: 2,
     });
   });
+
 
   it("reads live messages when another loaded message was deleted", async () => {
     const loaded = await safe(ids.other, `${base}/messages`);
@@ -339,6 +343,10 @@ integration("Thread watches, read state, and bell notifications", () => {
   });
 
   it("serializes watch and read writes with course archiving", async () => {
+    await pool.query(
+      "DELETE FROM thread_message_reads WHERE message_id=$1 AND user_id=$2",
+      [ids.opening, ids.other],
+    );
     const blocker = await pool.connect();
     try {
       await blocker.query("BEGIN");
@@ -537,4 +545,48 @@ integration("Thread watches, read state, and bell notifications", () => {
       (await safe(ids.watcher, "/api/v1/users/me/notifications")).body.data,
     ).toEqual([]);
   });
+  it("retries a failed opening read without marking a concurrent reply", async () => {
+    const watch = await unsafe(ids.other, `${base}/watch`, "put").send({
+      noticesEnabled: false,
+    });
+    expect(watch.status).toBe(200);
+    const loaded = await safe(ids.other, `${base}/messages`);
+    expect(loaded.status).toBe(200);
+    const loadedIds = loaded.body.data.map((message: { id: string }) => message.id);
+    const failing = new (class extends ThreadWatchService {
+      override async markRead(): Promise<void> {
+        throw new AuthError(503, "service_unavailable", "Read unavailable");
+      }
+    })(pool);
+    const failed = await request(app(ids.other, failing))
+      .post(`${base}/read`)
+      .set("Cookie", "__Host-chalktalk_session=opaque")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("X-CSRF-Token", "csrf")
+      .send({ messageIds: loadedIds });
+    expect(failed.status).toBe(503);
+    const beforeRetry = await pool.query(
+      "SELECT 1 FROM thread_message_reads WHERE user_id=$1 AND message_id=ANY($2::uuid[])",
+      [ids.other, loadedIds],
+    );
+    expect(beforeRetry.rowCount).toBe(0);
+    const reply = await unsafe(ids.author, `${base}/messages`, "post").send({
+      bodyMarkdown: "Concurrent reply",
+    });
+    expect(reply.status).toBe(201);
+    const retry = await unsafe(ids.other, `${base}/read`, "post").send({
+      messageIds: loadedIds,
+    });
+    expect(retry.status).toBe(204);
+    const reads = await pool.query<{ message_id: string }>(
+      "SELECT message_id FROM thread_message_reads WHERE user_id=$1 AND message_id=ANY($2::uuid[])",
+      [ids.other, [...loadedIds, reply.body.data.id]],
+    );
+    expect(reads.rows.map((row) => row.message_id).sort()).toEqual(loadedIds.sort());
+    expect(
+      (await safe(ids.other, `/api/v1/courses/${ids.course}/threads/unread-count`))
+        .body.data.count,
+    ).toBe(1);
+  });
+
 });
