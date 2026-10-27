@@ -823,9 +823,11 @@ export function CourseThreads(props: Props) {
                         <input
                           type="file"
                           disabled={Boolean(uploading)}
-                          onChange={(event) =>
-                            void upload(item, event.target.files?.[0])
-                          }
+                          onChange={(event) => {
+                            const file = event.currentTarget.files?.[0];
+                            event.currentTarget.value = "";
+                            void upload(item, file);
+                          }}
                         />
                       </label>
                     </div>

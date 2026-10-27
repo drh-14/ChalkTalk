@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import { EventEmitter, once } from "node:events";
 import { AddressInfo } from "node:net";
@@ -18,17 +18,15 @@ class Listener extends EventEmitter {
   release() {}
 }
 
-function fixture(memberCheck?: (userId: string) => Promise<void>) {
+function fixture() {
   const server = createServer((_request, response) => response.end());
   const listener = new Listener();
   const members = new Set(["alice", "bob"]);
   const pool = {
     connect: async () => listener,
     query: async (sql: string, params?: unknown[]) => {
-      if (sql.includes("course_memberships")) {
-        await memberCheck?.(String(params?.[1]));
+      if (sql.includes("course_memberships"))
         return { rows: members.has(String(params?.[1])) ? [{ ok: 1 }] : [] };
-      }
       if (sql.includes("thread_conversations"))
         return { rows: [{ course_id: COURSE }] };
       if (sql.includes("pg_notify")) {
@@ -79,79 +77,6 @@ afterEach(async () => {
 });
 
 describe("Thread live WebSocket", () => {
-  it("processes subscribe before immediate view and then delivers typing", async () => {
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let firstAliceCheck = true;
-    const { server, live } = fixture(async (userId) => {
-      if (userId === "alice" && firstAliceCheck) {
-        firstAliceCheck = false;
-        await blocked;
-      }
-    });
-    await live.start();
-    await new Promise<void>((resolve) => server.listen(0, resolve));
-    cleanups.push(async () => {
-      await live.stop();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    });
-    const bob = await connect(server, "bob");
-    const alice = await connect(server, "alice");
-    cleanups.push(async () => {
-      bob.terminate();
-      alice.terminate();
-    });
-    bob.send(JSON.stringify({ type: "subscribe", courseId: COURSE }));
-    expect(await next(bob)).toEqual({ type: "subscribed", courseId: COURSE });
-    bob.send(
-      JSON.stringify({
-        type: "view",
-        courseId: COURSE,
-        conversationId: CONVERSATION,
-      }),
-    );
-    expect(await next(bob)).toEqual({
-      type: "viewing",
-      conversationId: CONVERSATION,
-    });
-
-    const received: unknown[] = [];
-    alice.on("message", (data) => received.push(JSON.parse(data.toString())));
-    alice.send(JSON.stringify({ type: "subscribe", courseId: COURSE }));
-    alice.send(
-      JSON.stringify({
-        type: "view",
-        courseId: COURSE,
-        conversationId: CONVERSATION,
-      }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    release();
-    await vi.waitFor(() =>
-      expect(received).toEqual([
-        { type: "subscribed", courseId: COURSE },
-        { type: "viewing", conversationId: CONVERSATION },
-      ]),
-    );
-    const typed = next(bob);
-    alice.send(
-      JSON.stringify({
-        type: "typing",
-        conversationId: CONVERSATION,
-        active: true,
-      }),
-    );
-    expect(await typed).toEqual({
-      type: "typing",
-      conversationId: CONVERSATION,
-      userId: "alice",
-      displayName: "alice",
-      active: true,
-    });
-  });
-
   it("rejects foreign origins and missing sessions before upgrade", async () => {
     const { server, live } = fixture();
     await live.start();

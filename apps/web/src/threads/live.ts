@@ -9,6 +9,7 @@ import {
 
 type Event =
   | { type: "subscribed"; courseId: string }
+  | { type: "viewing"; conversationId: string }
   | { type: "changed"; courseId: string; boardId: string; sequence: number }
   | {
       type: "typing";
@@ -29,6 +30,8 @@ export function useThreadEvents(
   const [connected, setConnected] = useState(false);
   const socket = useRef<WebSocket | null>(null);
   const viewer = useRef(conversationId);
+  const subscribed = useRef(false);
+  const viewed = useRef<string | null>(null);
   const change = useRef(onChange);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPulse = useRef(0);
@@ -43,7 +46,7 @@ export function useThreadEvents(
   const stopTyping = useCallback(() => {
     if (typingTimer.current) clearTimeout(typingTimer.current);
     typingTimer.current = null;
-    if (viewer.current)
+    if (viewer.current && viewed.current === viewer.current)
       send({ type: "typing", conversationId: viewer.current, active: false });
   }, [send]);
   const typing = useCallback(
@@ -53,7 +56,7 @@ export function useThreadEvents(
         return;
       }
       const now = Date.now();
-      if (now - lastPulse.current > 2500) {
+      if (viewed.current === viewer.current && now - lastPulse.current > 2500) {
         send({ type: "typing", conversationId: viewer.current, active: true });
         lastPulse.current = now;
       }
@@ -72,6 +75,8 @@ export function useThreadEvents(
     let reconnect: ReturnType<typeof setTimeout> | null = null;
     let expiry: ReturnType<typeof setInterval> | null = null;
     let retryMs = 1000;
+    subscribed.current = false;
+    viewed.current = null;
     async function catchUp() {
       if (disposed) return;
       if (catchingUp) {
@@ -132,24 +137,35 @@ export function useThreadEvents(
         retryMs = 1000;
         setConnected(true);
         ws.send(JSON.stringify({ type: "subscribe", courseId }));
-        if (viewer.current)
-          ws.send(
-            JSON.stringify({
-              type: "view",
-              courseId,
-              conversationId: viewer.current,
-            }),
-          );
       };
       ws.onmessage = (message) => {
+        if (disposed || socket.current !== ws) return;
         let value: Event;
         try {
           value = JSON.parse(String(message.data)) as Event;
         } catch {
           return;
         }
-        if (value.type === "subscribed" && value.courseId === courseId)
+        if (value.type === "subscribed" && value.courseId === courseId) {
+          subscribed.current = true;
+          if (viewer.current)
+            send({ type: "view", courseId, conversationId: viewer.current });
           void catchUp();
+        }
+        if (
+          value.type === "viewing" &&
+          value.conversationId === viewer.current
+        ) {
+          viewed.current = value.conversationId;
+          if (typingTimer.current) {
+            send({
+              type: "typing",
+              conversationId: value.conversationId,
+              active: true,
+            });
+            lastPulse.current = Date.now();
+          }
+        }
         if (value.type === "changed" && value.courseId === courseId)
           void catchUp();
         if (
@@ -169,6 +185,8 @@ export function useThreadEvents(
       ws.onclose = () => {
         if (disposed) return;
         setConnected(false);
+        subscribed.current = false;
+        viewed.current = null;
         presence.current.clear();
         setNames([]);
         reconnect = setTimeout(connect, retryMs);
@@ -189,18 +207,23 @@ export function useThreadEvents(
     }, 1000);
     return () => {
       disposed = true;
+      subscribed.current = false;
+      viewed.current = null;
       if (reconnect) clearTimeout(reconnect);
       if (expiry) clearInterval(expiry);
       socket.current?.close();
       socket.current = null;
       setConnected(false);
     };
-  }, [courseId, userId, setNames]);
+  }, [courseId, userId, setNames, send]);
 
   useEffect(() => {
     presence.current.clear();
     setNames([]);
-    if (conversationId) send({ type: "view", courseId, conversationId });
+    viewed.current = null;
+    lastPulse.current = 0;
+    if (conversationId && subscribed.current)
+      send({ type: "view", courseId, conversationId });
     return () => {
       stopTyping();
       if (conversationId) send({ type: "unview", conversationId });

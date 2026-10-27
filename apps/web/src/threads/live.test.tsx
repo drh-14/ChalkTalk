@@ -1,31 +1,40 @@
 import { useState } from "react";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useThreadEvents } from "./live.js";
 
 class Socket {
   static OPEN = 1;
+  static autoSubscribe = true;
+  static instances: Socket[] = [];
   readyState = Socket.OPEN;
+  sent: Array<{
+    type: string;
+    courseId?: string;
+    conversationId?: string;
+    active?: boolean;
+  }> = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
   constructor() {
+    Socket.instances.push(this);
     queueMicrotask(() => this.onopen?.());
   }
 
   send(raw: string) {
     const message = JSON.parse(raw) as { type: string; courseId?: string };
-    if (message.type === "subscribe")
+    this.sent.push(message);
+    if (message.type === "subscribe" && Socket.autoSubscribe)
       queueMicrotask(() =>
-        this.onmessage?.({
-          data: JSON.stringify({
-            type: "subscribed",
-            courseId: message.courseId,
-          }),
-        } as MessageEvent),
+        this.emit({ type: "subscribed", courseId: message.courseId }),
       );
+  }
+
+  emit(message: object) {
+    this.onmessage?.({ data: JSON.stringify(message) } as MessageEvent);
   }
 
   close() {
@@ -37,6 +46,59 @@ afterEach(() => {
   cleanup();
   sessionStorage.clear();
   vi.unstubAllGlobals();
+  Socket.instances = [];
+  Socket.autoSubscribe = true;
+});
+
+it("waits for subscription and view acknowledgements before typing", async () => {
+  Socket.autoSubscribe = false;
+  vi.stubGlobal("WebSocket", Socket);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [],
+            page: { hasMore: false, nextCursor: null },
+          }),
+        ),
+    ),
+  );
+  let typing!: (active: boolean) => void;
+  function Viewer() {
+    const [, setNames] = useState<string[]>([]);
+    typing = useThreadEvents(
+      "course-a",
+      "conversation-a",
+      "user-1",
+      async () => {},
+      setNames,
+    ).typing;
+    return null;
+  }
+  render(<Viewer />);
+  await waitFor(() =>
+    expect(Socket.instances[0]?.sent).toEqual([
+      { type: "subscribe", courseId: "course-a" },
+    ]),
+  );
+  const socket = Socket.instances[0]!;
+  act(() => typing(true));
+  expect(socket.sent).toHaveLength(1);
+  act(() => socket.emit({ type: "subscribed", courseId: "course-a" }));
+  expect(socket.sent[1]).toEqual({
+    type: "view",
+    courseId: "course-a",
+    conversationId: "conversation-a",
+  });
+  expect(socket.sent).toHaveLength(2);
+  act(() => socket.emit({ type: "viewing", conversationId: "conversation-a" }));
+  expect(socket.sent[2]).toEqual({
+    type: "typing",
+    conversationId: "conversation-a",
+    active: true,
+  });
 });
 
 it("starts the new course catch-up while the previous course is pending", async () => {

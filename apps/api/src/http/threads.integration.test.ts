@@ -477,6 +477,35 @@ integration("public Threads HTTP contract", () => {
     ).toEqual(["Opening once", "Reply once"]);
   });
 
+  it("does not replay deleted opening text from a keyed conversation create", async () => {
+    const board = await unsafe(request(app(ids.ta)).post(root)).send({
+      title: "Replay moderation",
+    });
+    const path = `${root}/${board.body.data.id}/conversations`;
+    const create = () =>
+      unsafe(request(app(ids.student)).post(path))
+        .set("Idempotency-Key", "deleted-opening-replay")
+        .send({ bodyMarkdown: "Private original text" });
+    const first = await create();
+    expect(first.status).toBe(201);
+    const messagePath = `${path}/${first.body.data.id}/messages/${first.body.openingMessage.id}`;
+    const removed = await unsafe(
+      request(app(ids.student)).delete(messagePath),
+    ).set("If-Match", '"v1"');
+    expect(removed.status).toBe(204);
+    const retry = await create();
+    expect(retry.status).toBe(404);
+    expect(JSON.stringify(retry.body)).not.toContain("Private original text");
+    const messages = await safe(
+      request(app(ids.student)).get(`${path}/${first.body.data.id}/messages`),
+    );
+    expect(messages.body.data[0]).toMatchObject({
+      deleted: true,
+      bodyMarkdown: "",
+      author: null,
+    });
+  });
+
   it("hides Threads from nonmembers before body and ETag validation", async () => {
     const board = await unsafe(request(app(ids.ta)).post(root)).send({
       title: "Hidden from outsider",

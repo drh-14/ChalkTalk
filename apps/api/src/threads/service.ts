@@ -570,6 +570,12 @@ export class ThreadService {
         openingMessage: ThreadMessage;
       }>(db, scope, key, inputHash, async (value) => {
         await this.activeConversation(db, courseId, boardId, value.data.id);
+        const opening = await db.query(
+          `SELECT 1 FROM thread_messages
+           WHERE course_id=$1 AND board_id=$2 AND conversation_id=$3 AND id=$4 AND deleted_at IS NULL`,
+          [courseId, boardId, value.data.id, value.openingMessage.id],
+        );
+        if (!opening.rowCount) throw missing();
       });
       if (previous) return previous;
       const conversationId = uuidv7();

@@ -45,6 +45,13 @@ async function app(
         socket.send(
           JSON.stringify({ type: "subscribed", courseId: event.courseId }),
         );
+      if (event.type === "view")
+        socket.send(
+          JSON.stringify({
+            type: "viewing",
+            conversationId: event.conversationId,
+          }),
+        );
     });
   });
   const boards = [
@@ -948,6 +955,7 @@ test("attachment upload failure preserves the saved reply for retry", async ({
   await expect(page.getByRole("alert")).toContainText(
     "Message saved, but file upload failed",
   );
+  await expect(message.getByLabel("Attach file")).toHaveJSProperty("value", "");
   await expect(message).toBeVisible();
   fixture.enableUploads();
   await message.getByLabel("Attach file").setInputFiles({
