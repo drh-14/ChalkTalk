@@ -100,6 +100,26 @@ describe("routes", () => {
         new URL("https://app.example.edu/courses/abc/resources"),
       ),
     ).toEqual({ name: "course-resources", courseId: "abc" });
+    expect(
+      routeFromLocation(new URL("https://app.example.edu/courses/abc/threads")),
+    ).toEqual({ name: "course-threads", courseId: "abc" });
+    expect(
+      routeFromLocation(
+        new URL("https://app.example.edu/courses/abc/threads/board-1"),
+      ),
+    ).toEqual({ name: "course-threads", courseId: "abc", threadId: "board-1" });
+    expect(
+      routeFromLocation(
+        new URL(
+          "https://app.example.edu/courses/abc/threads/board-1/conversations/conversation-1",
+        ),
+      ),
+    ).toEqual({
+      name: "course-threads",
+      courseId: "abc",
+      threadId: "board-1",
+      conversationId: "conversation-1",
+    });
   });
 
   it("restores submitted q and selection from browser history", async () => {

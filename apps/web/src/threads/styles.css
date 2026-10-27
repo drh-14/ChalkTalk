@@ -1,0 +1,173 @@
+.threads-area {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+.threads-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+.threads-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-bottom: 1.25rem;
+}
+.threads-toolbar h2 {
+  margin: 0 auto 0 0;
+}
+.threads-connection {
+  font-size: 0.82rem;
+  color: var(--text-muted, #57646e);
+}
+.threads-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+}
+.threads-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #d7e1e7;
+  border-radius: 0.7rem;
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+}
+.threads-card:hover,
+.threads-card:focus-visible {
+  border-color: #307b9f;
+  box-shadow: 0 2px 8px #0c3f5a20;
+}
+.threads-card h3 {
+  font-size: 1rem;
+  margin: 0;
+}
+.threads-excerpt {
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.threads-excerpt p {
+  margin: 0;
+}
+.threads-unread {
+  min-width: 1.4rem;
+  text-align: center;
+  border-radius: 1rem;
+  padding: 0.1rem 0.4rem;
+  color: #fff;
+  background: #b42135;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.threads-form {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border: 1px solid #d7e1e7;
+  border-radius: 0.7rem;
+  background: #fff;
+}
+.threads-form label {
+  display: grid;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+.threads-form input,
+.threads-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #9caeb8;
+  border-radius: 0.4rem;
+}
+.threads-form textarea {
+  resize: vertical;
+}
+.threads-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0.75rem 0;
+}
+.threads-actions button {
+  cursor: pointer;
+}
+.threads-actions .danger {
+  color: #a11c30;
+}
+.threads-messages {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+.threads-message {
+  padding: 1rem;
+  border: 1px solid #d7e1e7;
+  border-radius: 0.7rem;
+  background: #fff;
+}
+.threads-message-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #465662;
+  font-size: 0.9rem;
+}
+.threads-body {
+  overflow-wrap: anywhere;
+}
+.threads-files {
+  margin: 0.8rem 0;
+  padding-left: 1.2rem;
+}
+.threads-upload {
+  position: relative;
+  cursor: pointer;
+  color: #126681;
+  text-decoration: underline;
+}
+.threads-upload input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.threads-upload:focus-within {
+  outline: 2px solid #126681;
+  outline-offset: 2px;
+}
+.threads-tombstone {
+  color: #64717a;
+  font-style: italic;
+}
+.threads-typing {
+  color: #526e7a;
+  font-size: 0.9rem;
+}
+@media (max-width: 600px) {
+  .threads-area {
+    padding: 1rem 0.6rem 2rem;
+  }
+  .threads-message-head {
+    display: block;
+  }
+  .threads-card {
+    padding: 0.85rem;
+  }
+}

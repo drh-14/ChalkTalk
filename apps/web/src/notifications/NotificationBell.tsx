@@ -14,9 +14,17 @@ export const NOTIFICATION_POLL_MS = 60_000;
 export function NotificationBell({
   csrfToken,
   onOpenPost,
+  onOpenThread,
 }: {
   csrfToken: string;
   onOpenPost: (courseId: string, postId?: string, hash?: string) => void;
+  onOpenThread: (
+    courseId: string,
+    threadId: string,
+    conversationId: string,
+    messageId: string,
+    notificationId: string,
+  ) => void;
 }) {
   const [count, setCount] = useState(0);
   const [open, setOpen] = useState(false);
@@ -44,10 +52,15 @@ export function NotificationBell({
       if (document.visibilityState === "visible") refreshCount();
     };
     window.addEventListener("focus", refreshCount);
+    window.addEventListener("chalktalk:notifications-changed", refreshCount);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("focus", refreshCount);
+      window.removeEventListener(
+        "chalktalk:notifications-changed",
+        refreshCount,
+      );
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [refreshCount]);
@@ -127,7 +140,7 @@ export function NotificationBell({
 
   async function choose(item: Notification) {
     setOpen(false);
-    if (!item.readAt) {
+    if (!item.readAt && item.kind !== "thread_reply_created") {
       setCount((value) => Math.max(0, value - 1));
       try {
         await markNotificationsRead(csrfToken, [item.id]);
@@ -135,15 +148,25 @@ export function NotificationBell({
         // Opening the post marks it read as well.
       }
     }
-    const destination = item.destination;
-    if (destination.kind === "course") onOpenPost(destination.courseId);
-    else if (destination.kind === "answer" || destination.kind === "followup")
-      onOpenPost(
+    if (item.kind === "thread_reply_created") {
+      onOpenThread(
         item.courseId,
-        destination.postId,
-        `#${destination.kind}-${destination.responseId}`,
+        item.threadId,
+        item.conversationId,
+        item.messageId,
+        item.id,
       );
-    else onOpenPost(item.courseId, destination.postId);
+    } else {
+      const destination = item.destination;
+      if (destination.kind === "course") onOpenPost(destination.courseId);
+      else if (destination.kind === "answer" || destination.kind === "followup")
+        onOpenPost(
+          item.courseId,
+          destination.postId,
+          `#${destination.kind}-${destination.responseId}`,
+        );
+      else onOpenPost(item.courseId, destination.postId);
+    }
   }
 
   async function markAll() {
@@ -240,11 +263,17 @@ export function NotificationBell({
                     >
                       <span className="notification-text">
                         {describeNotification(item)}{" "}
-                        {item.postTitle && <strong>{item.postTitle}</strong>}
+                        {item.kind === "thread_reply_created" ? (
+                          <strong>{item.threadTitle}</strong>
+                        ) : (
+                          item.postTitle && <strong>{item.postTitle}</strong>
+                        )}
                       </span>
-                      {(item.preview || item.responseUnavailable) && (
+                      {(item.kind === "thread_reply_created"
+                        ? item.preview
+                        : item.preview || item.responseUnavailable) && (
                         <span className="notification-preview">
-                          {item.responseUnavailable
+                          {item.kind !== "thread_reply_created" && item.responseUnavailable
                             ? "Response no longer available"
                             : item.preview}
                         </span>

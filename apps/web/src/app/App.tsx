@@ -30,6 +30,9 @@ import {
   type Versioned,
 } from "../courses/client.js";
 import { CourseResourcesArea } from "../course-information/views.js";
+import { CourseThreads } from "../threads/views.js";
+import { unreadCount as threadsUnreadCount } from "../threads/client.js";
+import { useThreadEvents } from "../threads/live.js";
 import { CourseStatistics } from "../statistics/views.js";
 import { Discussion } from "../posts/views.js";
 import { SessionView } from "../sessions/SessionView.js";
@@ -588,6 +591,18 @@ function AccountControls({
           );
           if (hash) window.dispatchEvent(new HashChangeEvent("hashchange"));
         }}
+        onOpenThread={(
+          courseId,
+          threadId,
+          conversationId,
+          messageId,
+          notificationId,
+        ) => {
+          if (canLeave())
+            onNavigate(
+              `/courses/${encodeURIComponent(courseId)}/threads/${encodeURIComponent(threadId)}/conversations/${encodeURIComponent(conversationId)}?notificationId=${encodeURIComponent(notificationId)}#thread-message-${encodeURIComponent(messageId)}`,
+            );
+        }}
       />
       <span className="avatar" aria-hidden="true">
         {firstNameOf(session)[0]}
@@ -918,6 +933,26 @@ function CourseFrame({
   }>();
   const [error, setError] = useState<{ courseId: string; message: string }>();
   const [cycle, setCycle] = useState(0);
+  const [threadsUnread, setThreadsUnread] = useState(0);
+  const [threadSignalVersion, setThreadSignalVersion] = useState(0);
+  const [threadTypingNames, setThreadTypingNames] = useState<string[]>([]);
+  const updateThreadsUnread = useCallback(
+    (count: number) => setThreadsUnread(count),
+    [],
+  );
+  const onThreadChange = useCallback(() => {
+    setThreadSignalVersion((value) => value + 1);
+    void threadsUnreadCount(courseId)
+      .then(setThreadsUnread)
+      .catch(() => {});
+  }, [courseId]);
+  const threadLive = useThreadEvents(
+    courseId,
+    route.name === "course-threads" ? route.conversationId : undefined,
+    session.user.id,
+    onThreadChange,
+    setThreadTypingNames,
+  );
   const beforeLeave = useRef<() => boolean>(() => true);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const visibleCourse = course?.data.id === courseId ? course : undefined;
@@ -960,6 +995,17 @@ function CourseFrame({
     };
   }, [courseId, session.user.id]);
   useEffect(() => {
+    let active = true;
+    void threadsUnreadCount(courseId)
+      .then((count) => {
+        if (active) setThreadsUnread(count);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [courseId]);
+  useEffect(() => {
     if (visibleCourse) headingRef.current?.focus();
   }, [route.name, visibleCourse]);
   const section =
@@ -967,11 +1013,13 @@ function CourseFrame({
       ? "settings"
       : route.name === "course-resources"
         ? "resources"
-        : route.name === "course-statistics"
-          ? "statistics"
-          : route.name === "course-session"
-            ? "session"
-            : "discussion";
+        : route.name === "course-threads"
+          ? "threads"
+          : route.name === "course-statistics"
+            ? "statistics"
+            : route.name === "course-session"
+              ? "session"
+              : "discussion";
   const discussionPath = `/courses/${encodeURIComponent(courseId)}`;
   const tabs = [
     { key: "discussion", label: "Discussion", path: discussionPath },
@@ -979,6 +1027,11 @@ function CourseFrame({
       key: "resources",
       label: "Course resources",
       path: `${discussionPath}/resources`,
+    },
+    {
+      key: "threads",
+      label: "Threads",
+      path: `${discussionPath}/threads`,
     },
     {
       key: "settings",
@@ -1034,6 +1087,14 @@ function CourseFrame({
                 onClick={(event) => follow(event, tab.path)}
               >
                 {tab.label}
+                {tab.key === "threads" && threadsUnread > 0 && (
+                  <span
+                    className="threads-unread"
+                    aria-label={`${threadsUnread} unread Thread messages`}
+                  >
+                    {threadsUnread}
+                  </span>
+                )}
               </a>
             ))}
           </nav>
@@ -1098,6 +1159,26 @@ function CourseFrame({
             }
             csrfToken={session.csrfToken}
           />
+        ) : section === "threads" ? (
+          staff === undefined ? (
+            <p role="status">Loading Threads…</p>
+          ) : (
+            <CourseThreads
+              key={`${courseId}:${route.threadId ?? ""}:${route.conversationId ?? ""}`}
+              courseId={courseId}
+              boardId={route.threadId}
+              conversationId={route.conversationId}
+              userId={session.user.id}
+              staff={staff}
+              active={visibleCourse.data.status === "active"}
+              csrfToken={session.csrfToken}
+              onNavigate={onNavigate}
+              onUnreadChange={updateThreadsUnread}
+              signalVersion={threadSignalVersion}
+              live={threadLive}
+              typingNames={threadTypingNames}
+            />
+          )
         ) : section === "settings" ? (
           <CourseDetail
             key={courseId}
@@ -1208,6 +1289,7 @@ export function App() {
           route.name === "post" ||
           route.name === "course-settings" ||
           route.name === "course-resources" ||
+          route.name === "course-threads" ||
           route.name === "course-statistics" ||
           route.name === "course-session"
         )
@@ -1266,6 +1348,7 @@ export function App() {
       route.name === "post" ||
       route.name === "course-settings" ||
       route.name === "course-resources" ||
+      route.name === "course-threads" ||
       route.name === "course-statistics" ||
       route.name === "course-session") &&
     route.courseId &&

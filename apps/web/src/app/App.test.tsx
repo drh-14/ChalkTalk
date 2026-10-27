@@ -464,6 +464,7 @@ describe("ChalkTalk auth entry", () => {
     expect(tabs.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "Discussion",
       "Course resources",
+      "Threads",
       "Course settings",
     ]);
     expect(

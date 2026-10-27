@@ -90,6 +90,7 @@ export function createViteConfig(
         "/api": {
           target: environment.VITE_API_PROXY_TARGET ?? "http://localhost:3000",
           changeOrigin: true,
+          ws: true,
         },
         // Live code sessions; the browser Origin header is forwarded unchanged.
         "/collaboration": {

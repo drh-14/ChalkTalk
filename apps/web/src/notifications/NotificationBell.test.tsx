@@ -69,7 +69,13 @@ describe("notification bell", () => {
 
   it("labels the unread count for assistive technology", async () => {
     api([2]);
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     expect(
       await screen.findByRole("button", { name: "Notifications, 2 unread" }),
     ).toBeTruthy();
@@ -79,7 +85,13 @@ describe("notification bell", () => {
   it("refreshes the count on an interval and when the window regains focus", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetchMock = api([0, 1, 3]);
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     expect(
       await screen.findByRole("button", { name: "Notifications" }),
     ).toBeTruthy();
@@ -102,7 +114,13 @@ describe("notification bell", () => {
     const fetchMock = api([2]);
     const onOpenPost = vi.fn();
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={onOpenPost} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={onOpenPost}
+        onOpenThread={vi.fn()}
+      />,
+    );
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 2 unread" }),
     );
@@ -136,7 +154,13 @@ describe("notification bell", () => {
   it("marks all read and closes on Escape", async () => {
     const fetchMock = api([2]);
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 2 unread" }),
     );
@@ -169,7 +193,13 @@ describe("notification bell", () => {
       ],
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 1 unread" }),
     );
@@ -184,7 +214,13 @@ describe("notification bell", () => {
       [{ ...answered, kind: "mentioned", actor: { displayName: "Anonymous" } }],
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 1 unread" }),
     );
@@ -192,6 +228,7 @@ describe("notification bell", () => {
       "Anonymous mentioned you on Why does my loop never stop?",
     );
   });
+
 
   it("renders a response preview and opens its exact answer anchor", async () => {
     const onOpenPost = vi.fn();
@@ -211,11 +248,13 @@ describe("notification bell", () => {
       ],
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={onOpenPost} />);
+    render(<NotificationBell csrfToken="csrf" onOpenPost={onOpenPost} onOpenThread={vi.fn()} />);
+
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 1 unread" }),
     );
     const card = (await screen.findAllByRole("listitem"))[0]!;
+
     expect(card.textContent).toContain("replied to your message");
     expect(card.textContent).toContain("First response line");
     await user.click(within(card).getByRole("button"));
@@ -250,7 +289,7 @@ describe("notification bell", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} onOpenThread={vi.fn()} />);
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 2 unread" }),
     );
@@ -294,7 +333,7 @@ describe("notification bell", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} onOpenThread={vi.fn()} />);
     const bell = await screen.findByRole("button", { name: "Notifications" });
     await user.click(bell);
     expect(
@@ -330,7 +369,7 @@ describe("notification bell", () => {
       ],
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={onOpenPost} />);
+    render(<NotificationBell csrfToken="csrf" onOpenPost={onOpenPost} onOpenThread={vi.fn()} />);
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 1 unread" }),
     );
@@ -361,7 +400,7 @@ describe("notification bell", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} onOpenThread={vi.fn()} />);
     await user.click(
       await screen.findByRole("button", { name: "Notifications, 1 unread" }),
     );
@@ -371,12 +410,74 @@ describe("notification bell", () => {
     );
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findAllByRole("listitem")).toHaveLength(1);
+
+  });
+
+  it("opens a Thread reply without treating it as a Post notification", async () => {
+  it("opens a Thread reply without treating it as a Post notification", async () => {
+    const threadReply = {
+      id: "0192f7a4-58ae-7009-9f43-d1ba75831d70",
+      kind: "thread_reply_created" as const,
+      courseId: "course_1",
+      courseName: "CS 101",
+      threadId: "thread_1",
+      threadTitle: "Find a project team",
+      conversationId: "conversation_1",
+      messageId: "message_1",
+      preview: "I can join your team.",
+      actor: { displayName: "Ada Lovelace" },
+      createdAt: new Date().toISOString(),
+      readAt: null,
+    };
+    const fetchMock = api([1, 1, 0], [threadReply]);
+    const onOpenPost = vi.fn();
+    const onOpenThread = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={onOpenPost}
+        onOpenThread={onOpenThread}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Notifications, 1 unread" }),
+    );
+    const card = (await screen.findAllByRole("listitem"))[0]!;
+    expect(card.textContent).toContain("Ada Lovelace replied");
+    expect(card.textContent).toContain("Find a project team");
+    expect(card.textContent).toContain("I can join your team.");
+    await user.click(within(card).getByRole("button"));
+    expect(onOpenThread).toHaveBeenCalledWith(
+      "course_1",
+      "thread_1",
+      "conversation_1",
+      "message_1",
+      threadReply.id,
+    );
+    expect(onOpenPost).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith("/read")),
+    ).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "Notifications, 1 unread" }),
+    ).toBeTruthy();
+    window.dispatchEvent(new Event("chalktalk:notifications-changed"));
+    expect(
+      await screen.findByRole("button", { name: "Notifications" }),
+    ).toBeTruthy();
   });
 
   it("explains an empty inbox", async () => {
     api([0], []);
     const user = userEvent.setup();
-    render(<NotificationBell csrfToken="csrf" onOpenPost={vi.fn()} />);
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
     await user.click(
       await screen.findByRole("button", { name: "Notifications" }),
     );
