@@ -11400,7 +11400,7 @@ paths:
       tags:
         - Notifications
       summary: List notifications
-      description: Lists the caller's notifications newest first across courses. Notifications are omitted once the caller has left the course or the post is deleted or a confirmed duplicate. Only limit, cursor, and unread are accepted.
+      description: Lists the caller's notifications newest first across courses. Ordinary events require a readable active post; merge events require the unchanged confirmed merge and readable canonical post, and author-specific deletion events remain generic while the recipient is a member. Only limit, cursor, and unread are accepted.
       operationId: listNotifications
       security:
         - session_cookie: []
@@ -11430,6 +11430,13 @@ paths:
                     courseName: CS 101
                     postId: post_123
                     postTitle: Why does my loop never stop?
+                    preview: The condition never becomes false.
+                    responseUnavailable: false
+                    addressedToOwner: true
+                    destination:
+                      kind: answer
+                      postId: post_123
+                      responseId: answer_123
                     actor:
                       displayName: Grace Hopper
                     createdAt: "2026-09-20T14:30:00Z"
@@ -16674,6 +16681,9 @@ components:
             - announcement
             - post_published
             - mentioned
+            - post_staff_edited
+            - post_merged
+            - post_staff_deleted
           description: What happened on the post.
         courseId:
           type: string
@@ -16685,8 +16695,39 @@ components:
           type: string
           description: Post the activity happened on.
         postTitle:
-          type: string
-          description: Current post title.
+          type: [string, "null"]
+          description: Current post title, or null for a deletion event.
+        preview:
+          type: [string, "null"]
+          description: Plain text without Markdown formatting or link targets, at most three nonblank lines and 360 characters of the current referenced response; never retained deleted text.
+        responseUnavailable:
+          type: boolean
+          description: Whether a previously referenced response has been deleted or removed.
+        addressedToOwner:
+          type: boolean
+          description: Whether a new answer/followup addresses the post author or a nested reply addresses its parent followup author.
+        destination:
+          description: Typed, authorized destination, with no arbitrary URL.
+          oneOf:
+            - type: object
+              properties:
+                kind: { type: string, const: course }
+                courseId: { type: string }
+              required: [kind, courseId]
+              additionalProperties: false
+            - type: object
+              properties:
+                kind: { type: string, const: post }
+                postId: { type: string }
+              required: [kind, postId]
+              additionalProperties: false
+            - type: object
+              properties:
+                kind: { type: string, enum: [answer, followup] }
+                postId: { type: string }
+                responseId: { type: string }
+              required: [kind, postId, responseId]
+              additionalProperties: false
         actor:
           description: Who acted. Students see Anonymous for an anonymous actor; null for a deleted account.
           oneOf:
@@ -16716,6 +16757,10 @@ components:
         - courseName
         - postId
         - postTitle
+        - preview
+        - responseUnavailable
+        - addressedToOwner
+        - destination
         - actor
         - createdAt
         - readAt

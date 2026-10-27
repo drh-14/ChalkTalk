@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
-import { recordActivity } from "../notifications/activity.js";
+import {
+  recordActivity,
+  recordPostModeration,
+} from "../notifications/activity.js";
 import { newMentions, parseMentions } from "../notifications/mentions.js";
 import { canReadPost, readablePost } from "./visibility.js";
 import { endCollaborationSessions } from "../collaboration/lifecycle.js";
@@ -1373,6 +1376,35 @@ export class PostService {
         );
       }
       const updated = (await this.row(db, id))!;
+      if (staff && !author && row.author_user_id) {
+        if (
+          row.type === "question" &&
+          row.duplicate_status !== "confirmed" &&
+          status === "confirmed"
+        )
+          await recordPostModeration(db, {
+            courseId: row.course_id,
+            postId: id,
+            authorId: row.author_user_id,
+            actorId: userId,
+            kind: "post_merged",
+            canonicalPostId: targetId!,
+            sourceVersion: Number(updated.version),
+          });
+        else if (
+          status !== "confirmed" &&
+          ((body.title !== undefined && body.title !== row.title) ||
+            (body.bodyMarkdown !== undefined &&
+              body.bodyMarkdown !== row.body_markdown))
+        )
+          await recordPostModeration(db, {
+            courseId: row.course_id,
+            postId: id,
+            authorId: row.author_user_id,
+            actorId: userId,
+            kind: "post_staff_edited",
+          });
+      }
       if (
         row.type === "question" &&
         row.duplicate_status !== "confirmed" &&
@@ -1745,6 +1777,14 @@ export class PostService {
           "permission_denied",
           "Post deletion is not permitted",
         );
+      if (STAFF.has(member.role))
+        await recordPostModeration(db, {
+          courseId: row.course_id,
+          postId: id,
+          authorId: row.author_user_id,
+          actorId: userId,
+          kind: "post_staff_deleted",
+        });
       await db.query("DELETE FROM post_tags WHERE post_id=$1", [id]);
       await this.removeEmbeddings(db, id);
       await hideAttachmentsForPostTree(db, id);

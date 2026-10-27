@@ -475,6 +475,7 @@ export class AnswerService {
         postId: row.post_id,
         actorId: userId,
         kind: "answer_edited",
+        response: { kind: "answer", id: answerId },
         anonymous: row.anonymous,
         mentions,
         follow: true,

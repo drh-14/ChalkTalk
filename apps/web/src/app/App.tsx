@@ -579,8 +579,14 @@ function AccountControls({
     <div className="account-controls">
       <NotificationBell
         csrfToken={session.csrfToken}
-        onOpenPost={(courseId, postId) => {
-          if (canLeave()) onNavigate(postPath(courseId, postId));
+        onOpenPost={(courseId, postId, hash) => {
+          if (!canLeave()) return;
+          onNavigate(
+            postId
+              ? `${postPath(courseId, postId)}${hash ?? ""}`
+              : `/courses/${encodeURIComponent(courseId)}`,
+          );
+          if (hash) window.dispatchEvent(new HashChangeEvent("hashchange"));
         }}
       />
       <span className="avatar" aria-hidden="true">
