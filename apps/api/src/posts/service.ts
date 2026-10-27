@@ -24,6 +24,8 @@ type Row = {
   body_markdown: string | null;
   anonymous: boolean;
   pinned: boolean;
+  folder_id: string | null;
+  folder_name: string | null;
   announcement: boolean;
   discussion_locked: boolean;
   private: boolean;
@@ -45,6 +47,7 @@ export type CreatePost = {
   bodyMarkdown: string;
   anonymous?: boolean;
   tags?: string[];
+  folderId?: string | null;
   /** Poll choices, in order; required for polls only. */
   options?: string[];
   selectionMode?: "single" | "multiple";
@@ -108,6 +111,7 @@ export type ListPosts = {
   /** Only questions with an unresolved followup discussion. */
   unresolvedFollowups?: true;
   tags?: string[];
+  folders?: string[];
   tagMatch?: "all";
   authorId?: string;
   createdAfter?: string;
@@ -336,7 +340,7 @@ export class PostService {
     lock = false,
   ): Promise<Row | undefined> {
     const result = await db.query<Row>(
-      `SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered FROM posts p LEFT JOIN users u ON u.id=p.author_user_id WHERE p.id=$1${lock ? " FOR UPDATE OF p" : ""}`,
+      `SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN post_folders f ON f.id=p.folder_id WHERE p.id=$1${lock ? " FOR UPDATE OF p" : ""}`,
       [id],
     );
     return result.rows[0];
@@ -383,6 +387,10 @@ export class PostService {
       },
       anonymous: row.anonymous,
       tags: await this.tags(db, row.id),
+      folder:
+        row.folder_id === null
+          ? null
+          : { id: row.folder_id, name: row.folder_name! },
       attachments:
         row.duplicate_status === "confirmed"
           ? []
@@ -412,6 +420,104 @@ export class PostService {
       [postId],
     );
     return result.rows[0]!.count;
+  }
+  private async validFolder(
+    db: Db,
+    courseId: string,
+    id: string | null | undefined,
+  ) {
+    if (!id) return;
+    const result = await db.query(
+      "SELECT 1 FROM post_folders WHERE id=$1 AND course_id=$2",
+      [id, courseId],
+    );
+    if (!result.rowCount) throw validation("Folder is invalid");
+  }
+  async listFolders(courseId: string, userId: string) {
+    await this.membership(this.pool, courseId, userId);
+    const result = await this.pool.query<{ id: string; name: string }>(
+      "SELECT id,name FROM post_folders WHERE course_id=$1 ORDER BY lower(name),name,id",
+      [courseId],
+    );
+    return result.rows;
+  }
+  private async folderStaff(db: Db, courseId: string, userId: string) {
+    const member = await this.membership(db, courseId, userId, true);
+    if (!STAFF.has(member.role))
+      throw new AuthError(
+        403,
+        "permission_denied",
+        "Folder management is staff-only",
+      );
+    this.writable(member.status);
+  }
+  async createFolder(courseId: string, userId: string, name: string) {
+    return this.tx(async (db) => {
+      await this.folderStaff(db, courseId, userId);
+      await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [courseId]);
+      const existing = await db.query(
+        "SELECT 1 FROM post_folders WHERE course_id=$1 AND lower(name)=lower($2)",
+        [courseId, name],
+      );
+      if (existing.rowCount)
+        throw new AuthError(
+          409,
+          "folder_name_conflict",
+          "Folder name already exists",
+        );
+      const id = uuidv7();
+      await db.query(
+        "INSERT INTO post_folders(id,course_id,name) VALUES($1,$2,$3)",
+        [id, courseId, name],
+      );
+      return { id, name };
+    });
+  }
+  async renameFolder(
+    courseId: string,
+    folderId: string,
+    userId: string,
+    name: string,
+  ) {
+    return this.tx(async (db) => {
+      await this.folderStaff(db, courseId, userId);
+      await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [courseId]);
+      const existing = await db.query(
+        "SELECT 1 FROM post_folders WHERE course_id=$1 AND lower(name)=lower($2) AND id<>$3",
+        [courseId, name, folderId],
+      );
+      if (existing.rowCount)
+        throw new AuthError(
+          409,
+          "folder_name_conflict",
+          "Folder name already exists",
+        );
+      const result = await db.query<{ id: string; name: string }>(
+        "UPDATE post_folders SET name=$3 WHERE course_id=$1 AND id=$2 RETURNING id,name",
+        [courseId, folderId, name],
+      );
+      if (!result.rows[0]) throw notFound();
+      return result.rows[0];
+    });
+  }
+  async deleteFolder(courseId: string, folderId: string, userId: string) {
+    await this.tx(async (db) => {
+      await this.folderStaff(db, courseId, userId);
+      await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [courseId]);
+      const folder = await db.query(
+        "SELECT 1 FROM post_folders WHERE course_id=$1 AND id=$2 FOR UPDATE",
+        [courseId, folderId],
+      );
+      if (!folder.rowCount) throw notFound();
+      await db.query(
+        "UPDATE posts SET folder_id=NULL,updated_at=now(),version=version+1 WHERE course_id=$1 AND folder_id=$2",
+        [courseId, folderId],
+      );
+      await db.query("DELETE FROM post_folders WHERE course_id=$1 AND id=$2", [
+        courseId,
+        folderId,
+      ]);
+    });
   }
   private async pollSettings(db: Db, postId: string) {
     const result = await db.query<{
@@ -599,6 +705,9 @@ export class PostService {
       );
     }
     this.writable(member.status);
+    if (body.folderId)
+      await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [courseId]);
+    await this.validFolder(db, courseId, body.folderId);
     if (fromDraft) {
       const draft = await this.lockedDraftRow(db, courseId, userId);
       if (
@@ -657,8 +766,8 @@ export class PostService {
     );
     const created = await db.query<{ created_on: string }>(
       `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
-         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,created_at,updated_at,last_activity_at)
-         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,stamp.at,stamp.at,stamp.at FROM stamp
+         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,folder_id,created_at,updated_at,last_activity_at)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,stamp.at,stamp.at,stamp.at FROM stamp
          RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on`,
       [
         id,
@@ -670,6 +779,7 @@ export class PostService {
         body.anonymous ?? false,
         body.announcement ?? false,
         body.private ?? false,
+        body.folderId ?? null,
       ],
     );
     for (const [position, label] of (body.options ?? []).entries())
@@ -901,6 +1011,15 @@ export class PostService {
     const visibility = readablePost("p", add(userId), add(member.role));
     const clauses = ["p.course_id=$1", "p.deleted_at IS NULL", visibility];
     if (options.private) clauses.push("p.private");
+    if (options.folders?.length) {
+      const folderIds = options.folders.filter((id) => id !== "unfiled");
+      const matches = folderIds.length
+        ? [`p.folder_id=ANY(${add(folderIds)}::uuid[])`]
+        : [];
+      if (options.folders.includes("unfiled"))
+        matches.push("p.folder_id IS NULL");
+      clauses.push(`(${matches.join(" OR ")})`);
+    }
     if (watermark)
       clauses.push(`p.created_at>${add(watermark.at)}::timestamptz`);
     if (options.unresolvedFollowups)
@@ -985,7 +1104,7 @@ export class PostService {
       cursorClause = `AND (listed.pinned < ${pinned}::boolean OR (listed.pinned = ${pinned}::boolean AND (${tier ? "listed.match_tier," : ""}listed.rank_value,listed.id)${ascending ? ">" : "<"}(${tier ? `${tier}::integer,` : ""}${rank}::${sortValue},${id}::uuid)))`;
     }
     const direction = ascending ? "ASC" : "DESC";
-    const source = `FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id WHERE ${clauses.join(" AND ")}`;
+    const source = `FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN posts canonical ON canonical.id=p.duplicate_of_post_id LEFT JOIN post_folders f ON f.id=p.folder_id WHERE ${clauses.join(" AND ")}`;
     const listed = semanticReady
       ? (() => {
           const terms = add(searchTerms);
@@ -1020,7 +1139,7 @@ export class PostService {
             UNION SELECT id FROM fuzzy_ids
             UNION SELECT post_id FROM semantic_matches
           ), candidates AS (
-            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,
+            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,
               ${ANSWERED} AS answered,canonical.title AS canonical_title,
               p.search_vector @@ ${searchQuery} AS lexical_match,
               (ts_rank_cd(p.search_vector,${searchQuery})
@@ -1067,7 +1186,7 @@ export class PostService {
           ), ${
             options.sort === "relevance"
               ? `candidates AS (
-            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,
+            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,
               ${ANSWERED} AS answered,canonical.title AS canonical_title,
               p.search_vector @@ ${searchQuery} AS lexical_match,
               (ts_rank_cd(p.search_vector,${searchQuery})
@@ -1086,12 +1205,12 @@ export class PostService {
             SELECT ranked.*,round(CASE WHEN lexical_match THEN 1.0+1.5/(60+lexical_position)+1.0/(60+fuzzy_position) ELSE 1.0/(60+fuzzy_position) END,12) AS rank_value FROM ranked
           )`
               : `listed AS (
-            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value
+            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value
             ${source} AND p.id IN (SELECT id FROM candidate_ids)
           )`
           }`;
           })()
-        : `listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
+        : `listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
     if (watermark) {
       const count = await this.pool.query<{ count: number }>(
         `WITH ${listed} SELECT count(*)::int AS count FROM listed`,
@@ -1227,6 +1346,7 @@ export class PostService {
         body.bodyMarkdown !== undefined ||
         body.anonymous !== undefined ||
         body.tags !== undefined ||
+        body.folderId !== undefined ||
         body.private !== undefined;
       if (body.private === true && !row.private)
         throw new AuthError(
@@ -1327,8 +1447,9 @@ export class PostService {
             "A post cannot be merged into a private post",
           );
       }
+      await this.validFolder(db, row.course_id, body.folderId);
       await db.query(
-        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,private=$8,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
+        "UPDATE posts SET title=$2,body_markdown=$3,anonymous=$4,pinned=$5,duplicate_of_post_id=$6,duplicate_status=$7,private=$8,folder_id=$9,updated_at=now(),last_activity_at=now(),version=version+1 WHERE id=$1",
         [
           id,
           body.title ?? row.title,
@@ -1338,6 +1459,7 @@ export class PostService {
           targetId,
           status,
           publishing ? false : row.private,
+          body.folderId === undefined ? row.folder_id : body.folderId,
         ],
       );
       if (mentions.userIds.length || mentions.staff)

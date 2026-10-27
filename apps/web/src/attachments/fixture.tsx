@@ -1,14 +1,20 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
+import { filtersFromSearch, type FeedFilters } from "../app/routes.js";
 import { Discussion } from "../posts/views.js";
 import "../styles.css";
 
 export function Fixture() {
-  const [postId, setPostId] = useState<string | undefined>(
-    new URLSearchParams(location.search).get("post") === "none"
-      ? undefined
-      : (new URLSearchParams(location.search).get("post") ?? "p1"),
+  const sharedFilters = new URLSearchParams(location.search).has(
+    "sharedFilters",
   );
+  const [filters, setFilters] = useState<FeedFilters>(() =>
+    filtersFromSearch(new URLSearchParams(location.search)),
+  );
+  const [postId, setPostId] = useState<string | undefined>(() => {
+    const selected = new URLSearchParams(location.search).get("post");
+    return selected === "none" ? undefined : (selected ?? "p1");
+  });
   return (
     <main className="course-page discussion">
       <header className="course-header">
@@ -36,6 +42,23 @@ export function Fixture() {
         userId="u1"
         query={new URLSearchParams(location.search).get("q") ?? undefined}
         postId={postId}
+        filters={sharedFilters ? filters : undefined}
+        onFiltersChange={
+          sharedFilters
+            ? (next) => {
+                setFilters(next);
+                const params = new URLSearchParams(location.search);
+                params.delete("folder");
+                for (const folder of next.folders ?? [])
+                  params.append("folder", folder);
+                history.replaceState(
+                  null,
+                  "",
+                  `${location.pathname}?${params}`,
+                );
+              }
+            : undefined
+        }
         onNavigate={(path) => {
           const id = path.match(/\/posts\/([^/?]+)/)?.[1];
           setPostId(id);

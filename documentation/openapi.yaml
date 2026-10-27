@@ -3304,6 +3304,100 @@ paths:
         - "$ref": "#/components/parameters/Origin"
         - "$ref": "#/components/parameters/CourseId"
         - "$ref": "#/components/parameters/CsrfToken"
+  "/courses/{courseId}/post-folders":
+    get:
+      tags: [Posts]
+      summary: List managed discussion post folders
+      operationId: listPostFolders
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: Alphabetically ordered folders for a current course member.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { "$ref": "#/components/schemas/PostFolder" }
+                required: [data]
+        "404": { description: Course membership not found. }
+    post:
+      tags: [Posts]
+      summary: Create a staff-managed discussion post folder
+      operationId: createPostFolder
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/PostFolderInput" }
+      responses:
+        "201":
+          description: Folder created; Location points to its course-scoped URL.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/PostFolderResponse" }
+        "403": { description: Current member is not course staff. }
+        "409": { description: Case-insensitive folder name conflict. }
+        "422": { description: Invalid folder name. }
+  "/courses/{courseId}/post-folders/{folderId}":
+    patch:
+      tags: [Posts]
+      summary: Rename a course post folder
+      operationId: renamePostFolder
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - name: folderId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/PostFolderInput" }
+      responses:
+        "200":
+          description: Folder renamed.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/PostFolderResponse" }
+        "403": { description: Current member is not course staff. }
+        "404": { description: Folder not found in this course. }
+        "409": { description: Case-insensitive folder name conflict. }
+        "422": { description: Invalid folder name. }
+    delete:
+      tags: [Posts]
+      summary: Delete a post folder and move its posts to Unfiled
+      operationId: deletePostFolder
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - name: folderId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Folder removed and posts made Unfiled. }
+        "403": { description: Current member is not course staff. }
+        "404": { description: Folder not found in this course. }
   "/courses/{courseId}/post-draft":
     parameters:
       - "$ref": "#/components/parameters/CourseId"
@@ -3854,6 +3948,17 @@ paths:
               - any
               - all
             default: any
+        - name: folder
+          in: query
+          required: false
+          description: Repeated managed folder UUIDs and/or unfiled; posts match any selected value. Omission shows all. Combines with tags and search before visibility-safe pagination; a changed selection invalidates the cursor.
+          schema:
+            type: array
+            maxItems: 100
+            items:
+              type: string
+          style: form
+          explode: true
         - name: authorId
           in: query
           required: false
@@ -13590,6 +13695,37 @@ components:
         - id
         - label
         - selected
+    PostFolder:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 64,
+            description: Length counts Unicode code points.,
+          }
+      required: [id, name]
+      additionalProperties: false
+    PostFolderInput:
+      type: object
+      properties:
+        name:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 64,
+            description: Trimmed; length counts Unicode code points; unique ignoring case within course.,
+          }
+      required: [name]
+      additionalProperties: false
+    PostFolderResponse:
+      type: object
+      properties:
+        data: { "$ref": "#/components/schemas/PostFolder" }
+      required: [data]
+      additionalProperties: false
     QuestionPost:
       type: object
       properties:
@@ -13636,6 +13772,11 @@ components:
           description: Post tags.
           maxItems: 10
           uniqueItems: true
+        folder:
+          oneOf:
+            - "$ref": "#/components/schemas/PostFolder"
+            - type: "null"
+          description: Current managed folder, or null for Unfiled.
         attachments:
           type: array
           items:
@@ -13718,6 +13859,7 @@ components:
         - author
         - anonymous
         - tags
+        - folder
         - attachments
         - pinned
         - discussionLocked
@@ -13779,6 +13921,11 @@ components:
           description: Post tags.
           maxItems: 10
           uniqueItems: true
+        folder:
+          oneOf:
+            - "$ref": "#/components/schemas/PostFolder"
+            - type: "null"
+          description: Current managed folder, or null for Unfiled.
         attachments:
           type: array
           items:
@@ -13854,6 +14001,7 @@ components:
         - author
         - anonymous
         - tags
+        - folder
         - attachments
         - pinned
         - discussionLocked
@@ -13913,6 +14061,11 @@ components:
           description: Post tags.
           maxItems: 10
           uniqueItems: true
+        folder:
+          oneOf:
+            - "$ref": "#/components/schemas/PostFolder"
+            - type: "null"
+          description: Current managed folder, or null for Unfiled.
         attachments:
           type: array
           items:
@@ -14019,6 +14172,7 @@ components:
         - author
         - anonymous
         - tags
+        - folder
         - attachments
         - pinned
         - discussionLocked
@@ -16374,6 +16528,10 @@ components:
           type: boolean
           description: Hide the author from course members.
           default: false
+        folderId:
+          type: [string, "null"]
+          format: uuid
+          description: Existing folder in the same course, or null for Unfiled.
         tags:
           type: array
           items:
@@ -16417,6 +16575,10 @@ components:
           type: boolean
           description: Hide the author from course members.
           default: false
+        folderId:
+          type: [string, "null"]
+          format: uuid
+          description: Existing folder in the same course, or null for Unfiled.
         tags:
           type: array
           items:
@@ -16464,6 +16626,10 @@ components:
           type: boolean
           description: Hide the author from course members.
           default: false
+        folderId:
+          type: [string, "null"]
+          format: uuid
+          description: Existing folder in the same course, or null for Unfiled.
         tags:
           type: array
           items:
@@ -16589,6 +16755,10 @@ components:
         anonymous:
           type: boolean
           description: Whether to hide the author.
+        folderId:
+          type: [string, "null"]
+          format: uuid
+          description: Existing folder in the same course, or null for Unfiled.
         tags:
           type: array
           items:

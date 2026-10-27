@@ -2164,6 +2164,7 @@ it("offers retry after an initial feed error", async () => {
   stubFetch(
     vi.fn(async (url: string) => {
       if (url.endsWith("/courses/course-1")) return json({ data: course });
+      if (url.endsWith("/post-folders")) return json({ data: [] });
       return ++attempts === 1
         ? json({ error: { message: "Feed unavailable" } }, 503)
         : page([post("p1", "Recovered")]);
@@ -6663,6 +6664,7 @@ it("does not restore a deleted post from an in-flight initial feed", async () =>
   });
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/members/staff")) return json({ data: { role: "ta" } });
+    if (url.endsWith("/post-folders")) return json({ data: [] });
     if (url.endsWith("/posts/post-1") && init?.method === "DELETE")
       return new Response(null, { status: 204 });
     if (url.endsWith("/posts/post-1")) return json({ data: target });

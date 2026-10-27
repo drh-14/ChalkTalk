@@ -440,6 +440,37 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       }
     },
   );
+  it("deletes a course with filed posts and its managed folders", async () => {
+    const { courseId, jobId } = await seedJob();
+    const folderId = uuidv7();
+    await pool.query(
+      "INSERT INTO post_folders (id,course_id,name) VALUES ($1,$2,'Week One')",
+      [folderId, courseId],
+    );
+    const post = await new PostService(pool).create(courseId, ownerId, {
+      type: "question",
+      title: "Filed question",
+      bodyMarkdown: "A question in a managed folder.",
+      folderId,
+    });
+
+    expect(await worker.runOnce()).toBe(true);
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId])).rows,
+    ).toEqual([{ status: "succeeded" }]);
+    expect(
+      (await pool.query("SELECT 1 FROM courses WHERE id=$1", [courseId]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (await pool.query("SELECT 1 FROM posts WHERE id=$1", [post.value.id]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (await pool.query("SELECT 1 FROM post_folders WHERE id=$1", [folderId]))
+        .rowCount,
+    ).toBe(0);
+  });
   it("retains course metadata and retries when object deletion fails", async () => {
     const { courseId, jobId } = await seedJob();
     const resourceId = uuidv7();

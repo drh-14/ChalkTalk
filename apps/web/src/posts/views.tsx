@@ -34,6 +34,10 @@ import {
   countNewPosts,
   listMergedPosts,
   listPosts,
+  listPostFolders,
+  createPostFolder,
+  renamePostFolder,
+  deletePostFolder,
   makePostPublic,
   markCourseRead,
   setFollowing,
@@ -50,9 +54,11 @@ import {
   type DraftRevision,
   type PostListOptions,
   type PostSort,
+  type PostFolder,
 } from "./client.js";
 import {
   feedSearch,
+  MAX_FEED_FOLDERS,
   hasFilters,
   hasTag,
   MAX_FEED_TAGS,
@@ -75,6 +81,7 @@ function feedOptions(
   sort: PostSort,
   tags: string[],
   tagMatch: "any" | undefined,
+  folders: string[] | undefined,
 ): PostListOptions {
   return {
     ...(query
@@ -84,6 +91,7 @@ function feedOptions(
         : {}),
     ...filter?.options,
     ...(tags.length ? { tags, ...(tagMatch ? { tagMatch } : {}) } : {}),
+    ...(folders?.length ? { folders } : {}),
   };
 }
 
@@ -599,6 +607,7 @@ function Composer({
   courseId,
   csrfToken,
   staff = false,
+  folders,
   archived = false,
   allowAnonymousPosting = true,
   allowPrivatePosting = true,
@@ -613,6 +622,7 @@ function Composer({
   csrfToken: string;
   /** TAs and instructors may post polls and announcements. */
   staff?: boolean;
+  folders: PostFolder[];
   archived?: boolean;
   allowAnonymousPosting?: boolean;
   allowPrivatePosting?: boolean;
@@ -649,6 +659,16 @@ function Composer({
   const [editorGeneration, setEditorGeneration] = useState(0);
   const [anonymous, setAnonymous] = useState(false);
   const [tags, setTags] = useState("");
+  const [folderId, setFolderId] = useState("");
+  const previousFolders = useRef(folders);
+  useEffect(() => {
+    if (
+      previousFolders.current.some((folder) => folder.id === folderId) &&
+      !folders.some((folder) => folder.id === folderId)
+    )
+      setFolderId("");
+    previousFolders.current = folders;
+  }, [folderId, folders]);
   const [pending, setPending] = useState(false);
   const [switchingDraft, setSwitchingDraft] = useState(false);
   const [error, setError] = useState("");
@@ -1076,6 +1096,7 @@ function Composer({
       bodyMarkdown: body,
       anonymous: submittedAnonymous,
       tags: parseComposerTags(tags),
+      folderId: folderId || null,
       ...(type === "poll"
         ? {
             options: labels.filter(Boolean).map((label) => ({ label })),
@@ -1465,6 +1486,20 @@ function Composer({
                 onChange={(event) => setTags(event.target.value)}
               />
             </label>
+            <label>
+              Post folder
+              <select
+                value={folderId}
+                onChange={(event) => setFolderId(event.target.value)}
+              >
+                <option value="">No folder</option>
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             {type !== "poll" && (
               <label>
                 Visibility
@@ -1748,12 +1783,14 @@ export function Discussion(props: DiscussionProps) {
 function PostEditor({
   post,
   csrfToken,
+  folders,
   onClose,
   onChanged,
   onStateChange,
 }: {
   post: Post;
   csrfToken: string;
+  folders: PostFolder[];
   onClose: () => void;
   onChanged: (post: Post) => void;
   onStateChange: (dirty: boolean, pending: boolean) => void;
@@ -1761,6 +1798,28 @@ function PostEditor({
   const [title, setTitle] = useState(post.title);
   const [body, setBody] = useState(post.bodyMarkdown);
   const [tags, setTags] = useState(post.tags.join(", "));
+  const [folderId, setFolderId] = useState(post.folder?.id ?? "");
+  const revision = useRef(post);
+  const previousFolders = useRef(folders);
+  useEffect(() => {
+    if (
+      previousFolders.current.some((folder) => folder.id === folderId) &&
+      !folders.some((folder) => folder.id === folderId)
+    )
+      setFolderId("");
+    if (
+      previousFolders.current.some(
+        (folder) => folder.id === revision.current.folder?.id,
+      ) &&
+      !folders.some((folder) => folder.id === revision.current.folder?.id)
+    )
+      revision.current = {
+        ...revision.current,
+        folder: null,
+        version: revision.current.version + 1,
+      };
+    previousFolders.current = folders;
+  }, [folderId, folders]);
   const [anonymous, setAnonymous] = useState(post.anonymous);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -1773,12 +1832,12 @@ function PostEditor({
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean),
+    folderId: folderId || null,
   };
   const payload = JSON.stringify(draft);
   const [savedPayload, setSavedPayload] = useState(payload);
   const latestPayload = useRef(payload);
   latestPayload.current = payload;
-  const revision = useRef(post);
   const [conflict, setConflict] = useState(false);
   const [review, setReview] = useState<Post>();
   const [filesAttempted, setFilesAttempted] = useState(false);
@@ -1823,8 +1882,16 @@ function PostEditor({
     try {
       if (payload !== savedPayload) {
         const saved = await updatePost(revision.current, draft, csrfToken);
-        revision.current = saved;
-        onChanged(saved);
+        const savedFolderId = saved.folder?.id;
+        if (
+          savedFolderId &&
+          !previousFolders.current.some((folder) => folder.id === savedFolderId)
+        )
+          await refresh();
+        else {
+          revision.current = saved;
+          onChanged(saved);
+        }
         setSavedPayload(payload);
       }
       setFilesAttempted(queue.files.length > 0);
@@ -1894,6 +1961,20 @@ function PostEditor({
             value={tags}
             onChange={(event) => setTags(event.target.value)}
           />
+        </label>
+        <label>
+          Post folder
+          <select
+            value={folderId}
+            onChange={(event) => setFolderId(event.target.value)}
+          >
+            <option value="">No folder</option>
+            {folders.map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.name}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="checkbox-label">
           <input
@@ -1988,6 +2069,152 @@ function PostEditor({
   );
 }
 
+function FolderManager({
+  courseId,
+  csrfToken,
+  folders,
+  onChanged,
+}: {
+  courseId: string;
+  csrfToken: string;
+  folders: PostFolder[];
+  onChanged: (deletedFolderId?: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [editing, setEditing] = useState<string>();
+  const [editName, setEditName] = useState("");
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  const nameTooLong = Array.from(name.trim()).length > 64;
+  const editNameTooLong = Array.from(editName.trim()).length > 64;
+  async function run(work: () => Promise<unknown>, deletedFolderId?: string) {
+    setPending(true);
+    setError("");
+    try {
+      await work();
+      onChanged(deletedFolderId);
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <details className="folder-manager">
+      <summary>Manage folders</summary>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void run(async () => {
+            await createPostFolder(courseId, name, csrfToken);
+            setName("");
+          });
+        }}
+      >
+        <label>
+          New folder name
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            required
+          />
+        </label>
+        {nameTooLong && (
+          <p role="alert">Folder name must be at most 64 characters.</p>
+        )}
+        <button
+          type="submit"
+          className="text-button"
+          disabled={pending || !name.trim() || nameTooLong}
+        >
+          Add folder
+        </button>
+      </form>
+      <ul aria-label="Managed folders">
+        {folders.map((folder) => (
+          <li key={folder.id}>
+            {editing === folder.id ? (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void run(async () => {
+                    await renamePostFolder(
+                      courseId,
+                      folder.id,
+                      editName,
+                      csrfToken,
+                    );
+                    setEditing(undefined);
+                  });
+                }}
+              >
+                <label>
+                  Rename {folder.name}
+                  <input
+                    value={editName}
+                    onChange={(event) => setEditName(event.target.value)}
+                    required
+                  />
+                </label>
+                {editNameTooLong && (
+                  <p role="alert">Folder name must be at most 64 characters.</p>
+                )}
+                <button
+                  type="submit"
+                  className="text-button"
+                  disabled={pending || !editName.trim() || editNameTooLong}
+                >
+                  Save name
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setEditing(undefined)}
+                >
+                  Cancel
+                </button>
+              </form>
+            ) : (
+              <>
+                <span>{folder.name}</span>{" "}
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => {
+                    setEditing(folder.id);
+                    setEditName(folder.name);
+                  }}
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  className="text-button danger"
+                  disabled={pending}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `Delete ${folder.name}? Its posts will have no folder.`,
+                      )
+                    )
+                      void run(
+                        () => deletePostFolder(courseId, folder.id, csrfToken),
+                        folder.id,
+                      );
+                  }}
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error && <p role="alert">{error}</p>}
+    </details>
+  );
+}
+
 function DiscussionContent({
   courseId,
   course: sharedCourse,
@@ -2008,13 +2235,16 @@ function DiscussionContent({
   const [items, setItems] = useState<Post[]>([]);
   const [mergedItems, setMergedItems] = useState<MergedPost[]>([]);
   const [staff, setStaff] = useState(false);
+  const [folders, setFolders] = useState<PostFolder[]>([]);
+  const [folderError, setFolderError] = useState("");
+  const [folderCycle, setFolderCycle] = useState(0);
   const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [tagLimitReached, setTagLimitReached] = useState(false);
   const [openSections, setOpenSections] = useState(() => {
     const open = initiallyOpen();
-    return { show: open, sort: open, tags: open };
+    return { show: open, sort: open, tags: open, folders: open };
   });
   function toggleSection(section: keyof typeof openSections) {
     setOpenSections((current) => ({
@@ -2113,8 +2343,61 @@ function DiscussionContent({
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   const currentFeed = useRef(0);
+  const activeFilters = onFiltersChange ? (routeFilters ?? {}) : localFilters;
+  const activeFiltersRef = useRef(activeFilters);
+  activeFiltersRef.current = activeFilters;
+  const onFiltersChangeRef = useRef(onFiltersChange);
+  onFiltersChangeRef.current = onFiltersChange;
+  const changeFilters = useCallback((next: FeedFilters) => {
+    activeFiltersRef.current = next;
+    if (onFiltersChangeRef.current) onFiltersChangeRef.current(next);
+    else setLocalFilters(next);
+  }, []);
   const deletedPostIds = useRef(new Set<string>());
 
+  useEffect(() => {
+    let active = true;
+    setFolderError("");
+    void listPostFolders(courseId)
+      .then((next) => {
+        if (active) {
+          setFolders(next);
+          const currentFilters = activeFiltersRef.current;
+          const selected = currentFilters.folders?.filter((id) =>
+            next.some((folder) => folder.id === id),
+          );
+          if (
+            currentFilters.folders?.some((id) => id !== "unfiled") &&
+            selected?.length !== currentFilters.folders.length
+          )
+            changeFilters({
+              ...currentFilters,
+              folders: selected?.length ? selected : ["unfiled"],
+            });
+          if (folderCycle > 0)
+            setDetail((current) => {
+              if (!current || current.deleted || !current.folder)
+                return current;
+              const folder = next.find(
+                (item) => item.id === current.folder?.id,
+              );
+              return folder?.name === current.folder.name
+                ? current
+                : {
+                    ...current,
+                    folder: folder ?? null,
+                    version: current.version + (folder ? 0 : 1),
+                  };
+            });
+        }
+      })
+      .catch((caught) => {
+        if (active) setFolderError(message(caught));
+      });
+    return () => {
+      active = false;
+    };
+  }, [changeFilters, courseId, folderCycle]);
   useEffect(() => {
     if (!userId) return;
     let active = true;
@@ -2165,11 +2448,6 @@ function DiscussionContent({
     }, 300);
     return () => window.clearTimeout(timer);
   }, [draftQuery, onQueryChange, query]);
-  const activeFilters = onFiltersChange ? (routeFilters ?? {}) : localFilters;
-  function changeFilters(next: FeedFilters) {
-    if (onFiltersChange) onFiltersChange(next);
-    else setLocalFilters(next);
-  }
   const filterOptions = feedFilters(userId, staff);
   const activeFilter = useMemo(
     () =>
@@ -2243,6 +2521,7 @@ function DiscussionContent({
             sort,
             tags,
             tagMatch,
+            activeFilters.folders,
           )),
       signal: controller.signal,
     };
@@ -2285,13 +2564,21 @@ function DiscussionContent({
     sort,
     tags,
     tagMatch,
+    activeFilters.folders,
     userId,
   ]);
   useEffect(() => {
     if (!feedSnapshot || postView !== "posts" || loading) return;
     let active = true;
     let pending = false;
-    const options = feedOptions(query, activeFilter, sort, tags, tagMatch);
+    const options = feedOptions(
+      query,
+      activeFilter,
+      sort,
+      tags,
+      tagMatch,
+      activeFilters.folders,
+    );
     const check = () => {
       if (document.visibilityState === "hidden" || pending) return;
       pending = true;
@@ -2323,6 +2610,7 @@ function DiscussionContent({
     sort,
     tags,
     tagMatch,
+    activeFilters.folders,
   ]);
   useEffect(() => {
     if (!postId) {
@@ -2401,7 +2689,14 @@ function DiscussionContent({
         ? query
           ? { q: query, sort: "relevance" as const }
           : {}
-        : feedOptions(query, activeFilter, sort, tags, tagMatch)),
+        : feedOptions(
+            query,
+            activeFilter,
+            sort,
+            tags,
+            tagMatch,
+            activeFilters.folders,
+          )),
       cursor,
     };
     void (
@@ -2800,6 +3095,129 @@ function DiscussionContent({
                 }}
               />
             </FilterSection>
+            <FilterSection
+              name="Folders"
+              summary={
+                !activeFilters.folders?.length
+                  ? "All posts"
+                  : activeFilters.folders.includes("unfiled")
+                    ? "No folder"
+                    : `${activeFilters.folders.length} selected`
+              }
+              open={openSections.folders}
+              onToggle={() => toggleSection("folders")}
+            >
+              <fieldset
+                className="folder-filter-label"
+                disabled={postView === "duplicates"}
+              >
+                <legend>Filter by folder</legend>
+                <label className="folder-filter-choice">
+                  <input
+                    type="checkbox"
+                    checked={!activeFilters.folders?.length}
+                    onChange={(event) => {
+                      const next = { ...activeFilters };
+                      if (event.target.checked) delete next.folders;
+                      else next.folders = ["unfiled"];
+                      changeFilters(next);
+                    }}
+                  />
+                  All posts
+                </label>
+                {folders.map((folder) => (
+                  <label key={folder.id} className="folder-filter-choice">
+                    <input
+                      type="checkbox"
+                      checked={
+                        activeFilters.folders?.includes(folder.id) ?? false
+                      }
+                      disabled={
+                        !(
+                          activeFilters.folders?.includes(folder.id) ?? false
+                        ) &&
+                        (activeFilters.folders?.filter((id) => id !== "unfiled")
+                          .length ?? 0) >= MAX_FEED_FOLDERS
+                      }
+                      onChange={(event) => {
+                        const selected = (activeFilters.folders ?? []).filter(
+                          (id) => id !== "unfiled",
+                        );
+                        const nextFolders = event.target.checked
+                          ? [...selected, folder.id]
+                          : selected.filter((id) => id !== folder.id);
+                        const next = { ...activeFilters };
+                        next.folders = nextFolders.length
+                          ? nextFolders
+                          : ["unfiled"];
+                        changeFilters(next);
+                      }}
+                    />
+                    <span className="folder-filter-name">{folder.name}</span>
+                  </label>
+                ))}
+                {activeFilters.folders?.includes("unfiled") && (
+                  <p className="folder-filter-hint" role="status">
+                    Showing posts with no folder.
+                  </p>
+                )}
+              </fieldset>
+              {folderError && (
+                <p role="alert">
+                  Could not load folders: {folderError}{" "}
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setFolderCycle((value) => value + 1)}
+                  >
+                    Retry
+                  </button>
+                </p>
+              )}
+              {staff && (
+                <FolderManager
+                  courseId={courseId}
+                  csrfToken={csrfToken}
+                  folders={folders}
+                  onChanged={(deletedFolderId) => {
+                    const currentFilters = activeFiltersRef.current;
+                    const remainingFolders = currentFilters.folders?.filter(
+                      (id) => id !== deletedFolderId,
+                    );
+                    if (deletedFolderId) {
+                      setFolders((current) =>
+                        current.filter(
+                          (folder) => folder.id !== deletedFolderId,
+                        ),
+                      );
+                      setDetail((current) =>
+                        current &&
+                        !current.deleted &&
+                        current.folder?.id === deletedFolderId
+                          ? {
+                              ...current,
+                              folder: null,
+                              version: current.version + 1,
+                            }
+                          : current,
+                      );
+                    }
+                    if (
+                      deletedFolderId &&
+                      currentFilters.folders?.includes(deletedFolderId)
+                    )
+                      changeFilters({
+                        ...currentFilters,
+                        folders: remainingFolders?.length
+                          ? remainingFolders
+                          : ["unfiled"],
+                      });
+                    else setFeedCycle((value) => value + 1);
+                    setFolderCycle((value) => value + 1);
+                  }}
+                />
+              )}
+            </FilterSection>
             {tags.length > 0 && (
               <FilterSection
                 name="Tags"
@@ -3130,6 +3548,14 @@ function DiscussionContent({
                                 {postTypeOf(post.type).extras?.(post)}
                               </span>
                             )}
+                            {post.folder && (
+                              <span
+                                className="post-card-extras post-card-folder"
+                                title={post.folder.name}
+                              >
+                                {post.folder.name}
+                              </span>
+                            )}
                           </span>
                         </a>
                         <TagList
@@ -3210,6 +3636,7 @@ function DiscussionContent({
                       courseId={courseId}
                       csrfToken={csrfToken}
                       staff={staff}
+                      folders={folders}
                       archived={course?.status !== "active"}
                       allowAnonymousPosting={course?.allowAnonymousPosting}
                       allowPrivatePosting={course?.allowPrivatePosting}
@@ -3360,6 +3787,7 @@ function DiscussionContent({
                             key={detail.id}
                             post={detail}
                             csrfToken={csrfToken}
+                            folders={folders}
                             onClose={() => setEditingPostId(undefined)}
                             onChanged={(next) => {
                               setDetail(next);
@@ -3381,6 +3809,11 @@ function DiscussionContent({
                             {postTypeOf(detail.type).label}
                           </p>
                           <h2>{detail.title}</h2>
+                          {detail.folder && (
+                            <p className="post-folder-label">
+                              {detail.folder.name}
+                            </p>
+                          )}
                           {detail.discussionLocked && (
                             <p className="discussion-lock-notice" role="status">
                               Discussion locked. Existing content remains

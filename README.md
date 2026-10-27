@@ -8,7 +8,7 @@ Students can ask questions, participate in threaded discussions, contribute to s
 
 A passive new-post count shows how many matching posts arrived since the feed loaded without interrupting the current post or an unsent draft. A browser refresh loads the latest posts.
 
-Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags, manage course resources, and identify unanswered questions.
+Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags and managed folders, manage course resources, and identify unanswered questions. Each post can have one optional folder, distinct from tags and course-resource sections; members can file their own posts, while staff manage folder names and can organize any post. Readers can select multiple folders in the feed sidebar, clear all selections to see posts with no folder, or explicitly choose All posts.
 
 Instructors can turn off new anonymous or private contributions and pause follow-up resolution in a course's settings. Existing contributions and resolution markers remain visible to their authorized readers.
 

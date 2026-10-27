@@ -435,6 +435,26 @@ function postTags(value: unknown): string[] | undefined {
     throw validationError("Tags are invalid");
   return names;
 }
+function postFolderId(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (typeof value !== "string" || !UUID_PATTERN.test(value))
+    throw validationError("Folder is invalid");
+  return value;
+}
+function postFolderName(value: unknown): string {
+  const body = strictBody(value, ["name"], ["name"]);
+  if (typeof body.name !== "string")
+    throw validationError("Folder name is invalid");
+  const name = body.name.trim();
+  if (!name || name.includes("\0") || Array.from(name).length > 64)
+    throw validationError("Folder name is invalid");
+  return name;
+}
+function postFolderPathId(value: unknown): string {
+  if (typeof value !== "string" || !UUID_PATTERN.test(value))
+    throw new AuthError(404, "not_found", "Folder is not found");
+  return value;
+}
 function pollOptions(value: unknown): string[] {
   if (!Array.isArray(value) || value.length < 2 || value.length > 10)
     throw validationError("A poll needs 2 to 10 options");
@@ -468,6 +488,7 @@ function postCreateBody(value: unknown): CreatePost {
       "bodyMarkdown",
       "anonymous",
       "tags",
+      "folderId",
       "options",
       "announcement",
       "private",
@@ -563,6 +584,7 @@ function postCreateBody(value: unknown): CreatePost {
     bodyMarkdown,
     anonymous: body.anonymous as boolean | undefined,
     tags: postTags(body.tags),
+    folderId: postFolderId(body.folderId),
     ...(body.type === "poll" ? { options } : {}),
     ...(body.type === "poll"
       ? {
@@ -707,6 +729,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     "type",
     "tag",
     "tagMatch",
+    "folder",
     "authorId",
     "createdAfter",
     "createdBefore",
@@ -768,6 +791,24 @@ function postListQuery(query: Request["query"]): ListPosts {
   if (tagMatch !== undefined && tagMatch !== "any" && tagMatch !== "all")
     throw new AuthError(400, "invalid_request", "Tag match is invalid");
   const authorId = one("authorId");
+  const rawFolders =
+    query.folder === undefined
+      ? []
+      : Array.isArray(query.folder)
+        ? query.folder
+        : [query.folder];
+  if (
+    rawFolders.length > 100 ||
+    rawFolders.some(
+      (folder) =>
+        typeof folder !== "string" ||
+        (folder !== "unfiled" && !UUID_PATTERN.test(folder)),
+    )
+  )
+    throw new AuthError(400, "invalid_request", "Folder filter is invalid");
+  const folders = [
+    ...new Set((rawFolders as string[]).map((folder) => folder.toLowerCase())),
+  ].sort();
   if (authorId !== undefined && !UUID_PATTERN.test(authorId))
     throw new AuthError(400, "invalid_request", "Author is invalid");
   const createdAfter = one("createdAfter");
@@ -838,6 +879,7 @@ function postListQuery(query: Request["query"]): ListPosts {
     semanticQuery,
     type: type as ListPosts["type"],
     tags,
+    folders: folders.length ? folders : undefined,
     // Any and all agree below two tags, so only a distinct all-match binds cursors.
     tagMatch: tagMatch === "all" && tags.length > 1 ? "all" : undefined,
     authorId,
@@ -934,6 +976,7 @@ function postUpdateBody(value: unknown): UpdatePost {
     "bodyMarkdown",
     "anonymous",
     "tags",
+    "folderId",
     "pinned",
     "duplicateOfPostId",
     "duplicateStatus",
@@ -962,7 +1005,11 @@ function postUpdateBody(value: unknown): UpdatePost {
     !["none", "suggested", "confirmed"].includes(body.duplicateStatus as string)
   )
     throw validationError("Duplicate status is invalid");
-  return { ...body, tags: postTags(body.tags) } as UpdatePost;
+  return {
+    ...body,
+    tags: postTags(body.tags),
+    folderId: postFolderId(body.folderId),
+  } as UpdatePost;
 }
 
 export function createApp(
@@ -1198,6 +1245,81 @@ export function createApp(
       },
     );
   }
+  app.get(
+    "/api/v1/courses/:courseId/post-folders",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response.json({
+          data: await posts().listFolders(
+            param(request.params.courseId),
+            current.session.user.id,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/post-folders",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const courseId = param(request.params.courseId);
+        const data = await posts().createFolder(
+          courseId,
+          auth(response).session.user.id,
+          postFolderName(request.body),
+        );
+        response
+          .status(201)
+          .set(
+            "Location",
+            `/api/v1/courses/${courseId}/post-folders/${data.id}`,
+          )
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/post-folders/:folderId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const data = await posts().renameFolder(
+          param(request.params.courseId),
+          postFolderPathId(request.params.folderId),
+          auth(response).session.user.id,
+          postFolderName(request.body),
+        );
+        response.json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/post-folders/:folderId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await posts().deleteFolder(
+          param(request.params.courseId),
+          postFolderPathId(request.params.folderId),
+          auth(response).session.user.id,
+        );
+        response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   app.post(
     "/api/v1/account-verification-requests",
     publicOrigin,

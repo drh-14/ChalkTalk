@@ -35,6 +35,7 @@ export type Post = {
   };
   anonymous: boolean;
   tags: string[];
+  folder: PostFolder | null;
   attachments?: Attachment[];
   createdAt: string;
   lastActivityAt: string;
@@ -83,6 +84,7 @@ export type CreatePostInput = {
   bodyMarkdown: string;
   anonymous: boolean;
   tags: string[];
+  folderId?: string | null;
   options?: { label: string }[];
   selectionMode?: PollState["selectionMode"];
   maxSelections?: number;
@@ -125,6 +127,7 @@ export type PostListOptions = {
   authorId?: string;
   authorRole?: "instructor" | "ta";
   tags?: string[];
+  folders?: string[];
   /** How several tags combine; the feed matches all of them unless told otherwise. */
   tagMatch?: "any" | "all";
   limit?: number;
@@ -162,6 +165,7 @@ function postListParams(options: PostListOptions): URLSearchParams {
   if (options.unresolvedFollowups) query.set("unresolvedFollowups", "true");
   if (options.authorId) query.set("authorId", options.authorId);
   if (options.authorRole) query.set("authorRole", options.authorRole);
+  for (const folder of options.folders ?? []) query.append("folder", folder);
   const tags = options.tags ?? [];
   for (const tag of tags) query.append("tag", tag);
   if (tags.length > 1) query.set("tagMatch", options.tagMatch ?? "all");
@@ -188,6 +192,60 @@ export async function listPosts(
     snapshot: response.headers.get("X-Feed-Snapshot") ?? undefined,
   };
 }
+
+export type PostFolder = { id: string; name: string };
+export async function listPostFolders(courseId: string): Promise<PostFolder[]> {
+  const result = await receive<{ data: PostFolder[] }>(
+    await fetch(
+      `/api/v1/courses/${encodeURIComponent(courseId)}/post-folders`,
+      {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      },
+    ),
+  );
+  return result.data;
+}
+async function mutateFolder(
+  courseId: string,
+  folderId: string | undefined,
+  name: string | undefined,
+  csrfToken: string,
+  method: "POST" | "PATCH" | "DELETE",
+) {
+  const path = `/api/v1/courses/${encodeURIComponent(courseId)}/post-folders${folderId ? `/${encodeURIComponent(folderId)}` : ""}`;
+  const response = await fetch(path, {
+    method,
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+      ...(name === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(name === undefined ? {} : { body: JSON.stringify({ name }) }),
+  });
+  if (method === "DELETE") {
+    if (!response.ok) await receive<never>(response);
+    return;
+  }
+  return (await receive<{ data: PostFolder }>(response)).data;
+}
+export const createPostFolder = (
+  courseId: string,
+  name: string,
+  csrfToken: string,
+) => mutateFolder(courseId, undefined, name, csrfToken, "POST");
+export const renamePostFolder = (
+  courseId: string,
+  folderId: string,
+  name: string,
+  csrfToken: string,
+) => mutateFolder(courseId, folderId, name, csrfToken, "PATCH");
+export const deletePostFolder = (
+  courseId: string,
+  folderId: string,
+  csrfToken: string,
+) => mutateFolder(courseId, folderId, undefined, csrfToken, "DELETE");
 
 export async function getPost(
   postId: string,

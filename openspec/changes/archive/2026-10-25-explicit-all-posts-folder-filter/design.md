@@ -1,0 +1,5 @@
+# Design
+
+The API's existing distinction is sufficient: no `folder` query means all posts, and `folder=unfiled` means folderless posts. Keep those semantics and use `folders: undefined` for All posts, `folders: ["unfiled"]` for zero checked named folders, or named UUIDs for the checked set. A separate All posts checkbox is exclusive with named folders. The initial course feed remains All posts and existing URLs remain readable. Checking a named folder clears All posts; unchecking the final named folder requests folderless posts. Checking All posts clears named selections.
+
+In the UI, remove the explicit Unfiled checkbox. Folderless state shows no checked folder boxes and a concise “No folder” section summary. Post create/edit pickers and missing-folder labels use “No folder.” Deleting a selected folder removes that selection; if none remain, the feed becomes folderless. The server, schema, and wire sentinel remain unchanged, so access control and cursor binding retain their existing tests.
