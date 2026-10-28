@@ -60,6 +60,14 @@ describe("Vite development configuration", () => {
     expect(compose["/collaboration"]!.target).toBe("ws://collaboration:3100");
   });
 
+  it("proxies authenticated Thread WebSockets through the API origin", () => {
+    const proxy = createViteConfig({}).server?.proxy as Record<
+      string,
+      { ws?: boolean; changeOrigin?: boolean }
+    >;
+    expect(proxy["/api"]).toMatchObject({ ws: true, changeOrigin: true });
+  });
+
   it("uses the configured internal API target and TLS certificate files", () => {
     const certificatePath = "apps/web/index.html";
     const configuration = createViteConfig({

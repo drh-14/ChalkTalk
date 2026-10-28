@@ -22,6 +22,7 @@ Core features include:
 - similar-question suggestions,
 - collaborative student and staff answers,
 - threaded follow-up discussions,
+- [public course Threads](documentation/api/channels.md) for member conversations,
 - endorsed answers,
 - anonymous posting,
 - private, autosaved drafts for unfinished new posts,

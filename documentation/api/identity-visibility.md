@@ -4,7 +4,7 @@ Identity-bearing API fields are projections for the authenticated viewer. Client
 
 ## Author
 
-`Author` is used for posts, digest and search results, direct and nested followups, messages, introductory messages, and subchannel creators.
+`Author` is used for posts, digest and search results, direct and nested followups. Thread messages use their own identified author projection and do not support anonymity.
 
 Nonanonymous content returns the author's real `userId` and `displayName`, with `anonymous: false` and `deleted: false`.
 
@@ -14,7 +14,7 @@ Anonymous content viewed by another student returns `userId: null`, `displayName
 
 Deleted authors return `userId: null`, `displayName: "Deleted user"`, and `deleted: true`. The `anonymous` value retains the content's original anonymity setting.
 
-Anonymous messages remain supported. Shared-answer drafts are local until explicitly saved; the API projects anonymous contributor identity according to the viewer's role. No answer presence or cursor data is published.
+Anonymous Posts content remains supported; Thread messages are always identified. Shared-answer drafts are local until explicitly saved; the API projects anonymous contributor identity according to the viewer's role. No answer presence or cursor data is published.
 
 ## Private posts
 

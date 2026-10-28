@@ -25,8 +25,12 @@ import { createObservability, logApiEvent } from "./observability/index.js";
 import { EmbeddingProvider, readEmbeddingConfig } from "./semantic/provider.js";
 import { SemanticIndex } from "./semantic/index.js";
 import { ContentAttachmentService } from "./content-attachments/service.js";
+import { ThreadAttachmentService } from "./threads/attachments.js";
+import { ThreadService } from "./threads/service.js";
+import { ThreadWatchService } from "./threads/watch.js";
 import { CollaborationSessionService } from "./collaboration/service.js";
 import { NotificationService } from "./notifications/service.js";
+import { createThreadLiveServer } from "./threads/live.js";
 
 const environment = loadEnvironment();
 const { port } = environment;
@@ -48,6 +52,7 @@ const semantic = embeddingConfig
     )
   : undefined;
 const emailSender = createEmailSender(environment);
+const authService = new AuthService(pool, environment, emailSender);
 const { bucket, endpoint, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
 if (endpoint) {
@@ -70,7 +75,7 @@ pool.on("error", () => {
 const app = createApp({
   environment,
   observability,
-  authService: new AuthService(pool, environment, emailSender),
+  authService,
   courseService: new CourseService(pool),
   postService: new PostService(pool, observability, semantic),
   answerService: new AnswerService(pool),
@@ -80,6 +85,9 @@ const app = createApp({
   courseResourceService: new CourseResourceService(pool),
   courseInformationService: new CourseInformationService(pool),
   contentAttachmentService: new ContentAttachmentService(pool, s3, bucket),
+  threadAttachmentService: new ThreadAttachmentService(pool, s3, bucket),
+  threadService: new ThreadService(pool),
+  threadWatchService: new ThreadWatchService(pool),
   notificationService: new NotificationService(pool),
   collaborationSessionService: new CollaborationSessionService(pool, {
     webSocketUrl: environment.collaboration.publicUrl,
@@ -89,6 +97,15 @@ const app = createApp({
     },
   }),
 });
-app.listen(port, () => {
+const server = app.listen(port, () => {
   logApiEvent(observability, "api_started");
+});
+const threadLive = createThreadLiveServer({
+  server,
+  pool,
+  authService,
+  frontendOrigins: environment.frontendOrigins,
+});
+void threadLive.start().catch((error) => {
+  console.error("Thread live listener failed", error);
 });

@@ -44,6 +44,8 @@ import {
   ContentAttachmentService,
   type ParentKind,
 } from "../content-attachments/service.js";
+import { ThreadAttachmentService } from "../threads/attachments.js";
+import { ThreadWatchService } from "../threads/watch.js";
 import {
   COLLABORATION_LANGUAGES,
   CollaborationSessionService,
@@ -53,6 +55,7 @@ import {
   type UpdateCollaborationSession,
 } from "../collaboration/service.js";
 import { NotificationService } from "../notifications/service.js";
+import { ThreadService, threadEtag } from "../threads/service.js";
 
 import {
   resourceEtag,
@@ -72,8 +75,11 @@ export interface AppDependencies {
   courseInformationService?: CourseInformationService;
   observability?: Observability;
   contentAttachmentService?: ContentAttachmentService;
+  threadAttachmentService?: ThreadAttachmentService;
+  threadWatchService?: ThreadWatchService;
   collaborationSessionService?: CollaborationSessionService;
   notificationService?: NotificationService;
+  threadService?: ThreadService;
 }
 type AuthContext = {
   credential: string;
@@ -1028,8 +1034,11 @@ export function createApp(
     courseInformationService,
     observability,
     contentAttachmentService,
+    threadAttachmentService,
+    threadWatchService,
     collaborationSessionService,
     notificationService,
+    threadService,
   } = dependencies;
   const app = express();
   app.disable("x-powered-by");
@@ -1976,6 +1985,397 @@ export function createApp(
             "Cache-Control": "private, no-store",
           })
           .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  const threads = () => {
+    if (!threadService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Thread service is unavailable",
+      );
+    return threadService;
+  };
+  app.get(
+    "/api/v1/courses/:courseId/threads",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (
+          Object.keys(request.query).some(
+            (key) => key !== "limit" && key !== "cursor",
+          )
+        )
+          throw new AuthError(400, "invalid_request", "Pagination is invalid");
+        const options = listQuery(request.query, undefined, 30);
+        const result = await threads().listBoards(
+          param(request.params.courseId),
+          current.session.user.id,
+          options.limit,
+          options.cursor,
+        );
+        response.set("Cache-Control", "private, no-store").json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/threads",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["title"], ["title"]);
+        const data = await threads().createBoard(
+          param(request.params.courseId),
+          auth(response).session.user.id,
+          body.title,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set({
+            ETag: threadEtag(data),
+            Location: `/api/v1/courses/${data.courseId}/threads/${data.id}`,
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/threads/changes",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (
+          Object.keys(request.query).some(
+            (key) => key !== "limit" && key !== "after",
+          )
+        )
+          throw new AuthError(400, "invalid_request", "Pagination is invalid");
+        const query = {
+          limit: request.query.limit,
+          cursor: request.query.after,
+        } as Request["query"];
+        const options = listQuery(query, undefined, 30);
+        const result = await threads().changes(
+          param(request.params.courseId),
+          current.session.user.id,
+          options.limit,
+          options.cursor,
+        );
+        response.set("Cache-Control", "private, no-store").json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/threads/unread-count",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response.json({
+          data: await threadWatches().unreadCount(
+            param(request.params.courseId),
+            current.session.user.id,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/threads/:threadId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await threads().getBoard(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          current.session.user.id,
+        );
+        response
+          .set({ ETag: threadEtag(data), "Cache-Control": "private, no-store" })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/threads/:threadId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["title"], ["title"]);
+        const data = await threads().changeBoard(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body.title,
+        );
+        response
+          .set({
+            ETag: threadEtag(data!),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/threads/:threadId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await threads().changeBoard(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response.sendStatus(204);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["bodyMarkdown"],
+          ["bodyMarkdown"],
+        );
+        const data = await threads().createConversation(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          auth(response).session.user.id,
+          body.bodyMarkdown,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set({
+            Location: `/api/v1/courses/${request.params.courseId}/threads/${request.params.threadId}/conversations/${data.data.id}`,
+            "Cache-Control": "private, no-store",
+          })
+          .json(data);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (
+          Object.keys(request.query).some(
+            (key) => key !== "limit" && key !== "cursor",
+          )
+        )
+          throw new AuthError(400, "invalid_request", "Pagination is invalid");
+        const options = listQuery(request.query, undefined, 30);
+        const result = await threads().listConversations(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          current.session.user.id,
+          options.limit,
+          options.cursor,
+        );
+        response.set("Cache-Control", "private, no-store").json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await threads().getConversation(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          param(request.params.conversationId),
+          current.session.user.id,
+        );
+        response
+          .set({ ETag: threadEtag(data), "Cache-Control": "private, no-store" })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await threads().deleteConversation(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          param(request.params.conversationId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response.sendStatus(204);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (
+          Object.keys(request.query).some(
+            (key) => key !== "limit" && key !== "cursor",
+          )
+        )
+          throw new AuthError(400, "invalid_request", "Pagination is invalid");
+        const options = listQuery(request.query, undefined, 30);
+        const result = await threads().listMessages(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          param(request.params.conversationId),
+          current.session.user.id,
+          options.limit,
+          options.cursor,
+        );
+        response.set("Cache-Control", "private, no-store").json(result);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["bodyMarkdown"],
+          ["bodyMarkdown"],
+        );
+        const data = await threads().createReply(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          param(request.params.conversationId),
+          auth(response).session.user.id,
+          body.bodyMarkdown,
+          request.header("idempotency-key"),
+        );
+        response
+          .status(201)
+          .set({
+            ETag: threadEtag(data),
+            Location: `/api/v1/courses/${request.params.courseId}/threads/${request.params.threadId}/conversations/${request.params.conversationId}/messages/${data.id}`,
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages/:messageId",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await threads().getMessage(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          param(request.params.conversationId),
+          param(request.params.messageId),
+          current.session.user.id,
+        );
+        response
+          .set({ ETag: threadEtag(data), "Cache-Control": "private, no-store" })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.patch(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages/:messageId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["bodyMarkdown"],
+          ["bodyMarkdown"],
+        );
+        const data = await threads().changeMessage(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          param(request.params.conversationId),
+          param(request.params.messageId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+          body.bodyMarkdown,
+        );
+        response
+          .set({
+            ETag: threadEtag(data!),
+            "Cache-Control": "private, no-store",
+          })
+          .json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages/:messageId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await threads().changeMessage(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          param(request.params.conversationId),
+          param(request.params.messageId),
+          auth(response).session.user.id,
+          request.header("if-match"),
+        );
+        response.sendStatus(204);
       } catch (error) {
         next(error);
       }
@@ -3288,6 +3688,79 @@ export function createApp(
       }
     },
   );
+  const threadWatches = (): ThreadWatchService => {
+    if (!threadWatchService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Thread watch service is unavailable",
+      );
+    return threadWatchService;
+  };
+  app.get(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/watch",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        response.json({
+          data: await threadWatches().get(
+            param(request.params.courseId),
+            param(request.params.threadId),
+            param(request.params.conversationId),
+            current.session.user.id,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.put(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/watch",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(
+          request.body,
+          ["noticesEnabled"],
+          ["noticesEnabled"],
+        );
+        response.json({
+          data: await threadWatches().set(
+            param(request.params.courseId),
+            param(request.params.threadId),
+            param(request.params.conversationId),
+            auth(response).session.user.id,
+            body.noticesEnabled as boolean,
+          ),
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/read",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        const body = strictBody(request.body, ["messageIds"], ["messageIds"]);
+        await threadWatches().markRead(
+          param(request.params.courseId),
+          param(request.params.threadId),
+          param(request.params.conversationId),
+          auth(response).session.user.id,
+          body.messageIds as string[],
+        );
+        response.status(204).send();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
   const notifications = (): NotificationService => {
     if (!notificationService)
       throw new AuthError(
@@ -3550,6 +4023,87 @@ export function createApp(
           current.session.user.id,
         );
         response.set("Cache-Control", "no-store").json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  const threadAttachments = (): ThreadAttachmentService => {
+    if (!threadAttachmentService)
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "Thread attachments are unavailable",
+      );
+    return threadAttachmentService;
+  };
+  app.post(
+    "/api/v1/thread-messages/:messageId/attachments",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+      try {
+        const messageId = param(request.params.messageId);
+        const userId = auth(response).session.user.id;
+        const key = request.header("idempotency-key");
+        await threadAttachments().authorizeUpload(messageId, userId, key);
+        upload = await readMultipart(request);
+        const value = await threadAttachments().create(
+          messageId,
+          userId,
+          upload,
+          key,
+        );
+        response
+          .status(201)
+          .set({ Location: value.downloadUrl })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      } finally {
+        await upload?.cleanup();
+      }
+    },
+  );
+  app.get(
+    "/api/v1/thread-attachments/:attachmentId/download",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const file = await threadAttachments().download(
+          param(request.params.attachmentId),
+          current.session.user.id,
+        );
+        const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, "_");
+        response.set({
+          "Content-Type": file.mediaType,
+          "Content-Length": String(file.length),
+          "Content-Disposition": `${file.mediaType.startsWith("image/") ? "inline" : "attachment"}; filename="${safeName}"`,
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "private, no-store",
+        });
+        const body = file.body as NodeJS.ReadableStream;
+        body.on("error", (error) => {
+          if (!response.headersSent) next(error);
+          else response.destroy(error);
+        });
+        body.pipe(response);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.delete(
+    "/api/v1/thread-attachments/:attachmentId",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        await threadAttachments().delete(
+          param(request.params.attachmentId),
+          auth(response).session.user.id,
+        );
+        response.status(204).end();
       } catch (error) {
         next(error);
       }

@@ -1,6 +1,6 @@
 ## Notifications
 
-Members are notified of activity on posts they follow and of announcements in their courses. A member follows a post automatically when they create it, create or edit an answer on it, or post a followup or reply on it, and can follow or unfollow any readable post; see [Follow post](posts.md#followPost). An explicit unfollow persists.
+Members are notified of activity on posts they follow, of announcements in their courses, and of replies in watched Thread conversations when reply notices are enabled. A member follows a post automatically when they create it, create or edit an answer on it, or post a followup or reply on it, and can follow or unfollow any readable post; see [Follow post](posts.md#followPost). An explicit unfollow persists.
 
 These events create one notification for each other follower who is a current course member with an account that is not deleted:
 
@@ -15,9 +15,11 @@ When a TA or instructor makes someone's private post public, its author receives
 
 An announcement creates an `announcement` notification for every other current course member. The actor is never notified of their own activity.
 
-Notifications are listed only while the caller is still a member of the course who can read the post, and the post is neither deleted nor a confirmed duplicate. Followers who can no longer read a private post, for example a TA who became a student, are not notified. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
+Post notifications are listed only while the caller is still a member of the course who can read the post, and the post is neither deleted nor a confirmed duplicate. Followers who can no longer read a private post, for example a TA who became a student, are not notified. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
 
-**Email:** Members who enable `activityEmails` in their [per-course email preferences](courses.md#courseEmailPreferences) are emailed about each notification other than announcements. `announcementEmails` and `digestEmails` independently control those course emails. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. Follower-activity mail also requires the recipient to still follow the post; a direct mention remains deliverable after unfollowing. An anonymous actor appears as "Someone".
+**Thread replies:** Other current watchers of a public Thread conversation receive a `thread_reply_created` in-app card when their watch has notices enabled. Its typed destination identifies `threadId`, `conversationId`, and `messageId`; it includes the current visible plain-text reply excerpt (up to three nonblank lines or 360 characters), and hides the card if the reply has been deleted. A board deletion or course departure hides its cards. New conversations create no course-wide bell or email notice; see [Threads](channels.md) for live discovery. Thread replies send no email, even when post activity emails are on. Unfollowing reply notices does not clear Threads unread-message counts; see [Threads](channels.md).
+
+**Email:** Members who enable `activityEmails` in their [per-course email preferences](courses.md#courseEmailPreferences) are emailed about eligible Post notifications, not Thread replies or announcements. `announcementEmails` and `digestEmails` independently control those course emails. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. Follower-activity mail also requires the recipient to still follow the post; a direct mention remains deliverable after unfollowing. An anonymous actor appears as "Someone".
 
 For newly created answers, root followups, and nested replies, the email includes up to three nonempty lines of the current response text (at most 360 characters) and a link to that exact response. A recipient who can no longer read the response, or whose response was deleted before delivery, receives no excerpt or email. The browser reveals and focuses a linked answer or followup, including an off-page nested reply. An unavailable linked response does not reveal its content. Older queued jobs without a response reference continue to use the post link.
 
@@ -67,15 +69,19 @@ None.
 
 `data[].id` (string, required): Opaque stable identifier.
 
-`data[].kind` (enum: answer_created, answer_edited, answer_endorsed, followup_created, reply_created, announcement, post_published, mentioned, required): What happened.
+`data[].kind` (enum: answer_created, answer_edited, answer_endorsed, followup_created, reply_created, announcement, post_published, mentioned, thread_reply_created, required): What happened.
 
-`data[].courseId` (string, required): Course of the post.
+`data[].courseId` (string, required): Course of the post or Thread.
 
 `data[].courseName` (string, required): Current course name.
 
-`data[].postId` (string, required): Post the activity happened on.
+`data[].postId` (string, required for Post kinds; absent for Thread replies): Post the activity happened on.
 
-`data[].postTitle` (string, required): Current post title.
+`data[].postTitle` (string, required for Post kinds; absent for Thread replies): Current post title.
+
+`data[].threadId`, `data[].threadTitle`, `data[].conversationId`, `data[].messageId` (required for `thread_reply_created`; absent for Post kinds): Exact Thread reply destination and current board title.
+
+`data[].preview` (string, required for `thread_reply_created`): Current visible plain-text excerpt, up to three nonblank lines/360 characters; deleted replies have no card and no stale text.
 
 `data[].actor` (object or null, required): `{ "displayName": … }` for who acted. A student sees `{ "displayName": "Anonymous" }` for an anonymous actor; TAs and instructors see the name. `null` when the actor's account is deleted.
 

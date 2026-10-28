@@ -426,45 +426,64 @@ The `resources` and `resource_regions` catalog structures below are deferred and
 - `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
 - `search_vector`: generated `tsvector`, nullable.
 
-## Channels and messages
+## Public course Threads
 
-### `channels`
+Threads are public topic boards managed by course staff. Conversations are separate chronological message streams inside a board, not subchannels or team rosters. The tables below are introduced by `053_public_course_threads.sql`; there is no legacy Channels data to convert.
 
-- `id`: `uuid_v7`; primary key.
-- `course_id`: `uuid_v7`; foreign key to `courses.id`.
-- `(course_id, id)`: unique key used by subchannels.
-- `name`: `varchar(200)`.
-- `description`: `varchar(2000)`.
-- `status`: `text`; `active` or `archived`.
-- `last_activity_at`, `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
-- `version`: `bigint`.
+### `thread_boards`
 
-### `subchannels`
+- `id`: `uuid`; primary key. `(course_id, id)` is unique.
+- `course_id`: `uuid`; foreign key to `courses.id`, deleted with the course.
+- `title`: `text`; trimmed length 1–200.
+- `version`: positive `integer`; used for conditional rename/deletion.
+- `created_at`, `updated_at`, `deleted_at`: `timestamptz`; `deleted_at` is nullable. Soft deletion immediately hides the board and all descendants while file cleanup is queued.
+- Live boards are indexed by course and creation order.
 
-- `id`: `uuid_v7`; primary key.
-- `course_id`: `uuid_v7`.
-- `channel_id`: `uuid_v7`; with `course_id`, foreign key to `channels(course_id, id)`.
-- `(course_id, id)`: unique key used by collaboration sessions.
-- `title`: `varchar(200)`.
-- `status`: `text`; `active` or `archived`.
-- `created_by_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
-- `last_activity_at`, `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
-- `version`: `bigint`.
+### `thread_conversations`
 
-### `messages`
+- `id`: `uuid`; primary key. `(course_id, board_id, id)` is unique.
+- `course_id`, `board_id`: `uuid`; together reference `thread_boards(course_id, id)`, cascading on course deletion.
+- `created_by_user_id`: nullable `uuid` referencing the starter; survives opening-message deletion so the starter may still delete the conversation.
+- `version`: positive `integer`; advances on reply, message edit/delete, and attachment changes to protect whole-conversation deletion.
+- `next_message_ordinal`: positive `bigint`; allocates chronological message order under a conversation-row lock.
+- `created_at`, `updated_at`: `timestamptz`; recent conversations are indexed per board.
+- Whole-conversation deletion cascades its messages, watches, read state, attachment metadata, and notification cards after queuing object-cleanup jobs and scrubbing idempotency replay bodies.
 
-- `id`: `uuid_v7`; primary key.
-- `course_id`: `uuid_v7`.
-- `subchannel_id`: `uuid_v7`; with `course_id`, foreign key to `subchannels(course_id, id)`.
-- `body_markdown`: `text`, nullable.
-- `author_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.
-- `anonymous`, `is_introductory`: `boolean`.
-- `deleted_at`, `created_at`, `updated_at`: `timestamptz`; `deleted_at` is nullable.
-- `version`: `bigint`.
+### `thread_messages`
+
+- `id`: `uuid`; primary key. `(course_id, id)` and `(conversation_id, ordinal)` are unique.
+- `course_id`, `board_id`, `conversation_id`: `uuid`; together reference the owning conversation.
+- `ordinal`: positive `bigint`; unique within the conversation. Ordinal 1 is the required opening message.
+- `author_user_id`: nullable `uuid`; foreign key to `users.id` with `ON DELETE SET NULL`.
+- `author_role_at_posting`: `student`, `ta`, or `instructor`; immutable permission snapshot for staff moderation.
+- `body_markdown`: `text`, at most 100,000 characters; scrubbed when deleted.
+- `version`: positive `integer`; stale edits and deletes fail their ETag precondition.
+- `created_at`, `updated_at`, `deleted_at`: `timestamptz`; `deleted_at` is nullable. A deleted opening message remains as an authorless, bodyless placeholder without losing replies.
+
+### `thread_watches` and `thread_message_reads`
+
+- `thread_watches` is keyed by `(conversation_id, user_id)` and references current course membership, so leaving a course removes the watch. `notices_enabled` controls reply notification cards, not unread counting or access; `created_at` and `updated_at` record watch changes.
+- `thread_message_reads` is keyed by `(message_id, user_id)` with a `read_at` timestamp. Exact loaded-message IDs are marked read; a single last-seen timestamp cannot incorrectly clear unloaded or concurrent messages.
+
+### `thread_attachments`
+
+- `id`: `uuid`; primary key. `course_id`, `board_id`, `conversation_id`, and `message_id` identify the parent; `(course_id, message_id)` references the message.
+- `object_key`: unique `text`; `file_name`, `media_type`: `text`; `size_bytes`: positive `bigint`, maximum 100 MiB; `checksum_sha256`: 32-byte digest.
+- `created_at`, `deleted_at`: `timestamptz`; `deleted_at` is nullable. Deleted messages, boards, and attachments deny new downloads before object cleanup completes.
+
+### `thread_notifications`
+
+- `id`: `uuid`; primary key. `course_id` and `recipient_user_id` reference a current membership; `conversation_id`, `message_id`, and nullable `actor_user_id` identify the reply.
+- `created_at`, `read_at`: `timestamptz`; `read_at` is nullable. Recent and unread recipient indexes support the existing bell projection. No Thread email is generated.
+
+### `thread_course_counters` and `thread_changes`
+
+- `thread_course_counters` has one row per course and a nonnegative committed `sequence`. Updating it under a row lock in the same transaction as each Thread mutation gives catch-up a course-local commit order.
+- `thread_changes` is keyed by `(course_id, sequence)` and records `board_id`, `kind`, `entity_id`, and `created_at`. WebSocket signals contain identifiers and sequence only; clients fetch authorized changes through REST.
 
 ## Collaboration
 
-Live sessions are private, temporary shared code and whiteboard documents anchored to a post. Subchannel anchors are future work and have no column until channels exist.
+Live sessions are private, temporary shared code and whiteboard documents anchored to a post. They do not attach to Threads or conversations.
 
 ### `collaboration_sessions`
 

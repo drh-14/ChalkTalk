@@ -14,9 +14,17 @@ export const NOTIFICATION_POLL_MS = 60_000;
 export function NotificationBell({
   csrfToken,
   onOpenPost,
+  onOpenThread,
 }: {
   csrfToken: string;
   onOpenPost: (courseId: string, postId: string) => void;
+  onOpenThread: (
+    courseId: string,
+    threadId: string,
+    conversationId: string,
+    messageId: string,
+    notificationId: string,
+  ) => void;
 }) {
   const [count, setCount] = useState(0);
   const [open, setOpen] = useState(false);
@@ -40,10 +48,15 @@ export function NotificationBell({
       if (document.visibilityState === "visible") refreshCount();
     };
     window.addEventListener("focus", refreshCount);
+    window.addEventListener("chalktalk:notifications-changed", refreshCount);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("focus", refreshCount);
+      window.removeEventListener(
+        "chalktalk:notifications-changed",
+        refreshCount,
+      );
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [refreshCount]);
@@ -82,7 +95,7 @@ export function NotificationBell({
 
   async function choose(item: Notification) {
     setOpen(false);
-    if (!item.readAt) {
+    if (!item.readAt && item.kind !== "thread_reply_created") {
       setCount((value) => Math.max(0, value - 1));
       try {
         await markNotificationsRead(csrfToken, [item.id]);
@@ -90,7 +103,17 @@ export function NotificationBell({
         // Opening the post marks it read as well.
       }
     }
-    onOpenPost(item.courseId, item.postId);
+    if (item.kind === "thread_reply_created") {
+      onOpenThread(
+        item.courseId,
+        item.threadId,
+        item.conversationId,
+        item.messageId,
+        item.id,
+      );
+    } else {
+      onOpenPost(item.courseId, item.postId);
+    }
   }
 
   async function markAll() {
@@ -177,8 +200,17 @@ export function NotificationBell({
                     >
                       <span className="notification-text">
                         {describeNotification(item)}{" "}
-                        <strong>{item.postTitle}</strong>
+                        <strong>
+                          {item.kind === "thread_reply_created"
+                            ? item.threadTitle
+                            : item.postTitle}
+                        </strong>
                       </span>
+                      {item.kind === "thread_reply_created" && item.preview && (
+                        <span className="notification-preview">
+                          {item.preview}
+                        </span>
+                      )}
                       <span className="notification-meta">
                         {item.courseName}
                         {time && (

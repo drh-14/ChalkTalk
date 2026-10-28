@@ -10,18 +10,29 @@ export type NotificationKind =
   | "announcement"
   | "post_published"
   | "mentioned";
-export type Notification = {
+type NotificationBase = {
   id: string;
-  kind: NotificationKind;
   courseId: string;
   courseName: string;
-  postId: string;
-  postTitle: string;
   /** "Anonymous" for a hidden actor; null for a deleted account. */
   actor: { displayName: string } | null;
   createdAt: string;
   readAt: string | null;
 };
+export type Notification =
+  | (NotificationBase & {
+      kind: NotificationKind;
+      postId: string;
+      postTitle: string;
+    })
+  | (NotificationBase & {
+      kind: "thread_reply_created";
+      threadId: string;
+      threadTitle: string;
+      conversationId: string;
+      messageId: string;
+      preview: string;
+    });
 
 async function receive<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
@@ -96,5 +107,7 @@ const VERBS: Record<NotificationKind, string> = {
 
 /** "Grace Hopper answered" style lead-in for a notification. */
 export function describeNotification(notification: Notification): string {
+  if (notification.kind === "thread_reply_created")
+    return `${notification.actor?.displayName ?? "Deleted user"} replied in`;
   return `${notification.actor?.displayName ?? "Deleted user"} ${VERBS[notification.kind]}`;
 }

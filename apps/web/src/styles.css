@@ -3637,6 +3637,16 @@ a:focus-visible {
 .notification-item:not(.unread) .notification-text {
   color: var(--ink-muted);
 }
+.notification-preview {
+  color: var(--ink-muted);
+  display: -webkit-box;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
 .notification-meta {
   color: var(--ink-subtle);
   font-size: 0.78rem;
