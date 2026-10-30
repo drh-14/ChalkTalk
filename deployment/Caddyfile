@@ -1,18 +1,33 @@
-{$DOMAIN} {
+:{$PORT:8080} {
 	encode zstd gzip
 
 	@apiHealth path /api/health
 	handle @apiHealth {
 		rewrite * /health
-		reverse_proxy api:3000
+		reverse_proxy {$API_UPSTREAM} {
+			header_up X-Forwarded-For {http.request.header.X-Real-IP}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Host {host}
+			header_up -Forwarded
+		}
 	}
 
 	handle /api/* {
-		reverse_proxy api:3000
+		reverse_proxy {$API_UPSTREAM} {
+			header_up X-Forwarded-For {http.request.header.X-Real-IP}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Host {host}
+			header_up -Forwarded
+		}
 	}
 
 	handle /collaboration {
-		reverse_proxy collaboration:3100
+		reverse_proxy {$COLLABORATION_UPSTREAM} {
+			header_up X-Forwarded-For {http.request.header.X-Real-IP}
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-Host {host}
+			header_up -Forwarded
+		}
 	}
 
 	handle {

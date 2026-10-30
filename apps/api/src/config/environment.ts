@@ -64,6 +64,9 @@ export interface Environment {
     publicUrl: string;
     idleEndMinutes: number;
   };
+  email:
+    | { provider: "smtp"; from: string }
+    | { provider: "resend"; from: string; resendApiKey: string };
   smtp: {
     host: string;
     port: number;
@@ -79,6 +82,13 @@ export function loadEnvironment(
 ): Environment {
   const port = Number(source.PORT ?? "3000");
   const smtpPort = Number(source.SMTP_PORT ?? "1025");
+  const emailProvider = source.EMAIL_PROVIDER ?? "smtp";
+  if (emailProvider !== "smtp" && emailProvider !== "resend")
+    throw new Error("EMAIL_PROVIDER must be smtp or resend");
+  if (emailProvider === "resend" && !source.RESEND_API_KEY?.trim())
+    throw new Error("RESEND_API_KEY is required when EMAIL_PROVIDER=resend");
+  if (emailProvider === "resend" && !source.EMAIL_FROM?.trim())
+    throw new Error("EMAIL_FROM is required when EMAIL_PROVIDER=resend");
   const positiveInteger = (name: string, fallback: number): number => {
     const value = Number(source[name] ?? fallback);
     if (!Number.isInteger(value) || value < 1)
@@ -90,7 +100,10 @@ export function loadEnvironment(
     throw new Error("PORT must be an integer between 1 and 65535");
   }
 
-  if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
+  if (
+    emailProvider === "smtp" &&
+    (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535)
+  ) {
     throw new Error("SMTP_PORT must be an integer between 1 and 65535");
   }
   if (
@@ -213,6 +226,17 @@ export function loadEnvironment(
       publicUrl: collaborationPublicUrl,
       idleEndMinutes,
     },
+    email:
+      emailProvider === "resend"
+        ? {
+            provider: "resend",
+            from: source.EMAIL_FROM!.trim(),
+            resendApiKey: source.RESEND_API_KEY!.trim(),
+          }
+        : {
+            provider: "smtp",
+            from: source.SMTP_FROM ?? "ChalkTalk <noreply@chalktalk.local>",
+          },
     smtp: {
       host: source.SMTP_HOST ?? "localhost",
       port: smtpPort,
