@@ -182,7 +182,7 @@ export class JobWorker {
       (staffRole !== "ta" && staffRole !== "instructor")
     )
       throw new Error("Question duplicate email job payload is invalid");
-    await this.sendQueuedEmail(job, async (client, prepared) => {
+    await this.sendQueuedEmail(job, async (client) => {
       const source = await client.query<{
         title: string;
         course_id: string;
@@ -205,11 +205,7 @@ export class JobWorker {
         [sourcePostId, canonicalPostId],
       );
       const post = source.rows[0];
-      if (
-        !post ||
-        (!prepared &&
-          job.deduplicationKey !== `${sourcePostId}:${post.version}`)
-      )
+      if (!post || job.deduplicationKey !== `${sourcePostId}:${post.version}`)
         return undefined;
       const staff = await client.query<{ display_name: string }>(
         "SELECT display_name FROM users WHERE id=$1 AND deleted_at IS NULL",
@@ -369,11 +365,15 @@ export class JobWorker {
         course_name: string;
         title: string;
         body_markdown: string;
+        private: boolean;
+        author_user_id: string | null;
+        recipient_user_id: string;
         email: string;
         actor_name: string | null;
         actor_anonymous: boolean;
       }>(
         `SELECT n.kind,n.post_id,n.course_id,c.name AS course_name,p.title,p.body_markdown,
+              p.private,p.author_user_id,n.user_id AS recipient_user_id,
               recipient.email,CASE WHEN actor.deleted_at IS NULL THEN actor.display_name END AS actor_name,
               n.actor_anonymous
        FROM notifications n
@@ -392,6 +392,19 @@ export class JobWorker {
       );
       const row = found.rows[0];
       if (!row) return undefined;
+      if (row.private) {
+        const membership = await client.query<{ role: string }>(
+          `SELECT role FROM course_memberships
+            WHERE course_id=$1 AND user_id=$2 AND activity_emails FOR SHARE`,
+          [row.course_id, row.recipient_user_id],
+        );
+        if (
+          !membership.rows[0] ||
+          (row.author_user_id !== row.recipient_user_id &&
+            !["ta", "instructor"].includes(membership.rows[0].role))
+        )
+          return undefined;
+      }
       let excerpt: string | undefined;
       let responseBody: string | undefined;
       if (responseKind && responseId) {

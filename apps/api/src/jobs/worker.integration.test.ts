@@ -322,7 +322,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(frozen.rows[0]?.frozen_email).toMatchObject({ version: 1 });
     const initial = frozen.rows[0]?.frozen_email;
     await pool.query(
-      "UPDATE posts SET title='Updated harmless title',version=version+1 WHERE id=$1",
+      "UPDATE posts SET title='Updated harmless title' WHERE id=$1",
       [source.value.id],
     );
     await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [jobId]);
@@ -633,6 +633,40 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       (await pool.query("SELECT status FROM jobs WHERE id=$1", [first.jobId]))
         .rows[0],
     ).toEqual({ status: "succeeded" });
+  });
+
+  it("cancels a frozen duplicate email after unmerge and re-merge to the same post", async () => {
+    delivered.length = 0;
+    const first = await seedMerge();
+    smtpFails = true;
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      smtpFails = false;
+    }
+    const posts = new PostService(pool);
+    const unmerged = await posts.update(
+      first.source.value.id,
+      first.staffId,
+      postEtag(first.merged),
+      { duplicateOfPostId: null, duplicateStatus: "none" },
+    );
+    await posts.update(
+      first.source.value.id,
+      first.staffId,
+      postEtag(unmerged),
+      {
+        duplicateOfPostId: first.canonical.value.id,
+        duplicateStatus: "confirmed",
+      },
+    );
+    await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
+      first.jobId,
+    ]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toEqual([]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toHaveLength(1);
   });
 
   it("uses a role-only byline when the confirming staff account was deleted", async () => {
@@ -2039,6 +2073,57 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
       );
       while (await worker.runOnce());
       expect(delivered).toEqual([]);
+    });
+
+    it("holds private staff access through the provider handoff", async () => {
+      await fresh();
+      const { courseId, postId, taId } = await seedAnswered();
+      while (await worker.runOnce());
+      delivered.length = 0;
+      await pool.query("UPDATE posts SET private=true WHERE id=$1", [postId]);
+      await pool.query(
+        "UPDATE course_memberships SET activity_emails=true WHERE course_id=$1 AND user_id=$2",
+        [courseId, taId],
+      );
+      const notification = await pool.query<{ id: string }>(
+        "INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id) VALUES (gen_random_uuid(),$1,$2,$3,'mentioned',$1) RETURNING id",
+        [taId, courseId, postId],
+      );
+      const id = notification.rows[0]!.id;
+      await pool.query(
+        "INSERT INTO jobs (id,kind,payload,deduplication_key) VALUES (gen_random_uuid(),'send_notification_email',$1,$2)",
+        [{ notificationId: id }, id],
+      );
+      let enterDelivery!: () => void;
+      let releaseDelivery!: () => void;
+      const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
+      const released = new Promise<void>((resolve) => (releaseDelivery = resolve));
+      inspectBeforeDelivery = async () => {
+        enterDelivery();
+        await released;
+      };
+      try {
+        const send = worker.runOnce();
+        await entered;
+        const demotion = pool.query(
+          "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+          [courseId, taId],
+        );
+        const order = await Promise.race([
+          demotion.then(() => "committed"),
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve("waiting"), 100),
+          ),
+        ]);
+        releaseDelivery();
+        await send;
+        await demotion;
+        expect(order).toBe("waiting");
+        expect(delivered).toHaveLength(1);
+      } finally {
+        releaseDelivery();
+        inspectBeforeDelivery = undefined;
+      }
     });
 
     it("sends nothing once the notification, post, or recipient no longer qualifies", async () => {
