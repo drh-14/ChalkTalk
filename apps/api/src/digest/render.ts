@@ -16,6 +16,7 @@ import type {
 } from "mdast";
 
 export type InlineImage = {
+  sourceId?: string;
   filename: string;
   content: Buffer;
   contentType: "image/png";
@@ -387,6 +388,7 @@ export async function renderDigest(
         imageBytes += content.length;
         const cid = `attachment-${randomUUID()}@chalktalk`;
         attachments.push({
+          ...(image.id ? { sourceId: image.id } : {}),
           filename: "image.png",
           content,
           contentType: "image/png",

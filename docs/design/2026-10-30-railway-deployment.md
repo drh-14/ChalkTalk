@@ -17,21 +17,6 @@ Retain one instance of each stateful or WebSocket-facing service initially. Do n
 
 ## Structure
 
-```mermaid
-flowchart LR
-  Browser -->|"HTTPS and WSS"| Edge["Railway edge"]
-  Edge -->|"HTTP upgrade and requests"| Web["Web gateway"]
-  Web -->|"/api/* via private DNS"| API["API service"]
-  Web -->|"/collaboration upgrade"| Collab["Collaboration service"]
-  API -->|"SQL"| DB["Railway Postgres"]
-  Collab -->|"SQL"| DB
-  Worker["Worker service"] -->|"SQL"| DB
-  API -->|"S3 API via private DNS"| Seaweed["SeaweedFS"]
-  Worker -->|"S3 API via private DNS"| Seaweed
-  Worker -->|"HTTPS email"| Resend["Resend API"]
-  API -->|"HTTPS auth email"| Resend
-```
-
 The browser sees one origin. `FRONTEND_ORIGINS`, `FRONTEND_BASE_URL`, and `COLLABORATION_PUBLIC_URL` therefore derive from the same public domain. Only `web` receives a Railway public/custom domain. Other services use `<service>.railway.internal` and fixed internal ports. SeaweedFS retains its S3-compatible endpoint and persistent `/data` directory. Railway service variables hold secrets and service references; secrets are not baked into images or committed files.
 
 The operator guide must specify the exact Railway service contract, not merely say “deploy the app”:

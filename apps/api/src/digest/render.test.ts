@@ -17,6 +17,39 @@ const base = {
 };
 
 describe("digest email rendering", () => {
+  it("identifies only CID images retained in the rendered message", async () => {
+    const image = await sharp({
+      create: {
+        width: 2,
+        height: 2,
+        channels: 3,
+        background: "red",
+      },
+    })
+      .png()
+      .toBuffer();
+    const result = await renderDigest({
+      ...base,
+      items: [
+        {
+          ...base.items[0],
+          images: Array.from({ length: 6 }, (_, index) => ({
+            id: `image-${index}`,
+            filename: `image-${index}.png`,
+            url: `https://app.example.edu/images/${index}`,
+            sizeBytes: image.length,
+            read: async () => image,
+          })),
+        },
+      ],
+    });
+    expect(result.attachments.map((attachment) => attachment.sourceId)).toEqual(
+      ["image-0", "image-1", "image-2", "image-3", "image-4"],
+    );
+    expect(result.html).toContain("View image: image-5.png");
+    for (const attachment of result.attachments)
+      expect(result.html).toContain(`cid:${attachment.cid}`);
+  });
   it("shows the activity date without a UTC suffix in both email headings", async () => {
     const result = await renderDigest(base);
     expect(result.html).toContain(

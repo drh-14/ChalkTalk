@@ -1147,6 +1147,71 @@ integration("daily course email digest", () => {
     });
   });
 
+  it("retries a frozen digest after an unembedded image is removed", async () => {
+    const post = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Image question",
+    );
+    const image = await sharp({
+      create: {
+        width: 2,
+        height: 2,
+        channels: 3,
+        background: "red",
+      },
+    })
+      .png()
+      .toBuffer();
+    const attachmentIds = Array.from({ length: 6 }, () => uuidv7());
+    for (const id of attachmentIds) {
+      await pool.query(
+        "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$1,'image.png','image/png',$4,$5)",
+        [
+          id,
+          ids.physics,
+          post,
+          image.length,
+          createHash("sha256").update(image).digest(),
+        ],
+      );
+    }
+    const imageDigest = new DigestService(
+      pool,
+      sender,
+      environment.frontendBaseUrl,
+      "image-retry",
+      undefined,
+      async () => image,
+    );
+    await imageDigest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.fail = true;
+    await imageDigest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    const frozen = await pool.query<{ frozen_email: { attachmentIds: string[] } }>(
+      "SELECT frozen_email FROM digest_outbox",
+    );
+    expect(frozen.rows[0]!.frozen_email.attachmentIds).toEqual(
+      attachmentIds.slice(0, 5),
+    );
+    await pool.query(
+      "UPDATE content_attachments SET deleted_at=now() WHERE id=$1",
+      [attachmentIds[5]],
+    );
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    sender.fail = false;
+    await imageDigest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+    expect(sender.attempts).toHaveLength(2);
+    expect(sender.messages).toHaveLength(1);
+    expect(sender.messages[0].attachments).toHaveLength(5);
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+        .rows[0],
+    ).toEqual({ status: "sent", frozen_email: null });
+  });
+
   it.each(["answer", "followup"] as const)(
     "cancels a frozen digest after an included %s body edit",
     async (kind) => {
