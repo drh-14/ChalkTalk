@@ -306,6 +306,7 @@ export class DigestService {
           images: (imageRows?.rows ?? [])
             .filter((image) => image[`${item.kind}_id`] === item.entity_id)
             .map((image): DigestImage => ({
+              id: image.id,
               filename: image.file_name,
               url: `${this.frontendBaseUrl}/api/v1/attachments/${image.id}/download`,
               sizeBytes: Number(image.size_bytes),
@@ -334,7 +335,9 @@ export class DigestService {
           entityId: item.entity_id,
           bodySha256: bodySha256(item.body_markdown),
         })),
-        attachmentIds: imageRows?.rows.map((image) => image.id) ?? [],
+        attachmentIds: rendered.attachments.flatMap((attachment) =>
+          attachment.sourceId ? [attachment.sourceId] : [],
+        ),
       };
       await client.query(
         `UPDATE digest_outbox SET frozen_email=$4::jsonb,updated_at=clock_timestamp()

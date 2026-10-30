@@ -21,28 +21,6 @@ Resend idempotency is only a 24-hour duplicate-suppression window, not an exactl
 
 ## Structure
 
-```mermaid
-sequenceDiagram
-  participant App as API or worker
-  participant DB as PostgreSQL
-  participant Sender as EmailSender
-  participant Resend as Resend HTTPS API
-  App->>DB: Check current delivery eligibility
-  App->>DB: Persist exact queued message and stable key
-  App->>DB: Recheck eligibility before send
-  App->>Sender: Send frozen message with key
-  Sender->>Resend: HTTPS email request plus idempotency key
-  alt Accepted
-    Resend-->>Sender: Email ID
-    Sender-->>App: Success
-    App->>DB: Mark sent and clear snapshot
-  else Timeout or transient error
-    Resend-->>Sender: Unknown or retryable failure
-    Sender-->>App: Failure
-    App->>DB: Schedule retry with same message and key
-  end
-```
-
 The snapshot and key must commit before the network call. Otherwise a timeout or worker crash could lose the original request body and make a later retry differ. A retry that finds the recipient or content no longer eligible cancels without calling Resend. PostgreSQL remains the sole delivery-state owner; Resend's response confirms API acceptance, not final inbox delivery.
 
 Local Compose continues to route both API and worker to Mailpit. Railway config selects Resend with `RESEND_API_KEY` and a verified-domain `EMAIL_FROM` value; `SMTP_*` values are not required there. The exact environment-variable names and validation rules are implementation details for planning, but configuration must fail fast if Resend is selected without a usable key or sender. No automatic SMTP fallback is permitted: a timeout followed by fallback could send two messages.
