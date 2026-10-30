@@ -110,6 +110,7 @@ function testEnvironment(): Environment {
       publicUrl: "wss://localhost:5173/collaboration",
       idleEndMinutes: 120,
     },
+    email: { provider: "smtp", from: "ChalkTalk <noreply@chalktalk.local>" },
     smtp: {
       host: "localhost",
       port: 1025,

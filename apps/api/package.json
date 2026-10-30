@@ -35,6 +35,7 @@
     "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.2",
+    "resend": "^6.37.0",
     "saxes": "^6.0.0",
     "sharp": "^0.35.5",
     "turndown": "^7.2.0",
