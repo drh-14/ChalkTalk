@@ -186,11 +186,13 @@ The ordinary migrations and PostgreSQL startup do not require pgvector. An opera
 - `id`: `uuid_v7`; primary key.
 - `user_id`: `uuid_v7`; the recipient.
 - `course_id`, `post_id`: `uuid_v7`; `(course_id, post_id)` references the post, cascading.
-- `kind`: `text`; `answer_created`, `answer_edited`, `answer_endorsed`, `followup_created`, `reply_created`, `announcement`, `post_published` (staff made the recipient's private post public), or `mentioned` (the recipient was mentioned in the content).
+- `kind`: `text`; existing answer, followup, reply, announcement, publication, and mention kinds, plus author-only `post_staff_edited`, `post_merged`, and `post_staff_deleted`. The kind check constrains this set.
+- `response_kind` (`answer` or `followup`) and `response_id` (`uuid`): nullable pair for answer creation/edit, followup/reply creation, and response mention events. Legacy rows may have neither. The list resolves current response text rather than storing it here.
+- `canonical_post_id` (`uuid`) and `source_version` (`bigint`): present together only for a confirmed-merge event. Projection checks the source still has this version and points to this active, readable canonical post, so unmerge/remerge cannot resurrect a stale notice.
 - `actor_user_id`: `uuid_v7`, nullable; who acted. `actor_anonymous`: `boolean`; the actor posted anonymously, so students see "Anonymous".
 - `created_at`: `timestamptz`. `read_at`: `timestamptz`, nullable.
 - Indexes: `(user_id, created_at DESC, id DESC)` for listing, partial `(user_id)` where unread for counts, and `(post_id, user_id)` for marking the notifications of an opened post read.
-- Rows are written by the same transaction as the activity; see the [notifications reference](api/notifications.md).
+- Rows are written by the same transaction as the activity or staff moderation. Deleting a post scrubs its title/body but leaves a generic author-specific deletion event; deleting the course removes the event with its source post. See the [notifications reference](api/notifications.md).
 
 ### `post_reads`
 

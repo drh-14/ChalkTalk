@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import request from "supertest";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations, getMigrationDirectory } from "../database/migrate.js";
 import { loadEnvironment } from "../config/environment.js";
 import type { AuthService } from "../auth/service.js";
@@ -107,6 +107,9 @@ async function clearAll() {
 }
 
 integration("notifications HTTP contract", () => {
+  afterEach(async () => {
+    await clearAll();
+  });
   beforeAll(async () => {
     admin = new Pool({ connectionString: url });
     await admin.query(`CREATE SCHEMA "${schema}"`);
@@ -261,6 +264,42 @@ integration("notifications HTTP contract", () => {
     await clearAll();
   });
 
+  it("constrains typed response and merge targets while accepting legacy rows", async () => {
+    const postId = await question(ids.asker);
+    await pool.query(
+      "INSERT INTO notifications (id,user_id,course_id,post_id,kind) VALUES (gen_random_uuid(),$1,$2,$3,'answer_created')",
+      [ids.classmate, ids.course, postId],
+    );
+    await expect(
+      pool.query(
+        "INSERT INTO notifications (id,user_id,course_id,post_id,kind,response_kind,response_id) VALUES (gen_random_uuid(),$1,$2,$3,'announcement','answer',gen_random_uuid())",
+        [ids.classmate, ids.course, postId],
+      ),
+    ).rejects.toThrow(/check/);
+    await expect(
+      pool.query(
+        "INSERT INTO notifications (id,user_id,course_id,post_id,kind,response_kind) VALUES (gen_random_uuid(),$1,$2,$3,'answer_created','answer')",
+        [ids.classmate, ids.course, postId],
+      ),
+    ).rejects.toThrow(/check/);
+    await pool.query(
+      "INSERT INTO notifications (id,user_id,course_id,post_id,kind,response_kind,response_id) VALUES (gen_random_uuid(),$1,$2,$3,'answer_edited','answer',gen_random_uuid())",
+      [ids.classmate, ids.course, postId],
+    );
+    await expect(
+      pool.query(
+        "INSERT INTO notifications (id,user_id,course_id,post_id,kind,canonical_post_id) VALUES (gen_random_uuid(),$1,$2,$3,'post_staff_edited',$3)",
+        [ids.classmate, ids.course, postId],
+      ),
+    ).rejects.toThrow(/check/);
+    await expect(
+      pool.query(
+        "INSERT INTO notifications (id,user_id,course_id,post_id,kind) VALUES (gen_random_uuid(),$1,$2,$3,'post_merged')",
+        [ids.classmate, ids.course, postId],
+      ),
+    ).rejects.toThrow(/check/);
+  });
+
   it("notifies the asker of a TA answer, follows automatically, and keeps an unfollow", async () => {
     const postId = await question(ids.asker);
     const own = await get(ids.asker, `/api/v1/posts/${postId}`);
@@ -287,6 +326,13 @@ integration("notifications HTTP contract", () => {
       courseName: "Physics",
       actor: { displayName: "Teaching Assistant" },
       readAt: null,
+      preview: "Staff answer",
+      destination: {
+        kind: "answer",
+        postId,
+        responseId: answered.body.data.id,
+      },
+      addressedToOwner: true,
     });
     expect(await inbox(ids.ta)).toEqual([]);
     expect(
@@ -311,11 +357,262 @@ integration("notifications HTTP contract", () => {
       "answer_edited",
       "answer_created",
     ]);
+    expect((await inbox(ids.asker))[0]).toMatchObject({
+      preview: "Better staff answer",
+      destination: {
+        kind: "answer",
+        postId,
+        responseId: answered.body.data.id,
+      },
+    });
     await unsafe(
       request(app(ids.classmate)).post(`/api/v1/posts/${postId}/followups`),
     ).send({ bodyMarkdown: "Same question" });
     expect(await inbox(ids.ta)).toEqual([]);
     await clearAll();
+  });
+
+  it("projects current response text, deletes its preview, and keeps access checks", async () => {
+    const postId = await question(ids.asker);
+    const created = await unsafe(
+      request(app(ids.classmate)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({
+      bodyMarkdown:
+        "**First line**\n\n[Second line](https://example.edu/private)\nThird line\nFourth line",
+    });
+    expect(created.status).toBe(201);
+    expect((await inbox(ids.asker))[0]).toMatchObject({
+      preview: "First line\nSecond line\nThird line",
+      destination: {
+        kind: "followup",
+        postId,
+        responseId: created.body.data.id,
+      },
+    });
+    expect(await inbox(ids.outsider)).toEqual([]);
+    await pool.query(
+      "UPDATE followups SET body_markdown='Revised' WHERE id=$1",
+      [created.body.data.id],
+    );
+    expect((await inbox(ids.asker))[0]).toMatchObject({ preview: "Revised" });
+    await pool.query(
+      "UPDATE followups SET body_markdown=NULL,deleted_at=now() WHERE id=$1",
+      [created.body.data.id],
+    );
+    expect((await inbox(ids.asker))[0]).toMatchObject({
+      preview: null,
+      destination: { kind: "post", postId },
+    });
+    await clearAll();
+  });
+
+  it("links a new followup edit mention to its current response", async () => {
+    const postId = await question(ids.asker);
+    const created = await unsafe(
+      request(app(ids.classmate)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "Initial text" });
+    expect(created.status).toBe(201);
+    const edited = await unsafe(
+      request(app(ids.classmate)).patch(created.headers.location),
+    )
+      .set("If-Match", created.headers.etag)
+      .send({
+        bodyMarkdown: `Updated for [@Teaching Assistant](mention:${ids.ta})`,
+      });
+    expect(edited.status).toBe(200);
+    expect((await inbox(ids.ta))[0]).toMatchObject({
+      kind: "mentioned",
+      preview: "Updated for @Teaching Assistant",
+      destination: {
+        kind: "followup",
+        postId,
+        responseId: created.body.data.id,
+      },
+    });
+    expect(await inbox(ids.outsider)).toEqual([]);
+  });
+
+  it("respects an author's unfollow and addresses a followed followup author", async () => {
+    const postId = await question(ids.asker);
+    await unsafe(
+      request(app(ids.asker)).delete(`/api/v1/posts/${postId}/follow`),
+    ).expect(200);
+    const root = await unsafe(
+      request(app(ids.classmate)).post(`/api/v1/posts/${postId}/followups`),
+    ).send({ bodyMarkdown: "My followup" });
+    expect(root.status).toBe(201);
+    expect(await inbox(ids.asker)).toEqual([]);
+    await unsafe(
+      request(app(ids.asker)).put(`/api/v1/posts/${postId}/follow`),
+    ).expect(200);
+    const reply = await unsafe(
+      request(app(ids.ta)).post(`${root.headers.location}/replies`),
+    ).send({ bodyMarkdown: "Staff reply" });
+    expect(reply.status).toBe(201);
+    expect((await inbox(ids.classmate))[0]).toMatchObject({
+      kind: "reply_created",
+      addressedToOwner: true,
+      preview: "Staff reply",
+      destination: { kind: "followup", postId, responseId: reply.body.data.id },
+    });
+    expect((await inbox(ids.asker))[0]).toMatchObject({
+      kind: "reply_created",
+      addressedToOwner: false,
+    });
+  });
+
+  it("creates only author-targeted staff edit, merge, and deletion cards", async () => {
+    const postId = await question(ids.asker);
+    const path = `/api/v1/posts/${postId}`;
+    const original = await get(ids.ta, path);
+    const metadata = await unsafe(request(app(ids.ta)).patch(path))
+      .set("If-Match", original.headers.etag)
+      .send({ pinned: true });
+    expect(metadata.status).toBe(200);
+    expect(await inbox(ids.asker)).toEqual([]);
+    const edited = await unsafe(request(app(ids.ta)).patch(path))
+      .set("If-Match", metadata.headers.etag)
+      .send({ title: "Staff title", bodyMarkdown: "Staff body" });
+    expect(edited.status).toBe(200);
+    expect((await inbox(ids.asker))[0]).toMatchObject({
+      kind: "post_staff_edited",
+      postTitle: "Staff title",
+      destination: { kind: "post", postId },
+    });
+    const targetId = await question(ids.classmate, { title: "Canonical" });
+    const merged = await unsafe(request(app(ids.ta)).patch(path))
+      .set("If-Match", edited.headers.etag)
+      .send({
+        duplicateOfPostId: targetId,
+        duplicateStatus: "confirmed",
+        title: "Merged title",
+      });
+    expect(merged.status).toBe(200);
+    const cards = await inbox(ids.asker);
+    expect(cards[0]).toMatchObject({
+      kind: "post_merged",
+      destination: { kind: "post", postId: targetId },
+    });
+    await pool.query("UPDATE posts SET private=true WHERE id=$1", [targetId]);
+    expect(
+      (await inbox(ids.asker)).some((item) => item.kind === "post_merged"),
+    ).toBe(false);
+    expect(
+      (await get(ids.asker, "/api/v1/users/me/notifications/unread-count")).body
+        .data.count,
+    ).toBe(0);
+    await pool.query("UPDATE posts SET private=false WHERE id=$1", [targetId]);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS count FROM notifications WHERE post_id=$1 AND kind='post_staff_edited'",
+          [postId],
+        )
+      ).rows[0].count,
+    ).toBe(1);
+    const unmerged = await unsafe(request(app(ids.ta)).patch(path))
+      .set("If-Match", merged.headers.etag)
+      .send({ duplicateOfPostId: null, duplicateStatus: "none" });
+    expect(unmerged.status).toBe(200);
+    expect(
+      (await inbox(ids.asker)).some((item) => item.kind === "post_merged"),
+    ).toBe(false);
+    expect(
+      (await get(ids.asker, "/api/v1/users/me/notifications/unread-count")).body
+        .data.count,
+    ).toBe(1);
+    const deleted = await unsafe(request(app(ids.ta)).delete(path)).set(
+      "If-Match",
+      unmerged.headers.etag,
+    );
+    expect(deleted.status).toBe(204);
+    expect((await inbox(ids.asker))[0]).toMatchObject({
+      kind: "post_staff_deleted",
+      postTitle: null,
+      preview: null,
+      destination: { kind: "course", courseId: ids.course },
+    });
+    const stored = await pool.query(
+      "SELECT title,body_markdown FROM posts WHERE id=$1",
+      [postId],
+    );
+    expect(stored.rows[0]).toEqual({ title: null, body_markdown: null });
+    await pool.query(
+      "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+      [ids.course, ids.asker],
+    );
+    try {
+      expect(await inbox(ids.asker)).toEqual([]);
+      expect(
+        (await get(ids.asker, "/api/v1/users/me/notifications/unread-count"))
+          .body.data.count,
+      ).toBe(0);
+    } finally {
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student')",
+        [ids.course, ids.asker],
+      );
+    }
+    const emailJobs = await pool.query(
+      "SELECT count(*)::int AS count FROM jobs WHERE kind='send_notification_email'",
+    );
+    expect(emailJobs.rows[0].count).toBe(0);
+    await clearAll();
+  });
+
+  it("does not notify for self-edits, unchanged text, or rejected staff writes", async () => {
+    const postId = await question(ids.ta);
+    const path = `/api/v1/posts/${postId}`;
+    const original = await get(ids.ta, path);
+    const ownEdit = await unsafe(request(app(ids.ta)).patch(path))
+      .set("If-Match", original.headers.etag)
+      .send({ title: "New staff title" });
+    expect(ownEdit.status).toBe(200);
+    expect(await inbox(ids.ta)).toEqual([]);
+    const same = await unsafe(request(app(ids.instructor)).patch(path))
+      .set("If-Match", ownEdit.headers.etag)
+      .send({ title: "New staff title" });
+    expect(same.status).toBe(200);
+    expect(await inbox(ids.ta)).toEqual([]);
+    const stale = await unsafe(request(app(ids.instructor)).patch(path))
+      .set("If-Match", ownEdit.headers.etag)
+      .send({ title: "Rejected" });
+    expect(stale.status).toBe(412);
+    expect(await inbox(ids.ta)).toEqual([]);
+  });
+
+  it("rolls back a response when its promised notification cannot be stored", async () => {
+    const postId = await question(ids.asker);
+    await pool.query(`CREATE FUNCTION reject_answer_notice() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.kind='answer_created' THEN RAISE EXCEPTION 'notice unavailable'; END IF;
+      RETURN NEW; END $$`);
+    await pool.query(`CREATE TRIGGER reject_answer_notice BEFORE INSERT ON notifications
+      FOR EACH ROW EXECUTE FUNCTION reject_answer_notice()`);
+    try {
+      const attempted = await unsafe(
+        request(app(ids.ta)).post(`/api/v1/posts/${postId}/answers`),
+      ).send({ bodyMarkdown: "This must roll back" });
+      expect(attempted.status).toBe(500);
+      expect(
+        (
+          await pool.query(
+            "SELECT count(*)::int AS count FROM answers WHERE post_id=$1",
+            [postId],
+          )
+        ).rows[0].count,
+      ).toBe(0);
+      expect(
+        (
+          await pool.query(
+            "SELECT count(*)::int AS count FROM notifications WHERE post_id=$1",
+            [postId],
+          )
+        ).rows[0].count,
+      ).toBe(0);
+    } finally {
+      await pool.query("DROP TRIGGER reject_answer_notice ON notifications");
+      await pool.query("DROP FUNCTION reject_answer_notice()");
+    }
   });
 
   it("notifies followers of endorsements, followups, and replies but never the actor", async () => {

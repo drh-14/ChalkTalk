@@ -9,14 +9,24 @@ export type NotificationKind =
   | "reply_created"
   | "announcement"
   | "post_published"
-  | "mentioned";
+  | "mentioned"
+  | "post_staff_edited"
+  | "post_merged"
+  | "post_staff_deleted";
 export type Notification = {
   id: string;
   kind: NotificationKind;
   courseId: string;
   courseName: string;
   postId: string;
-  postTitle: string;
+  postTitle: string | null;
+  preview?: string | null;
+  responseUnavailable?: boolean;
+  addressedToOwner?: boolean;
+  destination:
+    | { kind: "course"; courseId: string }
+    | { kind: "post"; postId: string }
+    | { kind: "answer" | "followup"; postId: string; responseId: string };
   /** "Anonymous" for a hidden actor; null for a deleted account. */
   actor: { displayName: string } | null;
   createdAt: string;
@@ -39,9 +49,10 @@ async function receive<T>(response: Response): Promise<T> {
 }
 
 export async function listNotifications(
-  options: { limit?: number; signal?: AbortSignal } = {},
+  options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
 ): Promise<Page<Notification>> {
   const query = new URLSearchParams({ limit: String(options.limit ?? 20) });
+  if (options.cursor) query.set("cursor", options.cursor);
   return receive<Page<Notification>>(
     await fetch(`/api/v1/users/me/notifications?${query}`, {
       credentials: "include",
@@ -92,9 +103,24 @@ const VERBS: Record<NotificationKind, string> = {
   announcement: "announced",
   post_published: "made your post public:",
   mentioned: "mentioned you on",
+  post_staff_edited: "edited your post:",
+  post_merged: "marked your question as a duplicate:",
+  post_staff_deleted: "deleted your post",
 };
 
 /** "Grace Hopper answered" style lead-in for a notification. */
 export function describeNotification(notification: Notification): string {
-  return `${notification.actor?.displayName ?? "Deleted user"} ${VERBS[notification.kind]}`;
+  const actor =
+    notification.actor?.displayName ??
+    (notification.kind.startsWith("post_")
+      ? "A course staff member"
+      : "Deleted user");
+  if (
+    notification.addressedToOwner &&
+    ["answer_created", "followup_created", "reply_created"].includes(
+      notification.kind,
+    )
+  )
+    return `${actor} replied to your message`;
+  return `${actor} ${VERBS[notification.kind]}`;
 }

@@ -564,6 +564,7 @@ export class FollowupService {
           anonymous: row.anonymous,
           mentions,
           follow: false,
+          response: { kind: "followup", id },
         });
       return this.project(
         db,
