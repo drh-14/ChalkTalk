@@ -259,10 +259,14 @@ function summary(counts: DigestInput["counts"]): string {
     .map((kind) => `${counts[kind]} ${kind}${counts[kind] === 1 ? "" : "s"}`)
     .join(" · ");
 }
-export async function renderDigest(
-  input: DigestInput,
-): Promise<{ html: string; text: string; attachments: InlineImage[] }> {
+export async function renderDigest(input: DigestInput): Promise<{
+  html: string;
+  text: string;
+  attachments: InlineImage[];
+  imageIds: string[];
+}> {
   const attachments: InlineImage[] = [];
+  const imageIds: string[] = [];
   let imageCount = 0;
   let imageBytes = 0;
   let equationCount = 0;
@@ -415,6 +419,9 @@ export async function renderDigest(
       break;
     }
     html.push(entryHtml);
+    imageIds.push(
+      ...(item.images ?? []).flatMap((image) => (image.id ? [image.id] : [])),
+    );
     rendered++;
     text.push(item.title, plainBody, ...imageText, href, "");
   }
@@ -425,5 +432,5 @@ export async function renderDigest(
     text.push(`View remaining activity: ${input.courseUrl}`);
   }
   html.push("</main></body></html>");
-  return { html: html.join(""), text: text.join("\n"), attachments };
+  return { html: html.join(""), text: text.join("\n"), attachments, imageIds };
 }
