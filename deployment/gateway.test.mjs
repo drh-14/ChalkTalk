@@ -56,6 +56,7 @@ test("Railway gateway serves SPA and safely routes API and WebSocket traffic", a
     return;
   }
   const image = process.env.GATEWAY_TEST_IMAGE ?? "caddy:2.10-alpine";
+  const stockImage = image === "caddy:2.10-alpine";
   try {
     docker("image", "inspect", image);
   } catch {
@@ -95,6 +96,9 @@ test("Railway gateway serves SPA and safely routes API and WebSocket traffic", a
       `COLLABORATION_UPSTREAM=host.docker.internal:${collaborationPort}`,
       "-v",
       `${directory}Caddyfile:/etc/caddy/Caddyfile:ro`,
+      ...(stockImage
+        ? ["-v", `${directory}gateway-fixture:/srv:ro`]
+        : []),
       image,
     );
     const port = Number(
@@ -137,7 +141,9 @@ test("Railway gateway serves SPA and safely routes API and WebSocket traffic", a
     const spa = await fetch(`${base}/courses/example`);
     assert.equal(spa.status, 200);
     assert.match(spa.headers.get("content-type") ?? "", /text\/html/);
-    assert.match(await spa.text(), /<html/i);
+    const spaBody = await spa.text();
+    assert.match(spaBody, /<html/i);
+    if (stockImage) assert.match(spaBody, /Gateway test SPA/);
 
     await close(api);
     const failedApi = await fetch(`${base}/api/v1/posts`);
