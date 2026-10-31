@@ -12,7 +12,10 @@ export type NotificationKind =
   | "reply_created"
   | "announcement"
   | "post_published"
-  | "mentioned";
+  | "mentioned"
+  | "post_staff_edited"
+  | "post_merged"
+  | "post_staff_deleted";
 
 /**
  * Records a member's activity on a post inside the caller's transaction:
@@ -28,7 +31,10 @@ export async function recordActivity(
     courseId: string;
     postId: string;
     actorId: string;
-    kind?: NotificationKind;
+    kind?: Exclude<
+      NotificationKind,
+      "post_staff_edited" | "post_merged" | "post_staff_deleted"
+    >;
     response?: { kind: "answer" | "followup"; id: string };
     anonymous?: boolean;
     /** Followers by default; the post's author alone for post_published. */
@@ -74,8 +80,8 @@ export async function recordActivity(
            JOIN course_memberships m ON m.course_id=f.course_id AND m.user_id=f.user_id
            JOIN posts p ON p.id=f.post_id
            WHERE f.post_id=$2 AND f.following AND ${readablePost("p", "f.user_id", "m.role")}`;
-  const insert = `INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous)
-       SELECT gen_random_uuid(),r.user_id,$1,$2,$4,$3,$5
+  const insert = `INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous,response_kind,response_id)
+       SELECT gen_random_uuid(),r.user_id,$1,$2,$4,$3,$5,${activity.kind === "announcement" ? "NULL,NULL" : "$7,$8::uuid"}
        FROM recipients r JOIN users u ON u.id=r.user_id AND u.deleted_at IS NULL
        WHERE r.user_id<>$3 AND NOT (r.user_id = ANY($6::uuid[]))`;
   await db.query(
@@ -116,8 +122,8 @@ async function recordMentions(
          AND (m.user_id = ANY($5::uuid[]) OR ($6 AND m.role IN ('ta','instructor')))
          AND ${readablePost("p", "m.user_id", "m.role")}
      ), created AS (
-       INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous)
-       SELECT gen_random_uuid(),r.user_id,$1,$2,'mentioned',$3,$4 FROM recipients r
+       INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id,actor_anonymous,response_kind,response_id)
+       SELECT gen_random_uuid(),r.user_id,$1,$2,'mentioned',$3,$4,$7,$8::uuid FROM recipients r
        RETURNING id,user_id
      ), emails AS (
        INSERT INTO jobs (id,kind,payload,deduplication_key)
@@ -137,4 +143,36 @@ async function recordMentions(
     ],
   );
   return result.rows.map((row) => row.user_id);
+}
+
+/** Persists author-only moderation events inside the post transaction. */
+export async function recordPostModeration(
+  db: Db,
+  event: {
+    courseId: string;
+    postId: string;
+    authorId: string | null;
+    actorId: string;
+    kind: "post_staff_edited" | "post_merged" | "post_staff_deleted";
+    canonicalPostId?: string;
+    sourceVersion?: number;
+  },
+): Promise<void> {
+  if (!event.authorId || event.authorId === event.actorId) return;
+  await db.query(
+    `INSERT INTO notifications
+       (id,user_id,course_id,post_id,kind,actor_user_id,canonical_post_id,source_version)
+     SELECT gen_random_uuid(),m.user_id,$1,$2,$4,$5,$6::uuid,$7::bigint
+     FROM course_memberships m JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
+     WHERE m.course_id=$1 AND m.user_id=$3`,
+    [
+      event.courseId,
+      event.postId,
+      event.authorId,
+      event.kind,
+      event.actorId,
+      event.canonicalPostId ?? null,
+      event.sourceVersion ?? null,
+    ],
+  );
 }

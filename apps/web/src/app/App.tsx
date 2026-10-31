@@ -582,8 +582,14 @@ function AccountControls({
     <div className="account-controls">
       <NotificationBell
         csrfToken={session.csrfToken}
-        onOpenPost={(courseId, postId) => {
-          if (canLeave()) onNavigate(postPath(courseId, postId));
+        onOpenPost={(courseId, postId, hash) => {
+          if (!canLeave()) return;
+          onNavigate(
+            postId
+              ? `${postPath(courseId, postId)}${hash ?? ""}`
+              : `/courses/${encodeURIComponent(courseId)}`,
+          );
+          if (hash) window.dispatchEvent(new HashChangeEvent("hashchange"));
         }}
         onOpenThread={(
           courseId,
@@ -1195,6 +1201,7 @@ function CourseFrame({
               courseId={courseId}
               boardId={route.threadId}
               conversationId={route.conversationId}
+              locationTarget={`${window.location.search}${window.location.hash}`}
               userId={session.user.id}
               staff={staff}
               active={visibleCourse.data.status === "active"}

@@ -39,6 +39,7 @@ type Props = {
   courseId: string;
   boardId?: string;
   conversationId?: string;
+  locationTarget: string;
   userId: string;
   staff: boolean;
   active: boolean;
@@ -84,6 +85,7 @@ export function CourseThreads(props: Props) {
     courseId,
     boardId,
     conversationId,
+    locationTarget,
     userId,
     staff,
     active,
@@ -156,6 +158,7 @@ export function CourseThreads(props: Props) {
       selectedLookup.current = id;
       void getMessage(courseId, boardId, conversationId, id)
         .then((item) => {
+          if (selectedLookup.current !== id) return;
           setMessages((old) =>
             old.some((existing) => existing.id === item.id)
               ? old
@@ -179,11 +182,13 @@ export function CourseThreads(props: Props) {
           }
         })
         .catch((caught) => {
+          if (selectedLookup.current !== id) return;
           selectedLookup.current = null;
           setError(err(caught));
         });
       return;
     }
+    selectedLookup.current = null;
     const target = document.getElementById(`thread-message-${id}`);
     target?.scrollIntoView({ block: "center" });
     target?.focus();
@@ -214,6 +219,7 @@ export function CourseThreads(props: Props) {
     loading,
     active,
     onUnreadChange,
+    locationTarget,
   ]);
 
   useEffect(() => {

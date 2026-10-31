@@ -7013,3 +7013,142 @@ it("does not replace a newer new-post count with a stalled poll", async () => {
   expect(countRequests).toBe(2);
   expect(screen.getByRole("status", { name: /2 new posts/i })).toBeTruthy();
 });
+
+it("schedules an announcement for a local time", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/members/user-staff"))
+      return json({ data: { role: "ta" } });
+    if (init?.method === "POST")
+      return json(
+        {
+          data: {
+            ...post("s-1", "Exam room"),
+            type: "note",
+            announcement: true,
+            scheduledFor: "2030-01-15T14:30:00.000Z",
+          },
+        },
+        201,
+      );
+    return page([]);
+  });
+  stubFetch(fetchMock);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Post type" }),
+    "note",
+  );
+  expect(screen.queryByRole("group", { name: "Publish" })).toBeNull();
+  await user.click(
+    await screen.findByRole("checkbox", {
+      name: "Post as announcement (pinned; email sent to subscribers)",
+    }),
+  );
+  const publish = screen.getByRole("group", { name: "Publish" });
+  expect(
+    (within(publish).getByRole("radio", { name: "Now" }) as HTMLInputElement)
+      .checked,
+  ).toBe(true);
+  await user.click(within(publish).getByRole("radio", { name: "Later" }));
+  const when = screen.getByLabelText("Publish at");
+  fireEvent.change(when, { target: { value: "2030-01-15T09:30" } });
+  await user.type(
+    screen.getByRole("textbox", { name: "Post title" }),
+    "Exam room",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Post body" }),
+    "Room 204",
+  );
+  await user.click(screen.getByRole("button", { name: "Publish post" }));
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "POST"),
+    ).toBe(true),
+  );
+  const create = fetchMock.mock.calls.find(
+    ([, init]) => init?.method === "POST",
+  )!;
+  expect(JSON.parse(create[1]?.body as string)).toMatchObject({
+    announcement: true,
+    scheduledFor: new Date("2030-01-15T09:30").toISOString(),
+  });
+}, 30_000);
+
+it("badges a scheduled announcement and lets staff publish it now or reschedule", async () => {
+  let scheduledFor: string | null = "2030-01-15T14:30:00.000Z";
+  let version = 1;
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const current = () => ({
+    ...post("s-1", "Exam room"),
+    type: "note",
+    announcement: true,
+    pinned: true,
+    scheduledFor,
+    version,
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/members/user-staff"))
+        return json({ data: { role: "instructor" } });
+      if (url === "/api/v1/posts/s-1" && init?.method === "PATCH") {
+        scheduledFor = JSON.parse(String(init.body)).scheduledFor;
+        version += 1;
+        return json({ data: current() });
+      }
+      if (url === "/api/v1/posts/s-1") return json({ data: current() });
+      return page([current()]);
+    }),
+  );
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      userId="user-staff"
+      postId="s-1"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const notice = await screen.findByText(/Scheduled to publish/);
+  expect(notice.textContent).toContain("Only staff can see it until then.");
+  const row = screen.getByRole("link", { name: /Exam room/ });
+  expect(within(row).getByText(/^Scheduled · /)).toBeTruthy();
+
+  await user.click(await screen.findByRole("button", { name: "Reschedule" }));
+  fireEvent.change(screen.getByLabelText("New time"), {
+    target: { value: "2030-02-01T08:00" },
+  });
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(scheduledFor).toBe(new Date("2030-02-01T08:00").toISOString()),
+  );
+  expect(
+    calls.find((call) => call.init?.method === "PATCH")!.init?.headers,
+  ).toMatchObject({
+    "If-Match": '"v1"',
+  });
+
+  await user.click(await screen.findByRole("button", { name: "Publish now" }));
+  expect(confirm).toHaveBeenCalled();
+  await waitFor(() =>
+    expect(screen.queryByText(/Scheduled to publish/)).toBeNull(),
+  );
+  expect(within(row).queryByText(/^Scheduled · /)).toBeNull();
+  const patches = calls.filter((call) => call.init?.method === "PATCH");
+  expect(patches[1]!.init?.body).toBe(JSON.stringify({ scheduledFor: null }));
+});

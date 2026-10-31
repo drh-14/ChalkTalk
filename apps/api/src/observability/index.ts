@@ -26,6 +26,7 @@ type JobKind =
   | "send_collaboration_invitation_email"
   | "send_announcement_email"
   | "send_notification_email"
+  | "publish_scheduled_announcement"
   | "digest_schedule"
   | "digest_delivery";
 const fallbackLogger = pino({ base: null });

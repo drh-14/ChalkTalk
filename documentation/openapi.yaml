@@ -21,7 +21,8 @@ info:
     replies also use REST only. Saved questions, notes, answers, and followups
     support separate parent-scoped file attachments; create/update text requests
     remain JSON-only. Private post-anchored live sessions are live through the
-    collaboration-session routes and the collaboration WebSocket. Multipart
+    collaboration-session routes and the collaboration WebSocket. Public course
+    Threads are live through REST and a separate API-owned WebSocket. Multipart
     post create/update, download refresh, and Thread-anchored collaboration
     sessions remain unavailable.
   license:
@@ -3636,6 +3637,14 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                schedule_invalid:
+                  summary: The schedule is not 1 minute to 365 days ahead, or the post is not an announcement.
+                  value:
+                    error:
+                      code: schedule_invalid
+                      message: The schedule is not 1 minute to 365 days ahead, or the post is not an announcement.
+                      requestId: req_createPost
+                      details: []
                 too_many_mentions:
                   summary: The body mentions more than 20 people.
                   value:
@@ -4374,6 +4383,22 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
+                schedule_invalid:
+                  summary: The new schedule is not 1 minute to 365 days ahead.
+                  value:
+                    error:
+                      code: schedule_invalid
+                      message: The new schedule is not 1 minute to 365 days ahead.
+                      requestId: req_updatePost
+                      details: []
+                not_scheduled:
+                  summary: The post is not a scheduled announcement.
+                  value:
+                    error:
+                      code: not_scheduled
+                      message: The post is not a scheduled announcement.
+                      requestId: req_updatePost
+                      details: []
                 too_many_mentions:
                   summary: The body mentions more than 20 people.
                   value:
@@ -8922,6 +8947,8 @@ paths:
       responses:
         "200":
           description: Conversation including its opening message.
+          headers:
+            ETag: { schema: { type: string } }
           content:
             application/json:
               schema:
@@ -9996,7 +10023,7 @@ paths:
       tags:
         - Notifications
       summary: List notifications
-      description: Lists the caller's notifications newest first across courses. Notifications are omitted once the caller has left the course or the referenced post or Thread reply is no longer visible. Thread reply cards have a typed Thread destination and current plain-text preview. Only limit, cursor, and unread are accepted.
+      description: Lists the caller's notifications newest first across courses. Post events require a readable active post; merge events require the unchanged confirmed merge and readable canonical post; author-specific deletion events remain generic while the recipient is a member. Thread reply cards require a visible reply and carry a typed Thread destination and current plain-text preview. Only limit, cursor, and unread are accepted.
       operationId: listNotifications
       security:
         - session_cookie: []
@@ -10026,6 +10053,13 @@ paths:
                     courseName: CS 101
                     postId: post_123
                     postTitle: Why does my loop never stop?
+                    preview: The condition never becomes false.
+                    responseUnavailable: false
+                    addressedToOwner: true
+                    destination:
+                      kind: answer
+                      postId: post_123
+                      responseId: answer_123
                     actor:
                       displayName: Grace Hopper
                     createdAt: "2026-09-20T14:30:00Z"
@@ -12279,6 +12313,12 @@ components:
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
+        scheduledFor:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When a scheduled announcement will publish; null once published or when never scheduled. Only staff can read a scheduled post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -12349,6 +12389,7 @@ components:
         - discussionLocked
         - announcement
         - private
+        - scheduledFor
         - following
         - unread
         - duplicateOfPostId
@@ -12428,6 +12469,12 @@ components:
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
+        scheduledFor:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When a scheduled announcement will publish; null once published or when never scheduled. Only staff can read a scheduled post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -12491,6 +12538,7 @@ components:
         - discussionLocked
         - announcement
         - private
+        - scheduledFor
         - following
         - unread
         - duplicateOfPostId
@@ -12568,6 +12616,12 @@ components:
         private:
           type: boolean
           description: Whether only the author and course staff can read the post.
+        scheduledFor:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: When a scheduled announcement will publish; null once published or when never scheduled. Only staff can read a scheduled post.
         following:
           type: boolean
           description: Whether the viewer follows the post and is notified of its activity.
@@ -12662,6 +12716,7 @@ components:
         - discussionLocked
         - announcement
         - private
+        - scheduledFor
         - following
         - unread
         - duplicateOfPostId
@@ -14783,6 +14838,10 @@ components:
           type: integer
           minimum: 0
           description: Current owner/course draft version to check before atomic publication.
+        scheduledFor:
+          type: string
+          format: date-time
+          description: Announcements only. When the job worker publishes it, 1 minute to 365 days ahead; staff alone can read it until then.
       additionalProperties: false
       required:
         - type
@@ -14957,6 +15016,12 @@ components:
         private:
           type: boolean
           description: false makes a private post public (author or staff; cannot be undone). true on a public post returns post_already_public.
+        scheduledFor:
+          type:
+            - string
+            - "null"
+          format: date-time
+          description: For a scheduled announcement, a new time reschedules it and null publishes it now; otherwise not_scheduled.
         duplicateOfPostId:
           type:
             - string
@@ -15026,6 +15091,9 @@ components:
             - announcement
             - post_published
             - mentioned
+            - post_staff_edited
+            - post_merged
+            - post_staff_deleted
           description: What happened on the post.
         courseId:
           type: string
@@ -15037,8 +15105,39 @@ components:
           type: string
           description: Post the activity happened on.
         postTitle:
-          type: string
-          description: Current post title.
+          type: [string, "null"]
+          description: Current post title, or null for a deletion event.
+        preview:
+          type: [string, "null"]
+          description: Plain text without Markdown formatting or link targets, at most three nonblank lines and 360 characters of the current referenced response; never retained deleted text.
+        responseUnavailable:
+          type: boolean
+          description: Whether a previously referenced response has been deleted or removed.
+        addressedToOwner:
+          type: boolean
+          description: Whether a new answer/followup addresses the post author or a nested reply addresses its parent followup author.
+        destination:
+          description: Typed, authorized destination, with no arbitrary URL.
+          oneOf:
+            - type: object
+              properties:
+                kind: { type: string, const: course }
+                courseId: { type: string }
+              required: [kind, courseId]
+              additionalProperties: false
+            - type: object
+              properties:
+                kind: { type: string, const: post }
+                postId: { type: string }
+              required: [kind, postId]
+              additionalProperties: false
+            - type: object
+              properties:
+                kind: { type: string, enum: [answer, followup] }
+                postId: { type: string }
+                responseId: { type: string }
+              required: [kind, postId, responseId]
+              additionalProperties: false
         actor:
           description: Who acted. Students see Anonymous for an anonymous actor; null for a deleted account.
           oneOf:
@@ -15068,6 +15167,10 @@ components:
         - courseName
         - postId
         - postTitle
+        - preview
+        - responseUnavailable
+        - addressedToOwner
+        - destination
         - actor
         - createdAt
         - readAt

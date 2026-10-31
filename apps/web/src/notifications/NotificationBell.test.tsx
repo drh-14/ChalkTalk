@@ -21,6 +21,7 @@ const answered: Notification = {
   actor: { displayName: "Grace Hopper" },
   createdAt: new Date().toISOString(),
   readAt: null,
+  destination: { kind: "post", postId: "post_1" },
 };
 const anonymous: Notification = {
   ...answered,
@@ -29,6 +30,7 @@ const anonymous: Notification = {
   postId: "post_2",
   postTitle: "Recursion depth",
   actor: { displayName: "Anonymous" },
+  destination: { kind: "post", postId: "post_2" },
 };
 
 function json(data: unknown, status = 200) {
@@ -225,6 +227,218 @@ describe("notification bell", () => {
     expect((await screen.findAllByRole("listitem"))[0]!.textContent).toContain(
       "Anonymous mentioned you on Why does my loop never stop?",
     );
+  });
+
+  it("renders a response preview and opens its exact answer anchor", async () => {
+    const onOpenPost = vi.fn();
+    api(
+      [1],
+      [
+        {
+          ...answered,
+          preview: "First response line\nSecond response line",
+          addressedToOwner: true,
+          destination: {
+            kind: "answer",
+            postId: "post_1",
+            responseId: "answer_1",
+          },
+        } as Notification,
+      ],
+    );
+    const user = userEvent.setup();
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={onOpenPost}
+        onOpenThread={vi.fn()}
+      />,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Notifications, 1 unread" }),
+    );
+    const card = (await screen.findAllByRole("listitem"))[0]!;
+
+    expect(card.textContent).toContain("replied to your message");
+    expect(card.textContent).toContain("First response line");
+    await user.click(within(card).getByRole("button"));
+    expect(onOpenPost).toHaveBeenCalledWith(
+      "course_1",
+      "post_1",
+      "#answer-answer_1",
+    );
+  });
+
+  it("loads another page without discarding the first and retries after failure", async () => {
+    let attempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/unread-count")) return json({ data: { count: 2 } });
+        if (url.includes("cursor=next")) {
+          attempts += 1;
+          if (attempts === 1)
+            return json({ error: { message: "Try again" } }, 503);
+          return json({
+            data: [anonymous],
+            page: { nextCursor: null, hasMore: false },
+          });
+        }
+        if (url.startsWith("/api/v1/users/me/notifications?"))
+          return json({
+            data: [answered],
+            page: { nextCursor: "next", hasMore: true },
+          });
+        throw new Error(`Unexpected ${url}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Notifications, 2 unread" }),
+    );
+    expect(await screen.findAllByRole("listitem")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Try again",
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    expect(await screen.findAllByRole("listitem")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("ignores a previous panel's pending Load more response after reopening", async () => {
+    let resolveOldPage!: (response: Response) => void;
+    let firstPages = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.endsWith("/unread-count"))
+          return Promise.resolve(json({ data: { count: 0 } }));
+        if (url.includes("cursor=old"))
+          return new Promise<Response>((resolve) => {
+            resolveOldPage = resolve;
+          });
+        if (url.startsWith("/api/v1/users/me/notifications?")) {
+          firstPages += 1;
+          return Promise.resolve(
+            json({
+              data: [firstPages === 1 ? answered : anonymous],
+              page: {
+                nextCursor: firstPages === 1 ? "old" : null,
+                hasMore: firstPages === 1,
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected ${url}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
+    const bell = await screen.findByRole("button", { name: "Notifications" });
+    await user.click(bell);
+    expect(
+      await screen.findByText("Why does my loop never stop?"),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await user.click(bell);
+    await user.click(bell);
+    expect(await screen.findByText("Recursion depth")).toBeTruthy();
+    await act(async () => {
+      resolveOldPage(
+        json({ data: [answered], page: { nextCursor: "old", hasMore: true } }),
+      );
+    });
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText("Recursion depth")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("opens the course for a scrubbed deletion card without showing deleted text", async () => {
+    const onOpenPost = vi.fn();
+    api(
+      [1],
+      [
+        {
+          ...answered,
+          kind: "post_staff_deleted",
+          postTitle: null,
+          preview: null,
+          actor: { displayName: "Tara TA" },
+          destination: { kind: "course", courseId: "course_1" },
+        },
+      ],
+    );
+    const user = userEvent.setup();
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={onOpenPost}
+        onOpenThread={vi.fn()}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Notifications, 1 unread" }),
+    );
+    const card = (await screen.findAllByRole("listitem"))[0]!;
+    expect(card.textContent).toContain("Tara TA deleted your post");
+    expect(card.textContent).not.toContain("Why does my loop never stop?");
+    await user.click(within(card).getByRole("button"));
+    expect(onOpenPost).toHaveBeenCalledWith("course_1");
+  });
+
+  it("offers retry when the initial page fails", async () => {
+    let failed = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/unread-count")) return json({ data: { count: 1 } });
+        if (url.startsWith("/api/v1/users/me/notifications?")) {
+          if (!failed) {
+            failed = true;
+            return json({ error: { message: "Try again" } }, 503);
+          }
+          return json({
+            data: [answered],
+            page: { nextCursor: null, hasMore: false },
+          });
+        }
+        throw new Error(`Unexpected ${url}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <NotificationBell
+        csrfToken="csrf"
+        onOpenPost={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Notifications, 1 unread" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Try again",
+    );
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findAllByRole("listitem")).toHaveLength(1);
   });
 
   it("opens a Thread reply without treating it as a Post notification", async () => {

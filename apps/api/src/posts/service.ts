@@ -2,9 +2,18 @@ import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
-import { recordActivity } from "../notifications/activity.js";
+import {
+  recordActivity,
+  recordPostModeration,
+} from "../notifications/activity.js";
 import { newMentions, parseMentions } from "../notifications/mentions.js";
 import { canReadPost, readablePost } from "./visibility.js";
+import {
+  publishScheduled,
+  queueAnnouncementEmails,
+  queuePublish,
+  scheduleTime,
+} from "./announce.js";
 import { endCollaborationSessions } from "../collaboration/lifecycle.js";
 import { logApiEvent, type Observability } from "../observability/index.js";
 import { POST_REVISION_SQL, type SemanticIndex } from "../semantic/index.js";
@@ -29,6 +38,7 @@ type Row = {
   announcement: boolean;
   discussion_locked: boolean;
   private: boolean;
+  scheduled_for: Date | null;
   duplicate_of_post_id: string | null;
   duplicate_status: "none" | "suggested" | "confirmed";
   last_activity_at: Date;
@@ -59,6 +69,8 @@ export type CreatePost = {
   announcement?: boolean;
   /** Questions and notes only: readable by the author and course staff. */
   private?: boolean;
+  /** Announcements only: when the worker publishes it. */
+  scheduledFor?: string;
   /** Confirm this owner's course draft revision before publication. */
   draftVersion?: number;
 };
@@ -81,8 +93,10 @@ type DraftRow = {
   version: string | number;
 };
 export type UpdatePost = Partial<
-  Omit<CreatePost, "type" | "options" | "announcement">
+  Omit<CreatePost, "type" | "options" | "announcement" | "scheduledFor">
 > & {
+  /** A new time reschedules; null publishes a scheduled announcement now. */
+  scheduledFor?: string | null;
   pinned?: boolean;
   duplicateOfPostId?: string | null;
   duplicateStatus?: "none" | "suggested" | "confirmed";
@@ -399,6 +413,7 @@ export class PostService {
       announcement: row.announcement,
       discussionLocked: row.type === "note" ? false : row.discussion_locked,
       private: row.private,
+      scheduledFor: row.scheduled_for?.toISOString() ?? null,
       duplicateOfPostId: row.duplicate_of_post_id,
       duplicateStatus: row.duplicate_status,
       lastActivityAt: row.last_activity_at.toISOString(),
@@ -741,6 +756,16 @@ export class PostService {
       );
     if (body.private && body.type === "poll")
       throw new AuthError(422, "private_poll", "Polls cannot be private");
+    if (body.scheduledFor !== undefined && !body.announcement)
+      throw new AuthError(
+        422,
+        "schedule_invalid",
+        "Only announcements can be scheduled",
+      );
+    const scheduled =
+      body.scheduledFor === undefined
+        ? undefined
+        : scheduleTime(body.scheduledFor);
     if (body.anonymous && !member.allow_anonymous_posting)
       throw new AuthError(
         409,
@@ -766,8 +791,8 @@ export class PostService {
     );
     const created = await db.query<{ created_on: string }>(
       `WITH stamp AS MATERIALIZED (SELECT clock_timestamp() AS at)
-         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,folder_id,created_at,updated_at,last_activity_at)
-         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,stamp.at,stamp.at,stamp.at FROM stamp
+         INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,announcement,pinned,private,folder_id,scheduled_for,created_at,updated_at,last_activity_at)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,stamp.at,stamp.at,stamp.at FROM stamp
          RETURNING (created_at AT TIME ZONE 'UTC')::date AS created_on`,
       [
         id,
@@ -780,6 +805,7 @@ export class PostService {
         body.announcement ?? false,
         body.private ?? false,
         body.folderId ?? null,
+        scheduled ?? null,
       ],
     );
     for (const [position, label] of (body.options ?? []).entries())
@@ -800,17 +826,14 @@ export class PostService {
           body.explanation ?? null,
         ],
       );
-    if (body.announcement)
-      // One job per recipient, so a failing address retries on its own.
-      await db.query(
-        `INSERT INTO jobs (id,kind,payload,deduplication_key)
-           SELECT gen_random_uuid(),'send_announcement_email',
-             jsonb_build_object('postId',$1::uuid,'userId',m.user_id),$1::text||':'||m.user_id
-           FROM course_memberships m JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
-           WHERE m.course_id=$2 AND m.user_id<>$3 AND m.announcement_emails
-           ON CONFLICT (kind,deduplication_key) WHERE deduplication_key IS NOT NULL DO NOTHING`,
-        [id, courseId, userId],
-      );
+    // A scheduled announcement says nothing to anyone until it publishes.
+    if (scheduled) await queuePublish(db, id, scheduled);
+    else if (body.announcement)
+      await queueAnnouncementEmails(db, {
+        postId: id,
+        courseId,
+        authorId: userId,
+      });
     if (body.type === "question")
       await db.query(
         "INSERT INTO question_creation_daily_counts(course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1) ON CONFLICT (course_id,user_id,created_on) DO UPDATE SET question_count=question_creation_daily_counts.question_count+1",
@@ -824,9 +847,11 @@ export class PostService {
       courseId,
       postId: id,
       actorId: userId,
-      ...(body.announcement ? { kind: "announcement" as const } : {}),
+      ...(body.announcement && !scheduled
+        ? { kind: "announcement" as const }
+        : {}),
       anonymous: body.anonymous ?? false,
-      mentions: parseMentions(body.bodyMarkdown),
+      ...(scheduled ? {} : { mentions: parseMentions(body.bodyMarkdown) }),
       follow: true,
     });
     const row = await this.row(db, id);
@@ -1347,7 +1372,18 @@ export class PostService {
         body.anonymous !== undefined ||
         body.tags !== undefined ||
         body.folderId !== undefined ||
-        body.private !== undefined;
+        body.private !== undefined ||
+        body.scheduledFor !== undefined;
+      if (body.scheduledFor !== undefined && !row.scheduled_for)
+        throw new AuthError(
+          422,
+          "not_scheduled",
+          "Only a scheduled announcement can be rescheduled",
+        );
+      const rescheduled =
+        typeof body.scheduledFor === "string"
+          ? scheduleTime(body.scheduledFor)
+          : undefined;
       if (body.private === true && !row.private)
         throw new AuthError(
           422,
@@ -1462,6 +1498,19 @@ export class PostService {
           body.folderId === undefined ? row.folder_id : body.folderId,
         ],
       );
+      if (rescheduled) {
+        // The earlier job finds the time changed and does nothing.
+        await db.query("UPDATE posts SET scheduled_for=$2 WHERE id=$1", [
+          id,
+          rescheduled,
+        ]);
+        await queuePublish(db, id, rescheduled);
+      } else if (body.scheduledFor === null && row.author_user_id)
+        await publishScheduled(db, {
+          postId: id,
+          courseId: row.course_id,
+          authorId: row.author_user_id,
+        });
       if (mentions.userIds.length || mentions.staff)
         await recordActivity(db, {
           courseId: row.course_id,
@@ -1495,6 +1544,35 @@ export class PostService {
         );
       }
       const updated = (await this.row(db, id))!;
+      if (staff && !author && row.author_user_id) {
+        if (
+          row.type === "question" &&
+          row.duplicate_status !== "confirmed" &&
+          status === "confirmed"
+        )
+          await recordPostModeration(db, {
+            courseId: row.course_id,
+            postId: id,
+            authorId: row.author_user_id,
+            actorId: userId,
+            kind: "post_merged",
+            canonicalPostId: targetId!,
+            sourceVersion: Number(updated.version),
+          });
+        else if (
+          status !== "confirmed" &&
+          ((body.title !== undefined && body.title !== row.title) ||
+            (body.bodyMarkdown !== undefined &&
+              body.bodyMarkdown !== row.body_markdown))
+        )
+          await recordPostModeration(db, {
+            courseId: row.course_id,
+            postId: id,
+            authorId: row.author_user_id,
+            actorId: userId,
+            kind: "post_staff_edited",
+          });
+      }
       if (
         row.type === "question" &&
         row.duplicate_status !== "confirmed" &&
@@ -1867,6 +1945,14 @@ export class PostService {
           "permission_denied",
           "Post deletion is not permitted",
         );
+      if (STAFF.has(member.role))
+        await recordPostModeration(db, {
+          courseId: row.course_id,
+          postId: id,
+          authorId: row.author_user_id,
+          actorId: userId,
+          kind: "post_staff_deleted",
+        });
       await db.query("DELETE FROM post_tags WHERE post_id=$1", [id]);
       await this.removeEmbeddings(db, id);
       await hideAttachmentsForPostTree(db, id);

@@ -3582,6 +3582,7 @@ a:focus-visible {
   position: sticky;
   top: 0;
   background: var(--surface-raised);
+  z-index: 1;
 }
 .notification-panel-head h2 {
   font-size: 1rem;
@@ -3599,14 +3600,15 @@ a:focus-visible {
 .notification-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0.45rem;
 }
 .notification-list li + li {
-  border-top: 1px solid var(--line);
+  margin-top: 0.4rem;
 }
 .notification-item {
-  background: none;
-  border: 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
   color: var(--ink);
   cursor: pointer;
   display: grid;
@@ -3633,6 +3635,34 @@ a:focus-visible {
 .notification-text {
   font-size: 0.9rem;
   line-height: 1.35;
+}
+.notification-preview {
+  color: var(--ink-muted);
+  display: -webkit-box;
+  font-size: 0.83rem;
+  line-height: 1.4;
+  overflow: hidden;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.notification-load-more {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0.7rem;
+  width: 100%;
+}
+.notification-load-more:hover {
+  background: var(--surface-sunken);
+}
+.notification-load-more:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
 }
 .notification-item:not(.unread) .notification-text {
   color: var(--ink-muted);
@@ -3804,4 +3834,43 @@ a:focus-visible {
   color: var(--ink-muted);
   font-style: normal;
   margin-left: 0.6rem;
+}
+
+/* Scheduled announcements */
+.publish-choice {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+}
+.publish-choice legend {
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 0 0.25rem;
+}
+.scheduled-notice {
+  align-items: center;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.88rem;
+  gap: 0.5rem 1rem;
+  justify-content: space-between;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+}
+.scheduled-notice-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.scheduled-notice .form-message {
+  flex-basis: 100%;
+  margin: 0;
 }

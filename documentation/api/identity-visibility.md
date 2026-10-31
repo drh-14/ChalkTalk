@@ -18,7 +18,9 @@ Anonymous Posts content remains supported; Thread messages are always identified
 
 ## Private posts
 
-A private post is readable only by its author and the course's current TAs and instructors; see [Posts](posts.md). For anyone else it is indistinguishable from a post that does not exist, and so are its answers, followups, replies, attachments, upvotes, and live sessions. Lists, search, related questions, notifications, and digests remove private posts the viewer cannot read before ranking, pagination, `hasMore`, and counts. Visibility follows the viewer's current role, so a TA who becomes a student stops seeing other students' private posts at once. Making a post public keeps its anonymity setting, so the author projection rules above still apply.
+A private post is readable only by its author and the course's current TAs and instructors; see [Posts](posts.md). For anyone else it is indistinguishable from a post that does not exist, and so are its answers, followups, replies, attachments, upvotes, and live sessions. Lists, search, related questions, and digests remove private posts the viewer cannot read before ranking, pagination, `hasMore`, and counts; [notification visibility](notifications.md) also depends on the event kind. Visibility follows the viewer's current role, so a TA who becomes a student stops seeing other students' private posts at once. Making a post public keeps its anonymity setting, so the author projection rules above still apply.
+
+A scheduled announcement follows the same rule, except that only current TAs and instructors can read it until it publishes.
 
 ## Answer contributors
 

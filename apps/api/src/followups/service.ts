@@ -103,12 +103,13 @@ export class FollowupService {
       private: boolean;
       discussion_locked: boolean;
       author_user_id: string | null;
+      scheduled_for: Date | null;
       status: string;
       allow_anonymous_posting: boolean;
       allow_followup_resolution: boolean;
       role: Role;
     }>(
-      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.discussion_locked,p.author_user_id,c.status,c.allow_anonymous_posting,c.allow_followup_resolution,m.role
+      `SELECT p.id,p.course_id,p.type,p.deleted_at,p.duplicate_status,p.private,p.discussion_locked,p.author_user_id,p.scheduled_for,c.status,c.allow_anonymous_posting,c.allow_followup_resolution,m.role
        FROM posts p JOIN courses c ON c.id=p.course_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2
        WHERE p.id=$1${lock ? " FOR NO KEY UPDATE OF p FOR SHARE OF c,m" : ""}`,
@@ -563,6 +564,7 @@ export class FollowupService {
           anonymous: row.anonymous,
           mentions,
           follow: false,
+          response: { kind: "followup", id },
         });
       return this.project(
         db,

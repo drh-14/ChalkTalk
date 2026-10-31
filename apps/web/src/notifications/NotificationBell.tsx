@@ -17,7 +17,7 @@ export function NotificationBell({
   onOpenThread,
 }: {
   csrfToken: string;
-  onOpenPost: (courseId: string, postId: string) => void;
+  onOpenPost: (courseId: string, postId?: string, hash?: string) => void;
   onOpenThread: (
     courseId: string,
     threadId: string,
@@ -29,9 +29,13 @@ export function NotificationBell({
   const [count, setCount] = useState(0);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notification[]>();
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [reload, setReload] = useState(0);
   const [error, setError] = useState<string>();
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const panelGeneration = useRef(0);
   const panelId = useId();
 
   const refreshCount = useCallback(() => {
@@ -64,11 +68,23 @@ export function NotificationBell({
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
+    const generation = ++panelGeneration.current;
+    setItems(undefined);
+    setNextCursor(null);
+    setLoadingMore(false);
     setError(undefined);
     void listNotifications({ signal: controller.signal })
-      .then((page) => setItems(page.data))
+      .then((page) => {
+        if (controller.signal.aborted || generation !== panelGeneration.current)
+          return;
+        setItems(page.data);
+        setNextCursor(page.page.nextCursor);
+      })
       .catch((caught: unknown) => {
-        if (!controller.signal.aborted)
+        if (
+          !controller.signal.aborted &&
+          generation === panelGeneration.current
+        )
           setError(
             caught instanceof Error
               ? caught.message
@@ -87,11 +103,40 @@ export function NotificationBell({
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", escape);
     return () => {
+      panelGeneration.current = generation + 1;
       controller.abort();
       document.removeEventListener("pointerdown", close);
       document.removeEventListener("keydown", escape);
     };
-  }, [open, refreshCount]);
+  }, [open, refreshCount, reload]);
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    const generation = panelGeneration.current;
+    setLoadingMore(true);
+    setError(undefined);
+    try {
+      const page = await listNotifications({ cursor: nextCursor });
+      if (generation !== panelGeneration.current) return;
+      setItems((current) => {
+        const seen = new Set(current?.map((item) => item.id));
+        return [
+          ...(current ?? []),
+          ...page.data.filter((item) => !seen.has(item.id)),
+        ];
+      });
+      setNextCursor(page.page.nextCursor);
+    } catch (caught) {
+      if (generation !== panelGeneration.current) return;
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Notifications could not be loaded.",
+      );
+    } finally {
+      if (generation === panelGeneration.current) setLoadingMore(false);
+    }
+  }
 
   async function choose(item: Notification) {
     setOpen(false);
@@ -112,7 +157,15 @@ export function NotificationBell({
         item.id,
       );
     } else {
-      onOpenPost(item.courseId, item.postId);
+      const destination = item.destination;
+      if (destination.kind === "course") onOpenPost(destination.courseId);
+      else if (destination.kind === "answer" || destination.kind === "followup")
+        onOpenPost(
+          item.courseId,
+          destination.postId,
+          `#${destination.kind}-${destination.responseId}`,
+        );
+      else onOpenPost(item.courseId, destination.postId);
     }
   }
 
@@ -175,15 +228,25 @@ export function NotificationBell({
               Mark all read
             </button>
           </div>
-          {error ? (
+          {error && (
             <p className="form-message error" role="alert">
               {error}
             </p>
-          ) : !items ? (
+          )}
+          {error && !items && (
+            <button
+              type="button"
+              className="notification-load-more"
+              onClick={() => setReload((value) => value + 1)}
+            >
+              Retry
+            </button>
+          )}
+          {!items && !error ? (
             <p className="notification-empty" aria-live="polite">
               Loading…
             </p>
-          ) : items.length === 0 ? (
+          ) : !items ? null : items.length === 0 ? (
             <p className="notification-empty">
               Nothing yet. Activity on posts you follow shows up here.
             </p>
@@ -200,15 +263,20 @@ export function NotificationBell({
                     >
                       <span className="notification-text">
                         {describeNotification(item)}{" "}
-                        <strong>
-                          {item.kind === "thread_reply_created"
-                            ? item.threadTitle
-                            : item.postTitle}
-                        </strong>
+                        {item.kind === "thread_reply_created" ? (
+                          <strong>{item.threadTitle}</strong>
+                        ) : (
+                          item.postTitle && <strong>{item.postTitle}</strong>
+                        )}
                       </span>
-                      {item.kind === "thread_reply_created" && item.preview && (
+                      {(item.kind === "thread_reply_created"
+                        ? item.preview
+                        : item.preview || item.responseUnavailable) && (
                         <span className="notification-preview">
-                          {item.preview}
+                          {item.kind !== "thread_reply_created" &&
+                          item.responseUnavailable
+                            ? "Response no longer available"
+                            : item.preview}
                         </span>
                       )}
                       <span className="notification-meta">
@@ -230,6 +298,16 @@ export function NotificationBell({
                 );
               })}
             </ul>
+          )}
+          {items && nextCursor && (
+            <button
+              type="button"
+              className="notification-load-more"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+            >
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
           )}
         </div>
       )}
