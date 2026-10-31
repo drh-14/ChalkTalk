@@ -205,6 +205,23 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     };
   }
 
+  it.each(["renamed", "deleted"] as const)(
+    "cancels frozen duplicate mail when staff identity is %s",
+    async (change) => {
+      delivered.length = 0;
+      const seeded = await seedMerge();
+      await freezeQueuedEmail(seeded.jobId);
+      await pool.query(
+        change === "renamed"
+          ? "UPDATE users SET display_name='Different Staff' WHERE id=$1"
+          : "UPDATE users SET deleted_at=now() WHERE id=$1",
+        [seeded.staffId],
+      );
+      await retryQueuedEmail(seeded.jobId);
+      expect(delivered).toEqual([]);
+    },
+  );
+
   it("sends the exact question-duplicate email with a canonical link", async () => {
     delivered.length = 0;
     const { canonical, jobId } = await seedMerge();
@@ -1384,6 +1401,15 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       expect(await status(seeded.jobId)).toBe("succeeded");
     });
 
+    it("cancels a frozen invitation after the inviter is renamed", async () => {
+      await fresh();
+      const seeded = await seedInvitation();
+      await freezeQueuedEmail(seeded.jobId);
+      await pool.query("UPDATE users SET display_name='New Inviter' WHERE id=$1", [seeded.studentId]);
+      await retryQueuedEmail(seeded.jobId);
+      expect(delivered).toEqual([]);
+    });
+
     it("retries a frozen invitation after its inviter leaves the course", async () => {
       await fresh();
       const seeded = await seedInvitation();
@@ -1556,6 +1582,24 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       expect(found.rowCount).toBe(1);
       return found.rows[0]!.id;
     }
+
+    it.each(["renamed", "deleted"] as const)(
+      "cancels a frozen announcement after the author is %s",
+      async (change) => {
+        await fresh();
+        const seeded = await seedAnnouncement();
+        const jobId = await announcementJob(seeded.postId, seeded.studentId);
+        await freezeQueuedEmail(jobId);
+        await pool.query(
+          change === "renamed"
+            ? "UPDATE users SET display_name='New Author' WHERE id=$1"
+            : "UPDATE users SET deleted_at=now() WHERE id=$1",
+          [seeded.instructorId],
+        );
+        await retryQueuedEmail(jobId);
+        expect(delivered).toEqual([]);
+      },
+    );
 
     it("emails each other member the announcement with a link", async () => {
       await fresh();
@@ -1764,6 +1808,24 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       expect(found.rowCount).toBe(1);
       return found.rows[0]!;
     }
+
+    it.each(["renamed", "deleted"] as const)(
+      "cancels frozen notification mail after the actor is %s",
+      async (change) => {
+        await fresh();
+        const seeded = await seedAnswered();
+        const { id: jobId } = await answerNotificationJob(seeded.answerId);
+        await freezeQueuedEmail(jobId);
+        await pool.query(
+          change === "renamed"
+            ? "UPDATE users SET display_name='New Actor' WHERE id=$1"
+            : "UPDATE users SET deleted_at=now() WHERE id=$1",
+          [seeded.taId],
+        );
+        await retryQueuedEmail(jobId);
+        expect(delivered).toEqual([]);
+      },
+    );
 
     it("emails the follower a bounded answer preview and an exact-response link", async () => {
       await fresh();

@@ -1152,7 +1152,7 @@ integration("daily course email digest", () => {
     });
   });
 
-  it("retries a frozen digest after an unembedded image is removed", async () => {
+  it("cancels a frozen digest after a linked image is removed", async () => {
     const post = await addQuestion(
       ids.physics,
       ids.bob,
@@ -1195,11 +1195,9 @@ integration("daily course email digest", () => {
     sender.fail = true;
     await imageDigest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
     const frozen = await pool.query<{
-      frozen_email: { attachmentIds: string[] };
+      frozen_email: { imageIds: string[] };
     }>("SELECT frozen_email FROM digest_outbox");
-    expect(frozen.rows[0]!.frozen_email.attachmentIds).toEqual(
-      attachmentIds.slice(0, 5),
-    );
+    expect(frozen.rows[0]!.frozen_email.imageIds).toEqual(attachmentIds);
     await pool.query(
       "UPDATE content_attachments SET deleted_at=now() WHERE id=$1",
       [attachmentIds[5]],
@@ -1209,13 +1207,12 @@ integration("daily course email digest", () => {
     );
     sender.fail = false;
     await imageDigest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
-    expect(sender.attempts).toHaveLength(2);
-    expect(sender.messages).toHaveLength(1);
-    expect(sender.messages[0].attachments).toHaveLength(5);
+    expect(sender.attempts).toHaveLength(1);
+    expect(sender.messages).toHaveLength(0);
     expect(
       (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
         .rows[0],
-    ).toEqual({ status: "sent", frozen_email: null });
+    ).toEqual({ status: "canceled", frozen_email: null });
   });
 
   it.each(["answer", "followup"] as const)(

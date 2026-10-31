@@ -234,6 +234,7 @@ export class JobWorker {
           post.title,
           post.source_body,
           post.canonical_body,
+          byline,
         ]),
       };
     });
@@ -290,7 +291,7 @@ export class JobWorker {
           subject: `${inviter} invited you to a live session`,
           text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly invited participants and course staff can open it.`,
         },
-        guard: JSON.stringify([row.email, row.invited_at_exact, row.title]),
+        guard: JSON.stringify([row.email, row.invited_at_exact, row.title, inviter, row.course_name]),
       };
     });
   }
@@ -314,7 +315,7 @@ export class JobWorker {
               author.display_name AS author_name,recipient.email
        FROM posts p
        JOIN courses c ON c.id=p.course_id AND c.status='active'
-       JOIN users author ON author.id=p.author_user_id
+       JOIN users author ON author.id=p.author_user_id AND author.deleted_at IS NULL
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2 AND m.announcement_emails
        JOIN users recipient ON recipient.id=$2 AND recipient.deleted_at IS NULL
        WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL AND p.scheduled_for IS NULL
@@ -340,7 +341,7 @@ export class JobWorker {
           subject: `[${clean(row.course_name)}] ${clean(row.title)}`,
           text: `${clean(row.author_name)} posted an announcement in ${clean(row.course_name)}:\n\n${clean(row.title)}\n\n${body}\n\n${url}`,
         },
-        guard: JSON.stringify([row.email, row.title, row.body_markdown]),
+        guard: JSON.stringify([row.email, row.title, row.body_markdown, clean(row.author_name), row.course_name]),
       };
     });
   }
@@ -458,6 +459,8 @@ export class JobWorker {
           row.email,
           row.title,
           responseBody ?? row.body_markdown,
+          actor,
+          row.course_name,
         ]),
       };
     });

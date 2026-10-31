@@ -49,7 +49,7 @@ type FrozenEmail = {
     bodySha256: string;
     titleSha256?: string;
   }>;
-  attachmentIds: string[];
+  imageIds: string[];
 };
 
 // All three events are creation events. Joining the active parent here also
@@ -337,9 +337,7 @@ export class DigestService {
           bodySha256: bodySha256(item.body_markdown),
           titleSha256: bodySha256(item.title),
         })),
-        attachmentIds: rendered.attachments.flatMap((attachment) =>
-          attachment.sourceId ? [attachment.sourceId] : [],
-        ),
+        imageIds: rendered.imageIds,
       };
       await client.query(
         `UPDATE digest_outbox SET frozen_email=$4::jsonb,updated_at=clock_timestamp()
@@ -404,16 +402,16 @@ export class DigestService {
         await this.cancel(client, row);
         return;
       }
-      if (snapshot.attachmentIds.length) {
+      if (snapshot.imageIds.length) {
         const attachments = await client.query<{
           id: string;
           deleted_at: Date | null;
         }>(
           `SELECT id,deleted_at FROM content_attachments WHERE id=ANY($1::uuid[]) FOR SHARE`,
-          [snapshot.attachmentIds],
+          [snapshot.imageIds],
         );
         if (
-          attachments.rows.length !== snapshot.attachmentIds.length ||
+          attachments.rows.length !== snapshot.imageIds.length ||
           attachments.rows.some((attachment) => attachment.deleted_at)
         ) {
           await this.cancel(client, row);
