@@ -263,11 +263,10 @@ export class JobWorker {
        JOIN courses c ON c.id=s.course_id AND c.status='active'
        JOIN collaboration_participants cp ON cp.collaboration_session_id=s.id AND cp.user_id=$2
        JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$2
-       JOIN course_memberships inviter_membership ON inviter_membership.course_id=s.course_id AND inviter_membership.user_id=$3
        JOIN users invitee ON invitee.id=$2 AND invitee.deleted_at IS NULL
        JOIN users inviter ON inviter.id=$3 AND inviter.deleted_at IS NULL
        WHERE s.id=$1 AND s.lifecycle_state='active'
-       FOR SHARE OF s,c,cp,m,inviter_membership,invitee,inviter`,
+       FOR SHARE OF s,c,cp,m,invitee,inviter`,
         [sessionId, inviteeUserId, inviterUserId],
       );
       const row = invitation.rows[0];

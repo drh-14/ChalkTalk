@@ -1372,6 +1372,31 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       expect(delivered).toHaveLength(1);
     });
 
+    it("sends a queued invitation after its inviter leaves the course", async () => {
+      await fresh();
+      const seeded = await seedInvitation();
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [seeded.courseId, seeded.studentId],
+      );
+      expect(await worker.runOnce()).toBe(true);
+      expect(delivered).toHaveLength(1);
+      expect(await status(seeded.jobId)).toBe("succeeded");
+    });
+
+    it("retries a frozen invitation after its inviter leaves the course", async () => {
+      await fresh();
+      const seeded = await seedInvitation();
+      await freezeQueuedEmail(seeded.jobId);
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [seeded.courseId, seeded.studentId],
+      );
+      await retryQueuedEmail(seeded.jobId);
+      expect(delivered).toHaveLength(1);
+      expect(await status(seeded.jobId)).toBe("succeeded");
+    });
+
     it("cancels frozen invitations after recipient, invitation, session, or course invalidation", async () => {
       await fresh();
       for (const invalidate of [
@@ -1380,7 +1405,6 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         "reinvited",
         "ended",
         "course",
-        "inviter-left",
         "invitee-left",
       ] as const) {
         await fresh();
@@ -1422,13 +1446,10 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
             seeded.courseId,
           ]);
-        if (invalidate === "inviter-left" || invalidate === "invitee-left")
+        if (invalidate === "invitee-left")
           await pool.query(
             "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
-            [
-              seeded.courseId,
-              invalidate === "inviter-left" ? seeded.studentId : seeded.taId,
-            ],
+            [seeded.courseId, seeded.taId],
           );
         await retryQueuedEmail(seeded.jobId);
         expect(deliveryKeys).toHaveLength(1);
