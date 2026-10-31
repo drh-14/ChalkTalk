@@ -27,6 +27,7 @@ async function app(
   includeStaffMessage = false,
   includeReplyNotice = false,
   missingNotice = false,
+  secondReplyNotice = false,
 ) {
   const writes = [];
   const reads = [];
@@ -153,6 +154,24 @@ async function app(
             createdAt: "2026-10-27T12:00:00Z",
             readAt: null,
           },
+          ...(secondReplyNotice
+            ? [
+                {
+                  id: "notice-2",
+                  kind: "thread_reply_created",
+                  courseId: "course-1",
+                  courseName: "Physics",
+                  threadId: "board-1",
+                  threadTitle: "Find a project team",
+                  conversationId: "conversation-1",
+                  messageId: "message-1",
+                  preview: "Looking for two teammates",
+                  actor: { displayName: "Sam" },
+                  createdAt: "2026-10-27T12:01:00Z",
+                  readAt: null,
+                },
+              ]
+            : []),
         ],
         page: { hasMore: false, nextCursor: null },
       });
@@ -949,8 +968,30 @@ test("an off-page notification reply is fetched, marked read, focused, then clea
   await expect(
     page.getByRole("button", { name: "Notifications", exact: true }),
   ).toBeVisible();
+  fixture.changeUnread(2);
+  await expect.poll(() => exactRequests).toBeGreaterThan(1);
+  await expect(page.locator("#thread-message-message-reply")).toBeFocused();
   await page.screenshot({
     path: resolve(evidence, "off-page-reply-target.png"),
+    fullPage: true,
+  });
+});
+
+test("a second exact reply destination in the same conversation receives focus", async ({
+  page,
+}) => {
+  await app(page, "student", "active", false, true, false, true);
+  await page.getByRole("button", { name: /Notifications/ }).click();
+  await page.getByRole("button", { name: /Pat replied in/ }).click();
+  await expect(page.locator("#thread-message-message-reply")).toBeFocused();
+  await page.getByRole("button", { name: /Notifications/ }).click();
+  await page.getByRole("button", { name: /Sam replied in/ }).click();
+  await expect(page).toHaveURL(
+    /notificationId=notice-2#thread-message-message-1$/,
+  );
+  await expect(page.locator("#thread-message-message-1")).toBeFocused();
+  await page.screenshot({
+    path: resolve(evidence, "same-conversation-second-reply-target.png"),
     fullPage: true,
   });
 });

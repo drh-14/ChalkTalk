@@ -1201,6 +1201,7 @@ function CourseFrame({
               courseId={courseId}
               boardId={route.threadId}
               conversationId={route.conversationId}
+              locationTarget={`${window.location.search}${window.location.hash}`}
               userId={session.user.id}
               staff={staff}
               active={visibleCourse.data.status === "active"}
