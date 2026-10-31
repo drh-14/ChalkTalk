@@ -208,16 +208,20 @@ export class JobWorker {
       const post = source.rows[0];
       if (!post || job.deduplicationKey !== `${sourcePostId}:${post.version}`)
         return undefined;
-      const staff = await client.query<{ display_name: string }>(
-        "SELECT display_name FROM users WHERE id=$1 AND deleted_at IS NULL",
+      const staff = await client.query<{
+        display_name: string;
+        deleted_at: Date | null;
+      }>(
+        "SELECT display_name,deleted_at FROM users WHERE id=$1 FOR SHARE",
         [staffUserId],
       );
       const role = staffRole === "ta" ? "TA" : "instructor";
-      const byline = staff.rows[0]
-        ? `${staff.rows[0].display_name.replace(/\s+/g, " ").trim()} (${role})`
-        : staffRole === "ta"
-          ? "a TA"
-          : "an instructor";
+      const byline =
+        staff.rows[0] && !staff.rows[0].deleted_at
+          ? `${staff.rows[0].display_name.replace(/\s+/g, " ").trim()} (${role})`
+          : staffRole === "ta"
+            ? "a TA"
+            : "an instructor";
       const title = post.title.replace(/\s+/g, " ").trim();
       const canonicalUrl = new URL(
         `/courses/${encodeURIComponent(post.course_id)}/posts/${encodeURIComponent(canonicalPostId)}`,
@@ -370,21 +374,19 @@ export class JobWorker {
         private: boolean;
         author_user_id: string | null;
         recipient_user_id: string;
+        actor_user_id: string | null;
         email: string;
-        actor_name: string | null;
         actor_anonymous: boolean;
       }>(
         `SELECT n.kind,n.post_id,n.course_id,c.name AS course_name,p.title,p.body_markdown,
               p.private,p.author_user_id,n.user_id AS recipient_user_id,
-              recipient.email,CASE WHEN actor.deleted_at IS NULL THEN actor.display_name END AS actor_name,
-              n.actor_anonymous
+              recipient.email,n.actor_user_id,n.actor_anonymous
        FROM notifications n
        JOIN users recipient ON recipient.id=n.user_id AND recipient.deleted_at IS NULL
        JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id AND m.activity_emails
        JOIN courses c ON c.id=n.course_id AND c.status='active'
        JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
          AND ${readablePost("p", "n.user_id", "m.role")}
-       LEFT JOIN users actor ON actor.id=n.actor_user_id
        WHERE n.id=$1 AND n.read_at IS NULL
          AND (n.kind IN ('mentioned','post_published') OR EXISTS (
            SELECT 1 FROM post_follows f WHERE f.post_id=n.post_id AND f.user_id=n.user_id AND f.following
@@ -437,10 +439,22 @@ export class JobWorker {
         mentioned: ["You were mentioned on", "mentioned you on"],
       };
       const [subject, verb] = wording[row.kind] ?? ["Activity on", "posted on"];
+      const actorUser =
+        !row.actor_anonymous && row.actor_user_id
+          ? (
+              await client.query<{
+                display_name: string;
+                deleted_at: Date | null;
+              }>(
+                "SELECT display_name,deleted_at FROM users WHERE id=$1 FOR SHARE",
+                [row.actor_user_id],
+              )
+            ).rows[0]
+          : undefined;
       const actor =
-        row.actor_anonymous || !row.actor_name
+        !actorUser || actorUser.deleted_at
           ? "Someone"
-          : clean(row.actor_name);
+          : clean(actorUser.display_name);
       const title = clean(row.title);
       const course = clean(row.course_name);
       const url = new URL(

@@ -222,6 +222,41 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     },
   );
 
+  it("holds the duplicate staff identity through provider handoff", async () => {
+    delivered.length = 0;
+    const seeded = await seedMerge();
+    let enterDelivery!: () => void;
+    let releaseDelivery!: () => void;
+    const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
+    const released = new Promise<void>((resolve) => (releaseDelivery = resolve));
+    inspectBeforeDelivery = async () => {
+      enterDelivery();
+      await released;
+    };
+    try {
+      const send = worker.runOnce();
+      await entered;
+      const rename = pool.query(
+        "UPDATE users SET display_name='Renamed Staff' WHERE id=$1",
+        [seeded.staffId],
+      );
+      const order = await Promise.race([
+        rename.then(() => "committed"),
+        new Promise<string>((resolve) =>
+          setTimeout(() => resolve("waiting"), 100),
+        ),
+      ]);
+      releaseDelivery();
+      await send;
+      await rename;
+      expect(order).toBe("waiting");
+      expect(delivered).toHaveLength(1);
+    } finally {
+      releaseDelivery();
+      inspectBeforeDelivery = undefined;
+    }
+  });
+
   it("sends the exact question-duplicate email with a canonical link", async () => {
     delivered.length = 0;
     const { canonical, jobId } = await seedMerge();
@@ -1826,6 +1861,41 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         expect(delivered).toEqual([]);
       },
     );
+
+    it("holds the notification actor identity through provider handoff", async () => {
+      await fresh();
+      const seeded = await seedAnswered();
+      let enterDelivery!: () => void;
+      let releaseDelivery!: () => void;
+      const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
+      const released = new Promise<void>((resolve) => (releaseDelivery = resolve));
+      inspectBeforeDelivery = async () => {
+        enterDelivery();
+        await released;
+      };
+      try {
+        const send = worker.runOnce();
+        await entered;
+        const rename = pool.query(
+          "UPDATE users SET display_name='Renamed Actor' WHERE id=$1",
+          [seeded.taId],
+        );
+        const order = await Promise.race([
+          rename.then(() => "committed"),
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve("waiting"), 100),
+          ),
+        ]);
+        releaseDelivery();
+        await send;
+        await rename;
+        expect(order).toBe("waiting");
+        expect(delivered).toHaveLength(1);
+      } finally {
+        releaseDelivery();
+        inspectBeforeDelivery = undefined;
+      }
+    });
 
     it("emails the follower a bounded answer preview and an exact-response link", async () => {
       await fresh();

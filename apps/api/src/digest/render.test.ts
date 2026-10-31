@@ -43,8 +43,8 @@ describe("digest email rendering", () => {
         },
       ],
     });
-    expect(result.attachments.map((attachment) => attachment.sourceId)).toEqual(
-      ["image-0", "image-1", "image-2", "image-3", "image-4"],
+    expect(result.imageIds).toEqual(
+      Array.from({ length: 6 }, (_, index) => `image-${index}`),
     );
     expect(result.html).toContain("View image: image-5.png");
     for (const attachment of result.attachments)
