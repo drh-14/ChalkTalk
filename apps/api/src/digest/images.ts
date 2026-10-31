@@ -3,6 +3,7 @@ import sharp, { type Sharp } from "sharp";
 import type { Readable } from "node:stream";
 
 export type DigestImage = {
+  id?: string;
   filename: string;
   url: string;
   sizeBytes: number;

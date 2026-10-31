@@ -17,6 +17,7 @@ import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { JobWorker } from "./worker.js";
+import { PermanentEmailDeliveryError } from "../auth/email.js";
 import { PostService, postEtag } from "../posts/service.js";
 import { AnswerService, answerEtag } from "../answers/service.js";
 import type { EmailSender } from "../auth/service.js";
@@ -33,11 +34,22 @@ let pool: Pool;
 let worker: JobWorker;
 let sequence = 0;
 const delivered: Array<{ to: string; subject: string; text: string }> = [];
+const deliveryKeys: Array<string | undefined> = [];
 let smtpFails = false;
+let dropAfterAccept = false;
+let permanentFailure = false;
+let inspectBeforeDelivery: (() => Promise<void>) | undefined;
 const emailSender: EmailSender = {
-  send: async (message) => {
+  send: async (message, options) => {
+    await inspectBeforeDelivery?.();
+    deliveryKeys.push(options?.idempotencyKey);
     if (smtpFails) throw new Error("SMTP unavailable");
+    if (permanentFailure)
+      throw new PermanentEmailDeliveryError(
+        "Resend rejected email: invalid_request",
+      );
     delivered.push(message);
+    if (dropAfterAccept) throw new Error("Connection dropped after acceptance");
   },
 };
 
@@ -75,6 +87,10 @@ integration("JobWorker PostgreSQL lifecycle", () => {
   });
 
   async function seedJob(maxAttempts = 5): Promise<Seeded> {
+    // A prior email retry may become due while these deletion tests run.
+    // Their assertions exercise one job at a time, so discard prior queued
+    // intents rather than letting timing choose which job runOnce claims.
+    await pool.query("DELETE FROM jobs WHERE status='queued'");
     sequence += 1;
     const courseId = uuidv7();
     const jobId = uuidv7();
@@ -91,6 +107,27 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       [jobId, { courseId }, maxAttempts, `course-delete:${courseId}`],
     );
     return { courseId, jobId };
+  }
+
+  async function freezeQueuedEmail(jobId: string) {
+    smtpFails = true;
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      smtpFails = false;
+    }
+    expect(
+      (
+        await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toMatchObject({ status: "queued", frozen_email: { version: 1 } });
+  }
+
+  async function retryQueuedEmail(jobId: string) {
+    await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [jobId]);
+    expect(await worker.runOnce()).toBe(true);
   }
 
   async function seedMerge(
@@ -268,6 +305,268 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     ).toEqual({ status: "succeeded", attempts: 2 });
   });
 
+  it("commits an exact frozen duplicate email before network send and reuses its key", async () => {
+    delivered.length = 0;
+    deliveryKeys.length = 0;
+    const { jobId, source } = await seedMerge("instructor");
+    smtpFails = true;
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      smtpFails = false;
+    }
+    const frozen = await pool.query<{ frozen_email: unknown }>(
+      "SELECT frozen_email FROM jobs WHERE id=$1",
+      [jobId],
+    );
+    expect(frozen.rows[0]?.frozen_email).toMatchObject({ version: 1 });
+    const initial = frozen.rows[0]?.frozen_email;
+    await pool.query(
+      "UPDATE posts SET title='Updated harmless title' WHERE id=$1",
+      [source.value.id],
+    );
+    await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [jobId]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.text).toContain("Why does this happen?");
+    expect(delivered[0]?.text).not.toContain("Updated harmless title");
+    const finished = await pool.query<{ frozen_email: unknown }>(
+      "SELECT frozen_email FROM jobs WHERE id=$1",
+      [jobId],
+    );
+    expect(finished.rows[0]?.frozen_email).toBeNull();
+    expect(initial).not.toBeNull();
+  });
+
+  it("commits the frozen job payload before the first outbound call", async () => {
+    delivered.length = 0;
+    const { jobId } = await seedMerge();
+    inspectBeforeDelivery = async () => {
+      const visible = await pool.query<{
+        frozen_email: { version: number } | null;
+      }>("SELECT frozen_email FROM jobs WHERE id=$1", [jobId]);
+      expect(visible.rows[0]?.frozen_email?.version).toBe(1);
+    };
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      inspectBeforeDelivery = undefined;
+    }
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("makes no outbound call if the frozen payload cannot commit", async () => {
+    delivered.length = 0;
+    deliveryKeys.length = 0;
+    const { jobId } = await seedMerge();
+    await pool.query(`CREATE FUNCTION fail_email_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.id='${jobId}'::uuid AND NEW.frozen_email IS NOT NULL AND OLD.frozen_email IS NULL THEN
+        RAISE EXCEPTION 'simulated snapshot failure'; END IF;
+      RETURN NEW; END $$`);
+    await pool.query(
+      "CREATE TRIGGER fail_email_snapshot BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION fail_email_snapshot()",
+    );
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      await pool.query("DROP TRIGGER fail_email_snapshot ON jobs");
+      await pool.query("DROP FUNCTION fail_email_snapshot()");
+    }
+    expect(deliveryKeys).toEqual([]);
+    expect(delivered).toEqual([]);
+    expect(
+      (
+        await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: "queued", frozen_email: null });
+  });
+
+  it("retries an ambiguous accepted send with the same payload and key", async () => {
+    delivered.length = 0;
+    deliveryKeys.length = 0;
+    const { jobId } = await seedMerge();
+    dropAfterAccept = true;
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      dropAfterAccept = false;
+    }
+    expect(delivered).toHaveLength(1);
+    await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [jobId]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toHaveLength(2);
+    expect(delivered[1]).toEqual(delivered[0]);
+    expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
+  });
+
+  it("reclaims a frozen email after a crashed worker lease expires", async () => {
+    delivered.length = 0;
+    deliveryKeys.length = 0;
+    const { jobId } = await seedMerge();
+    await freezeQueuedEmail(jobId);
+    await pool.query(
+      "UPDATE jobs SET status='running',locked_by='crashed-worker',locked_until=now()-interval '1 second' WHERE id=$1",
+      [jobId],
+    );
+    const replacement = new JobWorker(
+      pool,
+      "replacement-worker",
+      emailSender,
+      "https://app.example.edu",
+    );
+    expect(await replacement.runOnce()).toBe(true);
+    expect(delivered).toHaveLength(1);
+    expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
+    expect(
+      (
+        await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: "succeeded", frozen_email: null });
+  });
+
+  it("retries the same frozen payload when database acknowledgment fails after send", async () => {
+    delivered.length = 0;
+    deliveryKeys.length = 0;
+    const { jobId } = await seedMerge();
+    await pool.query(`CREATE FUNCTION fail_email_ack() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.id='${jobId}'::uuid AND NEW.status='succeeded' THEN
+        RAISE EXCEPTION 'simulated acknowledgment failure'; END IF;
+      RETURN NEW; END $$`);
+    await pool.query(
+      "CREATE TRIGGER fail_email_ack BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION fail_email_ack()",
+    );
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      await pool.query("DROP TRIGGER fail_email_ack ON jobs");
+      await pool.query("DROP FUNCTION fail_email_ack()");
+    }
+    expect(delivered).toHaveLength(1);
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [jobId]))
+        .rows[0],
+    ).toEqual({ status: "queued" });
+    await retryQueuedEmail(jobId);
+    expect(delivered).toHaveLength(2);
+    expect(delivered[1]).toEqual(delivered[0]);
+    expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
+  });
+
+  it("dead-letters a permanent provider rejection and removes its snapshot", async () => {
+    delivered.length = 0;
+    const { jobId } = await seedMerge();
+    permanentFailure = true;
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      permanentFailure = false;
+    }
+    expect(delivered).toEqual([]);
+    expect(
+      (
+        await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: "dead", frozen_email: null });
+  });
+
+  it("cancels a frozen duplicate email if the author address or body changes", async () => {
+    for (const mutation of ["address", "body"] as const) {
+      delivered.length = 0;
+      deliveryKeys.length = 0;
+      const { jobId, authorId, source } = await seedMerge();
+      smtpFails = true;
+      try {
+        expect(await worker.runOnce()).toBe(true);
+      } finally {
+        smtpFails = false;
+      }
+      if (mutation === "address")
+        await pool.query("UPDATE users SET email=$2 WHERE id=$1", [
+          authorId,
+          `changed-${sequence}@jobs.example.edu`,
+        ]);
+      else
+        await pool.query(
+          "UPDATE posts SET body_markdown='Substantively revised' WHERE id=$1",
+          [source.value.id],
+        );
+      await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
+        jobId,
+      ]);
+      expect(await worker.runOnce()).toBe(true);
+      expect(deliveryKeys).toHaveLength(1);
+      expect(delivered).toEqual([]);
+      expect(
+        (
+          await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+            jobId,
+          ])
+        ).rows[0],
+      ).toEqual({ status: "succeeded", frozen_email: null });
+    }
+  });
+
+  it("cancels frozen duplicate mail after unmerge, source or target removal, privacy, membership, or course changes", async () => {
+    for (const invalidate of [
+      "unmerge",
+      "source-deleted",
+      "target-deleted",
+      "target-private",
+      "author-left",
+      "course-archived",
+    ] as const) {
+      delivered.length = 0;
+      deliveryKeys.length = 0;
+      const seeded = await seedMerge();
+      await freezeQueuedEmail(seeded.jobId);
+      if (invalidate === "unmerge")
+        await pool.query(
+          "UPDATE posts SET duplicate_status='none',duplicate_of_post_id=NULL WHERE id=$1",
+          [seeded.source.value.id],
+        );
+      if (invalidate === "source-deleted")
+        await pool.query(
+          "UPDATE posts SET deleted_at=now(),title=NULL,body_markdown=NULL,author_user_id=NULL WHERE id=$1",
+          [seeded.source.value.id],
+        );
+      if (invalidate === "target-deleted")
+        await pool.query(
+          "UPDATE posts SET deleted_at=now(),title=NULL,body_markdown=NULL,author_user_id=NULL WHERE id=$1",
+          [seeded.canonical.value.id],
+        );
+      if (invalidate === "target-private")
+        await pool.query("UPDATE posts SET private=true WHERE id=$1", [
+          seeded.canonical.value.id,
+        ]);
+      if (invalidate === "author-left")
+        await pool.query(
+          "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+          [seeded.courseId, seeded.authorId],
+        );
+      if (invalidate === "course-archived")
+        await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+          seeded.courseId,
+        ]);
+      await retryQueuedEmail(seeded.jobId);
+      expect(deliveryKeys).toHaveLength(1);
+      expect(delivered).toEqual([]);
+      expect(
+        (
+          await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+            seeded.jobId,
+          ])
+        ).rows[0],
+      ).toEqual({ status: "succeeded", frozen_email: null });
+    }
+  });
+
   it("cancels a queued notification after unmerge or membership removal", async () => {
     delivered.length = 0;
     const unmerged = await seedMerge();
@@ -334,6 +633,40 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       (await pool.query("SELECT status FROM jobs WHERE id=$1", [first.jobId]))
         .rows[0],
     ).toEqual({ status: "succeeded" });
+  });
+
+  it("cancels a frozen duplicate email after unmerge and re-merge to the same post", async () => {
+    delivered.length = 0;
+    const first = await seedMerge();
+    smtpFails = true;
+    try {
+      expect(await worker.runOnce()).toBe(true);
+    } finally {
+      smtpFails = false;
+    }
+    const posts = new PostService(pool);
+    const unmerged = await posts.update(
+      first.source.value.id,
+      first.staffId,
+      postEtag(first.merged),
+      { duplicateOfPostId: null, duplicateStatus: "none" },
+    );
+    await posts.update(
+      first.source.value.id,
+      first.staffId,
+      postEtag(unmerged),
+      {
+        duplicateOfPostId: first.canonical.value.id,
+        duplicateStatus: "confirmed",
+      },
+    );
+    await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
+      first.jobId,
+    ]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toEqual([]);
+    expect(await worker.runOnce()).toBe(true);
+    expect(delivered).toHaveLength(1);
   });
 
   it("uses a role-only byline when the confirming staff account was deleted", async () => {
@@ -932,6 +1265,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     // Jobs left by earlier tests would otherwise be claimed first.
     async function fresh() {
       while (await worker.runOnce());
+      // Earlier retry tests can leave delayed jobs that become due midway
+      // through this matrix. Keep each invitation case isolated.
+      await pool.query("DELETE FROM jobs WHERE status='queued'");
       delivered.length = 0;
     }
     async function seedInvitation() {
@@ -1035,6 +1371,117 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       while (await worker.runOnce());
       expect(delivered).toHaveLength(1);
     });
+
+    it("cancels frozen invitations after recipient, invitation, session, or course invalidation", async () => {
+      await fresh();
+      for (const invalidate of [
+        "address",
+        "removed",
+        "reinvited",
+        "ended",
+        "course",
+        "inviter-left",
+        "invitee-left",
+      ] as const) {
+        await fresh();
+        const seeded = await seedInvitation();
+        delivered.length = 0;
+        deliveryKeys.length = 0;
+        await freezeQueuedEmail(seeded.jobId);
+        if (invalidate === "address")
+          await pool.query("UPDATE users SET email=$2 WHERE id=$1", [
+            seeded.taId,
+            `changed-${sequence}@jobs.example.edu`,
+          ]);
+        if (invalidate === "removed" || invalidate === "reinvited") {
+          await seeded.sessions.remove(
+            seeded.sessionId,
+            seeded.studentId,
+            seeded.taId,
+          );
+          if (invalidate === "reinvited") {
+            await seeded.sessions.invite(
+              seeded.sessionId,
+              seeded.studentId,
+              seeded.taId,
+            );
+            // Exercise only the old frozen invitation; its replacement has a
+            // separate valid email intent and would obscure this assertion.
+            await pool.query(
+              "DELETE FROM jobs WHERE kind='send_collaboration_invitation_email' AND payload->>'sessionId'=$1 AND id<>$2",
+              [seeded.sessionId, seeded.jobId],
+            );
+          }
+        }
+        if (invalidate === "ended")
+          await pool.query(
+            "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=now() WHERE id=$1",
+            [seeded.sessionId],
+          );
+        if (invalidate === "course")
+          await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+            seeded.courseId,
+          ]);
+        if (invalidate === "inviter-left" || invalidate === "invitee-left")
+          await pool.query(
+            "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+            [
+              seeded.courseId,
+              invalidate === "inviter-left" ? seeded.studentId : seeded.taId,
+            ],
+          );
+        await retryQueuedEmail(seeded.jobId);
+        expect(deliveryKeys).toHaveLength(1);
+        expect(delivered).toEqual([]);
+        expect(
+          (
+            await pool.query(
+              "SELECT status,frozen_email FROM jobs WHERE id=$1",
+              [seeded.jobId],
+            )
+          ).rows[0],
+        ).toEqual({ status: "succeeded", frozen_email: null });
+      }
+    });
+
+    it("does not replay a frozen invitation after a same-millisecond reinvite", async () => {
+      await fresh();
+      const seeded = await seedInvitation();
+      const originalAt = "2026-10-30T12:00:00.123100Z";
+      const replacementAt = "2026-10-30T12:00:00.123200Z";
+      await pool.query(
+        "UPDATE collaboration_participants SET created_at=$3 WHERE collaboration_session_id=$1 AND user_id=$2",
+        [seeded.sessionId, seeded.taId, originalAt],
+      );
+      await pool.query("UPDATE jobs SET deduplication_key=$2 WHERE id=$1", [
+        seeded.jobId,
+        `${seeded.sessionId}:${seeded.taId}:${Date.parse(originalAt)}`,
+      ]);
+      delivered.length = 0;
+      deliveryKeys.length = 0;
+      await freezeQueuedEmail(seeded.jobId);
+      await seeded.sessions.remove(
+        seeded.sessionId,
+        seeded.studentId,
+        seeded.taId,
+      );
+      await seeded.sessions.invite(
+        seeded.sessionId,
+        seeded.studentId,
+        seeded.taId,
+      );
+      await pool.query(
+        "UPDATE collaboration_participants SET created_at=$3 WHERE collaboration_session_id=$1 AND user_id=$2",
+        [seeded.sessionId, seeded.taId, replacementAt],
+      );
+      await pool.query(
+        "DELETE FROM jobs WHERE kind='send_collaboration_invitation_email' AND payload->>'sessionId'=$1 AND id<>$2",
+        [seeded.sessionId, seeded.jobId],
+      );
+      await retryQueuedEmail(seeded.jobId);
+      expect(deliveryKeys).toHaveLength(1);
+      expect(delivered).toEqual([]);
+    });
   });
 
   describe("announcement email", () => {
@@ -1072,6 +1519,15 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         announcement: true,
       });
       return { courseId, instructorId, studentId, postId: post.value.id };
+    }
+
+    async function announcementJob(postId: string, userId: string) {
+      const found = await pool.query<{ id: string }>(
+        "SELECT id FROM jobs WHERE kind='send_announcement_email' AND payload->>'postId'=$1 AND payload->>'userId'=$2",
+        [postId, userId],
+      );
+      expect(found.rowCount).toBe(1);
+      return found.rows[0]!.id;
     }
 
     it("emails each other member the announcement with a link", async () => {
@@ -1171,6 +1627,58 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       while (await worker.runOnce());
       expect(delivered).toEqual([]);
     });
+
+    it("cancels frozen announcements after address, body, opt-out, deletion, or course changes", async () => {
+      await fresh();
+      for (const invalidate of [
+        "address",
+        "body",
+        "optout",
+        "deleted",
+        "course",
+      ] as const) {
+        const seeded = await seedAnnouncement();
+        const jobId = await announcementJob(seeded.postId, seeded.studentId);
+        delivered.length = 0;
+        deliveryKeys.length = 0;
+        await freezeQueuedEmail(jobId);
+        if (invalidate === "address")
+          await pool.query("UPDATE users SET email=$2 WHERE id=$1", [
+            seeded.studentId,
+            `changed-${sequence}@jobs.example.edu`,
+          ]);
+        if (invalidate === "body")
+          await pool.query(
+            "UPDATE posts SET body_markdown='New announcement content' WHERE id=$1",
+            [seeded.postId],
+          );
+        if (invalidate === "optout")
+          await pool.query(
+            "UPDATE course_memberships SET announcement_emails=false WHERE course_id=$1 AND user_id=$2",
+            [seeded.courseId, seeded.studentId],
+          );
+        if (invalidate === "deleted")
+          await pool.query(
+            "UPDATE posts SET deleted_at=now(),author_user_id=NULL,title=NULL,body_markdown=NULL WHERE id=$1",
+            [seeded.postId],
+          );
+        if (invalidate === "course")
+          await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+            seeded.courseId,
+          ]);
+        await retryQueuedEmail(jobId);
+        expect(deliveryKeys).toHaveLength(1);
+        expect(delivered).toEqual([]);
+        expect(
+          (
+            await pool.query(
+              "SELECT status,frozen_email FROM jobs WHERE id=$1",
+              [jobId],
+            )
+          ).rows[0],
+        ).toEqual({ status: "succeeded", frozen_email: null });
+      }
+    });
   });
 
   describe("notification email", () => {
@@ -1215,6 +1723,15 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       return { courseId, studentId, taId, postId, answerId: answer.value.id };
     }
 
+    async function answerNotificationJob(answerId: string) {
+      const found = await pool.query<{ id: string; notification_id: string }>(
+        "SELECT id,payload->>'notificationId' AS notification_id FROM jobs WHERE kind='send_notification_email' AND payload->>'responseId'=$1",
+        [answerId],
+      );
+      expect(found.rowCount).toBe(1);
+      return found.rows[0]!;
+    }
+
     it("emails the follower a bounded answer preview and an exact-response link", async () => {
       await fresh();
       const { courseId, postId, answerId } = await seedAnswered();
@@ -1234,6 +1751,88 @@ https://app.example.edu/courses/${courseId}/posts/${postId}#answer-${answerId}
 To stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
         },
       ]);
+    });
+
+    it("cancels frozen response mail after address, body, read, unfollow, deletion, or course changes", async () => {
+      await fresh();
+      for (const invalidate of [
+        "address",
+        "body",
+        "read",
+        "unfollow",
+        "deleted",
+        "course",
+        "notification-deleted",
+        "post-deleted",
+        "optout",
+        "left",
+      ] as const) {
+        const seeded = await seedAnswered();
+        const { id: jobId, notification_id: notificationId } =
+          await answerNotificationJob(seeded.answerId);
+        delivered.length = 0;
+        deliveryKeys.length = 0;
+        await freezeQueuedEmail(jobId);
+        if (invalidate === "address")
+          await pool.query("UPDATE users SET email=$2 WHERE id=$1", [
+            seeded.studentId,
+            `changed-${sequence}@jobs.example.edu`,
+          ]);
+        if (invalidate === "body")
+          await pool.query(
+            "UPDATE answers SET body_markdown='New response content' WHERE id=$1",
+            [seeded.answerId],
+          );
+        if (invalidate === "read")
+          await pool.query(
+            "UPDATE notifications SET read_at=now() WHERE id=$1",
+            [notificationId],
+          );
+        if (invalidate === "unfollow")
+          await pool.query(
+            "UPDATE post_follows SET following=false WHERE post_id=$1 AND user_id=$2",
+            [seeded.postId, seeded.studentId],
+          );
+        if (invalidate === "deleted")
+          await pool.query(
+            "UPDATE answers SET deleted_at=now(),body_markdown=NULL WHERE id=$1",
+            [seeded.answerId],
+          );
+        if (invalidate === "course")
+          await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+            seeded.courseId,
+          ]);
+        if (invalidate === "notification-deleted")
+          await pool.query("DELETE FROM notifications WHERE id=$1", [
+            notificationId,
+          ]);
+        if (invalidate === "post-deleted")
+          await pool.query(
+            "UPDATE posts SET deleted_at=now(),title=NULL,body_markdown=NULL,author_user_id=NULL WHERE id=$1",
+            [seeded.postId],
+          );
+        if (invalidate === "optout")
+          await pool.query(
+            "UPDATE course_memberships SET activity_emails=false WHERE course_id=$1 AND user_id=$2",
+            [seeded.courseId, seeded.studentId],
+          );
+        if (invalidate === "left")
+          await pool.query(
+            "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+            [seeded.courseId, seeded.studentId],
+          );
+        await retryQueuedEmail(jobId);
+        expect(deliveryKeys).toHaveLength(1);
+        expect(delivered).toEqual([]);
+        expect(
+          (
+            await pool.query(
+              "SELECT status,frozen_email FROM jobs WHERE id=$1",
+              [jobId],
+            )
+          ).rows[0],
+        ).toEqual({ status: "succeeded", frozen_email: null });
+      }
     });
 
     it("does not block activity opt-out during SMTP delivery", async () => {
@@ -1474,6 +2073,59 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
       );
       while (await worker.runOnce());
       expect(delivered).toEqual([]);
+    });
+
+    it("holds private staff access through the provider handoff", async () => {
+      await fresh();
+      const { courseId, postId, taId } = await seedAnswered();
+      while (await worker.runOnce());
+      delivered.length = 0;
+      await pool.query("UPDATE posts SET private=true WHERE id=$1", [postId]);
+      await pool.query(
+        "UPDATE course_memberships SET activity_emails=true WHERE course_id=$1 AND user_id=$2",
+        [courseId, taId],
+      );
+      const notification = await pool.query<{ id: string }>(
+        "INSERT INTO notifications (id,user_id,course_id,post_id,kind,actor_user_id) VALUES (gen_random_uuid(),$1,$2,$3,'mentioned',$1) RETURNING id",
+        [taId, courseId, postId],
+      );
+      const id = notification.rows[0]!.id;
+      await pool.query(
+        "INSERT INTO jobs (id,kind,payload,deduplication_key) VALUES (gen_random_uuid(),'send_notification_email',$1,$2)",
+        [{ notificationId: id }, id],
+      );
+      let enterDelivery!: () => void;
+      let releaseDelivery!: () => void;
+      const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
+      const released = new Promise<void>(
+        (resolve) => (releaseDelivery = resolve),
+      );
+      inspectBeforeDelivery = async () => {
+        enterDelivery();
+        await released;
+      };
+      try {
+        const send = worker.runOnce();
+        await entered;
+        const demotion = pool.query(
+          "UPDATE course_memberships SET role='student' WHERE course_id=$1 AND user_id=$2",
+          [courseId, taId],
+        );
+        const order = await Promise.race([
+          demotion.then(() => "committed"),
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve("waiting"), 100),
+          ),
+        ]);
+        releaseDelivery();
+        await send;
+        await demotion;
+        expect(order).toBe("waiting");
+        expect(delivered).toHaveLength(1);
+      } finally {
+        releaseDelivery();
+        inspectBeforeDelivery = undefined;
+      }
     });
 
     it("sends nothing once the notification, post, or recipient no longer qualifies", async () => {

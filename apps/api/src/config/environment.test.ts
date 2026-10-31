@@ -9,6 +9,34 @@ const base = {
 };
 
 describe("authentication environment", () => {
+  it("uses SMTP locally and requires explicit Resend credentials in HTTPS mode", () => {
+    expect(loadEnvironment(base).email.provider).toBe("smtp");
+    expect(() =>
+      loadEnvironment({ ...base, EMAIL_PROVIDER: "invalid" }),
+    ).toThrow("EMAIL_PROVIDER");
+    expect(() =>
+      loadEnvironment({ ...base, EMAIL_PROVIDER: "resend" }),
+    ).toThrow("RESEND_API_KEY");
+    expect(() =>
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "resend",
+        RESEND_API_KEY: "re_test",
+      }),
+    ).toThrow("EMAIL_FROM");
+    expect(
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "resend",
+        RESEND_API_KEY: "re_test",
+        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+      }).email,
+    ).toEqual({
+      provider: "resend",
+      from: "ChalkTalk <noreply@example.edu>",
+      resendApiKey: "re_test",
+    });
+  });
   it("disables proxy trust by default and only accepts one explicit hop", () => {
     expect(loadEnvironment(base).trustProxyHops).toBe(0);
     expect(

@@ -897,7 +897,7 @@ curl --request PATCH '/api/v1/users/me/password' \
 
 ### **`POST /api/v1/password-reset-requests`**
 
-Requests a password-reset email. For a syntactically valid request, the server returns `202 Accepted` no sooner than one second after processing begins, whether or not the email exists or SMTP delivery succeeds, preventing account discovery through either status or timing. For an existing account, SMTP delivery is attempted for at most 750 milliseconds; a delivery failure or timeout is intentionally not reported to the caller.
+Requests a password-reset email. For a syntactically valid request, the server returns `202 Accepted` no sooner than one second after processing begins, whether or not the email exists or delivery succeeds, preventing account discovery through either status or timing. For an existing account, delivery is attempted for at most 750 milliseconds; a failure or timeout is intentionally not reported to the caller.
 
 **Authentication:** None.
 

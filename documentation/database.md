@@ -80,6 +80,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `(recipient_user_id, course_id, activity_date)`: unique key preventing duplicate queued intents.
 - `status`: `queued`, `running`, `sent`, or `canceled`.
 - `attempts`, `available_at`, `locked_by`, `locked_until`, `last_error`, `sent_at`, `created_at`, `updated_at`: claim, retry, and delivery state.
+- `frozen_email`: nullable `jsonb`; versioned exact email payload (including base64-encoded inline images), recipient address, item-body hashes, and attachment IDs. Committed before the first provider handoff, reused with a stable delivery key on retries, and cleared on send or cancellation. Retries cancel rather than recompose if the recipient address, eligibility, any included item body/access, or an included attachment changes.
 
 For delivery and visibility behavior, see the [daily course email digest](api/daily-course-email-digest.md).
 
@@ -100,6 +101,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `attempts`, `max_attempts`: `integer`.
 - `available_at`, `locked_until`, `finished_at`, `created_at`, `updated_at`: `timestamptz`; lock and completion times are nullable.
 - `locked_by`, `last_error`: `text`, nullable.
+- `frozen_email`: nullable `jsonb`; versioned exact queued email payload and current-content guard. It commits before the first provider handoff, is retried with a stable key derived from the job ID, and is cleared on success, cancellation, or terminal provider failure. Current address, membership, preference, content, and course status are rechecked before each attempt; the frozen payload is not authorization to send.
 - `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `publish_scheduled_announcement` jobs use a `post-id:scheduled-for` deduplication key, a payload containing the post ID and the scheduled time, and `available_at` set to that time; the worker publishes only if the post is still scheduled for exactly that time. `send_notification_email` jobs, queued for recipients who opted in to activity emails and never for announcements, use the notification ID as deduplication key and a payload containing it. New answer/followup/reply jobs also carry optional `responseKind` (`answer` or `followup`) and `responseId` fields so the worker can recheck and link the current response; older payloads without those fields remain valid. `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
 
 ## Courses and membership

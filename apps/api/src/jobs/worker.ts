@@ -6,6 +6,11 @@ import type { EmailSender } from "../auth/service.js";
 import type { Observability } from "../observability/index.js";
 import type { SemanticIndex } from "../semantic/index.js";
 import { readablePost } from "../posts/visibility.js";
+import { PermanentEmailDeliveryError } from "../auth/email.js";
+
+type OutboundMessage = Parameters<EmailSender["send"]>[0];
+type EmailCandidate = { message: OutboundMessage; guard: string };
+type FrozenEmail = { version: 1; message: OutboundMessage; guard: string };
 
 type Job = {
   id: string;
@@ -111,6 +116,60 @@ export class JobWorker {
     });
   }
 
+  /** Commit the provider payload before any network send, then recheck under a send-time lock. */
+  private async sendQueuedEmail(
+    job: Job,
+    candidate: (
+      client: PoolClient,
+      prepared: boolean,
+    ) => Promise<EmailCandidate | undefined>,
+  ): Promise<void> {
+    if (!this.emailSender) throw new Error("Email delivery is not configured");
+    const claim = (client: PoolClient) =>
+      client.query<{ frozen_email: FrozenEmail | null }>(
+        "SELECT frozen_email FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
+        [job.id, this.workerId, job.attempts],
+      );
+    await this.transaction(async (client) => {
+      const row = (await claim(client)).rows[0];
+      if (!row || row.frozen_email) return;
+      const current = await candidate(client, false);
+      if (!current) return;
+      const frozen: FrozenEmail = {
+        version: 1,
+        message: {
+          ...current.message,
+          ...(this.emailSender!.defaultFrom
+            ? { from: this.emailSender!.defaultFrom }
+            : {}),
+        },
+        guard: current.guard,
+      };
+      await client.query("UPDATE jobs SET frozen_email=$1 WHERE id=$2", [
+        frozen,
+        job.id,
+      ]);
+    });
+    await this.transaction(async (client) => {
+      const row = (await claim(client)).rows[0];
+      const frozen = row?.frozen_email;
+      if (!frozen) return;
+      if (frozen.version !== 1)
+        throw new Error("Unsupported frozen email version");
+      const current = await candidate(client, true);
+      if (
+        !current ||
+        current.guard !== frozen.guard ||
+        current.message.to !== frozen.message.to
+      )
+        return;
+      await this.emailSender!.send(frozen.message, {
+        idempotencyKey: `job-${job.id}`,
+        signal: AbortSignal.timeout(30_000),
+      });
+    });
+  }
+
   private async sendQuestionDuplicateEmail(job: Job): Promise<void> {
     if (!this.emailSender || !this.frontendBaseUrl)
       throw new Error("Question duplicate email delivery is not configured");
@@ -123,13 +182,17 @@ export class JobWorker {
       (staffRole !== "ta" && staffRole !== "instructor")
     )
       throw new Error("Question duplicate email job payload is invalid");
-    const source = await this.pool.query<{
-      title: string;
-      course_id: string;
-      version: string;
-      email: string;
-    }>(
-      `SELECT p.title,p.course_id,p.version,u.email
+    await this.sendQueuedEmail(job, async (client) => {
+      const source = await client.query<{
+        title: string;
+        course_id: string;
+        version: string;
+        email: string;
+        source_body: string;
+        canonical_body: string;
+      }>(
+        `SELECT p.title,p.course_id,p.version,u.email,p.body_markdown AS source_body,
+              canonical.body_markdown AS canonical_body
        FROM posts p
        JOIN users u ON u.id=p.author_user_id AND u.deleted_at IS NULL
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=u.id
@@ -137,31 +200,40 @@ export class JobWorker {
        JOIN posts canonical ON canonical.id=$2 AND canonical.course_id=p.course_id
          AND canonical.deleted_at IS NULL AND canonical.duplicate_status <> 'confirmed' AND NOT canonical.private
        WHERE p.id=$1 AND p.type='question' AND p.deleted_at IS NULL
-         AND p.duplicate_status='confirmed' AND p.duplicate_of_post_id=$2`,
-      [sourcePostId, canonicalPostId],
-    );
-    const post = source.rows[0];
-    if (!post || job.deduplicationKey !== `${sourcePostId}:${post.version}`)
-      return;
-    const staff = await this.pool.query<{ display_name: string }>(
-      "SELECT display_name FROM users WHERE id=$1 AND deleted_at IS NULL",
-      [staffUserId],
-    );
-    const role = staffRole === "ta" ? "TA" : "instructor";
-    const byline = staff.rows[0]
-      ? `${staff.rows[0].display_name.replace(/\s+/g, " ").trim()} (${role})`
-      : staffRole === "ta"
-        ? "a TA"
-        : "an instructor";
-    const title = post.title.replace(/\s+/g, " ").trim();
-    const canonicalUrl = new URL(
-      `/courses/${encodeURIComponent(post.course_id)}/posts/${encodeURIComponent(canonicalPostId)}`,
-      this.frontendBaseUrl,
-    ).toString();
-    await this.emailSender.send({
-      to: post.email,
-      subject: "Your post has been marked as a duplicate",
-      text: `Your question "${title}" was marked as a duplicate by ${byline}.\n\n${canonicalUrl}`,
+         AND p.duplicate_status='confirmed' AND p.duplicate_of_post_id=$2
+       FOR SHARE OF p,u,m,c,canonical`,
+        [sourcePostId, canonicalPostId],
+      );
+      const post = source.rows[0];
+      if (!post || job.deduplicationKey !== `${sourcePostId}:${post.version}`)
+        return undefined;
+      const staff = await client.query<{ display_name: string }>(
+        "SELECT display_name FROM users WHERE id=$1 AND deleted_at IS NULL",
+        [staffUserId],
+      );
+      const role = staffRole === "ta" ? "TA" : "instructor";
+      const byline = staff.rows[0]
+        ? `${staff.rows[0].display_name.replace(/\s+/g, " ").trim()} (${role})`
+        : staffRole === "ta"
+          ? "a TA"
+          : "an instructor";
+      const title = post.title.replace(/\s+/g, " ").trim();
+      const canonicalUrl = new URL(
+        `/courses/${encodeURIComponent(post.course_id)}/posts/${encodeURIComponent(canonicalPostId)}`,
+        this.frontendBaseUrl,
+      ).toString();
+      return {
+        message: {
+          to: post.email,
+          subject: "Your post has been marked as a duplicate",
+          text: `Your question "${title}" was marked as a duplicate by ${byline}.\n\n${canonicalUrl}`,
+        },
+        guard: JSON.stringify([
+          post.email,
+          post.source_body,
+          post.canonical_body,
+        ]),
+      };
     });
   }
 
@@ -172,60 +244,63 @@ export class JobWorker {
     if (!sessionId || !inviteeUserId || !inviterUserId)
       throw new Error("Invitation email job payload is invalid");
     // Sends only while the invitation that queued this job still stands.
-    const invitation = await this.pool.query<{
-      title: string;
-      course_id: string;
-      course_name: string;
-      email: string;
-      inviter_name: string;
-      invited_at_ms: string;
-    }>(
-      `SELECT s.title,s.course_id,c.name AS course_name,invitee.email,
+    await this.sendQueuedEmail(job, async (client, prepared) => {
+      const invitation = await client.query<{
+        title: string;
+        course_id: string;
+        course_name: string;
+        email: string;
+        inviter_name: string;
+        invited_at_ms: string;
+        invited_at_exact: string;
+      }>(
+        `SELECT s.title,s.course_id,c.name AS course_name,invitee.email,
               inviter.display_name AS inviter_name,
-              floor(extract(epoch FROM cp.created_at)*1000)::bigint AS invited_at_ms
+              floor(extract(epoch FROM cp.created_at)*1000)::bigint AS invited_at_ms,
+              cp.created_at::text AS invited_at_exact
        FROM collaboration_sessions s
        JOIN courses c ON c.id=s.course_id AND c.status='active'
        JOIN collaboration_participants cp ON cp.collaboration_session_id=s.id AND cp.user_id=$2
        JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$2
+       JOIN course_memberships inviter_membership ON inviter_membership.course_id=s.course_id AND inviter_membership.user_id=$3
        JOIN users invitee ON invitee.id=$2 AND invitee.deleted_at IS NULL
        JOIN users inviter ON inviter.id=$3 AND inviter.deleted_at IS NULL
-       WHERE s.id=$1 AND s.lifecycle_state='active'`,
-      [sessionId, inviteeUserId, inviterUserId],
-    );
-    const row = invitation.rows[0];
-    if (
-      !row ||
-      job.deduplicationKey !==
-        `${sessionId}:${inviteeUserId}:${row.invited_at_ms}`
-    )
-      return;
-    const clean = (value: string) => value.replace(/\s+/g, " ").trim();
-    const inviter = clean(row.inviter_name);
-    const url = new URL(
-      `/courses/${encodeURIComponent(row.course_id)}/sessions/${encodeURIComponent(sessionId)}`,
-      this.frontendBaseUrl,
-    ).toString();
-    await this.emailSender.send({
-      to: row.email,
-      subject: `${inviter} invited you to a live session`,
-      text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly invited participants and course staff can open it.`,
+       WHERE s.id=$1 AND s.lifecycle_state='active'
+       FOR SHARE OF s,c,cp,m,inviter_membership,invitee,inviter`,
+        [sessionId, inviteeUserId, inviterUserId],
+      );
+      const row = invitation.rows[0];
+      if (
+        !row ||
+        (!prepared &&
+          job.deduplicationKey !==
+            `${sessionId}:${inviteeUserId}:${row.invited_at_ms}`)
+      )
+        return undefined;
+      const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+      const inviter = clean(row.inviter_name);
+      const url = new URL(
+        `/courses/${encodeURIComponent(row.course_id)}/sessions/${encodeURIComponent(sessionId)}`,
+        this.frontendBaseUrl,
+      ).toString();
+      return {
+        message: {
+          to: row.email,
+          subject: `${inviter} invited you to a live session`,
+          text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly invited participants and course staff can open it.`,
+        },
+        guard: JSON.stringify([row.email, row.invited_at_exact]),
+      };
     });
   }
 
   private async sendAnnouncementEmail(job: Job): Promise<void> {
-    const emailSender = this.emailSender;
-    if (!emailSender || !this.frontendBaseUrl)
+    if (!this.emailSender || !this.frontendBaseUrl)
       throw new Error("Announcement email delivery is not configured");
     const { postId, userId } = job.payload;
     if (!postId || !userId)
       throw new Error("Announcement email job payload is invalid");
-    await this.transaction(async (client) => {
-      const claimed = await client.query(
-        "SELECT id FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
-        [job.id, this.workerId, job.attempts],
-      );
-      if (!claimed.rows[0]) return;
-      // Sends only while the announcement stands and the recipient is a member.
+    await this.sendQueuedEmail(job, async (client, prepared) => {
       const found = await client.query<{
         title: string;
         body_markdown: string;
@@ -241,11 +316,13 @@ export class JobWorker {
        JOIN users author ON author.id=p.author_user_id
        JOIN course_memberships m ON m.course_id=p.course_id AND m.user_id=$2 AND m.announcement_emails
        JOIN users recipient ON recipient.id=$2 AND recipient.deleted_at IS NULL
-       WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL AND p.scheduled_for IS NULL`,
+       WHERE p.id=$1 AND p.announcement AND p.deleted_at IS NULL AND p.scheduled_for IS NULL
+       FOR SHARE OF p,c,author,recipient`,
         [postId, userId],
       );
       const row = found.rows[0];
-      if (!row || job.deduplicationKey !== `${postId}:${userId}`) return;
+      if (!row || (!prepared && job.deduplicationKey !== `${postId}:${userId}`))
+        return undefined;
       const clean = (value: string) => value.replace(/\s+/g, " ").trim();
       const limit = 2000;
       const body =
@@ -256,21 +333,19 @@ export class JobWorker {
         `/courses/${encodeURIComponent(row.course_id)}/posts/${encodeURIComponent(postId)}`,
         this.frontendBaseUrl,
       ).toString();
-      await emailSender.send({
-        to: row.email,
-        subject: `[${clean(row.course_name)}] ${clean(row.title)}`,
-        text: `${clean(row.author_name)} posted an announcement in ${clean(row.course_name)}:\n\n${clean(row.title)}\n\n${body}\n\n${url}`,
-      });
-      await client.query(
-        "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1",
-        [job.id],
-      );
+      return {
+        message: {
+          to: row.email,
+          subject: `[${clean(row.course_name)}] ${clean(row.title)}`,
+          text: `${clean(row.author_name)} posted an announcement in ${clean(row.course_name)}:\n\n${clean(row.title)}\n\n${body}\n\n${url}`,
+        },
+        guard: JSON.stringify([row.email, row.body_markdown]),
+      };
     });
   }
 
   private async sendNotificationEmail(job: Job): Promise<void> {
-    const emailSender = this.emailSender;
-    if (!emailSender || !this.frontendBaseUrl)
+    if (!this.emailSender || !this.frontendBaseUrl)
       throw new Error("Notification email delivery is not configured");
     const { notificationId, responseKind, responseId } = job.payload;
     if (!notificationId || job.deduplicationKey !== notificationId)
@@ -280,51 +355,68 @@ export class JobWorker {
       (!responseId || !["answer", "followup"].includes(responseKind ?? ""))
     )
       throw new Error("Notification email response reference is invalid");
-    await this.transaction(async (client) => {
-      const claimed = await client.query(
-        "SELECT id FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
-        [job.id, this.workerId, job.attempts],
-      );
-      if (!claimed.rows[0]) return;
-      // Sends only while the notification is unread, the post visible, and the
-      // recipient still a member who wants these emails.
+    await this.sendQueuedEmail(job, async (client) => {
+      // A frozen payload never overrides current follow, read, membership,
+      // privacy, or course-state checks.
       const found = await client.query<{
         kind: string;
         post_id: string;
         course_id: string;
         course_name: string;
         title: string;
+        body_markdown: string;
+        private: boolean;
+        author_user_id: string | null;
+        recipient_user_id: string;
         email: string;
         actor_name: string | null;
         actor_anonymous: boolean;
       }>(
-        `SELECT n.kind,n.post_id,n.course_id,c.name AS course_name,p.title,recipient.email,
-              CASE WHEN actor.deleted_at IS NULL THEN actor.display_name END AS actor_name,n.actor_anonymous
+        `SELECT n.kind,n.post_id,n.course_id,c.name AS course_name,p.title,p.body_markdown,
+              p.private,p.author_user_id,n.user_id AS recipient_user_id,
+              recipient.email,CASE WHEN actor.deleted_at IS NULL THEN actor.display_name END AS actor_name,
+              n.actor_anonymous
        FROM notifications n
        JOIN users recipient ON recipient.id=n.user_id AND recipient.deleted_at IS NULL
        JOIN course_memberships m ON m.course_id=n.course_id AND m.user_id=n.user_id AND m.activity_emails
-       JOIN courses c ON c.id=n.course_id
+       JOIN courses c ON c.id=n.course_id AND c.status='active'
        JOIN posts p ON p.id=n.post_id AND p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
          AND ${readablePost("p", "n.user_id", "m.role")}
        LEFT JOIN users actor ON actor.id=n.actor_user_id
        WHERE n.id=$1 AND n.read_at IS NULL
          AND (n.kind IN ('mentioned','post_published') OR EXISTS (
            SELECT 1 FROM post_follows f WHERE f.post_id=n.post_id AND f.user_id=n.user_id AND f.following
-         ))`,
+         ))
+       FOR SHARE OF n,recipient,c,p`,
         [notificationId],
       );
       const row = found.rows[0];
-      if (!row) return;
+      if (!row) return undefined;
+      if (row.private) {
+        const membership = await client.query<{ role: string }>(
+          `SELECT role FROM course_memberships
+            WHERE course_id=$1 AND user_id=$2 AND activity_emails FOR SHARE`,
+          [row.course_id, row.recipient_user_id],
+        );
+        if (
+          !membership.rows[0] ||
+          (row.author_user_id !== row.recipient_user_id &&
+            !["ta", "instructor"].includes(membership.rows[0].role))
+        )
+          return undefined;
+      }
       let excerpt: string | undefined;
+      let responseBody: string | undefined;
       if (responseKind && responseId) {
         const response = await client.query<{ body_markdown: string }>(
           responseKind === "answer"
-            ? "SELECT body_markdown FROM answers WHERE id=$1 AND post_id=$2 AND deleted_at IS NULL"
-            : "SELECT body_markdown FROM followups WHERE id=$1 AND post_id=$2 AND deleted_at IS NULL",
+            ? "SELECT body_markdown FROM answers WHERE id=$1 AND post_id=$2 AND deleted_at IS NULL FOR SHARE"
+            : "SELECT body_markdown FROM followups WHERE id=$1 AND post_id=$2 AND deleted_at IS NULL FOR SHARE",
           [responseId, row.post_id],
         );
-        if (!response.rows[0]?.body_markdown) return;
-        excerpt = response.rows[0].body_markdown
+        if (!response.rows[0]?.body_markdown) return undefined;
+        responseBody = response.rows[0].body_markdown;
+        excerpt = responseBody
           .split(/\r?\n/)
           .map((line) => line.replace(/\s+/g, " ").trim())
           .filter(Boolean)
@@ -343,7 +435,6 @@ export class JobWorker {
         mentioned: ["You were mentioned on", "mentioned you on"],
       };
       const [subject, verb] = wording[row.kind] ?? ["Activity on", "posted on"];
-      // The email cannot tell whether the reader may see an anonymous name.
       const actor =
         row.actor_anonymous || !row.actor_name
           ? "Someone"
@@ -356,15 +447,14 @@ export class JobWorker {
       );
       if (responseKind && responseId)
         url.hash = `${responseKind}-${responseId}`;
-      await emailSender.send({
-        to: row.email,
-        subject: `[${course}] ${subject} "${title}"`,
-        text: `${actor} ${verb} "${title}" in ${course}.\n\n${excerpt ? `${excerpt}\n\n` : ""}${url.toString()}\n\nTo stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
-      });
-      await client.query(
-        "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1",
-        [job.id],
-      );
+      return {
+        message: {
+          to: row.email,
+          subject: `[${course}] ${subject} "${title}"`,
+          text: `${actor} ${verb} "${title}" in ${course}.\n\n${excerpt ? `${excerpt}\n\n` : ""}${url.toString()}\n\nTo stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
+        },
+        guard: JSON.stringify([row.email, responseBody ?? row.body_markdown]),
+      };
     });
   }
 
@@ -481,15 +571,22 @@ export class JobWorker {
 
   private async succeed(job: Job): Promise<void> {
     await this.pool.query(
-      "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
+      "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,frozen_email=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
       [job.id, this.workerId, job.attempts],
     );
   }
 
   private async fail(job: Job, error: unknown): Promise<void> {
+    const permanent = error instanceof PermanentEmailDeliveryError;
     await this.pool.query(
-      "UPDATE jobs SET status=CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END, available_at=CASE WHEN attempts >= max_attempts THEN available_at ELSE now()+make_interval(secs => LEAST(300, (2 ^ attempts)::integer)) END, locked_by=NULL,locked_until=NULL,last_error=$1,finished_at=CASE WHEN attempts >= max_attempts THEN now() ELSE NULL END,updated_at=now() WHERE id=$2 AND status='running' AND locked_by=$3 AND attempts=$4",
-      [errorMessage(error).slice(0, 4000), job.id, this.workerId, job.attempts],
+      "UPDATE jobs SET status=CASE WHEN $5 OR attempts >= max_attempts THEN 'dead' ELSE 'queued' END, available_at=CASE WHEN $5 OR attempts >= max_attempts THEN available_at ELSE now()+make_interval(secs => LEAST(300, (2 ^ attempts)::integer)) END, locked_by=NULL,locked_until=NULL,last_error=$1,finished_at=CASE WHEN $5 OR attempts >= max_attempts THEN now() ELSE NULL END,frozen_email=CASE WHEN $5 OR attempts >= max_attempts THEN NULL ELSE frozen_email END,updated_at=now() WHERE id=$2 AND status='running' AND locked_by=$3 AND attempts=$4",
+      [
+        errorMessage(error).slice(0, 4000),
+        job.id,
+        this.workerId,
+        job.attempts,
+        permanent,
+      ],
     );
   }
 
