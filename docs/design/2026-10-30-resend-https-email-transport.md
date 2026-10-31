@@ -15,7 +15,7 @@ The operator will verify a sending domain and configure a sending-only Resend AP
 
 Retain the existing application-level `EmailSender` contract, with a small optional idempotency-key extension, and select one transport explicitly by environment: local Mailpit SMTP or production Resend HTTPS. The API and worker select the same provider and sender identity. Use the official maintained `resend` Node SDK for API shape, inline attachments, cancellation, and idempotency options; do not bypass it with raw `fetch` or add Resend-specific calls to domain services.
 
-For each queued email, persist the exact composed outbound message before the first external send and reuse it with a stable key derived from its queue item identity. Store the snapshot in PostgreSQL, including HTML, plain text, and inline image bytes/CIDs for digests. Clear the snapshot after confirmed success or cancellation. Delivery still checks current recipient, preference, audience, and content eligibility immediately before each attempt; a snapshot is **not** permission to send. If content becomes deleted, private to someone else, or otherwise inaccessible, cancel the pending send. A harmless title edit may leave the already-composed wording stale on retry; this is accepted to preserve an identical idempotent request. Existing lifecycle guards and send-time database locking remain authoritative.
+For each queued email, persist the exact composed outbound message before the first external send and reuse it with a stable key derived from its queue item identity. Store the snapshot in PostgreSQL, including HTML, plain text, and inline image bytes/CIDs for digests. Clear the snapshot after confirmed success or cancellation. Delivery still checks current recipient, preference, audience, and content eligibility immediately before each attempt; a snapshot is **not** permission to send. Current cancellation rules are specified in the [outbound email transport specification](../../openspec/specs/outbound-email-transport/spec.md). Existing lifecycle guards and send-time database locking remain authoritative.
 
 Resend idempotency is only a 24-hour duplicate-suppression window, not an exactly-once guarantee. An accepted send whose database acknowledgment fails and is retried after 24 hours can still duplicate. Synchronous authentication sends retain their present timeout/abort and failure semantics; they do not acquire a new durable queue as part of this change.
 
@@ -49,7 +49,6 @@ Provider facts checked on 2026-10-30 against [Resend's official Node SDK](https:
 ## Trade-offs accepted
 
 - Pending rich digests may temporarily place several MiB of image data per recipient in PostgreSQL. Existing rendering caps limit this, and snapshots are removed after success/cancellation; a long Resend outage can still grow the database. Operations should monitor queue age and database size.
-- Frozen visible wording can become stale after a harmless edit. Privacy/lifecycle changes cancel delivery rather than sending stale restricted content.
 - An HTTP success means Resend accepted the request, not that a recipient received it. No webhook/bounce-state feature is added.
 - Resend's 24-hour key window does not guarantee exactly-once delivery after a prolonged outage or delayed retry.
 

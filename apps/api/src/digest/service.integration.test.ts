@@ -1043,6 +1043,14 @@ integration("daily course email digest", () => {
       },
     ],
     [
+      "title changes",
+      async (post: string) => {
+        await pool.query("UPDATE posts SET title='Revised title' WHERE id=$1", [
+          post,
+        ]);
+      },
+    ],
+    [
       "content becomes private",
       async (post: string) => {
         await pool.query("UPDATE posts SET private=true WHERE id=$1", [post]);

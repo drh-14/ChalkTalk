@@ -48,11 +48,11 @@ The system SHALL persist each queued outbound message, including sender, recipie
 
 ### Requirement: Revalidate before each attempt
 
-The system SHALL recheck current recipient address, preferences, membership, course and referenced-content lifecycle, and current visibility before every queued send. It SHALL cancel rather than send if eligibility is lost, if an included response or announcement body substantively changes, or if the recipient address changes. Title-only edits MAY leave frozen wording unchanged. Invalidation SHALL result in zero provider calls on that attempt.
+The system SHALL recheck current recipient address, preferences, membership, course and referenced-content lifecycle, and current visibility before every queued send. It SHALL cancel rather than send if eligibility is lost, if an included title or body changes, or if the recipient address changes. Invalidation SHALL result in zero provider calls on that attempt.
 
-#### Scenario: Changed address or body
+#### Scenario: Changed address or content
 
-- **WHEN** the recipient email address or referenced message body changes after the queued payload is frozen
+- **WHEN** the recipient email address or an included title or body changes after the queued payload is frozen
 - **THEN** the pending email is canceled and no provider call occurs
 
 #### Scenario: Access revoked

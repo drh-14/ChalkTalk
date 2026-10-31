@@ -231,6 +231,7 @@ export class JobWorker {
         },
         guard: JSON.stringify([
           post.email,
+          post.title,
           post.source_body,
           post.canonical_body,
         ]),
@@ -289,7 +290,7 @@ export class JobWorker {
           subject: `${inviter} invited you to a live session`,
           text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly invited participants and course staff can open it.`,
         },
-        guard: JSON.stringify([row.email, row.invited_at_exact]),
+        guard: JSON.stringify([row.email, row.invited_at_exact, row.title]),
       };
     });
   }
@@ -339,7 +340,7 @@ export class JobWorker {
           subject: `[${clean(row.course_name)}] ${clean(row.title)}`,
           text: `${clean(row.author_name)} posted an announcement in ${clean(row.course_name)}:\n\n${clean(row.title)}\n\n${body}\n\n${url}`,
         },
-        guard: JSON.stringify([row.email, row.body_markdown]),
+        guard: JSON.stringify([row.email, row.title, row.body_markdown]),
       };
     });
   }
@@ -453,7 +454,11 @@ export class JobWorker {
           subject: `[${course}] ${subject} "${title}"`,
           text: `${actor} ${verb} "${title}" in ${course}.\n\n${excerpt ? `${excerpt}\n\n` : ""}${url.toString()}\n\nTo stop these emails, turn off "Activity emails on followed posts" in this course's settings.`,
         },
-        guard: JSON.stringify([row.email, responseBody ?? row.body_markdown]),
+        guard: JSON.stringify([
+          row.email,
+          row.title,
+          responseBody ?? row.body_markdown,
+        ]),
       };
     });
   }

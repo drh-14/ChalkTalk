@@ -47,6 +47,7 @@ type FrozenEmail = {
     kind: ActivityRow["kind"];
     entityId: string;
     bodySha256: string;
+    titleSha256?: string;
   }>;
   attachmentIds: string[];
 };
@@ -334,6 +335,7 @@ export class DigestService {
           kind: item.kind,
           entityId: item.entity_id,
           bodySha256: bodySha256(item.body_markdown),
+          titleSha256: bodySha256(item.title),
         })),
         attachmentIds: rendered.attachments.flatMap((attachment) =>
           attachment.sourceId ? [attachment.sourceId] : [],
@@ -387,13 +389,16 @@ export class DigestService {
       const current = new Map(
         items.rows.map((item) => [
           `${item.kind}:${item.entity_id}`,
-          bodySha256(item.body_markdown),
+          [bodySha256(item.body_markdown), bodySha256(item.title)],
         ]),
       );
       if (
         snapshot.items.some(
           (item) =>
-            current.get(`${item.kind}:${item.entityId}`) !== item.bodySha256,
+            current.get(`${item.kind}:${item.entityId}`)?.[0] !==
+              item.bodySha256 ||
+            current.get(`${item.kind}:${item.entityId}`)?.[1] !==
+              item.titleSha256,
         )
       ) {
         await this.cancel(client, row);

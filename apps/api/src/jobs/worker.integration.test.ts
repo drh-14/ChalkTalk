@@ -476,8 +476,8 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     ).toEqual({ status: "dead", frozen_email: null });
   });
 
-  it("cancels a frozen duplicate email if the author address or body changes", async () => {
-    for (const mutation of ["address", "body"] as const) {
+  it("cancels a frozen duplicate email if the author address, title, or body changes", async () => {
+    for (const mutation of ["address", "title", "body"] as const) {
       delivered.length = 0;
       deliveryKeys.length = 0;
       const { jobId, authorId, source } = await seedMerge();
@@ -492,6 +492,11 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           authorId,
           `changed-${sequence}@jobs.example.edu`,
         ]);
+      else if (mutation === "title")
+        await pool.query(
+          "UPDATE posts SET title='Revised question title' WHERE id=$1",
+          [source.value.id],
+        );
       else
         await pool.query(
           "UPDATE posts SET body_markdown='Substantively revised' WHERE id=$1",
@@ -1404,6 +1409,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         "removed",
         "reinvited",
         "ended",
+        "title",
         "course",
         "invitee-left",
       ] as const) {
@@ -1440,6 +1446,11 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         if (invalidate === "ended")
           await pool.query(
             "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=now() WHERE id=$1",
+            [seeded.sessionId],
+          );
+        if (invalidate === "title")
+          await pool.query(
+            "UPDATE collaboration_sessions SET title='Revised session' WHERE id=$1",
             [seeded.sessionId],
           );
         if (invalidate === "course")
@@ -1654,6 +1665,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       for (const invalidate of [
         "address",
         "body",
+        "title",
         "optout",
         "deleted",
         "course",
@@ -1671,6 +1683,11 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         if (invalidate === "body")
           await pool.query(
             "UPDATE posts SET body_markdown='New announcement content' WHERE id=$1",
+            [seeded.postId],
+          );
+        if (invalidate === "title")
+          await pool.query(
+            "UPDATE posts SET title='Revised announcement title' WHERE id=$1",
             [seeded.postId],
           );
         if (invalidate === "optout")
@@ -1779,6 +1796,7 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
       for (const invalidate of [
         "address",
         "body",
+        "title",
         "read",
         "unfollow",
         "deleted",
@@ -1803,6 +1821,11 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
           await pool.query(
             "UPDATE answers SET body_markdown='New response content' WHERE id=$1",
             [seeded.answerId],
+          );
+        if (invalidate === "title")
+          await pool.query(
+            "UPDATE posts SET title='Revised question title' WHERE id=$1",
+            [seeded.postId],
           );
         if (invalidate === "read")
           await pool.query(
