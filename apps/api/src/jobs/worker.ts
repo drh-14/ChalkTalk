@@ -211,10 +211,9 @@ export class JobWorker {
       const staff = await client.query<{
         display_name: string;
         deleted_at: Date | null;
-      }>(
-        "SELECT display_name,deleted_at FROM users WHERE id=$1 FOR SHARE",
-        [staffUserId],
-      );
+      }>("SELECT display_name,deleted_at FROM users WHERE id=$1 FOR SHARE", [
+        staffUserId,
+      ]);
       const role = staffRole === "ta" ? "TA" : "instructor";
       const byline =
         staff.rows[0] && !staff.rows[0].deleted_at
@@ -295,7 +294,13 @@ export class JobWorker {
           subject: `${inviter} invited you to a live session`,
           text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly invited participants and course staff can open it.`,
         },
-        guard: JSON.stringify([row.email, row.invited_at_exact, row.title, inviter, row.course_name]),
+        guard: JSON.stringify([
+          row.email,
+          row.invited_at_exact,
+          row.title,
+          inviter,
+          row.course_name,
+        ]),
       };
     });
   }
@@ -345,7 +350,13 @@ export class JobWorker {
           subject: `[${clean(row.course_name)}] ${clean(row.title)}`,
           text: `${clean(row.author_name)} posted an announcement in ${clean(row.course_name)}:\n\n${clean(row.title)}\n\n${body}\n\n${url}`,
         },
-        guard: JSON.stringify([row.email, row.title, row.body_markdown, clean(row.author_name), row.course_name]),
+        guard: JSON.stringify([
+          row.email,
+          row.title,
+          row.body_markdown,
+          clean(row.author_name),
+          row.course_name,
+        ]),
       };
     });
   }

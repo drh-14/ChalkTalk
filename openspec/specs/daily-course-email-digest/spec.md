@@ -51,14 +51,14 @@ The system SHALL generate at most one durable digest intent per recipient, activ
 
 ### Requirement: Durable midnight dispatch and recovery
 
-The system SHALL start dispatch of eligible previous-day digests at or after 00:00 UTC. It SHALL recover eligible dates missed since deployment and retry failed provider sends using durable unique intents and expiring claims. Before the first network send it SHALL persist the exact composed digest including sender, recipient, HTML, plain text, and inline CID image bytes. Every retry SHALL reuse that payload and a stable idempotency key, while rechecking the recipient address, active membership, course digest preference, course status, and current visibility, title, and body of every included item. If any included item becomes inaccessible or its title or body changes, the whole frozen digest SHALL be canceled. It SHALL record success only after provider acceptance and SHALL clear the snapshot after success or cancellation. It SHALL not claim exactly-once delivery beyond the provider's idempotency window.
+The system SHALL start dispatch of eligible previous-day digests at or after 00:00 UTC. It SHALL recover eligible dates missed since deployment and retry failed provider sends using durable unique intents and expiring claims. Before the first network send it SHALL persist the exact composed digest including sender, recipient, HTML, plain text, and inline CID image bytes. Every retry SHALL reuse that payload and a stable idempotency key, while rechecking the recipient address, active membership, course digest preference, course status, current visibility, title, and body of every included item, and every linked or embedded image represented in the message. If any included item becomes inaccessible or its title or body changes, or a represented image is deleted, the whole frozen digest SHALL be canceled. It SHALL record success only after provider acceptance and SHALL clear the snapshot after success or cancellation. It SHALL not claim exactly-once delivery beyond the provider's idempotency window.
 
 #### Scenario: API process restart
 
 - **WHEN** the API process was unavailable at midnight and restarts later
 - **THEN** it discovers eligible missed dates and attempts their per-course digests without creating duplicate intents
 
-#### Scenario: SMTP failure
+#### Scenario: Provider failure
 
 - **WHEN** SMTP rejects a digest attempt in local development, or Resend rejects or ambiguously accepts a production digest attempt
 - **THEN** the intent remains retryable with its identical snapshot and key

@@ -259,9 +259,12 @@ function summary(counts: DigestInput["counts"]): string {
     .map((kind) => `${counts[kind]} ${kind}${counts[kind] === 1 ? "" : "s"}`)
     .join(" · ");
 }
-export async function renderDigest(
-  input: DigestInput,
-): Promise<{ html: string; text: string; attachments: InlineImage[]; imageIds: string[] }> {
+export async function renderDigest(input: DigestInput): Promise<{
+  html: string;
+  text: string;
+  attachments: InlineImage[];
+  imageIds: string[];
+}> {
   const attachments: InlineImage[] = [];
   const imageIds: string[] = [];
   let imageCount = 0;
@@ -416,7 +419,9 @@ export async function renderDigest(
       break;
     }
     html.push(entryHtml);
-    imageIds.push(...(item.images ?? []).flatMap((image) => image.id ? [image.id] : []));
+    imageIds.push(
+      ...(item.images ?? []).flatMap((image) => (image.id ? [image.id] : [])),
+    );
     rendered++;
     text.push(item.title, plainBody, ...imageText, href, "");
   }

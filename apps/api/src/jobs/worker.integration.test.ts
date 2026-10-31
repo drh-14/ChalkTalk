@@ -18,7 +18,10 @@ import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { JobWorker } from "./worker.js";
-import { createEmailSender, PermanentEmailDeliveryError } from "../auth/email.js";
+import {
+  createEmailSender,
+  PermanentEmailDeliveryError,
+} from "../auth/email.js";
 import { loadEnvironment } from "../config/environment.js";
 import { PostService, postEtag } from "../posts/service.js";
 import { AnswerService, answerEtag } from "../answers/service.js";
@@ -230,7 +233,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     let enterDelivery!: () => void;
     let releaseDelivery!: () => void;
     const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
-    const released = new Promise<void>((resolve) => (releaseDelivery = resolve));
+    const released = new Promise<void>(
+      (resolve) => (releaseDelivery = resolve),
+    );
     inspectBeforeDelivery = async () => {
       enterDelivery();
       await released;
@@ -468,53 +473,87 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           });
           response.end(
             requests.length === 1
-              ? JSON.stringify({ name: "internal_server_error", message: "ambiguous" })
+              ? JSON.stringify({
+                  name: "internal_server_error",
+                  message: "ambiguous",
+                })
               : JSON.stringify({ id: "email-accepted" }),
           );
         });
       });
-      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
       try {
         const address = server.address();
-        if (!address || typeof address === "string") throw new Error("No mock port");
+        if (!address || typeof address === "string")
+          throw new Error("No mock port");
         const sender = createEmailSender(
           loadEnvironment({
-            AUTH_TOKEN_SECRET: "test-secret-that-is-longer-than-thirty-two-characters",
+            AUTH_TOKEN_SECRET:
+              "test-secret-that-is-longer-than-thirty-two-characters",
             EMAIL_PROVIDER: "resend",
             RESEND_API_KEY: "re_local_test",
             EMAIL_FROM: "sender@example.edu",
             RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
           }),
         );
-        const liveWorker = new JobWorker(pool, "http-provider-worker", sender, "https://app.example.edu");
+        const liveWorker = new JobWorker(
+          pool,
+          "http-provider-worker",
+          sender,
+          "https://app.example.edu",
+        );
         const seeded = await seedMerge();
         expect(await liveWorker.runOnce()).toBe(true);
         expect(requests).toHaveLength(1);
-        const frozen = await pool.query<{ status: string; frozen_email: unknown }>(
-          "SELECT status,frozen_email FROM jobs WHERE id=$1",
-          [seeded.jobId],
-        );
-        expect(frozen.rows[0]).toMatchObject({ status: "queued", frozen_email: { version: 1 } });
+        const frozen = await pool.query<{
+          status: string;
+          frozen_email: unknown;
+        }>("SELECT status,frozen_email FROM jobs WHERE id=$1", [seeded.jobId]);
+        expect(frozen.rows[0]).toMatchObject({
+          status: "queued",
+          frozen_email: { version: 1 },
+        });
         if (change === "recipient") {
-          await pool.query("UPDATE users SET email='new-address@jobs.example.edu' WHERE id=$1", [seeded.authorId]);
+          await pool.query(
+            "UPDATE users SET email='new-address@jobs.example.edu' WHERE id=$1",
+            [seeded.authorId],
+          );
         } else if (change === "identity") {
-          await pool.query("UPDATE users SET display_name='Renamed Staff' WHERE id=$1", [seeded.staffId]);
+          await pool.query(
+            "UPDATE users SET display_name='Renamed Staff' WHERE id=$1",
+            [seeded.staffId],
+          );
         } else if (change === "content") {
-          await pool.query("UPDATE posts SET title='Changed title' WHERE id=$1", [seeded.source.value.id]);
+          await pool.query(
+            "UPDATE posts SET title='Changed title' WHERE id=$1",
+            [seeded.source.value.id],
+          );
         }
-        await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [seeded.jobId]);
+        await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
+          seeded.jobId,
+        ]);
         expect(await liveWorker.runOnce()).toBe(true);
         if (change === "none") {
           expect(requests).toHaveLength(2);
           expect(requests[1]).toEqual(requests[0]);
         } else {
           expect(requests).toHaveLength(1);
-          expect((await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [seeded.jobId])).rows[0])
-            .toEqual({ status: "succeeded", frozen_email: null });
+          expect(
+            (
+              await pool.query(
+                "SELECT status,frozen_email FROM jobs WHERE id=$1",
+                [seeded.jobId],
+              )
+            ).rows[0],
+          ).toEqual({ status: "succeeded", frozen_email: null });
         }
         expect(requests[0]!.key).toBe(`job-${seeded.jobId}`);
       } finally {
-        await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
       }
     },
   );
@@ -1510,7 +1549,10 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       await fresh();
       const seeded = await seedInvitation();
       await freezeQueuedEmail(seeded.jobId);
-      await pool.query("UPDATE users SET display_name='New Inviter' WHERE id=$1", [seeded.studentId]);
+      await pool.query(
+        "UPDATE users SET display_name='New Inviter' WHERE id=$1",
+        [seeded.studentId],
+      );
       await retryQueuedEmail(seeded.jobId);
       expect(delivered).toEqual([]);
     });
@@ -1938,7 +1980,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       let enterDelivery!: () => void;
       let releaseDelivery!: () => void;
       const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
-      const released = new Promise<void>((resolve) => (releaseDelivery = resolve));
+      const released = new Promise<void>(
+        (resolve) => (releaseDelivery = resolve),
+      );
       inspectBeforeDelivery = async () => {
         enterDelivery();
         await released;

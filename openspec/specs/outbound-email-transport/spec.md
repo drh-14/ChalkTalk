@@ -48,7 +48,7 @@ The system SHALL persist each queued outbound message, including sender, recipie
 
 ### Requirement: Revalidate before each attempt
 
-The system SHALL recheck current recipient address, preferences, membership, course and referenced-content lifecycle, and current visibility before every queued send. It SHALL cancel rather than send if eligibility is lost, if an included title or body changes, or if the recipient address changes. Invalidation SHALL result in zero provider calls on that attempt.
+The system SHALL recheck current recipient address, preferences, membership, course and referenced-content lifecycle, and current visibility before every queued send. It SHALL cancel rather than send if eligibility is lost, if an included title or body changes, if an included actor or sender identity changes or is deleted, if a represented image is deleted, or if the recipient address changes. Included identities SHALL be locked through provider handoff so a committed identity change cannot be followed by a stale-name send. Invalidation SHALL result in zero provider calls on that attempt.
 
 #### Scenario: Changed address or content
 
@@ -59,6 +59,11 @@ The system SHALL recheck current recipient address, preferences, membership, cou
 
 - **WHEN** a recipient leaves, opts out, unfollows where applicable, or loses access to referenced content
 - **THEN** the pending email is canceled without exposing the frozen content
+
+#### Scenario: Included identity or image changes
+
+- **WHEN** an included actor or sender identity changes or is deleted, or a linked or embedded digest image is deleted after the payload is frozen
+- **THEN** the pending email is canceled before a provider call
 
 #### Scenario: Authentication mail
 
