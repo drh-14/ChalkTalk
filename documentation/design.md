@@ -146,7 +146,7 @@ flowchart TB
 
 **Object store.** The object store holds uploaded images and documents. It is AWS S3 in the managed deployment and SeaweedFS in the self-hosted deployment. Both use the same S3 API, so the application code is identical in both.
 
-**Email provider.** The email provider delivers verification, password reset, and notification emails. It is AWS SES in the managed deployment and any SMTP server in the self-hosted deployment. The worker sends queued email; direct authentication request flows send email from the API.
+**Email provider.** The email provider delivers verification, password reset, and notification emails. The application supports Resend HTTPS or SMTP, with local development defaulting to Mailpit SMTP. The worker sends queued email; direct authentication request flows send email from the API. The deployment guide remains a separate concern.
 
 # Deployment
 
