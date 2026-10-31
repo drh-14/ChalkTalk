@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import sharp from "sharp";
 import {
   S3Client,
@@ -1213,6 +1214,59 @@ integration("daily course email digest", () => {
       (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
         .rows[0],
     ).toEqual({ status: "canceled", frozen_email: null });
+  });
+
+  it("does not call the HTTP provider after a frozen linked image is removed", async () => {
+    const post = await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Image question");
+    const image = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: "red" },
+    }).png().toBuffer();
+    const attachmentIds = Array.from({ length: 6 }, () => uuidv7());
+    for (const id of attachmentIds) {
+      await pool.query(
+        "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$6,'image.png','image/png',$4,$5)",
+        [id, ids.physics, post, image.length, createHash("sha256").update(image).digest(), id],
+      );
+    }
+    const requests: unknown[] = [];
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(JSON.stringify({ name: "internal_server_error", message: "ambiguous" }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("No mock port");
+      const liveSender = createEmailSender(loadEnvironment({
+        AUTH_TOKEN_SECRET: secret,
+        EMAIL_PROVIDER: "resend",
+        RESEND_API_KEY: "re_local_test",
+        EMAIL_FROM: "sender@example.edu",
+        RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      }));
+      const liveDigest = new DigestService(
+        pool, liveSender, environment.frontendBaseUrl, "http-image-retry", undefined, async () => image,
+      );
+      await liveDigest.schedule(new Date("2026-10-15T00:00:00Z"));
+      await liveDigest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+      expect(requests).toHaveLength(1);
+      expect((await pool.query<{ frozen_email: { imageIds: string[] } }>(
+        "SELECT frozen_email FROM digest_outbox",
+      )).rows[0]!.frozen_email.imageIds).toEqual(attachmentIds);
+      await pool.query("UPDATE content_attachments SET deleted_at=now() WHERE id=$1", [attachmentIds[5]]);
+      await pool.query("UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'");
+      await liveDigest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+      expect(requests).toHaveLength(1);
+      expect((await pool.query("SELECT status,frozen_email FROM digest_outbox")).rows[0])
+        .toEqual({ status: "canceled", frozen_email: null });
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
   });
 
   it.each(["answer", "followup"] as const)(
