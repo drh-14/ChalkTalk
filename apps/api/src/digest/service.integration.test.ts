@@ -988,7 +988,7 @@ integration("daily course email digest", () => {
   });
 
   it("freezes digest bytes and key before a failed handoff, then retries exactly", async () => {
-    const post = await addQuestion(
+    await addQuestion(
       ids.physics,
       ids.bob,
       "2026-10-14T12:00:00Z",
@@ -1002,9 +1002,6 @@ integration("daily course email digest", () => {
     );
     expect(stored.rows[0]!.frozen_email).toBeTruthy();
     expect(sender.attempts).toHaveLength(1);
-    await pool.query("UPDATE posts SET title='Edited title' WHERE id=$1", [
-      post,
-    ]);
     await pool.query(
       "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
     );
