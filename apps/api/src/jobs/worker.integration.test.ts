@@ -2097,7 +2097,9 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
       let enterDelivery!: () => void;
       let releaseDelivery!: () => void;
       const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
-      const released = new Promise<void>((resolve) => (releaseDelivery = resolve));
+      const released = new Promise<void>(
+        (resolve) => (releaseDelivery = resolve),
+      );
       inspectBeforeDelivery = async () => {
         enterDelivery();
         await released;

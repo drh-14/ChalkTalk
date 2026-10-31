@@ -1189,9 +1189,9 @@ integration("daily course email digest", () => {
     await imageDigest.schedule(new Date("2026-10-15T00:00:00Z"));
     sender.fail = true;
     await imageDigest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
-    const frozen = await pool.query<{ frozen_email: { attachmentIds: string[] } }>(
-      "SELECT frozen_email FROM digest_outbox",
-    );
+    const frozen = await pool.query<{
+      frozen_email: { attachmentIds: string[] };
+    }>("SELECT frozen_email FROM digest_outbox");
     expect(frozen.rows[0]!.frozen_email.attachmentIds).toEqual(
       attachmentIds.slice(0, 5),
     );
