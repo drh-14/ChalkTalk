@@ -833,4 +833,4 @@ Updates one or more of `activityEmails`, `announcementEmails`, or `digestEmails`
 { "digestEmails": false }
 ```
 
-Activity, announcement, and digest queueing use the corresponding choice. Delivery checks the latest choice again before sending: an opt-out completed before that check suppresses queued email. An activity or announcement email already in flight may still finish, and its SMTP delivery does not block the preference update.
+Activity, announcement, and digest queueing use the corresponding choice. Delivery checks the latest choice again before sending: an opt-out completed before that check suppresses queued email. An activity or announcement email already in flight may still finish. Public-post activity and announcement sends do not block the preference update, but an in-flight private-post notification may hold the membership row lock until the provider handoff finishes.

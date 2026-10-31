@@ -144,13 +144,13 @@ flowchart TB
 
 **PostgreSQL.** PostgreSQL stores users, courses, memberships, posts, answers, followups, sessions, and the job queue. Course-scoped tables use course identifiers and relational constraints; API authorization checks determine which rows a user can access.
 
-**Object store.** The object store holds uploaded images and documents. It is AWS S3 in the managed deployment and SeaweedFS in the self-hosted deployment. Both use the same S3 API, so the application code is identical in both.
+**Object store.** The object store holds uploaded images and documents. The Railway deployment and local development both use SeaweedFS through its S3-compatible API; see the [deployment guide](../deployment/README.md) for the production storage setup.
 
-**Email provider.** The email provider delivers verification, password reset, and notification emails. It is AWS SES in the managed deployment and any SMTP server in the self-hosted deployment. The worker sends queued email; direct authentication request flows send email from the API.
+**Email provider.** The email provider delivers verification, password reset, and notification emails. Railway production uses Resend HTTPS; local development uses Mailpit SMTP. The worker sends queued email; direct authentication request flows send email from the API. See the [deployment guide](../deployment/README.md) for configuration.
 
 # Deployment
 
-Because ChalkTalk offers both a managed cloud deployment and a self-managed deployment, the implementation and hosting of some services differ between the two versions. In the managed deployment, the React frontend is deployed to Vercel. The API server and background worker run on AWS ECS. PostgreSQL is provided by AWS RDS, AWS S3 provides object storage, and AWS SES provides email delivery. In the self-managed deployment, the frontend and backend components run as containers managed through Docker Compose. The deployment includes PostgreSQL for application data and durable jobs, SeaweedFS for S3-compatible object storage, and a configurable SMTP server for email delivery.
+The supported production topology is documented in the [Railway deployment guide](../deployment/README.md). The repository-root Docker Compose stack is for local development with Mailpit, PostgreSQL, and SeaweedFS.
 
 ### **AI module**
 
