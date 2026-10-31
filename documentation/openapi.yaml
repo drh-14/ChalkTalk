@@ -21,8 +21,9 @@ info:
     replies also use REST only. Saved questions, notes, answers, and followups
     support separate parent-scoped file attachments; create/update text requests
     remain JSON-only. Private post-anchored live sessions are live through the
-    collaboration-session routes and the collaboration WebSocket. Multipart
-    post create/update, download refresh, and subchannel-anchored collaboration
+    collaboration-session routes and the collaboration WebSocket. Public course
+    Threads are live through REST and a separate API-owned WebSocket. Multipart
+    post create/update, download refresh, and Thread-anchored collaboration
     sessions remain unavailable.
   license:
     name: MIT
@@ -50,8 +51,8 @@ tags:
     description: Course Digest operations.
   - name: Resources
     description: Resources operations.
-  - name: Channels
-    description: Channels operations.
+  - name: Threads
+    description: Public course topic boards, conversations, messages, watches, attachments, and catch-up.
   - name: Collaboration Sessions
     description: Collaboration Sessions operations.
   - name: Notifications
@@ -8718,2053 +8719,546 @@ paths:
         - "$ref": "#/components/parameters/ResourceRegionId"
         - "$ref": "#/components/parameters/IfMatch"
         - "$ref": "#/components/parameters/CsrfToken"
-  "/courses/{courseId}/channels":
-    post:
-      tags:
-        - Channels
-      summary: Create channel in course
-      description: Create channel in course.
-      operationId: createChannel
-      security:
-        - session_cookie: []
-      responses:
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_createChannel
-                      details: []
-        "201":
-          description: Create channel in course completed successfully.
-          headers:
-            Location:
-              "$ref": "#/components/headers/Location"
-            ETag:
-              "$ref": "#/components/headers/ETag"
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ChannelResponse"
-              example:
-                {
-                  "data":
-                    {
-                      "id": "channel_123",
-                      "courseId": "course_123",
-                      "name": "Homework",
-                      "description": "Discuss weekly assignments",
-                      "status": "active",
-                      "lastActivityAt": "2026-09-01T00:00:00Z",
-                      "createdAt": "2026-09-01T00:00:00Z",
-                      "updatedAt": "2026-09-01T00:00:00Z",
-                      "version": 1,
-                    },
-                }
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                course_archived:
-                  summary: The course is archived.
-                  value:
-                    error:
-                      code: course_archived
-                      message: The course is archived.
-                      requestId: req_createChannel
-                      details: []
-                idempotency_key_reused:
-                  summary: The idempotency key was already used with a different request body.
-                  value:
-                    error:
-                      code: idempotency_key_reused
-                      message: The idempotency key was already used with a different request body.
-                      requestId: req_createChannel
-                      details: []
-        "422":
-          description: Unprocessable Content
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                validation_failed:
-                  summary: The channel fields are invalid.
-                  value:
-                    error:
-                      code: validation_failed
-                      message: The channel fields are invalid.
-                      requestId: req_createChannel
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_createChannel
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_createChannel
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_createChannel
-                      details: []
+  "/courses/{courseId}/threads":
+    get:
+      tags: [Threads]
+      summary: List public course Threads
+      operationId: listCourseThreads
+      security: [{ session_cookie: [] }]
       parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/CourseId"
-        - "$ref": "#/components/parameters/IdempotencyKey"
-        - "$ref": "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Current member's visible boards, in bounded pages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadBoardListResponse" }
+        "400": { description: Invalid cursor or limit (invalid_request). }
+        "401": { description: Authentication required. }
+        "404": { description: Course absent or hidden from caller. }
+    post:
+      tags: [Threads]
+      summary: Create a public Thread board
+      operationId: createCourseThread
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              "$ref": "#/components/schemas/CreateChannelRequest"
-            example:
-              name: Homework
-              description: Discuss weekly assignments
+            schema: { $ref: "#/components/schemas/ThreadBoardTitleRequest" }
+      responses:
+        "201":
+          description: Board created by a current TA or instructor.
+          headers:
+            Location: { schema: { type: string } }
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadBoardResponse" }
+        "401": { description: Authentication required. }
+        "403": { description: Permission denied or CSRF validation failed. }
+        "409":
+          {
+            description: Course archived or idempotency key reused with a different request.,
+          }
+        "422": { description: Invalid title. }
+  "/courses/{courseId}/threads/unread-count":
     get:
-      tags:
-        - Channels
-      summary: List channels in course
-      description: List channels in course.
-      operationId: listCourseChannels
-      security:
-        - session_cookie: []
+      tags: [Threads]
+      summary: Count unread messages in watched conversations
+      operationId: getCourseThreadsUnreadCount
+      security: [{ session_cookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/CourseId" }]
       responses:
         "200":
-          description: List channels in course completed successfully.
+          description: Count includes watches with notices disabled, not passive readers.
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/ChannelListResponse"
-              example:
-                data:
-                  - id: channel_123
-                    courseId: course_123
-                    name: Homework
-                    description: Discuss weekly assignments
-                    status: active
-                    lastActivityAt: "2026-09-20T14:30:00Z"
-                    createdAt: "2026-09-01T00:00:00Z"
-                    updatedAt: "2026-09-20T14:30:00Z"
-                    version: 2
-                page:
-                  nextCursor:
-                  hasMore: false
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                invalid_request:
-                  summary: Filters or pagination are invalid.
-                  value:
-                    error:
-                      code: invalid_request
-                      message: Filters or pagination are invalid.
-                      requestId: req_listCourseChannels
-                      details: []
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The course is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The course is absent or hidden.
-                      requestId: req_listCourseChannels
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_listCourseChannels
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_listCourseChannels
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_listCourseChannels
-                      details: []
+              schema: { $ref: "#/components/schemas/ThreadUnreadCountResponse" }
+        "401": { description: Authentication required. }
+        "404": { description: Course absent or hidden from caller. }
+  "/courses/{courseId}/threads/changes":
+    get:
+      tags: [Threads]
+      summary: Recover committed Thread changes after a cursor
+      operationId: getCourseThreadChanges
+      security: [{ session_cookie: [] }]
       parameters:
-        - "$ref": "#/components/parameters/CourseId"
-        - name: status
+        - $ref: "#/components/parameters/CourseId"
+        - name: after
           in: query
           required: false
-          description: Filter by active or archived state.
-          schema:
-            type: string
-            enum:
-              - active
-              - archived
-        - "$ref": "#/components/parameters/Cursor"
-        - "$ref": "#/components/parameters/Limit"
-  "/channels/{channelId}":
+          schema: { type: string, minLength: 1, maxLength: 2048 }
+          description: Opaque course-bound committed sequence cursor.
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Bounded authorized changes with next durable cursor; subscribe to WebSocket before catch-up.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadChangesResponse" }
+        "400": { description: Invalid cursor or limit. }
+        "401": { description: Authentication required. }
+        "404": { description: Course absent or hidden from caller. }
+  "/courses/{courseId}/threads/{threadId}":
     get:
-      tags:
-        - Channels
-      summary: Retrieve channel
-      description: Retrieve channel.
-      operationId: getChannel
-      security:
-        - session_cookie: []
+      tags: [Threads]
+      summary: Get a public Thread board
+      operationId: getThreadBoard
+      security: [{ session_cookie: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/CourseId" },
+          { $ref: "#/components/parameters/ThreadId" },
+        ]
       responses:
         "200":
-          description: Retrieve channel completed successfully.
+          description: Board detail for a current course member.
           headers:
-            ETag:
-              "$ref": "#/components/headers/ETag"
+            ETag: { schema: { type: string } }
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/ChannelResponse"
-              example:
-                data:
-                  id: channel_123
-                  courseId: course_123
-                  name: Homework
-                  description: Discuss weekly assignments
-                  status: active
-                  lastActivityAt: "2026-09-20T14:30:00Z"
-                  createdAt: "2026-09-01T00:00:00Z"
-                  updatedAt: "2026-09-20T14:30:00Z"
-                  version: 2
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The channel is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The channel is absent or hidden.
-                      requestId: req_getChannel
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_getChannel
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_getChannel
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_getChannel
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/ChannelId"
+              schema: { $ref: "#/components/schemas/ThreadBoardResponse" }
+        "401": { description: Authentication required. }
+        "404": { description: Board absent or hidden. }
     patch:
-      tags:
-        - Channels
-      summary: Update channel name, description, or status
-      description: Update channel name, description, or status.
-      operationId: updateChannel
-      security:
-        - session_cookie: []
-      responses:
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_updateChannel
-                      details: []
-        "200":
-          description: Update channel name, description, or status completed successfully.
-          headers:
-            ETag:
-              "$ref": "#/components/headers/ETag"
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ChannelResponse"
-              example:
-                {
-                  "data":
-                    {
-                      "id": "channel_123",
-                      "courseId": "course_123",
-                      "name": "Homework",
-                      "description": "Discuss weekly assignments",
-                      "status": "archived",
-                      "lastActivityAt": "2026-09-20T14:30:00Z",
-                      "createdAt": "2026-09-01T00:00:00Z",
-                      "updatedAt": "2026-09-20T14:40:00Z",
-                      "version": 4,
-                    },
-                }
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                course_archived:
-                  summary: The course is archived.
-                  value:
-                    error:
-                      code: course_archived
-                      message: The course is archived.
-                      requestId: req_updateChannel
-                      details: []
-        "412":
-          description: Precondition Failed
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                version_conflict:
-                  summary: The supplied ETag is stale.
-                  value:
-                    error:
-                      code: version_conflict
-                      message: The supplied ETag is stale.
-                      requestId: req_updateChannel
-                      details: []
-        "422":
-          description: Unprocessable Content
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                validation_failed:
-                  summary: No valid editable field was supplied.
-                  value:
-                    error:
-                      code: validation_failed
-                      message: No valid editable field was supplied.
-                      requestId: req_updateChannel
-                      details: []
-        "428":
-          description: Precondition Required
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                precondition_required:
-                  summary: If-Match is required.
-                  value:
-                    error:
-                      code: precondition_required
-                      message: If-Match is required.
-                      requestId: req_updateChannel
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_updateChannel
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_updateChannel
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_updateChannel
-                      details: []
+      tags: [Threads]
+      summary: Rename a Thread board
+      operationId: updateThreadBoard
+      security: [{ session_cookie: [] }]
       parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/ChannelId"
-        - "$ref": "#/components/parameters/IfMatch"
-        - "$ref": "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IfMatch"
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              "$ref": "#/components/schemas/UpdateChannelRequest"
-            example:
-              status: archived
-    delete:
-      tags:
-        - Channels
-      summary: Delete channel
-      description: Delete channel. Descendants are deleted or tombstoned where retained conversation structure requires them.
-      operationId: deleteChannel
-      security:
-        - session_cookie: []
+            schema: { $ref: "#/components/schemas/ThreadBoardTitleRequest" }
       responses:
-        "403":
-          description: Forbidden
+        "200":
+          description: Board renamed by current staff.
+          headers:
+            ETag: { schema: { type: string } }
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_deleteChannel
-                      details: []
-        "204":
-          description: Descendants are deleted or tombstoned where retained conversation structure requires them.
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                course_archived:
-                  summary: The course is archived.
-                  value:
-                    error:
-                      code: course_archived
-                      message: The course is archived.
-                      requestId: req_deleteChannel
-                      details: []
-        "412":
-          description: Precondition Failed
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                version_conflict:
-                  summary: The supplied ETag is stale.
-                  value:
-                    error:
-                      code: version_conflict
-                      message: The supplied ETag is stale.
-                      requestId: req_deleteChannel
-                      details: []
-        "428":
-          description: Precondition Required
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                precondition_required:
-                  summary: If-Match is required.
-                  value:
-                    error:
-                      code: precondition_required
-                      message: If-Match is required.
-                      requestId: req_deleteChannel
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_deleteChannel
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_deleteChannel
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_deleteChannel
-                      details: []
+              schema: { $ref: "#/components/schemas/ThreadBoardResponse" }
+        "401": { description: Authentication required. }
+        "403": { description: Permission denied or CSRF validation failed. }
+        "404": { description: Board absent or hidden. }
+        "409": { description: Course archived. }
+        "412": { description: Version conflict. }
+        "422": { description: Invalid title. }
+        "428": { description: If-Match required. }
+    delete:
+      tags: [Threads]
+      summary: Delete a whole Thread board
+      description: Staff-only destructive action. Immediately hides conversations and files and enqueues object cleanup; the UI requires explicit confirmation.
+      operationId: deleteThreadBoard
+      security: [{ session_cookie: [] }]
       parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/ChannelId"
-        - "$ref": "#/components/parameters/IfMatch"
-        - "$ref": "#/components/parameters/CsrfToken"
-  "/channels/{channelId}/subchannels":
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Board deleted; no content. }
+        "401": { description: Authentication required. }
+        "403": { description: Permission denied or CSRF validation failed. }
+        "404": { description: Board absent or hidden. }
+        "409": { description: Course archived. }
+        "412": { description: Version conflict. }
+        "428": { description: If-Match required. }
+  "/courses/{courseId}/threads/{threadId}/conversations":
+    get:
+      tags: [Threads]
+      summary: List conversations in a Thread
+      operationId: listThreadConversations
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Recent conversations in bounded pages.
+          content:
+            application/json:
+              schema:
+                { $ref: "#/components/schemas/ThreadConversationListResponse" }
+        "400": { description: Invalid cursor or limit. }
+        "401": { description: Authentication required. }
+        "404": { description: Board absent or hidden. }
     post:
-      tags:
-        - Channels
-      summary: Create subchannel in channel
-      description: Create subchannel in channel.
-      operationId: createSubchannel
-      security:
-        - session_cookie: []
+      tags: [Threads]
+      summary: Start a conversation with one opening message
+      operationId: createThreadConversation
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ThreadMessageBodyRequest" }
       responses:
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_createSubchannel
-                      details: []
         "201":
-          description: Create subchannel in channel completed successfully.
+          description: Conversation and opening message saved atomically.
           headers:
-            Location:
-              "$ref": "#/components/headers/Location"
-            ETag:
-              "$ref": "#/components/headers/ETag"
+            Location: { schema: { type: string } }
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/SubchannelResponse"
-              example:
                 {
-                  "data":
-                    {
-                      "id": "subchannel_123",
-                      "channelId": "channel_123",
-                      "title": "Problem set 2",
-                      "status": "active",
-                      "createdBy":
-                        {
-                          "userId": "user_123",
-                          "displayName": "Ada Lovelace",
-                          "anonymous": false,
-                          "deleted": false,
-                        },
-                      "lastActivityAt": "2026-09-20T14:00:00Z",
-                      "introductoryMessage":
-                        {
-                          "id": "message_123",
-                          "subchannelId": "subchannel_123",
-                          "bodyMarkdown": "Where should we start?",
-                          "author":
-                            {
-                              "userId": "user_123",
-                              "displayName": "Ada Lovelace",
-                              "anonymous": false,
-                              "deleted": false,
-                            },
-                          "anonymous": false,
-                          "deleted": false,
-                          "createdAt": "2026-09-20T14:00:00Z",
-                          "updatedAt": "2026-09-20T14:00:00Z",
-                          "version": 1,
-                        },
-                      "createdAt": "2026-09-20T14:00:00Z",
-                      "updatedAt": "2026-09-20T14:00:00Z",
-                      "version": 1,
-                    },
+                  $ref: "#/components/schemas/ThreadConversationCreateResponse",
                 }
+        "401": { description: Authentication required. }
+        "404": { description: Board absent or hidden. }
         "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                parent_archived:
-                  summary: The channel or course is archived.
-                  value:
-                    error:
-                      code: parent_archived
-                      message: The channel or course is archived.
-                      requestId: req_createSubchannel
-                      details: []
-                idempotency_key_reused:
-                  summary: The idempotency key was already used with a different request body.
-                  value:
-                    error:
-                      code: idempotency_key_reused
-                      message: The idempotency key was already used with a different request body.
-                      requestId: req_createSubchannel
-                      details: []
-        "422":
-          description: Unprocessable Content
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                validation_failed:
-                  summary: The title or introductory message is invalid.
-                  value:
-                    error:
-                      code: validation_failed
-                      message: The title or introductory message is invalid.
-                      requestId: req_createSubchannel
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_createSubchannel
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_createSubchannel
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_createSubchannel
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/ChannelId"
-        - "$ref": "#/components/parameters/IdempotencyKey"
-        - "$ref": "#/components/parameters/CsrfToken"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/CreateSubchannelRequest"
-            example:
-              title: Problem set 2
-              introductoryMessage:
-                bodyMarkdown: Where should we start?
-                anonymous: false
+          {
+            description: Course archived or idempotency key reused with a different request.,
+          }
+        "422": { description: Invalid message body. }
+  "/courses/{courseId}/threads/{threadId}/conversations/{conversationId}":
     get:
-      tags:
-        - Channels
-      summary: List subchannels in channel
-      description: List subchannels in channel.
-      operationId: listChannelSubchannels
-      security:
-        - session_cookie: []
-      responses:
-        "200":
-          description: List subchannels in channel completed successfully.
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/SubchannelListResponse"
-              example:
-                data:
-                  - id: subchannel_123
-                    channelId: channel_123
-                    title: Problem set 2
-                    status: active
-                    createdBy:
-                      userId: user_123
-                      displayName: Ada Lovelace
-                      anonymous: false
-                      deleted: false
-                    lastActivityAt: "2026-09-20T14:30:00Z"
-                    createdAt: "2026-09-20T14:00:00Z"
-                    updatedAt: "2026-09-20T14:30:00Z"
-                    version: 2
-                page:
-                  nextCursor:
-                  hasMore: false
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                invalid_request:
-                  summary: Filters or pagination are invalid.
-                  value:
-                    error:
-                      code: invalid_request
-                      message: Filters or pagination are invalid.
-                      requestId: req_listChannelSubchannels
-                      details: []
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The channel is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The channel is absent or hidden.
-                      requestId: req_listChannelSubchannels
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_listChannelSubchannels
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_listChannelSubchannels
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_listChannelSubchannels
-                      details: []
+      tags: [Threads]
+      summary: Get one conversation
+      operationId: getThreadConversation
+      security: [{ session_cookie: [] }]
       parameters:
-        - "$ref": "#/components/parameters/ChannelId"
-        - name: status
-          in: query
-          required: false
-          description: Filter by active or archived state.
-          schema:
-            type: string
-            enum:
-              - active
-              - archived
-        - "$ref": "#/components/parameters/Cursor"
-        - "$ref": "#/components/parameters/Limit"
-  "/subchannels/{subchannelId}":
-    get:
-      tags:
-        - Channels
-      summary: Retrieve subchannel
-      description: Retrieve subchannel.
-      operationId: getSubchannel
-      security:
-        - session_cookie: []
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
       responses:
         "200":
-          description: Retrieve subchannel completed successfully.
+          description: Conversation including its opening message.
           headers:
-            ETag:
-              "$ref": "#/components/headers/ETag"
+            ETag: { schema: { type: string } }
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/SubchannelResponse"
-              example:
-                data:
-                  id: subchannel_123
-                  channelId: channel_123
-                  title: Problem set 2
-                  status: active
-                  createdBy:
-                    userId: user_123
-                    displayName: Ada Lovelace
-                    anonymous: false
-                    deleted: false
-                  lastActivityAt: "2026-09-20T14:30:00Z"
-                  introductoryMessage:
-                    id: message_123
-                    subchannelId: subchannel_123
-                    bodyMarkdown: Where should we start?
-                    author:
-                      userId: user_123
-                      displayName: Ada Lovelace
-                      anonymous: false
-                      deleted: false
-                    anonymous: false
-                    deleted: false
-                    createdAt: "2026-09-20T14:00:00Z"
-                    updatedAt: "2026-09-20T14:00:00Z"
-                    version: 1
-                  createdAt: "2026-09-20T14:00:00Z"
-                  updatedAt: "2026-09-20T14:30:00Z"
-                  version: 2
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The subchannel is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The subchannel is absent or hidden.
-                      requestId: req_getSubchannel
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_getSubchannel
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_getSubchannel
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_getSubchannel
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/SubchannelId"
-    patch:
-      tags:
-        - Channels
-      summary: Update subchannel title or status
-      description: Update subchannel title or status.
-      operationId: updateSubchannel
-      security:
-        - session_cookie: []
-      responses:
-        "200":
-          description: Update subchannel title or status completed successfully.
-          headers:
-            ETag:
-              "$ref": "#/components/headers/ETag"
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/SubchannelResponse"
-              example:
-                {
-                  "data":
-                    {
-                      "id": "subchannel_123",
-                      "channelId": "channel_123",
-                      "title": "Problem set 2 help",
-                      "status": "active",
-                      "createdBy":
-                        {
-                          "userId": "user_123",
-                          "displayName": "Ada Lovelace",
-                          "anonymous": false,
-                          "deleted": false,
-                        },
-                      "lastActivityAt": "2026-09-20T14:30:00Z",
-                      "introductoryMessage":
-                        {
-                          "id": "message_123",
-                          "subchannelId": "subchannel_123",
-                          "bodyMarkdown": "Where should we start?",
-                          "author":
-                            {
-                              "userId": "user_123",
-                              "displayName": "Ada Lovelace",
-                              "anonymous": false,
-                              "deleted": false,
-                            },
-                          "anonymous": false,
-                          "deleted": false,
-                          "createdAt": "2026-09-20T14:00:00Z",
-                          "updatedAt": "2026-09-20T14:00:00Z",
-                          "version": 1,
-                        },
-                      "createdAt": "2026-09-20T14:00:00Z",
-                      "updatedAt": "2026-09-20T14:40:00Z",
-                      "version": 4,
-                    },
-                }
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_updateSubchannel
-                      details: []
-                permission_denied:
-                  summary: The caller cannot change one or more fields.
-                  value:
-                    error:
-                      code: permission_denied
-                      message: The caller cannot change one or more fields.
-                      requestId: req_updateSubchannel
-                      details: []
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                parent_archived:
-                  summary: The parent channel or course is archived.
-                  value:
-                    error:
-                      code: parent_archived
-                      message: The parent channel or course is archived.
-                      requestId: req_updateSubchannel
-                      details: []
-        "412":
-          description: Precondition Failed
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                version_conflict:
-                  summary: The supplied ETag is stale.
-                  value:
-                    error:
-                      code: version_conflict
-                      message: The supplied ETag is stale.
-                      requestId: req_updateSubchannel
-                      details: []
-        "422":
-          description: Unprocessable Content
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                validation_failed:
-                  summary: No valid editable field was supplied.
-                  value:
-                    error:
-                      code: validation_failed
-                      message: No valid editable field was supplied.
-                      requestId: req_updateSubchannel
-                      details: []
-        "428":
-          description: Precondition Required
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                precondition_required:
-                  summary: If-Match is required.
-                  value:
-                    error:
-                      code: precondition_required
-                      message: If-Match is required.
-                      requestId: req_updateSubchannel
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_updateSubchannel
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_updateSubchannel
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_updateSubchannel
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/SubchannelId"
-        - "$ref": "#/components/parameters/IfMatch"
-        - "$ref": "#/components/parameters/CsrfToken"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/UpdateSubchannelRequest"
-            example:
-              title: Problem set 2 help
+                { $ref: "#/components/schemas/ThreadConversationResponse" }
+        "401": { description: Authentication required. }
+        "404": { description: Conversation absent or hidden. }
     delete:
-      tags:
-        - Channels
-      summary: Delete subchannel
-      description: Delete subchannel. Messages are deleted or retained as bodyless, authorless tombstones where conversation integrity requires them.
-      operationId: deleteSubchannel
-      security:
-        - session_cookie: []
-      responses:
-        "204":
-          description: Messages are deleted or retained as bodyless, authorless tombstones where conversation integrity requires them.
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_deleteSubchannel
-                      details: []
-                permission_denied:
-                  summary: The caller cannot delete this subchannel.
-                  value:
-                    error:
-                      code: permission_denied
-                      message: The caller cannot delete this subchannel.
-                      requestId: req_deleteSubchannel
-                      details: []
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                parent_archived:
-                  summary: The parent channel or course is archived.
-                  value:
-                    error:
-                      code: parent_archived
-                      message: The parent channel or course is archived.
-                      requestId: req_deleteSubchannel
-                      details: []
-        "412":
-          description: Precondition Failed
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                version_conflict:
-                  summary: The supplied ETag is stale.
-                  value:
-                    error:
-                      code: version_conflict
-                      message: The supplied ETag is stale.
-                      requestId: req_deleteSubchannel
-                      details: []
-        "428":
-          description: Precondition Required
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                precondition_required:
-                  summary: If-Match is required.
-                  value:
-                    error:
-                      code: precondition_required
-                      message: If-Match is required.
-                      requestId: req_deleteSubchannel
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_deleteSubchannel
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_deleteSubchannel
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_deleteSubchannel
-                      details: []
+      tags: [Threads]
+      summary: Delete a whole conversation and all its replies and files
+      operationId: deleteThreadConversation
+      security: [{ session_cookie: [] }]
       parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/SubchannelId"
-        - "$ref": "#/components/parameters/IfMatch"
-        - "$ref": "#/components/parameters/CsrfToken"
-  "/subchannels/{subchannelId}/messages":
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Conversation deleted; object cleanup queued. }
+        "401": { description: Authentication required. }
+        "403":
+          { description: Only the starter or current course staff may delete. }
+        "404": { description: Conversation absent or hidden. }
+        "409": { description: Course is archived. }
+        "412": { description: Conversation version changed. }
+        "428": { description: If-Match required. }
+  "/courses/{courseId}/threads/{threadId}/conversations/{conversationId}/messages":
+    get:
+      tags: [Threads]
+      summary: List chronological conversation messages
+      operationId: listThreadMessages
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Bounded chronological messages, including deleted placeholders.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadMessageListResponse" }
+        "400": { description: Invalid cursor or limit. }
+        "401": { description: Authentication required. }
+        "404": { description: Conversation absent or hidden. }
     post:
-      tags:
-        - Channels
-      summary: Create message in subchannel
-      description: Create message in subchannel.
-      operationId: createMessage
-      security:
-        - session_cookie: []
+      tags: [Threads]
+      summary: Add a reply to a conversation
+      operationId: createThreadReply
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ThreadMessageBodyRequest" }
       responses:
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_createMessage
-                      details: []
         "201":
-          description: Create message in subchannel completed successfully.
+          description: Reply saved and eligible watcher notifications created.
           headers:
-            Location:
-              "$ref": "#/components/headers/Location"
-            ETag:
-              "$ref": "#/components/headers/ETag"
+            Location: { schema: { type: string } }
+            ETag: { schema: { type: string } }
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/ActiveMessageResponse"
-              example:
-                {
-                  "data":
-                    {
-                      "id": "message_123",
-                      "subchannelId": "subchannel_123",
-                      "bodyMarkdown": "Rayleigh scattering favors shorter wavelengths.",
-                      "author":
-                        {
-                          "userId": "user_123",
-                          "displayName": "Ada Lovelace",
-                          "anonymous": false,
-                          "deleted": false,
-                        },
-                      "anonymous": false,
-                      "deleted": false,
-                      "createdAt": "2026-09-20T14:00:00Z",
-                      "updatedAt": "2026-09-20T14:00:00Z",
-                      "version": 1,
-                    },
-                }
+              schema: { $ref: "#/components/schemas/ThreadMessageResponse" }
+        "401": { description: Authentication required. }
+        "404": { description: Conversation absent or hidden. }
         "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                parent_archived:
-                  summary: The subchannel, channel, or course is archived.
-                  value:
-                    error:
-                      code: parent_archived
-                      message: The subchannel, channel, or course is archived.
-                      requestId: req_createMessage
-                      details: []
-                idempotency_key_reused:
-                  summary: The idempotency key was already used with a different request body.
-                  value:
-                    error:
-                      code: idempotency_key_reused
-                      message: The idempotency key was already used with a different request body.
-                      requestId: req_createMessage
-                      details: []
-        "422":
-          description: Unprocessable Content
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                validation_failed:
-                  summary: The message is invalid.
-                  value:
-                    error:
-                      code: validation_failed
-                      message: The message is invalid.
-                      requestId: req_createMessage
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_createMessage
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_createMessage
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_createMessage
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/SubchannelId"
-        - "$ref": "#/components/parameters/IdempotencyKey"
-        - "$ref": "#/components/parameters/CsrfToken"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/CreateContentRequest"
-            example:
-              bodyMarkdown: Rayleigh scattering favors shorter wavelengths.
-              anonymous: false
+          {
+            description: Course archived or idempotency key reused with a different request.,
+          }
+        "422": { description: Invalid message body. }
+  "/courses/{courseId}/threads/{threadId}/conversations/{conversationId}/messages/{messageId}":
     get:
-      tags:
-        - Channels
-      summary: List messages in subchannel
-      description: List messages in subchannel. Messages are ordered oldest first.
-      operationId: listSubchannelMessages
-      security:
-        - session_cookie: []
+      tags: [Threads]
+      summary: Get one exact conversation message
+      operationId: getThreadMessage
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+        - $ref: "#/components/parameters/ThreadMessageId"
       responses:
         "200":
-          description: Messages are ordered oldest first.
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/MessageListResponse"
-              example:
-                data:
-                  - id: message_123
-                    subchannelId: subchannel_123
-                    bodyMarkdown: Where should we start?
-                    author:
-                      userId: user_123
-                      displayName: Ada Lovelace
-                      anonymous: false
-                      deleted: false
-                    anonymous: false
-                    deleted: false
-                    createdAt: "2026-09-20T14:00:00Z"
-                    updatedAt: "2026-09-20T14:00:00Z"
-                    version: 1
-                page:
-                  nextCursor:
-                  hasMore: false
-        "400":
-          description: Bad Request
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                invalid_request:
-                  summary: Pagination is invalid.
-                  value:
-                    error:
-                      code: invalid_request
-                      message: Pagination is invalid.
-                      requestId: req_listSubchannelMessages
-                      details: []
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The subchannel is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The subchannel is absent or hidden.
-                      requestId: req_listSubchannelMessages
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_listSubchannelMessages
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_listSubchannelMessages
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_listSubchannelMessages
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/SubchannelId"
-        - "$ref": "#/components/parameters/Cursor"
-        - "$ref": "#/components/parameters/Limit"
-  "/messages/{messageId}":
-    get:
-      tags:
-        - Channels
-      summary: Retrieve message
-      description: Retrieve message.
-      operationId: getMessage
-      security:
-        - session_cookie: []
-      responses:
-        "200":
-          description: Retrieve message completed successfully.
+          description: Current message or deleted placeholder, for a current course member.
           headers:
-            ETag:
-              "$ref": "#/components/headers/ETag"
+            ETag: { schema: { type: string } }
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/MessageResponse"
-              example:
-                data:
-                  id: message_123
-                  subchannelId: subchannel_123
-                  bodyMarkdown: Where should we start?
-                  author:
-                    userId: user_123
-                    displayName: Ada Lovelace
-                    anonymous: false
-                    deleted: false
-                  anonymous: false
-                  deleted: false
-                  createdAt: "2026-09-20T14:00:00Z"
-                  updatedAt: "2026-09-20T14:00:00Z"
-                  version: 1
+              schema: { $ref: "#/components/schemas/ThreadMessageResponse" }
+        "401": { description: Authentication required. }
         "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                not_found:
-                  summary: The message is absent or hidden.
-                  value:
-                    error:
-                      code: not_found
-                      message: The message is absent or hidden.
-                      requestId: req_getMessage
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_getMessage
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_getMessage
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_getMessage
-                      details: []
-      parameters:
-        - "$ref": "#/components/parameters/MessageId"
+          { description: Message, conversation, or board absent or hidden. }
     patch:
-      tags:
-        - Channels
-      summary: Update message
-      description: Update message.
-      operationId: updateMessage
-      security:
-        - session_cookie: []
+      tags: [Threads]
+      summary: Edit an existing Thread message
+      operationId: updateThreadMessage
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+        - $ref: "#/components/parameters/ThreadMessageId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ThreadMessageBodyRequest" }
       responses:
         "200":
-          description: Update message completed successfully.
+          description: Edited by the author or current staff for a student-authored message.
           headers:
-            ETag:
-              "$ref": "#/components/headers/ETag"
+            ETag: { schema: { type: string } }
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/ActiveMessageResponse"
-              example:
-                {
-                  "data":
-                    {
-                      "id": "message_123",
-                      "subchannelId": "subchannel_123",
-                      "bodyMarkdown": "Start by identifying the recurrence.",
-                      "author":
-                        {
-                          "userId": "user_123",
-                          "displayName": "Ada Lovelace",
-                          "anonymous": false,
-                          "deleted": false,
-                        },
-                      "anonymous": false,
-                      "deleted": false,
-                      "createdAt": "2026-09-20T14:00:00Z",
-                      "updatedAt": "2026-09-20T14:40:00Z",
-                      "version": 4,
-                    },
-                }
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_updateMessage
-                      details: []
-                permission_denied:
-                  summary: The caller cannot edit this message.
-                  value:
-                    error:
-                      code: permission_denied
-                      message: The caller cannot edit this message.
-                      requestId: req_updateMessage
-                      details: []
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                parent_archived:
-                  summary: The subchannel, channel, or course is archived.
-                  value:
-                    error:
-                      code: parent_archived
-                      message: The subchannel, channel, or course is archived.
-                      requestId: req_updateMessage
-                      details: []
-        "412":
-          description: Precondition Failed
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                version_conflict:
-                  summary: The supplied ETag is stale.
-                  value:
-                    error:
-                      code: version_conflict
-                      message: The supplied ETag is stale.
-                      requestId: req_updateMessage
-                      details: []
-        "422":
-          description: Unprocessable Content
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                validation_failed:
-                  summary: No valid editable field was supplied.
-                  value:
-                    error:
-                      code: validation_failed
-                      message: No valid editable field was supplied.
-                      requestId: req_updateMessage
-                      details: []
-        "428":
-          description: Precondition Required
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                precondition_required:
-                  summary: If-Match is required.
-                  value:
-                    error:
-                      code: precondition_required
-                      message: If-Match is required.
-                      requestId: req_updateMessage
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_updateMessage
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_updateMessage
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_updateMessage
-                      details: []
+              schema: { $ref: "#/components/schemas/ThreadMessageResponse" }
+        "401": { description: Authentication required. }
+        "403": { description: Permission denied or CSRF validation failed. }
+        "404": { description: Message absent or hidden. }
+        "409": { description: Course archived. }
+        "412": { description: Version conflict. }
+        "422": { description: Invalid message body. }
+        "428": { description: If-Match required. }
+    delete:
+      tags: [Threads]
+      summary: Delete Thread message text and attachments
+      operationId: deleteThreadMessage
+      security: [{ session_cookie: [] }]
       parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/MessageId"
-        - "$ref": "#/components/parameters/IfMatch"
-        - "$ref": "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+        - $ref: "#/components/parameters/ThreadMessageId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204": { description: Text scrubbed; bodyless placeholder retained. }
+        "401": { description: Authentication required. }
+        "403": { description: Permission denied or CSRF validation failed. }
+        "404": { description: Message absent or hidden. }
+        "409": { description: Course archived. }
+        "412": { description: Version conflict. }
+        "428": { description: If-Match required. }
+  "/courses/{courseId}/threads/{threadId}/conversations/{conversationId}/watch":
+    get:
+      tags: [Threads]
+      summary: Read current conversation watch preference
+      operationId: getThreadConversationWatch
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+      responses:
+        "200":
+          description: Watch and notice preference for current member.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadWatchResponse" }
+        "401": { description: Authentication required. }
+        "404": { description: Conversation absent or hidden. }
+    put:
+      tags: [Threads]
+      summary: Follow or unfollow reply notices without losing unread state
+      operationId: putThreadConversationWatch
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              "$ref": "#/components/schemas/UpdateMessageRequest"
-            example:
-              bodyMarkdown: Start by identifying the recurrence.
-    delete:
-      tags:
-        - Channels
-      summary: Delete message
-      description: Delete message. A bodyless, authorless tombstone is retained when required for conversation integrity.
-      operationId: deleteMessage
-      security:
-        - session_cookie: []
+              type: object
+              additionalProperties: false
+              required: [noticesEnabled]
+              properties:
+                noticesEnabled: { type: boolean }
       responses:
-        "204":
-          description: A bodyless, authorless tombstone is retained when required for conversation integrity.
-        "403":
-          description: Forbidden
+        "200":
+          description: Preference saved; watch remains even when notices are off.
           content:
             application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                csrf_validation_failed:
-                  summary: The request origin or CSRF token is missing, invalid, or does not match the session.
-                  value:
-                    error:
-                      code: csrf_validation_failed
-                      message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_deleteMessage
-                      details: []
-                permission_denied:
-                  summary: The caller cannot delete this message.
-                  value:
-                    error:
-                      code: permission_denied
-                      message: The caller cannot delete this message.
-                      requestId: req_deleteMessage
-                      details: []
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                parent_archived:
-                  summary: The subchannel, channel, or course is archived.
-                  value:
-                    error:
-                      code: parent_archived
-                      message: The subchannel, channel, or course is archived.
-                      requestId: req_deleteMessage
-                      details: []
-        "412":
-          description: Precondition Failed
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                version_conflict:
-                  summary: The supplied ETag is stale.
-                  value:
-                    error:
-                      code: version_conflict
-                      message: The supplied ETag is stale.
-                      requestId: req_deleteMessage
-                      details: []
-        "428":
-          description: Precondition Required
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                precondition_required:
-                  summary: If-Match is required.
-                  value:
-                    error:
-                      code: precondition_required
-                      message: If-Match is required.
-                      requestId: req_deleteMessage
-                      details: []
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                authentication_required:
-                  summary: Authentication is missing or invalid.
-                  value:
-                    error:
-                      code: authentication_required
-                      message: Authentication is missing or invalid.
-                      requestId: req_deleteMessage
-                      details: []
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                internal_error:
-                  summary: The server could not complete the request.
-                  value:
-                    error:
-                      code: internal_error
-                      message: The server could not complete the request.
-                      requestId: req_deleteMessage
-                      details: []
-        "503":
-          description: Service Unavailable
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/Error"
-              examples:
-                service_unavailable:
-                  summary: A required service is temporarily unavailable.
-                  value:
-                    error:
-                      code: service_unavailable
-                      message: A required service is temporarily unavailable.
-                      requestId: req_deleteMessage
-                      details: []
+              schema: { $ref: "#/components/schemas/ThreadWatchResponse" }
+        "401": { description: Authentication required. }
+        "404": { description: Conversation absent or hidden. }
+        "409": { description: Course archived. }
+        "422": { description: Invalid preference. }
+  "/courses/{courseId}/threads/{threadId}/conversations/{conversationId}/read":
+    post:
+      tags: [Threads]
+      summary: Mark only loaded messages as read
+      operationId: markThreadMessagesRead
+      security: [{ session_cookie: [] }]
       parameters:
-        - "$ref": "#/components/parameters/Origin"
-        - "$ref": "#/components/parameters/MessageId"
-        - "$ref": "#/components/parameters/IfMatch"
-        - "$ref": "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/CourseId"
+        - $ref: "#/components/parameters/ThreadId"
+        - $ref: "#/components/parameters/ThreadConversationId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [messageIds]
+              properties:
+                messageIds:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        "204": { description: Exact loaded messages marked read. }
+        "401": { description: Authentication required. }
+        "404": { description: Conversation absent or hidden. }
+        "409": { description: Course archived. }
+        "422": { description: Invalid or foreign message ID. }
+  "/thread-messages/{messageId}/attachments":
+    post:
+      tags: [Threads]
+      summary: Upload a file after a Thread message is saved
+      operationId: createThreadMessageAttachment
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ThreadMessageId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Validated file uploaded, at most five live files per message and 100 MiB each.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadAttachmentResponse" }
+        "401": { description: Authentication required. }
+        "403": { description: Permission denied or CSRF validation failed. }
+        "404": { description: Message absent or hidden. }
+        "409":
+          {
+            description: Course archived,
+            attachment limit reached,
+            or idempotency-key conflict.,
+          }
+        "413": { description: File exceeds 100 MiB. }
+        "415": { description: Unsupported file type. }
+        "422": { description: Invalid upload. }
+  "/thread-attachments/{attachmentId}/download":
+    get:
+      tags: [Threads]
+      summary: Download a live Thread message attachment
+      operationId: downloadThreadAttachment
+      security: [{ session_cookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/ThreadAttachmentId" }]
+      responses:
+        "200":
+          description: Authorized byte stream; current course membership and live parent are rechecked.
+          headers:
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
+            X-Content-Type-Options: { schema: { type: string, const: nosniff } }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401": { description: Authentication required. }
+        "404": { description: Attachment or parent absent or hidden. }
+        "503": { description: Object store unavailable. }
+  "/thread-attachments/{attachmentId}":
+    delete:
+      tags: [Threads]
+      summary: Remove a Thread attachment
+      operationId: deleteThreadAttachment
+      security: [{ session_cookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ThreadAttachmentId"
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "204": { description: Attachment hidden and object cleanup queued. }
+        "401": { description: Authentication required. }
+        "403": { description: Permission denied or CSRF validation failed. }
+        "404": { description: Attachment absent or hidden. }
+        "409": { description: Course archived. }
   /courses/{courseId}/collaboration-sessions:
     post:
       tags:
@@ -11529,7 +10023,7 @@ paths:
       tags:
         - Notifications
       summary: List notifications
-      description: Lists the caller's notifications newest first across courses. Ordinary events require a readable active post; merge events require the unchanged confirmed merge and readable canonical post, and author-specific deletion events remain generic while the recipient is a member. Only limit, cursor, and unread are accepted.
+      description: Lists the caller's notifications newest first across courses. Post events require a readable active post; merge events require the unchanged confirmed merge and readable canonical post; author-specific deletion events remain generic while the recipient is a member. Thread reply cards require a visible reply and carry a typed Thread destination and current plain-text preview. Only limit, cursor, and unread are accepted.
       operationId: listNotifications
       security:
         - session_cookie: []
@@ -13049,33 +11543,26 @@ components:
         type: string
         minLength: 1
         maxLength: 255
-    ChannelId:
-      name: channelId
+    ThreadId:
+      name: threadId
       in: path
       required: true
-      description: Identifies the channel resource.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 255
-    SubchannelId:
-      name: subchannelId
+      schema: { type: string, format: uuid }
+    ThreadConversationId:
+      name: conversationId
       in: path
       required: true
-      description: Identifies the subchannel resource.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 255
-    MessageId:
+      schema: { type: string, format: uuid }
+    ThreadMessageId:
       name: messageId
       in: path
       required: true
-      description: Identifies the message resource.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 255
+      schema: { type: string, format: uuid }
+    ThreadAttachmentId:
+      name: attachmentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     CollaborationSessionId:
       name: collaborationSessionId
       in: path
@@ -15009,435 +13496,6 @@ components:
         - updatedAt
         - version
         - extractedText
-    ChannelSummary:
-      type: object
-      properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        courseId:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        name:
-          type: string
-          description: Human-readable title.
-          minLength: 1
-          maxLength: 200
-        description:
-          type: string
-          description: Human-readable description.
-          maxLength: 2000
-        status:
-          type: string
-          description: Channel lifecycle state.
-          enum:
-            - active
-            - archived
-        lastActivityAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        createdAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        updatedAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        version:
-          type: integer
-          description: Revision number used to construct the resource ETag.
-          minimum: 1
-          examples:
-            - 3
-      additionalProperties: false
-      required:
-        - id
-        - courseId
-        - name
-        - description
-        - status
-        - lastActivityAt
-        - createdAt
-        - updatedAt
-        - version
-    Channel:
-      type: object
-      properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        courseId:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        name:
-          type: string
-          description: Human-readable title.
-          minLength: 1
-          maxLength: 200
-        description:
-          type: string
-          description: Human-readable description.
-          maxLength: 2000
-        status:
-          type: string
-          description: Channel lifecycle state.
-          enum:
-            - active
-            - archived
-        lastActivityAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        createdAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        updatedAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        version:
-          type: integer
-          description: Revision number used to construct the resource ETag.
-          minimum: 1
-          examples:
-            - 3
-      additionalProperties: false
-      required:
-        - id
-        - courseId
-        - name
-        - description
-        - status
-        - lastActivityAt
-        - createdAt
-        - updatedAt
-        - version
-    MessageSummary:
-      type: object
-      properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        subchannelId:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        bodyMarkdown:
-          type: string
-          description: Markdown content.
-          minLength: 1
-          maxLength: 100000
-        author:
-          "$ref": "#/components/schemas/Author"
-        anonymous:
-          type: boolean
-          description: Whether author identity is hidden.
-        deleted:
-          type: boolean
-          const: false
-          description: Active content discriminator.
-        createdAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        updatedAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        version:
-          type: integer
-          description: Revision number used to construct the resource ETag.
-          minimum: 1
-          examples:
-            - 3
-      additionalProperties: false
-      required:
-        - id
-        - subchannelId
-        - bodyMarkdown
-        - author
-        - anonymous
-        - deleted
-        - createdAt
-        - updatedAt
-        - version
-    Message:
-      type: object
-      properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        subchannelId:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        bodyMarkdown:
-          type: string
-          description: Markdown content.
-          minLength: 1
-          maxLength: 100000
-        author:
-          "$ref": "#/components/schemas/Author"
-        anonymous:
-          type: boolean
-          description: Whether author identity is hidden.
-        deleted:
-          type: boolean
-          const: false
-          description: Active content discriminator.
-        createdAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        updatedAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        version:
-          type: integer
-          description: Revision number used to construct the resource ETag.
-          minimum: 1
-          examples:
-            - 3
-      additionalProperties: false
-      required:
-        - id
-        - subchannelId
-        - bodyMarkdown
-        - author
-        - anonymous
-        - deleted
-        - createdAt
-        - updatedAt
-        - version
-    MessageTombstone:
-      type: object
-      properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-        subchannelId:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-        deleted:
-          type: boolean
-          const: true
-          description: Deleted tombstone discriminator.
-        createdAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-        updatedAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-        version:
-          type: integer
-          description: Revision number used to construct the resource ETag.
-          minimum: 1
-      additionalProperties: false
-      required:
-        - id
-        - subchannelId
-        - deleted
-        - createdAt
-        - updatedAt
-        - version
-    MessageRead:
-      oneOf:
-        - "$ref": "#/components/schemas/MessageSummary"
-        - "$ref": "#/components/schemas/MessageTombstone"
-      description: Message read representation. The required deleted field distinguishes active content from a retained tombstone.
-    SubchannelSummary:
-      type: object
-      properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        channelId:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        title:
-          type: string
-          description: Human-readable title.
-          minLength: 1
-          maxLength: 200
-        status:
-          type: string
-          description: Subchannel lifecycle state.
-          enum:
-            - active
-            - archived
-        createdBy:
-          "$ref": "#/components/schemas/Author"
-        lastActivityAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        createdAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        updatedAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        version:
-          type: integer
-          description: Revision number used to construct the resource ETag.
-          minimum: 1
-          examples:
-            - 3
-      additionalProperties: false
-      required:
-        - id
-        - channelId
-        - title
-        - status
-        - createdBy
-        - lastActivityAt
-        - createdAt
-        - updatedAt
-        - version
-    Subchannel:
-      type: object
-      properties:
-        id:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        channelId:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-        title:
-          type: string
-          description: Human-readable title.
-          minLength: 1
-          maxLength: 200
-        status:
-          type: string
-          description: Subchannel lifecycle state.
-          enum:
-            - active
-            - archived
-        createdBy:
-          "$ref": "#/components/schemas/Author"
-        lastActivityAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        createdAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        updatedAt:
-          type: string
-          description: UTC timestamp in ISO 8601 date-time format.
-          format: date-time
-          examples:
-            - "2026-09-20T14:30:00Z"
-        version:
-          type: integer
-          description: Revision number used to construct the resource ETag.
-          minimum: 1
-          examples:
-            - 3
-        introductoryMessage:
-          "$ref": "#/components/schemas/MessageRead"
-      additionalProperties: false
-      required:
-        - id
-        - channelId
-        - title
-        - status
-        - createdBy
-        - lastActivityAt
-        - createdAt
-        - updatedAt
-        - version
-        - introductoryMessage
     CollaborationAnchor:
       type: object
       properties:
@@ -15451,7 +13509,7 @@ components:
       additionalProperties: false
       required:
         - postId
-      description: A same-course post anchor. Subchannel anchors are future work and are not accepted.
+      description: A same-course post anchor. Thread conversation anchors are not supported.
     CollaborationLanguage:
       type: string
       description: Syntax-highlighting language. The editor never runs code.
@@ -16054,38 +14112,207 @@ components:
       additionalProperties: false
       required:
         - data
-    ChannelResponse:
+    ThreadBoard:
       type: object
-      properties:
-        data:
-          "$ref": "#/components/schemas/Channel"
       additionalProperties: false
       required:
-        - data
-    SubchannelResponse:
+        [id, courseId, title, version, unreadCount, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        courseId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        version: { type: integer, minimum: 1 }
+        unreadCount: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ThreadBoardTitleRequest:
       type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+    ThreadBoardResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: "#/components/schemas/ThreadBoard" }
+    ThreadBoardListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page]
       properties:
         data:
-          "$ref": "#/components/schemas/Subchannel"
+          { type: array, items: { $ref: "#/components/schemas/ThreadBoard" } }
+        page: { $ref: "#/components/schemas/Page" }
+    ThreadAuthor:
+      type: object
+      additionalProperties: false
+      required: [id, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string }
+    ThreadMessage:
+      type: object
       additionalProperties: false
       required:
-        - data
-    MessageResponse:
+        [
+          id,
+          conversationId,
+          ordinal,
+          authorRoleAtPosting,
+          attachments,
+          bodyMarkdown,
+          author,
+          createdAt,
+          updatedAt,
+          version,
+          deleted,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        conversationId: { type: string, format: uuid }
+        ordinal: { type: integer, minimum: 1 }
+        authorRoleAtPosting:
+          { type: [string, "null"], enum: [student, ta, instructor, null] }
+        attachments:
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/ThreadAttachment" },
+          }
+        bodyMarkdown:
+          {
+            type: string,
+            maxLength: 100000,
+            description: Empty on deleted placeholders.,
+          }
+        author:
+          oneOf:
+            - $ref: "#/components/schemas/ThreadAuthor"
+            - type: "null"
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+        deleted: { type: boolean }
+    ThreadMessageBodyRequest:
       type: object
+      additionalProperties: false
+      required: [bodyMarkdown]
+      properties:
+        bodyMarkdown: { type: string, minLength: 1, maxLength: 100000 }
+    ThreadMessageResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: "#/components/schemas/ThreadMessage" }
+    ThreadMessageListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page]
       properties:
         data:
-          "$ref": "#/components/schemas/MessageRead"
+          { type: array, items: { $ref: "#/components/schemas/ThreadMessage" } }
+        page: { $ref: "#/components/schemas/Page" }
+    ThreadConversation:
+      type: object
       additionalProperties: false
       required:
-        - data
-    ActiveMessageResponse:
+        [id, threadId, version, canDelete, createdAt, updatedAt, unreadCount]
+      properties:
+        id: { type: string, format: uuid }
+        threadId: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        canDelete:
+          {
+            type: boolean,
+            description: Whether the current viewer may delete this conversation.,
+          }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        openingMessage: { $ref: "#/components/schemas/ThreadMessage" }
+        unreadCount: { type: integer, minimum: 0 }
+    ThreadConversationResponse:
       type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: "#/components/schemas/ThreadConversation" }
+    ThreadConversationCreateResponse:
+      type: object
+      additionalProperties: false
+      required: [data, openingMessage]
+      properties:
+        data: { $ref: "#/components/schemas/ThreadConversation" }
+        openingMessage: { $ref: "#/components/schemas/ThreadMessage" }
+    ThreadConversationListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page]
       properties:
         data:
-          "$ref": "#/components/schemas/Message"
+          {
+            type: array,
+            items: { $ref: "#/components/schemas/ThreadConversation" },
+          }
+        page: { $ref: "#/components/schemas/Page" }
+    ThreadWatchResponse:
+      type: object
       additionalProperties: false
-      required:
-        - data
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [watching, noticesEnabled]
+          properties:
+            watching: { type: boolean }
+            noticesEnabled: { type: boolean }
+    ThreadUnreadCountResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [count]
+          properties:
+            count: { type: integer, minimum: 0 }
+    ThreadAttachment:
+      type: object
+      additionalProperties: false
+      required: [id, fileName, mediaType, sizeBytes, createdAt, downloadUrl]
+      properties:
+        id: { type: string, format: uuid }
+        fileName: { type: string }
+        mediaType: { type: string }
+        sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
+        createdAt: { type: string, format: date-time }
+        downloadUrl: { type: string }
+    ThreadAttachmentResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: "#/components/schemas/ThreadAttachment" }
+    ThreadChange:
+      type: object
+      additionalProperties: false
+      required: [sequence, boardId, kind, entityId]
+      properties:
+        sequence: { type: integer, minimum: 1 }
+        boardId: { type: string, format: uuid }
+        kind: { type: string }
+        entityId: { type: string, format: uuid }
+    ThreadChangesResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page]
+      properties:
+        data:
+          { type: array, items: { $ref: "#/components/schemas/ThreadChange" } }
+        page: { $ref: "#/components/schemas/Page" }
     CollaborationSessionResponse:
       type: object
       properties:
@@ -16202,48 +14429,6 @@ components:
           items:
             "$ref": "#/components/schemas/ResourceRegionSummary"
           description: Collection of ResourceRegionSummary records.
-        page:
-          "$ref": "#/components/schemas/Page"
-      additionalProperties: false
-      required:
-        - data
-        - page
-    ChannelListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            "$ref": "#/components/schemas/ChannelSummary"
-          description: Collection of ChannelSummary records.
-        page:
-          "$ref": "#/components/schemas/Page"
-      additionalProperties: false
-      required:
-        - data
-        - page
-    SubchannelListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            "$ref": "#/components/schemas/SubchannelSummary"
-          description: Collection of SubchannelSummary records.
-        page:
-          "$ref": "#/components/schemas/Page"
-      additionalProperties: false
-      required:
-        - data
-        - page
-    MessageListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            "$ref": "#/components/schemas/MessageRead"
-          description: Collection of active Message or retained MessageTombstone records.
         page:
           "$ref": "#/components/schemas/Page"
       additionalProperties: false
@@ -16889,7 +15074,7 @@ components:
       additionalProperties: false
       required:
         - data
-    Notification:
+    PostNotification:
       type: object
       properties:
         id:
@@ -16989,6 +15174,52 @@ components:
         - actor
         - createdAt
         - readAt
+    ThreadReplyNotification:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          kind,
+          courseId,
+          courseName,
+          threadId,
+          threadTitle,
+          conversationId,
+          messageId,
+          preview,
+          actor,
+          createdAt,
+          readAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, const: thread_reply_created }
+        courseId: { type: string, format: uuid }
+        courseName: { type: string }
+        threadId: { type: string, format: uuid }
+        threadTitle: { type: string }
+        conversationId: { type: string, format: uuid }
+        messageId: { type: string, format: uuid }
+        preview:
+          type: string
+          maxLength: 360
+          description: Current visible plain-text excerpt, up to three nonblank lines; hidden if source is deleted.
+        actor:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [displayName]
+              properties:
+                displayName: { type: string }
+            - type: "null"
+        createdAt: { type: string, format: date-time }
+        readAt: { type: [string, "null"], format: date-time }
+    Notification:
+      oneOf:
+        - $ref: "#/components/schemas/PostNotification"
+        - $ref: "#/components/schemas/ThreadReplyNotification"
+      description: Post activity or Thread reply notification, projected against current membership and content visibility.
     NotificationListResponse:
       type: object
       properties:
@@ -17129,85 +15360,6 @@ components:
           description: Human-readable title.
           minLength: 1
           maxLength: 200
-      additionalProperties: false
-      minProperties: 1
-    CreateChannelRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          description: Human-readable title.
-          minLength: 1
-          maxLength: 200
-        description:
-          type: string
-          description: Human-readable description.
-          maxLength: 2000
-      additionalProperties: false
-      required:
-        - name
-        - description
-    UpdateChannelRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          description: Human-readable title.
-          minLength: 1
-          maxLength: 200
-        description:
-          type: string
-          description: Human-readable description.
-          maxLength: 2000
-        status:
-          type: string
-          description: Replacement channel state.
-          enum:
-            - active
-            - archived
-      additionalProperties: false
-      minProperties: 1
-    CreateSubchannelRequest:
-      type: object
-      properties:
-        title:
-          type: string
-          description: Human-readable title.
-          minLength: 1
-          maxLength: 200
-        introductoryMessage:
-          "$ref": "#/components/schemas/CreateContentRequest"
-      additionalProperties: false
-      required:
-        - title
-        - introductoryMessage
-    UpdateSubchannelRequest:
-      type: object
-      properties:
-        title:
-          type: string
-          description: Human-readable title.
-          minLength: 1
-          maxLength: 200
-        status:
-          type: string
-          description: Replacement subchannel state.
-          enum:
-            - active
-            - archived
-      additionalProperties: false
-      minProperties: 1
-    UpdateMessageRequest:
-      type: object
-      properties:
-        bodyMarkdown:
-          type: string
-          description: Markdown content.
-          minLength: 1
-          maxLength: 100000
-        anonymous:
-          type: boolean
-          description: Whether to hide the author.
       additionalProperties: false
       minProperties: 1
     CreateCollaborationSessionRequest:

@@ -10,6 +10,7 @@ export type RouteName =
   | "post"
   | "course-settings"
   | "course-resources"
+  | "course-threads"
   | "course-statistics"
   | "course-session";
 
@@ -34,6 +35,8 @@ export type Route = {
   courseId?: string;
   postId?: string;
   sessionId?: string;
+  threadId?: string;
+  conversationId?: string;
   query?: string;
   filters?: FeedFilters;
 };
@@ -118,6 +121,12 @@ export function feedSearch(query?: string, filters?: FeedFilters): string {
 }
 
 export function routeForPath(pathname: string): RouteName {
+  if (
+    /^\/courses\/[^/]+\/threads(?:\/[^/]+(?:\/conversations\/[^/]+)?)?$/.test(
+      pathname,
+    )
+  )
+    return "course-threads";
   if (/^\/courses\/[^/]+\/posts\/[^/]+$/.test(pathname)) return "post";
   if (/^\/courses\/[^/]+\/sessions\/[^/]+$/.test(pathname))
     return "course-session";
@@ -149,6 +158,13 @@ export function routeFromLocation(location: URL): Route {
   const parts = location.pathname.split("/");
   const courseId = parts[2];
   if (name === "course-session") return { name, courseId, sessionId: parts[4] };
+  if (name === "course-threads")
+    return {
+      name,
+      courseId,
+      ...(parts[4] ? { threadId: parts[4] } : {}),
+      ...(parts[6] ? { conversationId: parts[6] } : {}),
+    };
   if (
     name === "course-settings" ||
     name === "course-resources" ||

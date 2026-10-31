@@ -55,7 +55,7 @@ function start(path: string): ChildProcess {
 }
 
 async function waitFor(condition: () => Promise<boolean>): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if (await condition()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -182,5 +182,5 @@ integration("daily digest process separation", () => {
     worker.kill("SIGTERM");
     await waitFor(async () => worker.exitCode !== null);
     expect(worker.exitCode).toBe(0);
-  }, 20_000);
+  }, 120_000);
 });

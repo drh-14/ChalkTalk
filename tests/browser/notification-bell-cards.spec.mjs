@@ -168,6 +168,10 @@ async function open(page, failOnce = false) {
       return json({ data: [], meta: { total: 0, nextCursor: null } });
     if (path.endsWith(`/courses/${courseId}/collaboration-sessions`))
       return json({ data: [], page: { nextCursor: null, hasMore: false } });
+    if (path.endsWith(`/courses/${courseId}/threads/unread-count`))
+      return json({ data: { count: 0 } });
+    if (path.endsWith(`/courses/${courseId}/post-folders`))
+      return json({ data: [] });
     if (path.endsWith("/notifications/unread-count"))
       return route.fulfill({ json: { data: { count: 5 } } });
     if (path.endsWith("/notifications/read"))

@@ -13,25 +13,36 @@ export type NotificationKind =
   | "post_staff_edited"
   | "post_merged"
   | "post_staff_deleted";
-export type Notification = {
+type NotificationBase = {
   id: string;
-  kind: NotificationKind;
   courseId: string;
   courseName: string;
-  postId: string;
-  postTitle: string | null;
-  preview?: string | null;
-  responseUnavailable?: boolean;
-  addressedToOwner?: boolean;
-  destination:
-    | { kind: "course"; courseId: string }
-    | { kind: "post"; postId: string }
-    | { kind: "answer" | "followup"; postId: string; responseId: string };
   /** "Anonymous" for a hidden actor; null for a deleted account. */
   actor: { displayName: string } | null;
   createdAt: string;
   readAt: string | null;
 };
+export type Notification =
+  | (NotificationBase & {
+      kind: NotificationKind;
+      postId: string;
+      postTitle: string | null;
+      preview?: string | null;
+      responseUnavailable?: boolean;
+      addressedToOwner?: boolean;
+      destination:
+        | { kind: "course"; courseId: string }
+        | { kind: "post"; postId: string }
+        | { kind: "answer" | "followup"; postId: string; responseId: string };
+    })
+  | (NotificationBase & {
+      kind: "thread_reply_created";
+      threadId: string;
+      threadTitle: string;
+      conversationId: string;
+      messageId: string;
+      preview: string;
+    });
 
 async function receive<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
@@ -110,6 +121,8 @@ const VERBS: Record<NotificationKind, string> = {
 
 /** "Grace Hopper answered" style lead-in for a notification. */
 export function describeNotification(notification: Notification): string {
+  if (notification.kind === "thread_reply_created")
+    return `${notification.actor?.displayName ?? "Deleted user"} replied in`;
   const actor =
     notification.actor?.displayName ??
     (notification.kind.startsWith("post_")

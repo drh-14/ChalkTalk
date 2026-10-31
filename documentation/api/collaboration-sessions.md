@@ -1,6 +1,6 @@
 ## Collaboration Sessions
 
-Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. A session on a [private post](posts.md) is also hidden from, and cannot be joined by, any member who cannot read that post. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Subchannel anchors are future work.
+Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. A session on a [private post](posts.md) is also hidden from, and cannot be joined by, any member who cannot read that post. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Thread conversations are not valid session anchors.
 
 <a id="createCollaborationSession"></a>
 
@@ -40,7 +40,7 @@ None.
 
 ##### `CreateCollaborationSessionRequest` (required)
 
-`anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+`anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
 
 `anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
 
@@ -72,7 +72,7 @@ None.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+`data.anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
 
 `data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
 
@@ -243,7 +243,7 @@ None.
 
 `data[].status` (enum: active, ended, required): Session lifecycle state.
 
-`data[].anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+`data[].anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
 
 `data[].anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
 
@@ -405,7 +405,7 @@ None.
 
 `data[].status` (enum: active, ended, required): Session lifecycle state.
 
-`data[].anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+`data[].anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
 
 `data[].anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
 
@@ -558,7 +558,7 @@ None.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+`data.anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
 
 `data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
 
@@ -714,7 +714,7 @@ None.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+`data.anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
 
 `data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
 
@@ -893,7 +893,7 @@ None.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): A same-course post anchor. Subchannel anchors are future work and are not accepted.
+`data.anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
 
 `data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
 

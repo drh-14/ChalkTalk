@@ -109,10 +109,9 @@ Posts, responses, and followups each have an author and timestamp; timestamps up
 
 Users can mark individual posts, responses, or followups as anonymous. When marked anonymous, the author is displayed as "Anonymous" to other students, while remaining visible to TAs and instructors.
 
-**Channels**  
-A channel is a group of discussion spaces called subchannels. Channels can only be created by instructors and TAs, and contain a title and description. Subchannels can be created by any user and contain a title and introductory message.
+### Threads
 
-Channels can be manually archived or deleted by an instructor or TA. When archived, all subchannels become read-only and new subchannels cannot be created. Channels are automatically archived after a configurable period of inactivity, defined as no new subchannels being created and no new activity within any subchannel.
+Staff create public topic boards for informal coordination, such as finding a project team. Any current course member can start a separate conversation with an opening message and reply in chronological order. The product does not maintain team rosters or approvals. Message authors can edit or delete their own messages; current staff can also moderate messages authored while the contributor was a student. Staff can rename or delete a whole board. Threads do not have categories, private access, anonymity, search, or automatic archiving.
 
 **Search**  
 Posts are indexed for full-text and fuzzy search. Matching, ranking, and filtering rules are documented in the [course posts API reference](api/posts.md).
@@ -125,7 +124,7 @@ Instructors can upload or link resources relating to the course, such as syllabu
 Uploaded documents can be divided into instructor-defined regions, such as a diagram or paragraph on a given page. Each region is independently searchable and can be directly linked to from posts, responses, and followups. Text within a defined region is extracted via OCR to support search.
 
 **Live Collaborative Sessions**  
-Any user can start a live, shared code editor session, linked to a post or channel, for use during office hours or collaborative debugging. Multiple participants can edit the same session concurrently, with changes merging in real time without conflict.
+Any user can start a live, shared code editor session, linked to a post, for use during office hours or collaborative debugging. Multiple participants can edit the same session concurrently, with changes merging in real time without conflict.
 
 **Statistics**  
 Course statistics are compiled per course in a statistics tab. These statistics include:

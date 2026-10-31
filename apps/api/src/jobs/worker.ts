@@ -6,6 +6,7 @@ import type { EmailSender } from "../auth/service.js";
 import type { Observability } from "../observability/index.js";
 import type { SemanticIndex } from "../semantic/index.js";
 import { readablePost } from "../posts/visibility.js";
+import { queueThreadAttachmentsForCourseDeletion } from "../threads/attachments.js";
 
 type Job = {
   id: string;
@@ -409,6 +410,9 @@ export class JobWorker {
       await client.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
         courseId,
       ]);
+      // Queue object removal before the course cascade removes attachment metadata.
+      // The existing deletion job retries independently if the object store is down.
+      await queueThreadAttachmentsForCourseDeletion(client, courseId);
       const attachments = await client.query<{ object_key: string }>(
         "SELECT object_key FROM content_attachments WHERE course_id=$1 FOR UPDATE",
         [courseId],

@@ -68,4 +68,4 @@ An authentication failure is reported through the provider's authentication-fail
 
 Tickets are single-use. After any disconnect that is not one of the final reasons above, request a new ticket before reconnecting. Local edits made while disconnected merge into the document on reconnect if the user is still authorized and the session is still active.
 
-Subchannel-anchored collaboration sessions are future work.
+Thread conversations are not collaboration-session anchors.

@@ -22,6 +22,7 @@ Core features include:
 - similar-question suggestions,
 - collaborative student and staff answers,
 - threaded follow-up discussions,
+- [public course Threads](documentation/api/channels.md) for member conversations,
 - endorsed answers,
 - anonymous posting,
 - private, autosaved drafts for unfinished new posts,
@@ -52,7 +53,7 @@ To delete a post you can read, open its detail view and select **Delete post**. 
 
 ## Project map and documentation
 
-The React/Vite client (`apps/web`) talks to the Express API (`apps/api`). PostgreSQL stores application data and background jobs; a separate worker sends mail and processes queued work. A collaboration server handles live-session WebSockets. Uploaded files use S3-compatible storage (SeaweedFS locally). See the [architecture diagram](diagrams/architecture/architecture.svg), [design](documentation/design.md), [database reference](documentation/database.md), and [API reference](documentation/openapi.yaml). The [`documentation/api/`](documentation/api/) directory explains individual API areas.
+The React/Vite client (`apps/web`) talks to the Express API (`apps/api`). PostgreSQL stores application data and background jobs; a separate worker sends mail and processes queued work. The API handles Threads WebSockets; a collaboration server handles live-session WebSockets. Uploaded files use S3-compatible storage (SeaweedFS locally). See the [architecture diagram](diagrams/architecture/architecture.svg), [design](documentation/design.md), [database reference](documentation/database.md), and [API reference](documentation/openapi.yaml). The [`documentation/api/`](documentation/api/) directory explains individual API areas.
 
 For a single-VM deployment from a pinned commit, see the [Compose deployment guide](deployment/README.md). It is a runnable skeleton, not a production-readiness guarantee; the instructions below are for local development.
 

@@ -1,6 +1,6 @@
 ## Notifications
 
-Members are notified of activity on posts they follow and of announcements in their courses. A member follows a post automatically when they create it, create or edit an answer on it, or post a followup or reply on it, and can follow or unfollow any readable post; see [Follow post](posts.md#followPost). An explicit unfollow persists.
+Members are notified of activity on posts they follow, of announcements in their courses, and of replies in watched Thread conversations when reply notices are enabled. A member follows a post automatically when they create it, create or edit an answer on it, or post a followup or reply on it, and can follow or unfollow any readable post; see [Follow post](posts.md#followPost). An explicit unfollow persists.
 
 These events create one notification for each other follower who is a current course member with an account that is not deleted:
 
@@ -19,7 +19,9 @@ An announcement creates an `announcement` notification for every other current c
 
 Ordinary notifications are listed only while the caller is still a member of the course who can read the active, unmerged post. A merge notice instead requires an unchanged confirmed merge and a readable, active canonical post. A deletion notice remains visible to its recipient while they are a course member, despite the scrubbed source post. Followers who can no longer read a private post, for example a TA who became a student, are not notified. List and unread count use the same visibility rules. Opening a post with [Get post](posts.md) marks the caller's notifications for it as read.
 
-**Email:** Members who enable `activityEmails` in their [per-course email preferences](courses.md#courseEmailPreferences) are emailed about existing activity/mention notifications, not the new staff edit/merge/delete in-app kinds or announcements. `announcementEmails` and `digestEmails` independently control those course emails. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. Follower-activity mail also requires the recipient to still follow the post; a direct mention remains deliverable after unfollowing. An anonymous actor appears as "Someone".
+**Thread replies:** Other current watchers of a public Thread conversation receive a `thread_reply_created` in-app card when their watch has notices enabled. Its typed destination identifies `threadId`, `conversationId`, and `messageId`; it includes the current visible plain-text reply excerpt (up to three nonblank lines or 360 characters), and hides the card if the reply has been deleted. A board deletion or course departure hides its cards. New conversations create no course-wide bell or email notice; see [Threads](channels.md) for live discovery. Thread replies send no email, even when post activity emails are on. Unfollowing reply notices does not clear Threads unread-message counts; see [Threads](channels.md).
+
+**Email:** Members who enable `activityEmails` in their [per-course email preferences](courses.md#courseEmailPreferences) are emailed about eligible Post activity/mention notifications, not Thread replies, staff edit/merge/delete cards, or announcements. `announcementEmails` and `digestEmails` independently control those course emails. The worker sends only while the notification is unread, the setting is still on, the recipient is still a member, and the post is still visible. Follower-activity mail also requires the recipient to still follow the post; a direct mention remains deliverable after unfollowing. An anonymous actor appears as "Someone".
 
 For newly created answers, root followups, and nested replies, the email includes up to three nonempty lines of the current response text (at most 360 characters) and a link to that exact response. A recipient who can no longer read the response, or whose response was deleted before delivery, receives no excerpt or email. The browser reveals and focuses a linked answer or followup, including an off-page nested reply. An unavailable linked response does not reveal its content. Older queued jobs without a response reference continue to use the post link.
 
@@ -69,25 +71,27 @@ None.
 
 `data[].id` (string, required): Opaque stable identifier.
 
-`data[].kind` (enum: answer_created, answer_edited, answer_endorsed, followup_created, reply_created, announcement, post_published, mentioned, post_staff_edited, post_merged, post_staff_deleted, required): What happened.
+`data[].kind` (enum: answer_created, answer_edited, answer_endorsed, followup_created, reply_created, announcement, post_published, mentioned, post_staff_edited, post_merged, post_staff_deleted, thread_reply_created, required): What happened.
 
-`data[].courseId` (string, required): Course of the post.
+`data[].courseId` (string, required): Course of the post or Thread.
 
 `data[].courseName` (string, required): Current course name.
 
-`data[].postId` (string, required): Post the activity happened on.
+`data[].postId` (string, required for Post kinds; absent for Thread replies): Post the activity happened on.
 
-`data[].postTitle` (string or null, required): Current post title; `null` for deletion notices.
+`data[].postTitle` (string or null, required for Post kinds; absent for Thread replies): Current post title; `null` for deletion notices.
 
-`data[].preview` (string or null, required): Up to three nonblank lines and 360 characters of the **current** referenced answer/followup text as plain text, without Markdown formatting or link targets; otherwise `null`. No response text is stored in the notification row.
+`data[].preview` (string or null, required): For Post kinds, up to three nonblank lines and 360 characters of the **current** referenced answer/followup text as plain text, without Markdown formatting or link targets; otherwise `null`. For Thread replies, a required string with the current visible plain-text reply excerpt at the same limits; a deleted reply has no card or stale text. No response text is stored in the notification row.
 
-`data[].responseUnavailable` (boolean, required): True when a referenced response was later deleted or removed; its old text is never returned.
+`data[].responseUnavailable` (boolean, required for Post kinds; absent for Thread replies): True when a referenced response was later deleted or removed; its old text is never returned.
 
-`data[].addressedToOwner` (boolean, required): True when a new answer or root followup addresses the post author, or a nested reply addresses its direct parent followup author. The question author is not the owner of another member's followup. Existing follow/unfollow rules still determine whether an event is created.
+`data[].addressedToOwner` (boolean, required for Post kinds; absent for Thread replies): True when a new answer or root followup addresses the post author, or a nested reply addresses its direct parent followup author. The question author is not the owner of another member's followup. Existing follow/unfollow rules still determine whether an event is created.
 
-`data[].destination` (object, required): `{ "kind": "course", "courseId": … }` for a deletion notice; `{ "kind": "post", "postId": … }` for a post or canonical merge target; or `{ "kind": "answer" | "followup", "postId": …, "responseId": … }` for an available referenced response. Clients build same-origin navigation from these typed IDs; no arbitrary URL or HTML is returned.
+`data[].destination` (object, required for Post kinds; absent for Thread replies): `{ "kind": "course", "courseId": … }` for a deletion notice; `{ "kind": "post", "postId": … }` for a post or canonical merge target; or `{ "kind": "answer" | "followup", "postId": …, "responseId": … }` for an available referenced response. Clients build same-origin navigation from these typed IDs; no arbitrary URL or HTML is returned.
 
-`data[].actor` (object or null, required): `{ "displayName": … }` for who acted. A student sees `{ "displayName": "Anonymous" }` for an anonymous actor; TAs and instructors see the name. `null` when the actor's account is deleted.
+`data[].threadId`, `data[].threadTitle`, `data[].conversationId`, `data[].messageId` (required for `thread_reply_created`; absent for Post kinds): Exact Thread reply destination and current board title.
+
+`data[].actor` (object or null, required): `{ "displayName": … }` for who acted. For anonymous Post activity, a student sees `{ "displayName": "Anonymous" }` while TAs and instructors see the name; Thread messages are identified. `null` when the actor's account is deleted.
 
 `data[].createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
