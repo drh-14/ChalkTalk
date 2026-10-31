@@ -368,6 +368,10 @@ export class DigestService {
       }
       if (snapshot.version !== 1)
         throw new Error("Unsupported digest email snapshot version");
+      if (snapshot.message.from !== this.sender.defaultFrom) {
+        await this.cancel(client, row);
+        return;
+      }
       const recipient = await client.query<{ email: string }>(
         `SELECT u.email FROM users u
            JOIN course_memberships m ON m.user_id=u.id AND m.course_id=$2 AND m.digest_emails

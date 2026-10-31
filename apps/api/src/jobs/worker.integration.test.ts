@@ -393,6 +393,47 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(initial).not.toBeNull();
   });
 
+  it("cancels an SMTP job retry when the configured sender changes", async () => {
+    const { jobId } = await seedMerge();
+    const attempts: string[] = [];
+    const oldSender: EmailSender = {
+      defaultFrom: "old@example.edu",
+      send: async (message) => {
+        attempts.push(message.from ?? "");
+        throw new Error("SMTP unavailable");
+      },
+    };
+    const first = new JobWorker(
+      pool,
+      "sender-retry",
+      oldSender,
+      "https://app.example.edu",
+    );
+    expect(await first.runOnce()).toBe(true);
+    expect(attempts).toEqual(["old@example.edu"]);
+    await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [jobId]);
+    const replacement = new JobWorker(
+      pool,
+      "sender-retry",
+      {
+        defaultFrom: "new@example.edu",
+        send: async () => {
+          attempts.push("new@example.edu");
+        },
+      },
+      "https://app.example.edu",
+    );
+    expect(await replacement.runOnce()).toBe(true);
+    expect(attempts).toEqual(["old@example.edu"]);
+    expect(
+      (
+        await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: "succeeded", frozen_email: null });
+  });
+
   it("commits the frozen job payload before the first outbound call", async () => {
     delivered.length = 0;
     const { jobId } = await seedMerge();
@@ -456,7 +497,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
   });
 
-  it.each(["none", "recipient", "identity", "content"] as const)(
+  it.each(["none", "recipient", "identity", "content", "sender"] as const)(
     "uses the HTTP provider for a frozen retry unless %s changes",
     async (change) => {
       const requests: Array<{ body: unknown; key: string | undefined }> = [];
@@ -488,16 +529,15 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         const address = server.address();
         if (!address || typeof address === "string")
           throw new Error("No mock port");
-        const sender = createEmailSender(
-          loadEnvironment({
-            AUTH_TOKEN_SECRET:
-              "test-secret-that-is-longer-than-thirty-two-characters",
-            EMAIL_PROVIDER: "resend",
-            RESEND_API_KEY: "re_local_test",
-            EMAIL_FROM: "sender@example.edu",
-            RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
-          }),
-        );
+        const environmentSource = {
+          AUTH_TOKEN_SECRET:
+            "test-secret-that-is-longer-than-thirty-two-characters",
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "re_local_test",
+          EMAIL_FROM: "sender@example.edu",
+          RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+        };
+        const sender = createEmailSender(loadEnvironment(environmentSource));
         const liveWorker = new JobWorker(
           pool,
           "http-provider-worker",
@@ -515,6 +555,20 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           status: "queued",
           frozen_email: { version: 1 },
         });
+        const retryWorker =
+          change === "sender"
+            ? new JobWorker(
+                pool,
+                "http-provider-worker",
+                createEmailSender(
+                  loadEnvironment({
+                    ...environmentSource,
+                    EMAIL_FROM: "replacement@example.edu",
+                  }),
+                ),
+                "https://app.example.edu",
+              )
+            : liveWorker;
         if (change === "recipient") {
           await pool.query(
             "UPDATE users SET email='new-address@jobs.example.edu' WHERE id=$1",
@@ -534,7 +588,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
           seeded.jobId,
         ]);
-        expect(await liveWorker.runOnce()).toBe(true);
+        expect(await retryWorker.runOnce()).toBe(true);
         if (change === "none") {
           expect(requests).toHaveLength(2);
           expect(requests[1]).toEqual(requests[0]);

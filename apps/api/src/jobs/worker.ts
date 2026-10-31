@@ -161,7 +161,8 @@ export class JobWorker {
       if (
         !current ||
         current.guard !== frozen.guard ||
-        current.message.to !== frozen.message.to
+        current.message.to !== frozen.message.to ||
+        frozen.message.from !== this.emailSender!.defaultFrom
       )
         return;
       await this.emailSender!.send(frozen.message, {
