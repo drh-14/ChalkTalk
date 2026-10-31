@@ -5,11 +5,11 @@ Date: 2026-10-30
 
 ## Context
 
-ChalkTalk sends authentication, announcement, followed-post activity, live-session invitation, duplicate-question, and daily-digest email through one `EmailSender` interface. Its current implementation uses Nodemailer over SMTP. Railway's lower-tier outbound-SMTP restriction makes that transport unsuitable for the intended Railway deployment. The user selected Resend's HTTPS Email API, while retaining Mailpit for local development. This is a transport change, not a change to which events generate mail or who may receive it.
+ChalkTalk sends authentication, announcement, followed-post activity, live-session invitation, duplicate-question, and daily-digest email through one `EmailSender` interface. Its current implementation uses Nodemailer over SMTP. The planned deployment will use Resend's HTTPS Email API, while retaining Mailpit as the local default. Resend integration is merged independently before Railway deployment work. This is a transport change, not a change to which events generate mail or who may receive it.
 
 The API process sends some authentication mail directly. A separate worker sends queued mail and rich daily digests. PostgreSQL owns queued delivery state and current recipient/content eligibility. Rich digests can contain up to 5 MiB of inline PNG images and generate random Content-IDs; rendering the same digest twice does not necessarily produce an identical API request. That matters because Resend's idempotency key requires an identical request payload on retry.
 
-The intended deployment is a small course project, with Railway hosting the application and Resend handling email. The operator will verify a sending domain and configure a sending-only Resend API key as a Railway secret. No provider fallback or inbound-mail feature is requested.
+The operator will verify a sending domain and configure a sending-only Resend API key as an environment secret. Railway-specific integration is deferred to a separate change. No provider fallback or inbound-mail feature is requested.
 
 ## Decision
 
@@ -23,17 +23,17 @@ Resend idempotency is only a 24-hour duplicate-suppression window, not an exactl
 
 The snapshot and key must commit before the network call. Otherwise a timeout or worker crash could lose the original request body and make a later retry differ. A retry that finds the recipient or content no longer eligible cancels without calling Resend. PostgreSQL remains the sole delivery-state owner; Resend's response confirms API acceptance, not final inbox delivery.
 
-Local Compose continues to route both API and worker to Mailpit. Railway config selects Resend with `RESEND_API_KEY` and a verified-domain `EMAIL_FROM` value; `SMTP_*` values are not required there. The exact environment-variable names and validation rules are implementation details for planning, but configuration must fail fast if Resend is selected without a usable key or sender. No automatic SMTP fallback is permitted: a timeout followed by fallback could send two messages.
+Local Compose continues to route both API and worker to Mailpit. For direct local Resend use, set `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, and a verified-domain `EMAIL_FROM`; `RESEND_API_BASE_URL` can select a local mock HTTP origin instead of the default Resend HTTPS origin. Configuration must fail fast if Resend is selected without a usable key or sender, or with a malformed endpoint. No automatic SMTP fallback is permitted: a timeout followed by fallback could send two messages.
 
 ## Technology choices
 
-| Concern | Choice | Why | Runner-up |
-| --- | --- | --- | --- |
-| Production transport | Resend Email API over HTTPS | Works on Railway without outbound SMTP and supports text, HTML, inline CID images, and idempotency keys | SES HTTPS requires AWS credentials and signing, contrary to the user's provider choice |
-| Client | Official `resend` Node SDK | Typed API and first-party support for request options and inline images | Hand-written `fetch` duplicates API mapping and error handling |
-| Local email | Existing Nodemailer to Mailpit | Keeps current fast, inspectable development and test flow | Sending every developer email through Resend costs quota and risks real delivery |
-| Queue-state owner | Existing PostgreSQL jobs and digest outbox | Preserves retry, cancellation, and lifecycle policy | Resend scheduling would split delivery ownership |
-| Frozen payload | PostgreSQL snapshot on queue row | Atomic with existing queue state; simple at expected course scale | Object-store snapshot adds a second durable dependency and cleanup path |
+| Concern              | Choice                                     | Why                                                                     | Runner-up                                                                              |
+| -------------------- | ------------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Production transport | Resend Email API over HTTPS                | Supports text, HTML, inline CID images, and idempotency keys            | SES HTTPS requires AWS credentials and signing, contrary to the user's provider choice |
+| Client               | Official `resend` Node SDK                 | Typed API and first-party support for request options and inline images | Hand-written `fetch` duplicates API mapping and error handling                         |
+| Local email          | Existing Nodemailer to Mailpit             | Keeps current fast, inspectable development and test flow               | Sending every developer email through Resend costs quota and risks real delivery       |
+| Queue-state owner    | Existing PostgreSQL jobs and digest outbox | Preserves retry, cancellation, and lifecycle policy                     | Resend scheduling would split delivery ownership                                       |
+| Frozen payload       | PostgreSQL snapshot on queue row           | Atomic with existing queue state; simple at expected course scale       | Object-store snapshot adds a second durable dependency and cleanup path                |
 
 Provider facts checked on 2026-10-30 against [Resend's official Node SDK](https://github.com/resend/resend-node), [idempotency documentation](https://resend.com/docs/dashboard/emails/idempotency-keys), and [inline-CID documentation](https://resend.com/changelog/embed-images-using-cid). Resend retains keys for 24 hours and rejects reuse of a key with a different payload. Its API supports CID inline attachments. Package-lock should pin the exact installed SDK version at implementation time.
 
@@ -55,16 +55,16 @@ Provider facts checked on 2026-10-30 against [Resend's official Node SDK](https:
 
 ## Failure modes
 
-| Failure | Behavior |
-| --- | --- |
-| Missing/invalid key or unverified sender | Fail configuration/startup or surface a non-retryable provider error; do not silently fall back to SMTP. |
-| Resend slow, down, or 429 | Bound the HTTP call; leave the durable queue item retryable with its identical snapshot/key. Honor provider retry guidance where available without unbounded request blocking. |
-| Network drops after Resend accepted | Retry the same snapshot/key. Resend suppresses duplicates inside its 24-hour window; beyond that, a duplicate remains possible. |
-| Provider returns malformed success/error | Treat as failure and retain the queued item; never mark sent without an identifiable accepted response. |
-| Recipient unsubscribes or loses access before retry | Recheck current eligibility and cancel; never rely on the frozen snapshot as authorization. |
-| Worker crashes after snapshot commit, before send | Reclaimed job sends the saved snapshot/key. |
-| Worker crashes after provider success, before DB mark-sent | Reclaimed job retries the same snapshot/key, subject to the 24-hour limit. |
-| Local Mailpit unavailable | Existing local SMTP failure remains visible; no production Resend fallback in development. |
+| Failure                                                    | Behavior                                                                                                                                                                       |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Missing/invalid key or unverified sender                   | Fail configuration/startup or surface a non-retryable provider error; do not silently fall back to SMTP.                                                                       |
+| Resend slow, down, or 429                                  | Bound the HTTP call; leave the durable queue item retryable with its identical snapshot/key. Honor provider retry guidance where available without unbounded request blocking. |
+| Network drops after Resend accepted                        | Retry the same snapshot/key. Resend suppresses duplicates inside its 24-hour window; beyond that, a duplicate remains possible.                                                |
+| Provider returns malformed success/error                   | Treat as failure and retain the queued item; never mark sent without an identifiable accepted response.                                                                        |
+| Recipient unsubscribes or loses access before retry        | Recheck current eligibility and cancel; never rely on the frozen snapshot as authorization.                                                                                    |
+| Worker crashes after snapshot commit, before send          | Reclaimed job sends the saved snapshot/key.                                                                                                                                    |
+| Worker crashes after provider success, before DB mark-sent | Reclaimed job retries the same snapshot/key, subject to the 24-hour limit.                                                                                                     |
+| Local Mailpit unavailable                                  | Existing local SMTP failure remains visible; no production Resend fallback in development.                                                                                     |
 
 ## Reversibility
 

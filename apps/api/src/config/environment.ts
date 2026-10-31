@@ -66,7 +66,12 @@ export interface Environment {
   };
   email:
     | { provider: "smtp"; from: string }
-    | { provider: "resend"; from: string; resendApiKey: string };
+    | {
+        provider: "resend";
+        from: string;
+        resendApiKey: string;
+        resendApiBaseUrl: string;
+      };
   smtp: {
     host: string;
     port: number;
@@ -89,6 +94,25 @@ export function loadEnvironment(
     throw new Error("RESEND_API_KEY is required when EMAIL_PROVIDER=resend");
   if (emailProvider === "resend" && !source.EMAIL_FROM?.trim())
     throw new Error("EMAIL_FROM is required when EMAIL_PROVIDER=resend");
+  let resendApiBaseUrl = "https://api.resend.com";
+  if (emailProvider === "resend" && source.RESEND_API_BASE_URL !== undefined) {
+    let endpoint: URL;
+    try {
+      endpoint = new URL(source.RESEND_API_BASE_URL);
+    } catch {
+      throw new Error("RESEND_API_BASE_URL must be an HTTP or HTTPS origin");
+    }
+    if (
+      !["http:", "https:"].includes(endpoint.protocol) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.pathname !== "/" ||
+      endpoint.search ||
+      endpoint.hash
+    )
+      throw new Error("RESEND_API_BASE_URL must be an HTTP or HTTPS origin");
+    resendApiBaseUrl = endpoint.origin;
+  }
   const positiveInteger = (name: string, fallback: number): number => {
     const value = Number(source[name] ?? fallback);
     if (!Number.isInteger(value) || value < 1)
@@ -232,6 +256,7 @@ export function loadEnvironment(
             provider: "resend",
             from: source.EMAIL_FROM!.trim(),
             resendApiKey: source.RESEND_API_KEY!.trim(),
+            resendApiBaseUrl,
           }
         : {
             provider: "smtp",

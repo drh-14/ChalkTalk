@@ -11,6 +11,6 @@
 
 ## 3. Delivery verification
 
-- [x] 3.1 Update deployment and operator documentation for `EMAIL_PROVIDER`, `EMAIL_FROM`, and `RESEND_API_KEY`; keep Mailpit instructions.
+- [x] 3.1 Update local and operator documentation for `EMAIL_PROVIDER`, `EMAIL_FROM`, `RESEND_API_KEY`, and `RESEND_API_BASE_URL`; keep Mailpit instructions. Railway integration is deferred.
 - [x] 3.2 Run focused and broad tests, typecheck, lint, build, formatting, and isolated PostgreSQL scenarios; resolve findings.
 - [x] 3.3 Archive OpenSpec after verification and hand the combined change to the no-mistakes publication gate.

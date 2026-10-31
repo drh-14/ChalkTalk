@@ -5,7 +5,9 @@ import type { EmailSender } from "./service.js";
 
 export function createEmailSender(environment: Environment): EmailSender {
   if (environment.email.provider === "resend") {
-    const client = new Resend(environment.email.resendApiKey);
+    const client = new Resend(environment.email.resendApiKey, {
+      baseUrl: environment.email.resendApiBaseUrl,
+    });
     return {
       defaultFrom: environment.email.from,
       send: async (message, { signal, idempotencyKey } = {}) => {

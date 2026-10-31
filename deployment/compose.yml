@@ -1,0 +1,144 @@
+name: chalktalk
+
+x-app-build: &app-build
+  context: ..
+  dockerfile: deployment/Dockerfile
+  target: app
+
+x-app-environment: &app-environment
+  env_file: .env
+  environment:
+    PORT: "3000"
+    COLLABORATION_PORT: "3100"
+    DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in deployment/.env}
+    S3_ENDPOINT: http://seaweedfs:8333
+    S3_BUCKET: ${S3_BUCKET:-chalktalk-resources}
+    S3_REGION: ${S3_REGION:-us-east-1}
+    S3_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:?Set SEAWEEDFS_ACCESS_KEY_ID}
+    S3_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:?Set SEAWEEDFS_SECRET_ACCESS_KEY}
+    FRONTEND_ORIGINS: https://${DOMAIN:?Set DOMAIN in deployment/.env}
+    FRONTEND_BASE_URL: https://${DOMAIN:?Set DOMAIN in deployment/.env}
+    COLLABORATION_PUBLIC_URL: wss://${DOMAIN:?Set DOMAIN in deployment/.env}/collaboration
+    TRUST_PROXY_HOPS: "1"
+
+x-bounded-logs: &bounded-logs
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: chalktalk
+      POSTGRES_USER: chalktalk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deployment/.env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chalktalk -d chalktalk"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *bounded-logs
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    command: ["mini", "-dir=/data"]
+    restart: unless-stopped
+    environment:
+      AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:?Set SEAWEEDFS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:?Set SEAWEEDFS_SECRET_ACCESS_KEY}
+    volumes:
+      - seaweedfs-data:/data
+    networks: [data]
+    logging: *bounded-logs
+
+  migrate:
+    build: *app-build
+    <<: *app-environment
+    command: ["node", "apps/api/dist/database/migrate.js"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [data]
+    restart: "no"
+    logging: *bounded-logs
+
+  api:
+    build: *app-build
+    <<: *app-environment
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      seaweedfs: { condition: service_started }
+    networks: [edge, data]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *bounded-logs
+
+  worker:
+    build: *app-build
+    <<: *app-environment
+    command: ["node", "apps/api/dist/jobs/main.js"]
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      seaweedfs: { condition: service_started }
+    # Non-internal network provides outbound SES SMTP access; no host port is published.
+    networks: [edge, data]
+    logging: *bounded-logs
+
+  collaboration:
+    build: *app-build
+    <<: *app-environment
+    command: ["node", "apps/api/dist/collaboration/main.js"]
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [edge, data]
+    logging: *bounded-logs
+
+  web:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: web
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in deployment/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      collaboration: { condition: service_started }
+    networks: [edge]
+    logging: *bounded-logs
+
+networks:
+  edge: {}
+  data:
+    internal: true
+
+volumes:
+  postgres-data: {}
+  seaweedfs-data: {}
+  caddy-data: {}
+  caddy-config: {}

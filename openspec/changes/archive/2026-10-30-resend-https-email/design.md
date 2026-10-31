@@ -4,13 +4,13 @@ The API sends immediate authentication mail through `EmailSender`; the worker se
 
 ## Goals / Non-Goals
 
-**Goals:** Select Resend HTTPS in production without changing local Mailpit; persist exact queued payloads before first external send; retry safely with stable keys and revalidate current eligibility for every attempt; verify network and invalidation cases.
+**Goals:** Select Resend HTTPS through environment variables without changing the local Mailpit default; permit a local mock API origin; persist exact queued payloads before first external send; retry safely with stable keys and revalidate current eligibility for every attempt; verify network and invalidation cases.
 
 **Non-Goals:** Change email triggers, build a new generic queue, introduce inbound mail/webhooks, guarantee exactly-once delivery after Resend's 24-hour key window, or change UI.
 
 ## Decisions
 
-- Retain the `EmailSender` boundary, adding optional `from`, `defaultFrom`, and `idempotencyKey`. The official Resend SDK is isolated in the adapter. `EMAIL_PROVIDER` selects `smtp` or `resend`; Resend requires `RESEND_API_KEY` and `EMAIL_FROM`, with no SMTP fallback.
+- Retain the `EmailSender` boundary, adding optional `from`, `defaultFrom`, and `idempotencyKey`. The official Resend SDK is isolated in the adapter. `EMAIL_PROVIDER` selects `smtp` or `resend`; Resend requires `RESEND_API_KEY` and `EMAIL_FROM`. `RESEND_API_BASE_URL` optionally overrides the HTTPS API origin for local mocks, with no SMTP fallback.
 - Add nullable versioned `frozen_email` JSONB to `jobs` and `digest_outbox`. The serialized payload includes base64 inline attachment bytes and validation references. A transaction commits the snapshot before any provider call. Stable keys derive from row IDs.
 - Recheck current account address, preferences, content visibility/body, and course state before sending. Send-time row locks preserve revocation ordering where currently provided. On ineligibility, cancel and clear the snapshot. A frozen digest is canceled as a whole if any included item becomes invalid.
 - Keep immediate authentication sends synchronous, including password-reset abort behavior. Queued messages retain existing retry scheduling and claim semantics. Permanent provider errors must not silently fall back or be marked sent.

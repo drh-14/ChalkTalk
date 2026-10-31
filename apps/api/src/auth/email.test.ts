@@ -2,16 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadEnvironment } from "../config/environment.js";
 import { createEmailSender, PermanentEmailDeliveryError } from "./email.js";
 
-const { send, keys } = vi.hoisted(() => ({
+const { send, keys, options } = vi.hoisted(() => ({
   send: vi.fn(),
   keys: [] as string[],
+  options: [] as Array<{ baseUrl?: string }>,
 }));
 
 vi.mock("resend", () => ({
   Resend: class {
     emails = { send };
-    constructor(key: string) {
+    constructor(key: string, config?: { baseUrl?: string }) {
       keys.push(key);
+      options.push(config ?? {});
     }
   },
 }));
@@ -27,6 +29,7 @@ describe("Resend HTTPS email sender", () => {
   beforeEach(() => {
     send.mockReset();
     keys.length = 0;
+    options.length = 0;
     send.mockResolvedValue({ data: { id: "email-1" }, error: null });
   });
 
@@ -73,6 +76,23 @@ describe("Resend HTTPS email sender", () => {
       },
       { signal: controller.signal, idempotencyKey: "digest/delivery-1" },
     );
+  });
+
+  it("uses the configured Resend API endpoint without changing message delivery", async () => {
+    const custom = loadEnvironment({
+      AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
+      EMAIL_PROVIDER: "resend",
+      RESEND_API_KEY: "re_secret_test",
+      EMAIL_FROM: "sender@example.edu",
+      RESEND_API_BASE_URL: "http://127.0.0.1:4000",
+    });
+    await createEmailSender(custom).send({
+      to: "r@example.edu",
+      subject: "Hi",
+      text: "body",
+    });
+    expect(options).toEqual([{ baseUrl: "http://127.0.0.1:4000" }]);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it("fails rather than treating an error or malformed success as delivered", async () => {

@@ -1,10 +1,10 @@
 ## Why
 
-Railway's intended deployment cannot rely on outbound SMTP, while ChalkTalk's existing email transport is SMTP-only. Resend HTTPS must deliver the same email events without weakening cancellation, privacy, or retry behavior.
+ChalkTalk's existing email transport is SMTP-only, while the planned deployment will use Resend HTTPS. The Resend capability should be independently mergeable before any Railway integration, without weakening cancellation, privacy, or retry behavior.
 
 ## What Changes
 
-- Add an explicit Resend HTTPS provider for production while retaining SMTP/Mailpit locally.
+- Add an explicit Resend HTTPS provider with a configurable API origin for local testing while retaining SMTP/Mailpit as the local default.
 - Freeze exact queued email payloads before the first send, retry with a stable idempotency key, and clear snapshots after success or cancellation.
 - Revalidate recipients, preferences, visibility, content, and lifecycle before every attempt; cancel stale messages rather than sending changed or restricted content.
 - Document provider configuration and bounded idempotency guarantees.
@@ -21,4 +21,4 @@ Railway's intended deployment cannot rely on outbound SMTP, while ChalkTalk's ex
 
 ## Impact
 
-API and worker email adapter/configuration, job and digest delivery, additive PostgreSQL migration, tests, environment/deployment documentation, and the official Resend SDK dependency. No UI or email trigger changes.
+API and worker email adapter/configuration, job and digest delivery, additive PostgreSQL migration, tests, local environment documentation, and the official Resend SDK dependency. Railway deployment changes are deferred; no UI or email trigger changes.

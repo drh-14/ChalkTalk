@@ -6,7 +6,8 @@ COPY apps/web/package.json apps/web/package.json
 RUN npm ci --no-audit --no-fund
 COPY tsconfig.base.json ./
 COPY apps/api apps/api
-RUN npm run build --workspace=@chalktalk/api
+COPY apps/web apps/web
+RUN npm run build
 
 FROM build AS production-dependencies
 RUN npm prune --omit=dev --no-audit --no-fund
@@ -21,3 +22,7 @@ COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY database/migrations ./database/migrations
 USER node
 CMD ["node", "apps/api/dist/server.js"]
+
+FROM caddy:2.10-alpine AS web
+COPY deployment/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/apps/web/dist /srv
