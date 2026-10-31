@@ -1167,13 +1167,14 @@ integration("daily course email digest", () => {
     const attachmentIds = Array.from({ length: 6 }, () => uuidv7());
     for (const id of attachmentIds) {
       await pool.query(
-        "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$1,'image.png','image/png',$4,$5)",
+        "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$6,'image.png','image/png',$4,$5)",
         [
           id,
           ids.physics,
           post,
           image.length,
           createHash("sha256").update(image).digest(),
+          id,
         ],
       );
     }
