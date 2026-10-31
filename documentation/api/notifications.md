@@ -81,19 +81,17 @@ None.
 
 `data[].postTitle` (string or null, required for Post kinds; absent for Thread replies): Current post title; `null` for deletion notices.
 
-`data[].preview` (string or null, required): Up to three nonblank lines and 360 characters of the **current** referenced answer/followup text as plain text, without Markdown formatting or link targets; otherwise `null`. No response text is stored in the notification row.
+`data[].preview` (string or null, required): For Post kinds, up to three nonblank lines and 360 characters of the **current** referenced answer/followup text as plain text, without Markdown formatting or link targets; otherwise `null`. For Thread replies, a required string with the current visible plain-text reply excerpt at the same limits; a deleted reply has no card or stale text. No response text is stored in the notification row.
 
-`data[].responseUnavailable` (boolean, required): True when a referenced response was later deleted or removed; its old text is never returned.
+`data[].responseUnavailable` (boolean, required for Post kinds; absent for Thread replies): True when a referenced response was later deleted or removed; its old text is never returned.
 
-`data[].addressedToOwner` (boolean, required): True when a new answer or root followup addresses the post author, or a nested reply addresses its direct parent followup author. The question author is not the owner of another member's followup. Existing follow/unfollow rules still determine whether an event is created.
+`data[].addressedToOwner` (boolean, required for Post kinds; absent for Thread replies): True when a new answer or root followup addresses the post author, or a nested reply addresses its direct parent followup author. The question author is not the owner of another member's followup. Existing follow/unfollow rules still determine whether an event is created.
 
-`data[].destination` (object, required): `{ "kind": "course", "courseId": … }` for a deletion notice; `{ "kind": "post", "postId": … }` for a post or canonical merge target; or `{ "kind": "answer" | "followup", "postId": …, "responseId": … }` for an available referenced response. Clients build same-origin navigation from these typed IDs; no arbitrary URL or HTML is returned.
+`data[].destination` (object, required for Post kinds; absent for Thread replies): `{ "kind": "course", "courseId": … }` for a deletion notice; `{ "kind": "post", "postId": … }` for a post or canonical merge target; or `{ "kind": "answer" | "followup", "postId": …, "responseId": … }` for an available referenced response. Clients build same-origin navigation from these typed IDs; no arbitrary URL or HTML is returned.
 
 `data[].threadId`, `data[].threadTitle`, `data[].conversationId`, `data[].messageId` (required for `thread_reply_created`; absent for Post kinds): Exact Thread reply destination and current board title.
 
-`data[].preview` (string, required for `thread_reply_created`): Current visible plain-text excerpt, up to three nonblank lines/360 characters; deleted replies have no card and no stale text.
-
-`data[].actor` (object or null, required): `{ "displayName": … }` for who acted. A student sees `{ "displayName": "Anonymous" }` for an anonymous actor; TAs and instructors see the name. `null` when the actor's account is deleted.
+`data[].actor` (object or null, required): `{ "displayName": … }` for who acted. For anonymous Post activity, a student sees `{ "displayName": "Anonymous" }` while TAs and instructors see the name; Thread messages are identified. `null` when the actor's account is deleted.
 
 `data[].createdAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 

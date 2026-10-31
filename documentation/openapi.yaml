@@ -21,7 +21,8 @@ info:
     replies also use REST only. Saved questions, notes, answers, and followups
     support separate parent-scoped file attachments; create/update text requests
     remain JSON-only. Private post-anchored live sessions are live through the
-    collaboration-session routes and the collaboration WebSocket. Multipart
+    collaboration-session routes and the collaboration WebSocket. Public course
+    Threads are live through REST and a separate API-owned WebSocket. Multipart
     post create/update, download refresh, and Thread-anchored collaboration
     sessions remain unavailable.
   license:
