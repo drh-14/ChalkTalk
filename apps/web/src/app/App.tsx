@@ -171,6 +171,18 @@ function SignupRequestForm({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
+    const domain = email.trim().toLowerCase().split("@")[1] ?? "";
+    if (
+      domain.length > 253 ||
+      !domain.endsWith(".edu") ||
+      !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+        domain,
+      )
+    ) {
+      setError("Use an email address with a valid .edu domain.");
+      setNotice(undefined);
+      return;
+    }
     setPending(true);
     setError(undefined);
     try {

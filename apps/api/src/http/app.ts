@@ -94,7 +94,6 @@ function testEnvironment(): Environment {
     frontendOrigins: new Set(["https://localhost:5173"]),
     frontendBaseUrl: "https://localhost:5173",
     authTokenSecret: "test-secret-that-is-longer-than-thirty-two-characters",
-    allowedSchoolDomains: new Set(["example.edu"]),
     rateLimits: {
       verificationPerEmail: 5,
       verificationPerIp: 100,

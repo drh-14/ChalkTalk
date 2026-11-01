@@ -102,6 +102,34 @@ function domainFor(email: string): string {
   return email.slice(email.lastIndexOf("@") + 1);
 }
 
+function isValidDomain(domain: string): boolean {
+  return (
+    domain.length <= 253 &&
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+      domain,
+    )
+  );
+}
+
+function requireAcademicEmail(email: string): void {
+  const normalizedEmail = normalizeEmail(email);
+  const localPart = normalizedEmail.slice(0, normalizedEmail.indexOf("@"));
+  if (
+    !isValidDomain(domainFor(normalizedEmail)) ||
+    localPart.length > 64 ||
+    !localPart
+      .split(".")
+      .every((part) => /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+$/.test(part))
+  )
+    throw new AuthError(422, "validation_failed", "Email is invalid");
+  if (!domainFor(normalizedEmail).endsWith(".edu"))
+    throw new AuthError(
+      422,
+      "email_domain_not_allowed",
+      "Email must use a valid .edu domain",
+    );
+}
+
 function mapUser(row: UserRow): UserProfile {
   return {
     id: row.id,
@@ -298,12 +326,7 @@ export class AuthService {
 
   async requestVerification(emailInput: unknown): Promise<void> {
     const email = normalizeEmail(emailInput);
-    if (!this.environment.allowedSchoolDomains.has(domainFor(email)))
-      throw new AuthError(
-        422,
-        "email_domain_not_allowed",
-        "Email domain is not allowed",
-      );
+    requireAcademicEmail(email);
     await this.requestVerificationForEmail(email);
   }
 
@@ -313,12 +336,7 @@ export class AuthService {
     normalizedEmail: string,
     ip: string,
   ): Promise<void> {
-    if (!this.environment.allowedSchoolDomains.has(domainFor(normalizedEmail)))
-      throw new AuthError(
-        422,
-        "email_domain_not_allowed",
-        "Email domain is not allowed",
-      );
+    requireAcademicEmail(normalizedEmail);
     if (key === undefined) {
       await this.checkLimit(normalizedEmail, ip, "verification");
       await this.requestVerificationForEmail(normalizedEmail);
@@ -430,11 +448,12 @@ export class AuthService {
         "verification_token_invalid",
         "Verification token is invalid",
       );
+    requireAcademicEmail(proof.email);
     const domain = domainFor(proof.email);
     const organization = await client.query<{ id: string }>(
-      `INSERT INTO organizations (id, domain, name) VALUES ($1, $2, $2)
+      `INSERT INTO organizations (id, domain, name) VALUES ($1, $2, $3)
          ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain RETURNING id`,
-      [uuidv7(), domain],
+      [uuidv7(), domain, domain.slice(0, 200)],
     );
     try {
       const userResult = await client.query<UserRow>(
@@ -700,6 +719,7 @@ export class AuthService {
             "verification_token_invalid",
             "Verification token is invalid",
           );
+        requireAcademicEmail(proof.email);
         if (domainFor(proof.email) !== domainFor(session.user.email))
           throw new AuthError(
             422,
