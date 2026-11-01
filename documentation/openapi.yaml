@@ -334,8 +334,9 @@ paths:
       summary: Request account email verification
       description:
         Request account email verification before account creation or a same-school
-        email change. The server enforces the deployment's allowed school-domain policy
-        and returns the same response for every allowed-domain request. If delivery
+        email change. The server requires a normalized ASCII address of at most 254 characters
+        with a 1–64-character dot-atom local part and a valid domain ending exactly in .edu (including subdomains)
+        and returns the same response for every eligible .edu request. If delivery
         is appropriate, it sends a deployment-configured HTTPS link to the web client
         containing a 30-minute, single-use opaque token; clients cannot supply a redirect
         destination. Tokens are stored only as hashes, and the latest request invalidates
@@ -385,11 +386,19 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 email_domain_not_allowed:
-                  summary: The normalized email domain is not allowed by this deployment.
+                  summary: The syntactically valid normalized email domain does not end exactly in .edu.
                   value:
                     error:
                       code: email_domain_not_allowed
-                      message: The normalized email domain is not allowed by this deployment.
+                      message: Email must use a valid .edu domain
+                      requestId: req_createAccountVerificationRequest
+                      details: []
+                validation_failed:
+                  summary: The email address has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form.
+                  value:
+                    error:
+                      code: validation_failed
+                      message: Email is invalid
                       requestId: req_createAccountVerificationRequest
                       details: []
         "429":
@@ -542,6 +551,22 @@ paths:
                     error:
                       code: verification_token_invalid
                       message: The verification token is invalid, expired, or superseded by a later request.
+                      requestId: req_createAccount
+                      details: []
+                email_domain_not_allowed:
+                  summary: The syntactically valid verified email in the token does not have a .edu domain.
+                  value:
+                    error:
+                      code: email_domain_not_allowed
+                      message: Email must use a valid .edu domain
+                      requestId: req_createAccount
+                      details: []
+                validation_failed:
+                  summary: The verified email in the token has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or DNS labels.
+                  value:
+                    error:
+                      code: validation_failed
+                      message: Email is invalid
                       requestId: req_createAccount
                       details: []
                 weak_password:
@@ -974,8 +999,8 @@ paths:
       summary: Update account profile
       description:
         Update account profile. A replacement email requires a valid email-verification
-        token and must have the same canonical school domain as the account's current
-        email. Its direct organization association and course memberships do not change. At least one field
+        token and must have a valid .edu domain matching the account's current canonical
+        school domain exactly. Its direct organization association and course memberships do not change. At least one field
         is required.
       operationId: updateCurrentUser
       security:
@@ -1076,15 +1101,15 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 email_domain_not_allowed:
-                  summary: The replacement email does not use the account's current canonical school domain.
+                  summary: The syntactically valid replacement email is not in the account's current canonical .edu school domain.
                   value:
                     error:
                       code: email_domain_not_allowed
-                      message: The replacement email does not use the account's current canonical school domain.
+                      message: Email must use the current school domain
                       requestId: req_updateCurrentUser
                       details: []
                 validation_failed:
-                  summary: No valid editable field was supplied.
+                  summary: No valid editable field was supplied, or the replacement email has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or DNS labels.
                   value:
                     error:
                       code: validation_failed
@@ -14527,7 +14552,7 @@ components:
       properties:
         email:
           type: string
-          description: Email address to verify before account creation or a same-school account email change.
+          description: Email address to verify before account creation or a same-school account email change; normalized ASCII address must be at most 254 characters.
           format: email
       additionalProperties: false
       required:

@@ -38,7 +38,6 @@ This is a **runnable starting point**, not a production-readiness guarantee. It 
 | `DOMAIN`                                                                           | Public HTTPS domain and same-origin WebSocket endpoint.                             |
 | `POSTGRES_PASSWORD`, `DATABASE_URL`                                                | Matching PostgreSQL credential and internal connection URL.                         |
 | `AUTH_TOKEN_SECRET`                                                                | Independent random session-signing secret (at least 32 characters).                 |
-| `ALLOWED_SCHOOL_DOMAINS`                                                           | Comma-separated domains permitted for account signup.                               |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | SES SMTP endpoint, port 465, TLS and verified sender.                               |
 | `SEAWEEDFS_ACCESS_KEY_ID`, `SEAWEEDFS_SECRET_ACCESS_KEY`                           | Private S3-compatible storage credentials, reused by SeaweedFS and the application. |
 | `S3_BUCKET`, `S3_REGION`                                                           | Storage bucket and SDK region; `S3_ENDPOINT` is set internally to SeaweedFS.        |
