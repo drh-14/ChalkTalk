@@ -60,7 +60,11 @@ The course page SHALL show a Collaboration tab immediately after Threads. It SHA
 - **THEN** the session appears in their course list and no post link or Post to discussion action is presented
 
 ### Requirement: Failure and race safety
-The live editor SHALL use one-use tickets and hold conflicting authorization locks through socket registration. It SHALL withhold document, awareness, and broadcast frames until admission succeeds and SHALL close a failed or timed-out admission before releasing those locks. A socket SHALL join no more than one document. The server SHALL perform bounded, fail-closed authorization checks for every inbound sync, awareness, awareness-query, and stateless message. On transport or service failure, unconfirmed edits SHALL NOT be presented as durable; reconnect SHALL require fresh authorization. Concurrent invitations, removal, and ending SHALL not restore revoked access. For an already established socket, a brief post-commit outbound window before notification-driven closure is permitted; the periodic sweep recovers missed notifications but does not guarantee a hard closure deadline.
+The live editor SHALL use one-use tickets and hold conflicting authorization locks through socket registration. It SHALL withhold document, awareness, and broadcast frames until admission succeeds and SHALL buffer other inbound frames sent with authentication until they can be checked and forwarded in order after admission. It SHALL discard both buffers and close a failed or timed-out admission before releasing those locks. A socket SHALL join no more than one document. The server SHALL perform bounded, fail-closed authorization checks for every inbound sync, awareness, awareness-query, and stateless message. On transport or service failure, unconfirmed edits SHALL NOT be presented as durable; reconnect SHALL require fresh authorization. Concurrent invitations, removal, and ending SHALL not restore revoked access. For an already established socket, a brief post-commit outbound window before notification-driven closure is permitted; the periodic sweep recovers missed notifications but does not guarantee a hard closure deadline.
+
+#### Scenario: Provider sends messages alongside authentication
+- **WHEN** an authorized provider sends sync or awareness before admission finishes
+- **THEN** the messages are processed in order after admission and the provider can synchronize normally
 
 #### Scenario: Network drops after edit
 - **WHEN** a WebSocket disconnects before a durable save is confirmed

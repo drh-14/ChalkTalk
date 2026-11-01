@@ -690,6 +690,45 @@ integration("collaboration server", () => {
   });
 
   describe("revocation and ending", () => {
+    it("replays ordinary provider handshake messages after admission", async () => {
+      const sessionId = await newSession();
+      const saved = new Y.Doc();
+      saved.getText("content").insert(0, "persisted before join");
+      await pool.query(
+        "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection) VALUES ($1,$2,$3)",
+        [
+          sessionId,
+          Buffer.from(Y.encodeStateAsUpdate(saved)),
+          "persisted before join",
+        ],
+      );
+      saved.destroy();
+      const originalCreate = collaboration.hocuspocus.createDocument.bind(
+        collaboration.hocuspocus,
+      );
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let entered = false;
+      collaboration.hocuspocus.createDocument = (async (...args) => {
+        entered = true;
+        await gate;
+        return originalCreate(...args);
+      }) as typeof collaboration.hocuspocus.createDocument;
+      try {
+        const bob = join("bob", sessionId);
+        await until(() => entered);
+        expect(bob.provider.isSynced).toBe(false);
+        expect(bob.state.closeReason).toBeUndefined();
+        release();
+        await until(() => bob.provider.isSynced);
+        expect(bob.text.toString()).toBe("persisted before join");
+        expect(bob.state.closeReason).toBeUndefined();
+      } finally {
+        release();
+        collaboration.hocuspocus.createDocument = originalCreate;
+      }
+    });
+
     it("holds removal until a paused admission either registers or aborts", async () => {
       await collaboration.stop();
       await startServer(60_000);
@@ -800,6 +839,16 @@ integration("collaboration server", () => {
         encoding.writeVarUint(encoder, 0);
         encoding.writeVarString(encoder, ticket);
         raw.send(encoding.toUint8Array(encoder));
+        const sync = encoding.createEncoder();
+        encoding.writeVarString(sync, documentName(sessionId));
+        encoding.writeVarUint(sync, 0);
+        encoding.writeVarUint(sync, 0);
+        encoding.writeVarUint8Array(sync, Y.encodeStateVector(new Y.Doc()));
+        raw.send(encoding.toUint8Array(sync));
+        const awarenessQuery = encoding.createEncoder();
+        encoding.writeVarString(awarenessQuery, documentName(sessionId));
+        encoding.writeVarUint(awarenessQuery, 3);
+        raw.send(encoding.toUint8Array(awarenessQuery));
         await until(() => entered);
         alice.text.insert(alice.text.length, " broadcast");
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -856,6 +905,16 @@ integration("collaboration server", () => {
         encoding.writeVarUint(encoder, 0);
         encoding.writeVarString(encoder, ticket);
         raw.send(encoding.toUint8Array(encoder));
+        const sync = encoding.createEncoder();
+        encoding.writeVarString(sync, documentName(sessionId));
+        encoding.writeVarUint(sync, 0);
+        encoding.writeVarUint(sync, 0);
+        encoding.writeVarUint8Array(sync, Y.encodeStateVector(new Y.Doc()));
+        raw.send(encoding.toUint8Array(sync));
+        const awarenessQuery = encoding.createEncoder();
+        encoding.writeVarString(awarenessQuery, documentName(sessionId));
+        encoding.writeVarUint(awarenessQuery, 3);
+        raw.send(encoding.toUint8Array(awarenessQuery));
         await until(() => entered);
         await until(() => raw.readyState === WebSocket.CLOSED);
         expect(frames).toHaveLength(0);
@@ -874,6 +933,53 @@ integration("collaboration server", () => {
         await collaboration.stop();
         await startServer();
       }
+    });
+
+    it("drops queued inbound messages when document loading fails", async () => {
+      const sessionId = await newSession();
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const originalQuery = pool.query.bind(pool);
+      pool.query = ((
+        sql: string | { text: string; values?: unknown[] },
+        values: unknown[],
+      ) => {
+        const text = typeof sql === "string" ? sql : sql.text;
+        if (text.includes("SELECT yjs_state FROM collaboration_documents"))
+          return Promise.reject(new Error("document load failed"));
+        return typeof sql === "string"
+          ? originalQuery(sql, values)
+          : originalQuery(sql);
+      }) as typeof pool.query;
+      const frames: Buffer[] = [];
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const auth = encoding.createEncoder();
+        encoding.writeVarString(auth, documentName(sessionId));
+        encoding.writeVarUint(auth, 2);
+        encoding.writeVarUint(auth, 0);
+        encoding.writeVarString(auth, ticket);
+        raw.send(encoding.toUint8Array(auth));
+        const query = encoding.createEncoder();
+        encoding.writeVarString(query, documentName(sessionId));
+        encoding.writeVarUint(query, 3);
+        raw.send(encoding.toUint8Array(query));
+        await until(() => raw.readyState === WebSocket.CLOSED);
+        expect(frames).toHaveLength(0);
+        expect(collaboration.connectionsOf(sessionId)).toHaveLength(0);
+      } finally {
+        pool.query = originalQuery;
+        raw.terminate();
+      }
+      const retry = join("bob", sessionId, { token: async () => ticket });
+      await until(() => retry.provider.isSynced);
     });
 
     it("lets concurrent removal commit after admission timeout without sending private frames", async () => {

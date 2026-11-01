@@ -13,10 +13,16 @@ import {
 import WebSocket, { WebSocketServer } from "ws";
 
 const MAX_OUTBOUND_BYTES = 16 * 1024 * 1024;
+const MAX_PENDING_INBOUND_BYTES = 5 * 1024 * 1024;
+const MAX_PENDING_INBOUND_MESSAGES = 1000;
 
 class AdmissionSocket implements WebSocketLike {
   private buffered: Buffer[] = [];
   private bufferedBytes = 0;
+  private pendingInbound: Uint8Array[] = [];
+  private pendingInboundBytes = 0;
+  private authenticationForwarded = false;
+  private client?: ReturnType<Hocuspocus["handleConnection"]>;
   private admitted = false;
   private closed = false;
   private timeout: NodeJS.Timeout;
@@ -32,6 +38,43 @@ class AdmissionSocket implements WebSocketLike {
 
   get readyState() {
     return this.closed ? WebSocket.CLOSED : this.raw.readyState;
+  }
+
+  attach(client: ReturnType<Hocuspocus["handleConnection"]>) {
+    this.client = client;
+  }
+
+  receive(frame: Uint8Array) {
+    if (this.closed) return;
+    const message = new HocuspocusIncomingMessage(frame);
+    const key = message.readVarString();
+    if (this.documentKey && this.documentKey !== key) {
+      this.abort();
+      return;
+    }
+    this.documentKey = key;
+    if (this.admitted) {
+      this.client!.handleMessage(frame);
+      return;
+    }
+    if (message.readVarUint() === 2) {
+      if (this.authenticationForwarded) {
+        this.abort();
+        return;
+      }
+      this.authenticationForwarded = true;
+      this.client!.handleMessage(frame);
+      return;
+    }
+    if (
+      this.pendingInboundBytes + frame.byteLength > MAX_PENDING_INBOUND_BYTES ||
+      this.pendingInbound.length >= MAX_PENDING_INBOUND_MESSAGES
+    ) {
+      this.abort();
+      return;
+    }
+    this.pendingInbound.push(frame);
+    this.pendingInboundBytes += frame.byteLength;
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
@@ -63,6 +106,12 @@ class AdmissionSocket implements WebSocketLike {
       this.admitted = true;
       this.buffered = [];
       this.bufferedBytes = 0;
+      for (const frame of this.pendingInbound) {
+        if (this.closed) return false;
+        this.client!.handleMessage(frame);
+      }
+      this.pendingInbound = [];
+      this.pendingInboundBytes = 0;
       return true;
     } catch {
       this.abort();
@@ -80,6 +129,8 @@ class AdmissionSocket implements WebSocketLike {
     clearTimeout(this.timeout);
     this.buffered = [];
     this.bufferedBytes = 0;
+    this.pendingInbound = [];
+    this.pendingInboundBytes = 0;
     if (this.raw.readyState === WebSocket.OPEN && this.documentKey) {
       this.raw.send(
         new OutgoingMessage(this.documentKey)
@@ -99,6 +150,8 @@ class AdmissionSocket implements WebSocketLike {
     clearTimeout(this.timeout);
     this.buffered = [];
     this.bufferedBytes = 0;
+    this.pendingInbound = [];
+    this.pendingInboundBytes = 0;
     if (this.raw.readyState === WebSocket.OPEN) this.raw.close(code, reason);
     this.onAbort();
   }
@@ -109,6 +162,8 @@ class AdmissionSocket implements WebSocketLike {
     clearTimeout(this.timeout);
     this.buffered = [];
     this.bufferedBytes = 0;
+    this.pendingInbound = [];
+    this.pendingInboundBytes = 0;
     this.raw.terminate();
     this.onAbort();
   }
@@ -164,17 +219,11 @@ export function createCollaborationTransport<Context>(options: {
       });
       raw.on("error", () => guarded.abort());
       client = options.hocuspocus.handleConnection(guarded, request);
+      guarded.attach(client);
       raw.on("message", (data) => {
         if (guarded.readyState !== WebSocket.OPEN) return;
         try {
-          const frame = new Uint8Array(data as Buffer);
-          const key = new HocuspocusIncomingMessage(frame).readVarString();
-          if (guarded.documentKey && guarded.documentKey !== key) {
-            guarded.abort();
-            return;
-          }
-          guarded.documentKey = key;
-          client.handleMessage(frame);
+          guarded.receive(new Uint8Array(data as Buffer));
         } catch {
           guarded.abort();
         }
