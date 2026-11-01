@@ -73,7 +73,7 @@ mkcert -key-file .cert/localhost-key.pem -cert-file .cert/localhost.pem localhos
 openssl rand -hex 32              # copy the output into AUTH_TOKEN_SECRET in .env
 ```
 
-Edit the ignored `.env` before starting. At minimum, replace `AUTH_TOKEN_SECRET` with the generated value. Keep `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` equal to the HTTPS URL you will open, and use a verified `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
+Edit the ignored `.env` before starting. At minimum, replace `AUTH_TOKEN_SECRET` with the generated value. Keep `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` equal to the HTTPS URL you will open, and use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
 
 For a repeatable local demo without creating accounts by hand, optionally set `MOCK_DATA=true` and `AMS161_DEMO_INSTRUCTOR_PASSWORD` (12–128 characters) in `.env` **before the first start**. Leave `MOCK_DATA=false` for an empty installation. See [Demo data](#demo-data) below.
 

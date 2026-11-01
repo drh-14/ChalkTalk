@@ -334,7 +334,8 @@ paths:
       summary: Request account email verification
       description:
         Request account email verification before account creation or a same-school
-        email change. The server requires a valid email domain ending exactly in .edu (including subdomains)
+        email change. The server requires a normalized ASCII address of at most 254 characters
+        with a 1–64-character dot-atom local part and a valid domain ending exactly in .edu (including subdomains)
         and returns the same response for every eligible .edu request. If delivery
         is appropriate, it sends a deployment-configured HTTPS link to the web client
         containing a 30-minute, single-use opaque token; clients cannot supply a redirect
