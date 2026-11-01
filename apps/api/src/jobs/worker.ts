@@ -520,6 +520,9 @@ export class JobWorker {
           row.title,
           responseBody ?? row.body_markdown,
           actor,
+          actorUser && !actorUser.deleted_at
+            ? [row.actor_user_id, actorUser.display_name]
+            : null,
           row.course_name,
         ]),
       };
