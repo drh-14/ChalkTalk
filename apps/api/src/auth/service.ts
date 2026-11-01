@@ -12,8 +12,10 @@ import { AuthError } from "./errors.js";
 import { collaborationAccessChanged } from "../collaboration/lifecycle.js";
 
 export interface EmailSender {
+  provider?: "smtp" | "resend";
   send(
     message: {
+      from?: string;
       to: string;
       subject: string;
       text: string;
@@ -26,8 +28,9 @@ export interface EmailSender {
         contentDisposition: "inline";
       }>;
     },
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; idempotencyKey?: string },
   ): Promise<void>;
+  defaultFrom?: string;
 }
 
 export interface PasswordResetTiming {
