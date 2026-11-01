@@ -371,9 +371,7 @@ integrationTest("AuthService PostgreSQL integration", () => {
        WHERE u.email = $1`,
       [email],
     );
-    expect(organization.rows).toEqual([
-      { domain, name: domain.slice(0, 200) },
-    ]);
+    expect(organization.rows).toEqual([{ domain, name: domain.slice(0, 200) }]);
   });
 
   it("rejects a pre-policy non-.edu verification token without creating an account or consuming it", async () => {

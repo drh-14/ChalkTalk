@@ -389,7 +389,7 @@ paths:
                   value:
                     error:
                       code: email_domain_not_allowed
-                      message: The normalized email domain is not a valid .edu domain.
+                      message: Email must use a valid .edu domain
                       requestId: req_createAccountVerificationRequest
                       details: []
                 validation_failed:
@@ -990,8 +990,8 @@ paths:
       summary: Update account profile
       description:
         Update account profile. A replacement email requires a valid email-verification
-        token and must have the same canonical school domain as the account's current
-        email. Its direct organization association and course memberships do not change. At least one field
+        token and must have a valid .edu domain matching the account's current canonical
+        school domain exactly. Its direct organization association and course memberships do not change. At least one field
         is required.
       operationId: updateCurrentUser
       security:
@@ -1096,7 +1096,7 @@ paths:
                   value:
                     error:
                       code: email_domain_not_allowed
-                      message: The replacement email is not a valid .edu address in the account's current canonical school domain.
+                      message: Email must use the current school domain
                       requestId: req_updateCurrentUser
                       details: []
                 validation_failed:
