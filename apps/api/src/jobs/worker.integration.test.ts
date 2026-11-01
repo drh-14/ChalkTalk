@@ -703,6 +703,71 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     ).toEqual({ status: "succeeded", frozen_email: null });
   });
 
+  it("does not reclaim a confirmed email when its lease expires", async () => {
+    delivered.length = 0;
+    deliveryAttempts.length = 0;
+    const { jobId } = await seedMerge();
+    await pool.query(`CREATE FUNCTION expire_confirmed_email_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.id='${jobId}'::uuid AND NEW.status='running' THEN
+        NEW.locked_until=now()-interval '1 second'; END IF;
+      RETURN NEW; END $$`);
+    await pool.query(
+      "CREATE TRIGGER expire_confirmed_email_claim BEFORE UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION expire_confirmed_email_claim()",
+    );
+    let pauseCompletion!: () => void;
+    const paused = new Promise<void>((resolve) => (pauseCompletion = resolve));
+    let releaseCompletion!: () => void;
+    const released = new Promise<void>(
+      (resolve) => (releaseCompletion = resolve),
+    );
+    const delayedPool = new Proxy(pool, {
+      get(target, property) {
+        if (property === "query")
+          return (statement: string, values?: unknown[]) => {
+            if (values?.includes(jobId)) {
+              pauseCompletion();
+              return released.then(() => target.query(statement, values));
+            }
+            return target.query(statement, values);
+          };
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const first = new JobWorker(
+      delayedPool,
+      "confirmed-email-first",
+      emailSender,
+      "https://app.example.edu",
+    );
+    const second = new JobWorker(
+      pool,
+      "confirmed-email-reclaimer",
+      emailSender,
+      "https://app.example.edu",
+    );
+    const firstRun = first.runOnce();
+    try {
+      await Promise.race([paused, firstRun]);
+      expect(delivered).toHaveLength(1);
+      const reclaimed = await second.runOnce();
+      expect(reclaimed).toBe(false);
+      expect(deliveryAttempts).toHaveLength(1);
+    } finally {
+      releaseCompletion();
+      await firstRun;
+      await pool.query("DROP TRIGGER expire_confirmed_email_claim ON jobs");
+      await pool.query("DROP FUNCTION expire_confirmed_email_claim()");
+    }
+    expect(
+      (
+        await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+          jobId,
+        ])
+      ).rows[0],
+    ).toEqual({ status: "succeeded", frozen_email: null });
+  });
+
   it("retries the same frozen payload when database acknowledgment fails after send", async () => {
     delivered.length = 0;
     deliveryAttempts.length = 0;

@@ -200,6 +200,7 @@ export class JobWorker {
       await this.emailSender!.send(frozen.message, {
         signal: AbortSignal.timeout(30_000),
       });
+      await this.succeed(job, client);
       return "sent";
     });
   }
@@ -643,8 +644,11 @@ export class JobWorker {
     });
   }
 
-  private async succeed(job: Job): Promise<void> {
-    await this.pool.query(
+  private async succeed(
+    job: Job,
+    client: Pool | PoolClient = this.pool,
+  ): Promise<void> {
+    await client.query(
       "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,frozen_email=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
       [job.id, this.workerId, job.attempts],
     );
@@ -727,7 +731,7 @@ export class JobWorker {
       } else {
         emailOutcome = await this.sendQuestionDuplicateEmail(job);
       }
-      if (emailOutcome !== "canceled") await this.succeed(job);
+      if (emailOutcome === undefined) await this.succeed(job);
       this.observability?.recordJob(
         job.kind,
         emailOutcome === "canceled" ? "canceled" : "succeeded",
