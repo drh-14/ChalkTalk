@@ -270,7 +270,9 @@ export class JobWorker {
     });
   }
 
-  private async sendCollaborationInvitationEmail(job: Job): Promise<EmailOutcome> {
+  private async sendCollaborationInvitationEmail(
+    job: Job,
+  ): Promise<EmailOutcome> {
     if (!this.emailSender || !this.frontendBaseUrl)
       throw new Error("Invitation email delivery is not configured");
     const { sessionId, inviteeUserId, inviterUserId } = job.payload;

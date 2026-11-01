@@ -434,7 +434,10 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(attempts).toEqual(["old@example.edu"]);
     expect(
       (
-        await pool.query("SELECT status,frozen_email,locked_by,locked_until,last_error FROM jobs WHERE id=$1", [jobId])
+        await pool.query(
+          "SELECT status,frozen_email,locked_by,locked_until,last_error FROM jobs WHERE id=$1",
+          [jobId],
+        )
       ).rows[0],
     ).toEqual({
       status: "canceled",
@@ -517,7 +520,14 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
   });
 
-  it.each(["none", "recipient", "identity", "content", "sender", "provider"] as const)(
+  it.each([
+    "none",
+    "recipient",
+    "identity",
+    "content",
+    "sender",
+    "provider",
+  ] as const)(
     "uses the HTTP provider for a frozen retry unless %s changes",
     async (change) => {
       const requests: Array<{ body: unknown; key: string | undefined }> = [];
@@ -584,10 +594,14 @@ integration("JobWorker PostgreSQL lifecycle", () => {
                   loadEnvironment(
                     change === "provider"
                       ? {
-                          AUTH_TOKEN_SECRET: environmentSource.AUTH_TOKEN_SECRET,
+                          AUTH_TOKEN_SECRET:
+                            environmentSource.AUTH_TOKEN_SECRET,
                           SMTP_FROM: environmentSource.EMAIL_FROM,
                         }
-                      : { ...environmentSource, EMAIL_FROM: "replacement@example.edu" },
+                      : {
+                          ...environmentSource,
+                          EMAIL_FROM: "replacement@example.edu",
+                        },
                   ),
                 ),
                 "https://app.example.edu",
@@ -1599,7 +1613,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       while (await worker.runOnce());
       expect(delivered).toEqual([]);
       for (const { jobId } of [removed, ended, archived])
-        expect(await status(jobId)).toBe("succeeded");
+        expect(await status(jobId)).toBe("canceled");
     });
 
     it("does not send a stale job for an earlier invitation of the same member", async () => {

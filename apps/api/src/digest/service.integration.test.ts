@@ -1067,7 +1067,12 @@ integration("daily course email digest", () => {
   it.each(["sender", "provider"] as const)(
     "cancels a Resend digest retry when the configured %s changes",
     async (change) => {
-      await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+      await addQuestion(
+        ids.physics,
+        ids.bob,
+        "2026-10-14T12:00:00Z",
+        "Question",
+      );
       const requests: unknown[] = [];
       const server = createServer((request, response) => {
         const chunks: Buffer[] = [];

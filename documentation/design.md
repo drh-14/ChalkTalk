@@ -132,7 +132,7 @@ flowchart TB
     API -->|"upload and download"| Store[("SeaweedFS / AWS S3")]
     Worker["Separate background worker"] -->|"claim jobs and schedule digest"| DB
     Worker -->|"file cleanup"| Store
-    Worker -->|"queued email"| Mail["SMTP / AWS SES"]
+    Worker -->|"queued email"| Mail["Email provider"]
     API -->|"authentication email"| Mail
 ```
 
@@ -150,7 +150,7 @@ flowchart TB
 
 # Deployment
 
-Because ChalkTalk offers both a managed cloud deployment and a self-managed deployment, the implementation and hosting of some services differ between the two versions. In the managed deployment, the React frontend is deployed to Vercel. The API server and background worker run on AWS ECS. PostgreSQL is provided by AWS RDS, AWS S3 provides object storage, and AWS SES provides email delivery. In the self-managed deployment, the frontend and backend components run as containers managed through Docker Compose. The deployment includes PostgreSQL for application data and durable jobs, SeaweedFS for S3-compatible object storage, and a configurable SMTP server for email delivery.
+Because ChalkTalk offers both a managed cloud deployment and a self-managed deployment, the implementation and hosting of some services differ between the two versions. In the managed deployment, the React frontend is deployed to Vercel. The API server and background worker run on AWS ECS. PostgreSQL is provided by AWS RDS, and AWS S3 provides object storage. In the self-managed deployment, the frontend and backend components run as containers managed through Docker Compose. The deployment includes PostgreSQL for application data and durable jobs and SeaweedFS for S3-compatible object storage. The email provider is selected by configuration; see the [local setup](../README.md#start-locally) for its settings.
 
 ### **AI module**
 

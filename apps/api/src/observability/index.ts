@@ -271,7 +271,11 @@ export function createObservability(options: ObservabilityOptions) {
     recordJobStart(kind: JobKind) {
       logger.info({ event: "job_start", kind });
     },
-    recordJob(kind: JobKind, outcome: "succeeded" | "failed" | "canceled", seconds: number) {
+    recordJob(
+      kind: JobKind,
+      outcome: "succeeded" | "failed" | "canceled",
+      seconds: number,
+    ) {
       jobs.inc({ kind, outcome });
       jobDuration.observe({ kind, outcome }, seconds);
       logger.info({
