@@ -172,9 +172,13 @@ function SignupRequestForm({
     event.preventDefault();
     if (pending) return;
     const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.length > 254) {
+      setError("Email address must be 254 characters or fewer.");
+      setNotice(undefined);
+      return;
+    }
     const domain = normalizedEmail.split("@")[1] ?? "";
     if (
-      normalizedEmail.length > 254 ||
       domain.length > 253 ||
       !domain.endsWith(".edu") ||
       !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(

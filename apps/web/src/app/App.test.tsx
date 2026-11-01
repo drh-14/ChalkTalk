@@ -1632,7 +1632,9 @@ describe("ChalkTalk auth entry", () => {
     await user.click(
       screen.getByRole("button", { name: "Send verification link" }),
     );
-    expect((await screen.findByRole("alert")).textContent).toContain(".edu");
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "254 characters or fewer",
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
