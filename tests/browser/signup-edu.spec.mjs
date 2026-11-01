@@ -48,7 +48,7 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
   await page.getByRole("link", { name: "Create an account" }).click();
   const email = page.getByRole("textbox", { name: "Email address" });
   await page.getByRole("button", { name: "Send verification link" }).click();
-  await expect(page.getByRole("alert")).toContainText("Enter an email address");
+  await expect(page.getByRole("alert")).toHaveText("Enter an email address.");
   expect(verificationRequests).toHaveLength(0);
   await page.screenshot({
     path: resolve(screenshots, "empty-email-rejected.png"),
@@ -57,7 +57,9 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
 
   await email.fill("student@example.com");
   await page.getByRole("button", { name: "Send verification link" }).click();
-  await expect(page.getByRole("alert")).toContainText(".edu");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Use an email address with a .edu domain.",
+  );
   expect(verificationRequests).toHaveLength(0);
   await page.screenshot({
     path: resolve(screenshots, "nonacademic-rejected.png"),
@@ -66,7 +68,9 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
 
   await email.fill(`${"a".repeat(65)}@school.edu`);
   await page.getByRole("button", { name: "Send verification link" }).click();
-  await expect(page.getByRole("alert")).toContainText("1–64 characters");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Use a valid ASCII email local part (1–64 characters, with single dots).",
+  );
   expect(verificationRequests).toHaveLength(0);
   await page.screenshot({
     path: resolve(screenshots, "malformed-local-part-rejected.png"),
@@ -75,8 +79,8 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
 
   await email.fill("student,admin@school.edu");
   await page.getByRole("button", { name: "Send verification link" }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "valid ASCII email local part",
+  await expect(page.getByRole("alert")).toHaveText(
+    "Use a valid ASCII email local part (1–64 characters, with single dots).",
   );
   expect(verificationRequests).toHaveLength(0);
   await page.screenshot({
@@ -86,7 +90,9 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
 
   await email.fill("student@bad..edu");
   await page.getByRole("button", { name: "Send verification link" }).click();
-  await expect(page.getByRole("alert")).toContainText("valid domain");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Use an email address with a valid domain.",
+  );
   expect(verificationRequests).toHaveLength(0);
   await page.screenshot({
     path: resolve(screenshots, "invalid-domain-rejected.png"),
@@ -97,8 +103,8 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
     `${"a".repeat(64)}@${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(58)}.edu`,
   );
   await page.getByRole("button", { name: "Send verification link" }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "254 characters or fewer",
+  await expect(page.getByRole("alert")).toHaveText(
+    "Email address must be 254 characters or fewer.",
   );
   expect(verificationRequests).toHaveLength(0);
   await page.screenshot({
@@ -108,7 +114,9 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
 
   await email.fill("Student@Dept.State.EDU");
   await page.getByRole("button", { name: "Send verification link" }).click();
-  await expect(page.getByRole("status")).toContainText("Check your inbox");
+  await expect(page.getByRole("status")).toHaveText(
+    "Check your inbox for a link to finish creating your account.",
+  );
   expect(verificationRequests).toEqual([{ email: "Student@Dept.State.EDU" }]);
   await page.screenshot({
     path: resolve(screenshots, "academic-accepted.png"),
