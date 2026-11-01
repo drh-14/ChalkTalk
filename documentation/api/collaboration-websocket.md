@@ -10,7 +10,7 @@ Live sessions are edited over a WebSocket served by the collaboration server, a 
 
 The server consumes the ticket in the same database transaction that accepts the connection. A ticket is accepted only once, only before `expiresAt`, only for its own document, and only while its login session is valid, the course and session are active, and the user is still a current course member and an explicit session participant. Identity comes only from the ticket; the server never accepts a client-supplied user ID, role, or name.
 
-The server rechecks membership, participant permission, and lifecycle before accepting or persisting edits. Removing a participant revokes unused tickets and closes their active connection promptly. An edit authorized before removal commits may finish afterward; new tickets and edits are denied once removal commits. A disconnected client must obtain a fresh ticket and cannot replay edits after access is revoked.
+The server rechecks membership, participant permission, and lifecycle before accepting or persisting edits. An in-flight invitation email send may delay participant removal's commit. Once removal commits, unused tickets are revoked, new tickets and edits are denied, and the active connection closes promptly; an edit authorized before commit may finish afterward. A disconnected client must obtain a fresh ticket and cannot replay edits after access is revoked.
 
 ## Document
 

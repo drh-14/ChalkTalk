@@ -17,7 +17,7 @@ The system SHALL allow any current member of an active course to create a sessio
 - **THEN** the session is not disclosed and access is denied
 
 ### Requirement: Immediate participant invitations
-Any current participant SHALL be able to invite a current course member with View or Edit access, granting access immediately. The creator and participating staff SHALL be able to remove invitees; removal SHALL deny new tickets and newly authorized live edits and close connections promptly. An edit already authorized and in flight before removal commits MAY finish afterward. The creator SHALL NOT be removable. An invite email SHALL be sent only while the invitee remains an eligible participant.
+Any current participant SHALL be able to invite a current course member with View or Edit access, granting access immediately. The creator and participating staff SHALL be able to remove invitees; after removal commits, new tickets and newly authorized live edits SHALL be denied and open connections SHALL close promptly. An edit already authorized and in flight before removal commits MAY finish afterward. The creator SHALL NOT be removable. An invite email SHALL be accepted by the delivery provider only while the invitee remains an eligible participant. The invitation worker SHALL hold eligibility locks through provider acceptance, so removal or creator departure MAY wait for an in-flight send before committing.
 
 #### Scenario: Ordinary participant invites another member
 - **WHEN** an ordinary participant invites a current course member with View access
@@ -29,7 +29,11 @@ Any current participant SHALL be able to invite a current course member with Vie
 
 #### Scenario: Invitee removal races with a live write or email
 - **WHEN** the creator or participating staff removes an invitee while that invitee has a WebSocket or queued invitation email
-- **THEN** new edits and access are denied, the connection closes promptly, and an unsent invitation email is not delivered after revocation commits; an edit authorized before commit may finish
+- **THEN** an in-flight email send may delay removal's commit; after commit, no invitation send is accepted, new edits and tickets are denied, and the connection closes promptly; an edit authorized before commit may finish
+
+#### Scenario: Creator departure races with an invitation send
+- **WHEN** a creator leaves the course while an invitation email send is in flight
+- **THEN** departure may wait for provider acceptance before committing, and no invitation send is accepted after the departure commits
 
 ### Requirement: Session management and lifecycle
 The creator or participating staff SHALL be able to rename and end a session. A creator's departure from the course SHALL end the session and preserve the last persisted snapshot for other current participants. Existing idle-ending and course-archive read-only behavior SHALL remain. Post editing, merge, or deletion SHALL NOT end or delete a session.

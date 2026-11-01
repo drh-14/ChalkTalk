@@ -10555,7 +10555,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Invite collaboration participant
-      description: Invites a current course member to an active session. Any current participant may invite. Inviting an existing participant succeeds without duplication; invited staff retain View/Edit permission.
+      description: Invites a current course member to an active session. Any current participant may invite. Inviting an existing participant succeeds without duplication; invited staff retain View/Edit permission. The worker holds eligibility locks through email-provider acceptance, so participant removal or creator departure may wait for an in-flight send before committing; no new invitation send is accepted after that commit.
       operationId: inviteCollaborationParticipant
       security:
         - session_cookie: []
@@ -10714,7 +10714,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Remove collaboration participant
-      description: Removes an invitee from an active session. Only the creator or participating course staff may remove. The invitee's unused tickets are revoked and their open connections close within 5 seconds.
+      description: Removes an invitee from an active session. Only the creator or participating course staff may remove. An in-flight invitation email send may delay the removal commit. Once removal commits, unused tickets are revoked, new tickets and edits are denied, and open connections close promptly. An email accepted before commit may arrive later; no new invitation send is accepted after commit.
       operationId: removeCollaborationParticipant
       security:
         - session_cookie: []

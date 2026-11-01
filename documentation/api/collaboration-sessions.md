@@ -805,7 +805,7 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/participants`**
 
-Invites a current course member to an active session as an editor or, with `permission: "view"`, as a viewer whose connection is read-only. Any current participant may invite. Inviting an existing participant succeeds without duplication and leaves their permission unchanged; to change it, the creator or participating staff must remove and re-invite them. Invited staff retain their assigned View/Edit permission. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only if the session and course are still active and the invitee is still a participant and member when it runs. Inviting an existing participant sends no email.
+Invites a current course member to an active session as an editor or, with `permission: "view"`, as a viewer whose connection is read-only. Any current participant may invite. Inviting an existing participant succeeds without duplication and leaves their permission unchanged; to change it, the creator or participating staff must remove and re-invite them. Invited staff retain their assigned View/Edit permission. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only while the session and course are active and the invitee is still a participant and member. The worker holds eligibility locks through email-provider acceptance, so participant removal or creator departure may wait for an in-flight send before committing; no new invitation send is accepted after that commit. Inviting an existing participant sends no email.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -971,7 +971,7 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
 
 ### **`DELETE /api/v1/collaboration-sessions/{collaborationSessionId}/participants/{userId}`**
 
-Removes an invitee from an active session. Only the creator or participating current course staff may remove. The invitee's unused tickets are revoked and their open connections close within 5 seconds.
+Removes an invitee from an active session. Only the creator or participating current course staff may remove. An in-flight invitation email send may delay the removal commit. Once removal commits, the invitee's unused tickets are revoked, new tickets and edits are denied, and open connections close promptly. An email accepted by the provider before commit may arrive later; no new invitation send is accepted after commit.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
