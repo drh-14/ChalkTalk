@@ -940,6 +940,43 @@ integration("daily course email digest", () => {
     ).toBe("sent");
   });
 
+  it("waits to commit digest opt-out until SMTP delivery finishes", async () => {
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    let started!: () => void;
+    let release!: () => void;
+    const sending = new Promise<void>((resolve) => (started = resolve));
+    const held = new Promise<void>((resolve) => (release = resolve));
+    sender.send = async (message) => {
+      started();
+      await held;
+      sender.messages.push(message);
+    };
+    const delivery = digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    await sending;
+    const optOut = pool.query(
+      "UPDATE course_memberships SET digest_emails=false WHERE course_id=$1 AND user_id=$2 RETURNING digest_emails",
+      [ids.physics, ids.alice],
+    );
+    let completedEarly = false;
+    try {
+      completedEarly = await Promise.race([
+        optOut.then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 250),
+        ),
+      ]);
+      expect(sender.messages).toHaveLength(0);
+    } finally {
+      release();
+    }
+    await delivery;
+    const updated = await optOut;
+    expect(completedEarly).toBe(false);
+    expect(updated.rows).toEqual([{ digest_emails: false }]);
+    expect(sender.messages).toHaveLength(1);
+  });
+
   it("does not reclaim a slow active SMTP attempt after its lease expires", async () => {
     await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
     await digest.schedule(new Date("2026-10-15T00:00:00Z"));
