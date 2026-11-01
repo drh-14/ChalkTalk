@@ -29,6 +29,7 @@ type ActivityRow = {
 
 type FrozenEmail = {
   version: 1;
+  provider: "smtp" | "resend";
   message: {
     to: string;
     from?: string;
@@ -317,6 +318,7 @@ export class DigestService {
       });
       const snapshot: FrozenEmail = {
         version: 1,
+        provider: this.sender.provider ?? "smtp",
         message: {
           to: recipient.rows[0].email,
           ...(this.sender.defaultFrom ? { from: this.sender.defaultFrom } : {}),
@@ -347,30 +349,33 @@ export class DigestService {
     });
   }
 
-  private async deliver(row: OutboxRow): Promise<void> {
+  private async deliver(row: OutboxRow): Promise<"sent" | "canceled"> {
     await this.prepare(row);
-    await this.transaction(async (client) => {
+    return this.transaction(async (client): Promise<"sent" | "canceled"> => {
       const user = await client.query(
         "SELECT id FROM users WHERE id=$1 FOR SHARE",
         [row.recipient_user_id],
       );
-      if (!user.rows[0]) return;
+      if (!user.rows[0]) return "canceled";
       const claimed = await client.query<{ frozen_email: FrozenEmail | null }>(
         `SELECT frozen_email FROM digest_outbox WHERE id=$1 AND status='running'
           AND locked_by=$2 AND attempts=$3 FOR UPDATE`,
         [row.id, this.workerId, row.attempts],
       );
-      if (!claimed.rows[0]) return;
+      if (!claimed.rows[0]) return "canceled";
       const snapshot = claimed.rows[0].frozen_email;
       if (!snapshot) {
         await this.cancel(client, row);
-        return;
+        return "canceled";
       }
       if (snapshot.version !== 1)
         throw new Error("Unsupported digest email snapshot version");
-      if (snapshot.message.from !== this.sender.defaultFrom) {
+      if (
+        snapshot.message.from !== this.sender.defaultFrom ||
+        snapshot.provider !== (this.sender.provider ?? "smtp")
+      ) {
         await this.cancel(client, row);
-        return;
+        return "canceled";
       }
       const recipient = await client.query<{ email: string }>(
         `SELECT u.email FROM users u
@@ -385,7 +390,7 @@ export class DigestService {
         recipient.rows[0].email !== snapshot.message.to
       ) {
         await this.cancel(client, row);
-        return;
+        return "canceled";
       }
       const items = await this.loadItems(client, row);
       const current = new Map(
@@ -404,7 +409,7 @@ export class DigestService {
         )
       ) {
         await this.cancel(client, row);
-        return;
+        return "canceled";
       }
       if (snapshot.imageIds.length) {
         const attachments = await client.query<{
@@ -419,7 +424,7 @@ export class DigestService {
           attachments.rows.some((attachment) => attachment.deleted_at)
         ) {
           await this.cancel(client, row);
-          return;
+          return "canceled";
         }
       }
       const { attachments, ...message } = snapshot.message;
@@ -445,6 +450,7 @@ export class DigestService {
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
         [row.id, this.workerId, row.attempts],
       );
+      return "sent";
     });
   }
 
@@ -456,8 +462,12 @@ export class DigestService {
     const duration = () => Number(process.hrtime.bigint() - started) / 1e9;
     this.observability?.recordJobStart("digest_delivery");
     try {
-      await this.deliver(row);
-      this.observability?.recordJob("digest_delivery", "succeeded", duration());
+      const outcome = await this.deliver(row);
+      this.observability?.recordJob(
+        "digest_delivery",
+        outcome === "sent" ? "succeeded" : "canceled",
+        duration(),
+      );
     } catch (error) {
       this.observability?.recordJob("digest_delivery", "failed", duration());
       const message =

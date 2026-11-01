@@ -11,8 +11,8 @@ The API sends immediate authentication mail through `EmailSender`; the worker se
 ## Decisions
 
 - Retain the `EmailSender` boundary, adding optional `from`, `defaultFrom`, and `idempotencyKey`. The official Resend SDK is isolated in the adapter. `EMAIL_PROVIDER` selects `smtp` or `resend`; Resend requires `RESEND_API_KEY` and `EMAIL_FROM`. `RESEND_API_BASE_URL` optionally overrides the HTTPS API origin for local mocks, with no SMTP fallback.
-- Add nullable versioned `frozen_email` JSONB to `jobs` and `digest_outbox`. The serialized payload includes base64 inline attachment bytes and validation references. A transaction commits the snapshot before any provider call. Stable keys derive from row IDs.
-- Recheck current account address, preferences, content visibility/body, and course state before sending. Send-time row locks preserve revocation ordering where currently provided. On ineligibility, cancel and clear the snapshot. A frozen digest is canceled as a whole if any included item becomes invalid.
+- Add nullable versioned `frozen_email` JSONB to `jobs` and `digest_outbox`. The serialized payload includes the original provider, base64 inline attachment bytes, and validation references. A transaction commits the snapshot before any provider call. Stable keys derive from row IDs.
+- Recheck current account address, preferences, content visibility/body, and course state before sending. Send-time row locks preserve revocation ordering where currently provided. On ineligibility or provider change, atomically cancel and clear the snapshot and claim; email jobs use a durable canceled status and non-sensitive reason rather than success. A frozen digest is canceled as a whole if any included item becomes invalid.
 - Keep immediate authentication sends synchronous, including password-reset abort behavior. Queued messages retain existing retry scheduling and claim semantics. Permanent provider errors must not silently fall back or be marked sent.
 - Bound an otherwise unbounded Resend HTTP request to 30 seconds; an existing shorter authentication abort signal remains authoritative. This stays below both queued claim leases.
 

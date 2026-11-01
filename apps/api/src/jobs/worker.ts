@@ -11,7 +11,13 @@ import { PermanentEmailDeliveryError } from "../auth/email.js";
 
 type OutboundMessage = Parameters<EmailSender["send"]>[0];
 type EmailCandidate = { message: OutboundMessage; guard: string };
-type FrozenEmail = { version: 1; message: OutboundMessage; guard: string };
+type FrozenEmail = {
+  version: 1;
+  provider: "smtp" | "resend";
+  message: OutboundMessage;
+  guard: string;
+};
+type EmailOutcome = "sent" | "canceled";
 
 type Job = {
   id: string;
@@ -124,20 +130,30 @@ export class JobWorker {
       client: PoolClient,
       prepared: boolean,
     ) => Promise<EmailCandidate | undefined>,
-  ): Promise<void> {
+  ): Promise<EmailOutcome> {
     if (!this.emailSender) throw new Error("Email delivery is not configured");
+    const cancel = (client: PoolClient, reason: string) =>
+      client.query(
+        "UPDATE jobs SET status='canceled',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=$4,frozen_email=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
+        [job.id, this.workerId, job.attempts, reason],
+      );
     const claim = (client: PoolClient) =>
       client.query<{ frozen_email: FrozenEmail | null }>(
         "SELECT frozen_email FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
         [job.id, this.workerId, job.attempts],
       );
-    await this.transaction(async (client) => {
+    const prepared = await this.transaction(async (client) => {
       const row = (await claim(client)).rows[0];
-      if (!row || row.frozen_email) return;
+      if (!row) return false;
+      if (row.frozen_email) return true;
       const current = await candidate(client, false);
-      if (!current) return;
+      if (!current) {
+        await cancel(client, "email eligibility changed");
+        return false;
+      }
       const frozen: FrozenEmail = {
         version: 1,
+        provider: this.emailSender!.provider ?? "smtp",
         message: {
           ...current.message,
           ...(this.emailSender!.defaultFrom
@@ -150,11 +166,17 @@ export class JobWorker {
         frozen,
         job.id,
       ]);
+      return true;
     });
-    await this.transaction(async (client) => {
+    if (!prepared) return "canceled";
+    return this.transaction(async (client): Promise<EmailOutcome> => {
       const row = (await claim(client)).rows[0];
       const frozen = row?.frozen_email;
-      if (!frozen) return;
+      if (!row) return "canceled";
+      if (!frozen) {
+        await cancel(client, "email snapshot unavailable");
+        return "canceled";
+      }
       if (frozen.version !== 1)
         throw new Error("Unsupported frozen email version");
       const current = await candidate(client, true);
@@ -162,17 +184,21 @@ export class JobWorker {
         !current ||
         current.guard !== frozen.guard ||
         current.message.to !== frozen.message.to ||
-        frozen.message.from !== this.emailSender!.defaultFrom
-      )
-        return;
+        frozen.message.from !== this.emailSender!.defaultFrom ||
+        frozen.provider !== (this.emailSender!.provider ?? "smtp")
+      ) {
+        await cancel(client, "email eligibility or provider changed");
+        return "canceled";
+      }
       await this.emailSender!.send(frozen.message, {
         idempotencyKey: `job-${job.id}`,
         signal: AbortSignal.timeout(30_000),
       });
+      return "sent";
     });
   }
 
-  private async sendQuestionDuplicateEmail(job: Job): Promise<void> {
+  private async sendQuestionDuplicateEmail(job: Job): Promise<EmailOutcome> {
     if (!this.emailSender || !this.frontendBaseUrl)
       throw new Error("Question duplicate email delivery is not configured");
     const { sourcePostId, canonicalPostId, staffUserId, staffRole } =
@@ -184,7 +210,7 @@ export class JobWorker {
       (staffRole !== "ta" && staffRole !== "instructor")
     )
       throw new Error("Question duplicate email job payload is invalid");
-    await this.sendQueuedEmail(job, async (client) => {
+    return this.sendQueuedEmail(job, async (client) => {
       const source = await client.query<{
         title: string;
         course_id: string;
@@ -244,14 +270,14 @@ export class JobWorker {
     });
   }
 
-  private async sendCollaborationInvitationEmail(job: Job): Promise<void> {
+  private async sendCollaborationInvitationEmail(job: Job): Promise<EmailOutcome> {
     if (!this.emailSender || !this.frontendBaseUrl)
       throw new Error("Invitation email delivery is not configured");
     const { sessionId, inviteeUserId, inviterUserId } = job.payload;
     if (!sessionId || !inviteeUserId || !inviterUserId)
       throw new Error("Invitation email job payload is invalid");
     // Sends only while the invitation that queued this job still stands.
-    await this.sendQueuedEmail(job, async (client, prepared) => {
+    return this.sendQueuedEmail(job, async (client, prepared) => {
       const invitation = await client.query<{
         title: string;
         course_id: string;
@@ -306,13 +332,13 @@ export class JobWorker {
     });
   }
 
-  private async sendAnnouncementEmail(job: Job): Promise<void> {
+  private async sendAnnouncementEmail(job: Job): Promise<EmailOutcome> {
     if (!this.emailSender || !this.frontendBaseUrl)
       throw new Error("Announcement email delivery is not configured");
     const { postId, userId } = job.payload;
     if (!postId || !userId)
       throw new Error("Announcement email job payload is invalid");
-    await this.sendQueuedEmail(job, async (client, prepared) => {
+    return this.sendQueuedEmail(job, async (client, prepared) => {
       const found = await client.query<{
         title: string;
         body_markdown: string;
@@ -362,7 +388,7 @@ export class JobWorker {
     });
   }
 
-  private async sendNotificationEmail(job: Job): Promise<void> {
+  private async sendNotificationEmail(job: Job): Promise<EmailOutcome> {
     if (!this.emailSender || !this.frontendBaseUrl)
       throw new Error("Notification email delivery is not configured");
     const { notificationId, responseKind, responseId } = job.payload;
@@ -373,7 +399,7 @@ export class JobWorker {
       (!responseId || !["answer", "followup"].includes(responseKind ?? ""))
     )
       throw new Error("Notification email response reference is invalid");
-    await this.sendQueuedEmail(job, async (client) => {
+    return this.sendQueuedEmail(job, async (client) => {
       // A frozen payload never overrides current follow, read, membership,
       // privacy, or course-state checks.
       const found = await client.query<{
@@ -634,6 +660,7 @@ export class JobWorker {
     this.observability?.recordJobStart(job.kind);
     const duration = () => Number(process.hrtime.bigint() - started) / 1e9;
     try {
+      let emailOutcome: EmailOutcome | undefined;
       if (job.kind === "delete_course") {
         if (!job.payload.courseId)
           throw new Error("Course deletion job payload is invalid");
@@ -677,16 +704,20 @@ export class JobWorker {
       } else if (job.kind === "publish_scheduled_announcement") {
         await this.publishScheduledAnnouncement(job);
       } else if (job.kind === "send_notification_email") {
-        await this.sendNotificationEmail(job);
+        emailOutcome = await this.sendNotificationEmail(job);
       } else if (job.kind === "send_announcement_email") {
-        await this.sendAnnouncementEmail(job);
+        emailOutcome = await this.sendAnnouncementEmail(job);
       } else if (job.kind === "send_collaboration_invitation_email") {
-        await this.sendCollaborationInvitationEmail(job);
+        emailOutcome = await this.sendCollaborationInvitationEmail(job);
       } else {
-        await this.sendQuestionDuplicateEmail(job);
+        emailOutcome = await this.sendQuestionDuplicateEmail(job);
       }
-      await this.succeed(job);
-      this.observability?.recordJob(job.kind, "succeeded", duration());
+      if (emailOutcome !== "canceled") await this.succeed(job);
+      this.observability?.recordJob(
+        job.kind,
+        emailOutcome === "canceled" ? "canceled" : "succeeded",
+        duration(),
+      );
     } catch (error) {
       try {
         await this.fail(job, error);

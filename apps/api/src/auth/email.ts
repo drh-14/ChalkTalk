@@ -9,6 +9,7 @@ export function createEmailSender(environment: Environment): EmailSender {
       baseUrl: environment.email.resendApiBaseUrl,
     });
     return {
+      provider: "resend",
       defaultFrom: environment.email.from,
       send: async (message, { signal, idempotencyKey } = {}) => {
         if (signal?.aborted) throw new Error("Email delivery was aborted");
@@ -59,6 +60,7 @@ export function createEmailSender(environment: Environment): EmailSender {
       : undefined,
   });
   return {
+    provider: "smtp",
     defaultFrom: environment.email.from,
     send: async (message, { signal } = {}) => {
       if (signal?.aborted) throw new Error("Email delivery was aborted");

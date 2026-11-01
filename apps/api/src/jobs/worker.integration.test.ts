@@ -396,6 +396,11 @@ integration("JobWorker PostgreSQL lifecycle", () => {
   it("cancels an SMTP job retry when the configured sender changes", async () => {
     const { jobId } = await seedMerge();
     const attempts: string[] = [];
+    const events: string[] = [];
+    const observability = createObservability({
+      token: "job-test-operator-token-long-enough",
+      stdout: (line) => events.push(line),
+    });
     const oldSender: EmailSender = {
       defaultFrom: "old@example.edu",
       send: async (message) => {
@@ -422,16 +427,31 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         },
       },
       "https://app.example.edu",
+      undefined,
+      observability,
     );
     expect(await replacement.runOnce()).toBe(true);
     expect(attempts).toEqual(["old@example.edu"]);
     expect(
       (
-        await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
-          jobId,
-        ])
+        await pool.query("SELECT status,frozen_email,locked_by,locked_until,last_error FROM jobs WHERE id=$1", [jobId])
       ).rows[0],
-    ).toEqual({ status: "succeeded", frozen_email: null });
+    ).toEqual({
+      status: "canceled",
+      frozen_email: null,
+      locked_by: null,
+      locked_until: null,
+      last_error: "email eligibility or provider changed",
+    });
+    expect(events.join("\n")).toContain('"outcome":"canceled"');
+    expect(events.join("\n")).not.toContain('"outcome":"succeeded"');
+    const metrics = await request(createWorkerMetricsApp(observability))
+      .get("/metrics")
+      .set("Authorization", "Bearer job-test-operator-token-long-enough");
+    expect(metrics.text).toContain(
+      'chalktalk_jobs_total{kind="send_question_duplicate_email",outcome="canceled"} 1',
+    );
+    await observability.close();
   });
 
   it("commits the frozen job payload before the first outbound call", async () => {
@@ -497,7 +517,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
   });
 
-  it.each(["none", "recipient", "identity", "content", "sender"] as const)(
+  it.each(["none", "recipient", "identity", "content", "sender", "provider"] as const)(
     "uses the HTTP provider for a frozen retry unless %s changes",
     async (change) => {
       const requests: Array<{ body: unknown; key: string | undefined }> = [];
@@ -556,15 +576,19 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           frozen_email: { version: 1 },
         });
         const retryWorker =
-          change === "sender"
+          change === "sender" || change === "provider"
             ? new JobWorker(
                 pool,
                 "http-provider-worker",
                 createEmailSender(
-                  loadEnvironment({
-                    ...environmentSource,
-                    EMAIL_FROM: "replacement@example.edu",
-                  }),
+                  loadEnvironment(
+                    change === "provider"
+                      ? {
+                          AUTH_TOKEN_SECRET: environmentSource.AUTH_TOKEN_SECRET,
+                          SMTP_FROM: environmentSource.EMAIL_FROM,
+                        }
+                      : { ...environmentSource, EMAIL_FROM: "replacement@example.edu" },
+                  ),
                 ),
                 "https://app.example.edu",
               )
@@ -601,7 +625,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
                 [seeded.jobId],
               )
             ).rows[0],
-          ).toEqual({ status: "succeeded", frozen_email: null });
+          ).toEqual({ status: "canceled", frozen_email: null });
         }
         expect(requests[0]!.key).toBe(`job-${seeded.jobId}`);
       } finally {
@@ -724,7 +748,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             jobId,
           ])
         ).rows[0],
-      ).toEqual({ status: "succeeded", frozen_email: null });
+      ).toEqual({ status: "canceled", frozen_email: null });
     }
   });
 
@@ -778,7 +802,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             seeded.jobId,
           ])
         ).rows[0],
-      ).toEqual({ status: "succeeded", frozen_email: null });
+      ).toEqual({ status: "canceled", frozen_email: null });
     }
   });
 
@@ -802,7 +826,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           unmerged.jobId,
         ])
       ).rows[0],
-    ).toEqual({ status: "succeeded" });
+    ).toEqual({ status: "canceled" });
     const removed = await seedMerge();
     await pool.query(
       "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
@@ -813,7 +837,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(
       (await pool.query("SELECT status FROM jobs WHERE id=$1", [removed.jobId]))
         .rows[0],
-    ).toEqual({ status: "succeeded" });
+    ).toEqual({ status: "canceled" });
   });
 
   it("delivers only the new event after a question is unmerged and confirmed again", async () => {
@@ -847,7 +871,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(
       (await pool.query("SELECT status FROM jobs WHERE id=$1", [first.jobId]))
         .rows[0],
-    ).toEqual({ status: "succeeded" });
+    ).toEqual({ status: "canceled" });
   });
 
   it("cancels a frozen duplicate email after unmerge and re-merge to the same post", async () => {
@@ -1694,7 +1718,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
               [seeded.jobId],
             )
           ).rows[0],
-        ).toEqual({ status: "succeeded", frozen_email: null });
+        ).toEqual({ status: "canceled", frozen_email: null });
       }
     });
 
@@ -1954,7 +1978,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
               [jobId],
             )
           ).rows[0],
-        ).toEqual({ status: "succeeded", frozen_email: null });
+        ).toEqual({ status: "canceled", frozen_email: null });
       }
     });
   });
@@ -2170,7 +2194,7 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
               [jobId],
             )
           ).rows[0],
-        ).toEqual({ status: "succeeded", frozen_email: null });
+        ).toEqual({ status: "canceled", frozen_email: null });
       }
     });
 

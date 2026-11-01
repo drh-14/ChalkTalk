@@ -1033,11 +1033,17 @@ integration("daily course email digest", () => {
     );
     const replacement = new RecordingSender();
     replacement.defaultFrom = "new@example.edu";
+    const events: string[] = [];
+    const observability = createObservability({
+      token: "digest-test-operator-token-long-enough",
+      stdout: (line) => events.push(line),
+    });
     const retry = new DigestService(
       pool,
       replacement,
       environment.frontendBaseUrl,
       "digest-replacement",
+      observability,
     );
     expect(await retry.deliverOnce(new Date("2026-10-15T00:00:03Z"))).toBe(
       true,
@@ -1047,73 +1053,89 @@ integration("daily course email digest", () => {
       (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
         .rows[0],
     ).toEqual({ status: "canceled", frozen_email: null });
+    expect(events.join("\n")).toContain('"outcome":"canceled"');
+    expect(events.join("\n")).not.toContain('"outcome":"succeeded"');
+    const metrics = await request(createWorkerMetricsApp(observability))
+      .get("/metrics")
+      .set("Authorization", "Bearer digest-test-operator-token-long-enough");
+    expect(metrics.text).toContain(
+      'chalktalk_jobs_total{kind="digest_delivery",outcome="canceled"} 1',
+    );
+    await observability.close();
   });
 
-  it("cancels a Resend digest retry when the configured sender changes", async () => {
-    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
-    const requests: unknown[] = [];
-    const server = createServer((request, response) => {
-      const chunks: Buffer[] = [];
-      request.on("data", (chunk: Buffer) => chunks.push(chunk));
-      request.on("end", () => {
-        requests.push(JSON.parse(Buffer.concat(chunks).toString()));
-        response.writeHead(500, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            name: "internal_server_error",
-            message: "ambiguous",
-          }),
-        );
+  it.each(["sender", "provider"] as const)(
+    "cancels a Resend digest retry when the configured %s changes",
+    async (change) => {
+      await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+      const requests: unknown[] = [];
+      const server = createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+          response.writeHead(500, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              name: "internal_server_error",
+              message: "ambiguous",
+            }),
+          );
+        });
       });
-    });
-    await new Promise<void>((resolve) =>
-      server.listen(0, "127.0.0.1", resolve),
-    );
-    try {
-      const address = server.address();
-      if (!address || typeof address === "string")
-        throw new Error("No mock port");
-      const source = {
-        AUTH_TOKEN_SECRET: secret,
-        EMAIL_PROVIDER: "resend",
-        RESEND_API_KEY: "re_local_test",
-        EMAIL_FROM: "old@example.edu",
-        RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
-      };
-      const first = new DigestService(
-        pool,
-        createEmailSender(loadEnvironment(source)),
-        environment.frontendBaseUrl,
-        "digest-http-sender",
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
       );
-      await first.schedule(new Date("2026-10-15T00:00:00Z"));
-      await first.deliverOnce(new Date("2026-10-15T00:00:01Z"));
-      expect(requests).toHaveLength(1);
-      await pool.query(
-        "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
-      );
-      const retry = new DigestService(
-        pool,
-        createEmailSender(
-          loadEnvironment({ ...source, EMAIL_FROM: "new@example.edu" }),
-        ),
-        environment.frontendBaseUrl,
-        "digest-http-sender",
-      );
-      expect(await retry.deliverOnce(new Date("2026-10-15T00:00:03Z"))).toBe(
-        true,
-      );
-      expect(requests).toHaveLength(1);
-      expect(
-        (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
-          .rows[0],
-      ).toEqual({ status: "canceled", frozen_email: null });
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
-  });
+      try {
+        const address = server.address();
+        if (!address || typeof address === "string")
+          throw new Error("No mock port");
+        const source = {
+          AUTH_TOKEN_SECRET: secret,
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "re_local_test",
+          EMAIL_FROM: "old@example.edu",
+          RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+        };
+        const first = new DigestService(
+          pool,
+          createEmailSender(loadEnvironment(source)),
+          environment.frontendBaseUrl,
+          "digest-http-sender",
+        );
+        await first.schedule(new Date("2026-10-15T00:00:00Z"));
+        await first.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+        expect(requests).toHaveLength(1);
+        await pool.query(
+          "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+        );
+        const retry = new DigestService(
+          pool,
+          createEmailSender(
+            loadEnvironment(
+              change === "provider"
+                ? { AUTH_TOKEN_SECRET: secret, SMTP_FROM: source.EMAIL_FROM }
+                : { ...source, EMAIL_FROM: "new@example.edu" },
+            ),
+          ),
+          environment.frontendBaseUrl,
+          "digest-http-sender",
+        );
+        expect(await retry.deliverOnce(new Date("2026-10-15T00:00:03Z"))).toBe(
+          true,
+        );
+        expect(requests).toHaveLength(1);
+        expect(
+          (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+            .rows[0],
+        ).toEqual({ status: "canceled", frozen_email: null });
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
 
   it.each([
     [

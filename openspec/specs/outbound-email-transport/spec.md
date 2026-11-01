@@ -29,12 +29,17 @@ The system SHALL support SMTP for local Mailpit and Resend HTTPS when explicitly
 
 ### Requirement: Durable identical queued retries
 
-The system SHALL persist each queued outbound message, including sender, recipient, text, HTML, and inline attachments, before its first network send. A retry SHALL use the identical message and stable provider idempotency key. A confirmed success or cancellation SHALL erase the snapshot. An accepted provider response SHALL be required before recording delivery success.
+The system SHALL persist each queued outbound message, including sender, recipient, text, HTML, and inline attachments, before its first network send. The frozen snapshot SHALL bind the selected provider. A retry SHALL use the identical message and stable provider idempotency key only while that provider remains selected; a provider switch SHALL cancel and erase the snapshot without a send. A confirmed success or cancellation SHALL erase the snapshot. An accepted provider response SHALL be required before recording delivery success. Invalidated email jobs SHALL terminate durably as canceled, clear their snapshot and claim, and record a non-sensitive reason rather than success.
 
 #### Scenario: Ambiguous network drop
 
 - **WHEN** a network connection drops after Resend may have accepted a queued message
 - **THEN** a retry uses exactly the same payload and key, without switching to SMTP
+
+#### Scenario: Provider switch after an ambiguous attempt
+
+- **WHEN** a frozen Resend or SMTP email is retried with a different selected provider
+- **THEN** it is canceled and scrubbed without calling either provider
 
 #### Scenario: Worker interruption
 
