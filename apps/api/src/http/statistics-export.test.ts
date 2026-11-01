@@ -44,7 +44,6 @@ function app(role: "staff" | "student" = "staff", authenticated = true) {
       frontendOrigins: new Set(["https://app.example.edu"]),
       frontendBaseUrl: "https://app.example.edu",
       authTokenSecret: "a-secret-that-is-longer-than-thirty-two-characters",
-      allowedSchoolDomains: new Set(["example.edu"]),
       rateLimits: { verificationPerEmail: 5 },
     } as Parameters<typeof createApp>[0]["environment"],
   });
