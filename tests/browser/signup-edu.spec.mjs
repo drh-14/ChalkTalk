@@ -1,10 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import process from "node:process";
 import { createServer } from "vite";
 import { expect, test } from "@playwright/test";
 
 const root = resolve(import.meta.dirname, "../..");
-const screenshots = resolve(root, "docs/pr-screenshots/signup-edu");
+const screenshots =
+  process.env.TEST_EVIDENCE_DIR ??
+  resolve(root, "docs/pr-screenshots/signup-edu");
 mkdirSync(screenshots, { recursive: true });
 let vite;
 let origin;
@@ -44,6 +47,14 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
   await page.goto(origin);
   await page.getByRole("link", { name: "Create an account" }).click();
   const email = page.getByRole("textbox", { name: "Email address" });
+  await page.getByRole("button", { name: "Send verification link" }).click();
+  await expect(page.getByRole("alert")).toContainText("Enter an email address");
+  expect(verificationRequests).toHaveLength(0);
+  await page.screenshot({
+    path: resolve(screenshots, "empty-email-rejected.png"),
+    fullPage: true,
+  });
+
   await email.fill("student@example.com");
   await page.getByRole("button", { name: "Send verification link" }).click();
   await expect(page.getByRole("alert")).toContainText(".edu");
@@ -64,10 +75,34 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
 
   await email.fill("student,admin@school.edu");
   await page.getByRole("button", { name: "Send verification link" }).click();
-  await expect(page.getByRole("alert")).toContainText("valid email local part");
+  await expect(page.getByRole("alert")).toContainText(
+    "valid ASCII email local part",
+  );
   expect(verificationRequests).toHaveLength(0);
   await page.screenshot({
     path: resolve(screenshots, "invalid-local-punctuation-rejected.png"),
+    fullPage: true,
+  });
+
+  await email.fill("student@bad..edu");
+  await page.getByRole("button", { name: "Send verification link" }).click();
+  await expect(page.getByRole("alert")).toContainText("valid domain");
+  expect(verificationRequests).toHaveLength(0);
+  await page.screenshot({
+    path: resolve(screenshots, "invalid-domain-rejected.png"),
+    fullPage: true,
+  });
+
+  await email.fill(
+    `${"a".repeat(64)}@${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(58)}.edu`,
+  );
+  await page.getByRole("button", { name: "Send verification link" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "254 characters or fewer",
+  );
+  expect(verificationRequests).toHaveLength(0);
+  await page.screenshot({
+    path: resolve(screenshots, "overlong-email-rejected.png"),
     fullPage: true,
   });
 

@@ -1663,13 +1663,15 @@ describe("ChalkTalk auth entry", () => {
     ["", "Enter an email address"],
     ["student.school.edu", "one @ sign"],
     ["student@school.edu@other.edu", "one @ sign"],
-    ["student,admin@school.edu", "valid email local part"],
+    ["student,admin@school.edu", "valid ASCII email local part"],
     ["student..admin@school.edu", "single dots"],
     ["student@school..edu", "valid domain"],
   ])(
     "shows a signup validation error for %j before sending",
     async (email, message) => {
-      const fetchMock = vi.fn().mockResolvedValueOnce(unauthenticatedResponse());
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(unauthenticatedResponse());
       vi.stubGlobal("fetch", fetchMock);
       const user = userEvent.setup();
       render(<App />);
