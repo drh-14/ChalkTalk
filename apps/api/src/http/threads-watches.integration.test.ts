@@ -30,7 +30,6 @@ const ids = {
 };
 const environment = loadEnvironment({
   AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-  ALLOWED_SCHOOL_DOMAINS: "example.edu",
   FRONTEND_ORIGINS: "https://app.example.edu",
   FRONTEND_BASE_URL: "https://app.example.edu",
 });
