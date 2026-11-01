@@ -1379,6 +1379,7 @@ integration("collaboration server", () => {
       const sessionId = await newSession("alice", []);
       const alice = join("alice", sessionId);
       await until(() => alice.provider.isSynced);
+      await collaboration.connectionsOf(sessionId)[0]!.waitForPendingMessages();
       const originalQuery = pool.query.bind(pool);
       let releaseCheck!: () => void;
       const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
@@ -1468,6 +1469,11 @@ integration("collaboration server", () => {
       const alice = join("alice", sessionId);
       const bob = join("bob", sessionId);
       await until(() => alice.provider.isSynced && bob.provider.isSynced);
+      await Promise.all(
+        collaboration
+          .connectionsOf(sessionId)
+          .map((connection) => connection.waitForPendingMessages()),
+      );
       const originalQuery = pool.query.bind(pool);
       let releaseCheck!: () => void;
       const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
@@ -1537,6 +1543,7 @@ integration("collaboration server", () => {
       const sessionId = await newSession("alice", []);
       const alice = join("alice", sessionId);
       await until(() => alice.provider.isSynced);
+      await collaboration.connectionsOf(sessionId)[0]!.waitForPendingMessages();
       const originalQuery = pool.query.bind(pool);
       let releaseCheck!: () => void;
       const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
