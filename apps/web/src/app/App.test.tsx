@@ -1600,6 +1600,93 @@ describe("ChalkTalk auth entry", () => {
     );
   });
 
+  it("rejects non-.edu signup email before sending a verification request", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(unauthenticatedResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("link", { name: "Create an account" }),
+    );
+    await user.type(
+      screen.getByLabelText("Email address"),
+      "student@example.com",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Send verification link" }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(".edu");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a 255-character signup email before sending a verification request", async () => {
+    const domain = `${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(61)}.edu`;
+    const fetchMock = vi.fn().mockResolvedValueOnce(unauthenticatedResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("link", { name: "Create an account" }),
+    );
+    await user.type(screen.getByLabelText("Email address"), `alices@${domain}`);
+    await user.click(
+      screen.getByRole("button", { name: "Send verification link" }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "254 characters or fewer",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an overlong signup local part before sending", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(unauthenticatedResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("link", { name: "Create an account" }),
+    );
+    await user.type(
+      screen.getByLabelText("Email address"),
+      `${"a".repeat(65)}@school.edu`,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Send verification link" }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "1–64 characters",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["", "Enter an email address"],
+    ["student.school.edu", "one @ sign"],
+    ["student@school.edu@other.edu", "one @ sign"],
+    ["student,admin@school.edu", "valid ASCII email local part"],
+    ["student..admin@school.edu", "single dots"],
+    ["student@school..edu", "valid domain"],
+  ])(
+    "shows a signup validation error for %j before sending",
+    async (email, message) => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(unauthenticatedResponse());
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      render(<App />);
+      await user.click(
+        await screen.findByRole("link", { name: "Create an account" }),
+      );
+      if (email) await user.type(screen.getByLabelText("Email address"), email);
+      await user.click(
+        screen.getByRole("button", { name: "Send verification link" }),
+      );
+      expect((await screen.findByRole("alert")).textContent).toContain(message);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("keeps reset requests generic and returns a completed reset to sign in", async () => {
     const fetchMock = vi
       .fn()
