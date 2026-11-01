@@ -42,7 +42,7 @@ flowchart LR
   Worker -->|"claim and revalidate invitation"| DB
 ```
 
-The API owns session metadata, participant authorization, invitation and lifecycle mutations, and ticket issuance. Hocuspocus accepts only a valid one-use ticket and rechecks the current course membership, participant row, session state, and ticket permission before accepting or persisting edits. PostgreSQL owns both the session roster and the durable Yjs state. It must also durably record whether an ended session's final snapshot was confirmed or is only the last saved version; the read API projects that state so the client cannot infer completeness from the mere presence of a snapshot. If the final-flush acknowledgement is missing or times out, mark the result conservatively as last-saved-only. `pg_notify` continues to carry access and lifecycle changes to connected collaboration workers; it is a signal, never an authority or a durable queue. The email worker rechecks current session, course, and invitee state and holds eligibility locks through provider acceptance. It must not claim that all staff can open the session.
+The API owns session metadata, participant authorization, invitation and lifecycle mutations, and ticket issuance. A thin Node HTTP/WebSocket transport owns admission buffering around the existing Hocuspocus connection handler; Hocuspocus and Yjs continue to own document synchronization. Admission consumes a valid one-use ticket while PostgreSQL locks the session and relevant membership, participant, and login rows through document load and socket registration. Until admission succeeds, no document, awareness, or broadcast frame leaves the transport. Failed or timed-out admission drops buffered frames and closes the socket before releasing locks. Every inbound message, including SyncStep1, awareness, awareness queries, and stateless messages, receives a bounded, fail-closed authorization check. PostgreSQL owns both the session roster and the durable Yjs state. It must also durably record whether an ended session's final snapshot was confirmed or is only the last saved version; the read API projects that state so the client cannot infer completeness from the mere presence of a snapshot. If the final-flush acknowledgement is missing or times out, mark the result conservatively as last-saved-only. `pg_notify` continues to carry access and lifecycle changes to connected collaboration workers; it is a signal, never an authority or a durable queue. The email worker rechecks current session, course, and invitee state and holds eligibility locks through provider acceptance. It must not claim that all staff can open the session.
 
 ```mermaid
 sequenceDiagram
@@ -61,8 +61,10 @@ sequenceDiagram
   API->>DB: Check course and participant permission
   API-->>Invitee: Ticket with View or Edit permission
   Invitee->>Socket: Connect with ticket
-  Socket->>DB: Consume ticket and recheck access
-  Socket-->>Invitee: Synchronize Yjs document
+  Socket->>DB: Lock authorization rows and consume ticket
+  Socket->>Socket: Load document and register connection; buffer outbound frames
+  Socket->>DB: Commit admission and release locks
+  Socket-->>Invitee: Deliver buffered frames and synchronize Yjs document
 ```
 
 The database migration removes the required post association without replacing it with a Threads or post foreign key. Existing rows retain their IDs, course IDs, titles, languages, states, documents, participant rows, and permissions. The old post reference is dropped after the migration; it is not used to continue gating access. An old private-post session does **not** become public: its exact roster remains the only non-course access grant, and no staff member is automatically added. A session already removed by a historical post-deletion cascade cannot be recovered. The session's original URL stays valid. Session list responses, create requests, and API documentation should describe course-scoped sessions without an `anchor` or post filter; callers should not need a synthetic post ID.
@@ -72,7 +74,7 @@ The database migration removes the required post association without replacing i
 | Concern | Choice | Why | Runner-up |
 | --- | --- | --- | --- |
 | Durable authority | Existing PostgreSQL session, participant, ticket, and document tables | Keeps authorization and Yjs state in one transactional system | New service or store adds operational complexity |
-| Live editing | Existing Hocuspocus 4.x, Yjs 13.x, and one-use tickets | Already deployed and supports code/whiteboard presence | New WebSocket protocol would duplicate tested behavior |
+| Live editing | Existing Hocuspocus 4.x, Yjs 13.x, one-use tickets, and a thin Node HTTP/WebSocket admission adapter | Keeps the established document protocol while withholding private frames until authorization commits | Replacing the collaboration protocol would duplicate tested behavior |
 | Change signals | Existing PostgreSQL notifications plus database recheck | Propagates revocation and ending without trusting ephemeral signals | Redis adds another runtime dependency |
 | Invitations | Immediate participant row plus existing email job | Matches current invitation behavior and avoids a new acceptance state | Acceptance workflow adds state and recovery paths not requested |
 
@@ -95,11 +97,11 @@ Versions above reflect the repository's `origin/main` manifests inspected on 202
 
 ## Failure modes and security
 
-- **API or database unavailable:** creation, listing, invitations, and new tickets fail; do not fall back to trusting cached client-side participants. Existing sockets may temporarily remain connected, but the server must recheck access on writes and close revoked connections when the database recovers or a revocation signal arrives.
+- **API or database unavailable:** creation, listing, invitations, and new tickets fail; do not fall back to trusting cached client-side participants. Admission and all inbound message checks fail closed on database error or timeout. Existing sockets may briefly receive outbound frames after a revocation commit while closure is in progress; notifications initiate prompt closure, and the 15-second periodic sweep recovers missed signals without providing a hard closure bound.
 - **Hocuspocus unavailable or disconnects:** metadata and lists still load; editors reconnect with fresh one-use tickets. Persisted snapshots remain readable for ended sessions. Never claim unsaved in-memory edits are durable.
 - **Invitation email delayed or failed:** the committed participant row already grants access. A retry revalidates that the invitee is still a current course member and participant before sending. An in-flight provider send holds eligibility locks, so participant removal or creator departure may wait before committing; no invitation send is accepted after that commit. A provider may deliver an email it accepted before commit later.
 - **Concurrent removal, departure, or ending:** serialize lifecycle and participant changes with ticket issuance; revoke outstanding tickets and active connections. A WebSocket ticket is not a permanent access grant. Ending must persist the final document before exposing its read-only snapshot when the collaboration server is healthy. If the server is unavailable or the final flush is unconfirmed, expose only the last durable state and visibly warn that newer edits may be missing. A late acknowledgement must not silently remove that warning without a verified durable final state.
-- **In-flight edit at removal:** a Yjs edit authorized before a participant-removal transaction commits may finish after that commit. New edit authorizations and tickets must be denied after commit, and prompt closure of the open socket begins then. Strict linearization of a previously authorized in-flight edit would require a different collaboration protocol and is not required here.
+- **In-flight edit at removal:** a Yjs edit authorized before a participant-removal transaction commits may finish after that commit. New edit authorizations and tickets must be denied after commit, and prompt closure of the open socket begins then. An already established socket may briefly receive outbound frames before that closure; a socket whose admission is still pending must receive none if removal commits first. Strict linearization of a previously authorized in-flight edit or immediate outbound revocation of established sockets would require a different collaboration protocol and is not required here.
 - **Privacy of migrated sessions:** never use old post visibility as a substitute for participant ACL, and never broaden the roster during migration. Return the same not-found behavior for nonparticipants so session existence is not exposed.
 
 ## Reversibility

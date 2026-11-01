@@ -1,5 +1,5 @@
-import { Server, type Document } from "@hocuspocus/server";
-import pg, { type Pool } from "pg";
+import { Hocuspocus, type Document } from "@hocuspocus/server";
+import pg, { type Pool, type PoolClient } from "pg";
 import {
   Counter,
   Gauge,
@@ -17,6 +17,7 @@ import {
   type CollaborationEvent,
 } from "./service.js";
 import { acceptsUpdate, whiteboardProjection } from "./whiteboard.js";
+import { createCollaborationTransport } from "./transport.js";
 
 export const MAX_DOCUMENT_CHARACTERS = 200_000;
 export const MAX_MESSAGE_BYTES = 256 * 1024;
@@ -58,6 +59,7 @@ export type CollaborationServerOptions = {
   maxDebounce?: number;
   sweepIntervalMs?: number;
   listenerRetryMs?: number;
+  admissionTimeoutMs?: number;
   /** Minutes with nobody connected before an active session ends. */
   idleEndMinutes?: number;
   /** Serves /metrics behind this bearer token when set. */
@@ -75,6 +77,28 @@ const sessionIdOf = (name: string) => DOCUMENT_PATTERN.exec(name)?.[1];
 
 class Rejection extends Error {}
 
+async function boundedQuery<Row extends pg.QueryResultRow = pg.QueryResultRow>(
+  db: Pool | PoolClient,
+  text: string,
+  values: unknown[] = [],
+  timeout = 2000,
+) {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      db.query<Row>({ text, values, query_timeout: timeout } as pg.QueryConfig),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Database query timed out")),
+          timeout,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /**
  * Hocuspocus server for live code sessions. PostgreSQL is the only store and
  * the only source of authorization; nothing about identity is taken from the
@@ -85,6 +109,16 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   const metrics = createMetrics(() => server.hocuspocus.documents);
   const persisting = new Map<string, Promise<void>>();
   const failedStores = new Set<string>();
+  const admissions = new Map<
+    Request,
+    {
+      client: PoolClient;
+      phase: "active" | "committing" | "finished";
+      socketId: string;
+    }
+  >();
+  const admissionSockets = new Map<string, Request>();
+  const aborting = new Set<Promise<void>>();
   let listener: pg.Client | undefined;
   let sweepTimer: NodeJS.Timeout | undefined;
   let retryTimer: NodeJS.Timeout | undefined;
@@ -92,8 +126,10 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
 
   /** Rechecks current membership, participation, and ticket permission. */
   async function stillAuthorized(context: ConnectionContext): Promise<boolean> {
-    const result = await pool.query(
-      `SELECT 1
+    try {
+      const result = await boundedQuery(
+        pool,
+        `SELECT 1
        FROM collaboration_sessions s
        JOIN courses c ON c.id=s.course_id AND c.status='active'
        JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$2
@@ -102,14 +138,31 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
        JOIN collaboration_participants cp ON cp.collaboration_session_id=s.id AND cp.user_id=$2
        WHERE s.id=$1 AND s.lifecycle_state='active'
          AND ($4='read' OR cp.permission='edit')`,
-      [
-        context.sessionId,
-        context.userId,
-        context.authSessionId,
-        context.permission,
-      ],
-    );
-    return Boolean(result.rowCount);
+        [
+          context.sessionId,
+          context.userId,
+          context.authSessionId,
+          context.permission,
+        ],
+      );
+      return Boolean(result.rowCount);
+    } catch {
+      return false;
+    }
+  }
+
+  async function abortAdmission(request: Request) {
+    const lease = admissions.get(request);
+    if (!lease || lease.phase !== "active") return;
+    lease.phase = "finished";
+    admissions.delete(request);
+    admissionSockets.delete(lease.socketId);
+    try {
+      await boundedQuery(lease.client, "ROLLBACK", [], 1000);
+      lease.client.release();
+    } catch {
+      lease.client.release(true);
+    }
   }
 
   /** Serializes stores per session so an older state never overwrites a newer one. */
@@ -212,11 +265,15 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   }
 
   function close(
-    connection: { close(event: { code: number; reason: string }): void },
+    connection: {
+      request: Request;
+      close(event: { code: number; reason: string }): void;
+    },
     reason: string,
   ) {
     metrics.closes.inc({ reason });
     connection.close({ code: 1000, reason });
+    server.socketFor(connection.request)?.close(1000, reason);
   }
 
   function closeAll(document: Document, reason: string) {
@@ -249,13 +306,14 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         const context = connection.context as ConnectionContext;
         if (!context?.userId || !filter(context)) continue;
         if (await stillAuthorized(context)) continue;
-        const state = await pool.query<{ lifecycle_state: string }>(
+        const state = await boundedQuery<{ lifecycle_state: string }>(
+          pool,
           "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1",
           [context.sessionId],
-        );
+        ).catch(() => undefined);
         close(
           connection,
-          state.rows[0]?.lifecycle_state === "active"
+          state?.rows[0]?.lifecycle_state === "active"
             ? CLOSE_REASONS.removed
             : CLOSE_REASONS.ended,
         );
@@ -380,61 +438,112 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     }
   }
 
-  const server = new Server<ConnectionContext>({
-    port: options.port ?? 3100,
-    address: options.address,
+  const hocuspocus = new Hocuspocus<ConnectionContext>({
     quiet: true,
-    stopOnSignals: false,
     debounce: options.debounce ?? 2000,
     maxDebounce: options.maxDebounce ?? 5000,
-    websocketOptions: { maxPayload: MAX_MESSAGE_BYTES },
 
-    async onRequest({ request, response }) {
-      if (!options.metricsToken || request.url?.split("?")[0] !== "/metrics")
-        return;
-      if (!authorized(request.headers.authorization, options.metricsToken)) {
-        response.writeHead(401, { "Content-Type": "text/plain" });
-        response.end("Unauthorized");
-      } else {
-        response.writeHead(200, {
-          "Content-Type": metrics.registry.contentType,
-        });
-        response.end(await metrics.registry.metrics());
-      }
-      // An empty rejection tells Hocuspocus the request was answered.
-      return Promise.reject();
-    },
-
-    async onConnect({ requestHeaders, documentName: name }) {
+    async onConnect({ requestHeaders, documentName: name, request }) {
       const origin = requestHeaders.get("origin");
-      if (!origin || !options.frontendOrigins.has(origin))
+      if (!origin || !options.frontendOrigins.has(origin)) {
+        server.socketFor(request)?.reject("Origin is not allowed");
         throw new Rejection("Origin is not allowed");
-      if (!sessionIdOf(name)) throw new Rejection("Unknown document");
+      }
+      if (!sessionIdOf(name)) {
+        server.socketFor(request)?.reject("Unknown document");
+        throw new Rejection("Unknown document");
+      }
     },
 
-    async onAuthenticate({ token, documentName: name, connectionConfig }) {
+    async onAuthenticate({
+      token,
+      documentName: name,
+      connectionConfig,
+      request,
+      socketId,
+    }) {
       const sessionId = sessionIdOf(name);
-      if (!sessionId || typeof token !== "string" || !token)
+      if (!sessionId || typeof token !== "string" || !token) {
+        server.socketFor(request)?.reject("Not authorized");
         throw new Rejection("Not authorized");
-      const client = await pool.connect();
+      }
+      const socket = server.socketFor(request);
+      if (!socket || socket.readyState !== 1)
+        throw new Rejection("Not authorized");
+      const client = await pool.connect().catch((error) => {
+        socket.reject("Not authorized");
+        throw error;
+      });
       try {
-        await client.query("BEGIN");
-        const consumed = await client.query<{
+        if (socket.readyState !== 1) throw new Rejection("Not authorized");
+        await boundedQuery(client, "BEGIN");
+        const pending = await boundedQuery<{
           user_id: string;
           auth_session_id: string;
           collaboration_session_id: string;
           permission: "read" | "write";
         }>(
-          "UPDATE collaboration_connection_tickets SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now() RETURNING user_id,auth_session_id,collaboration_session_id,permission",
+          client,
+          "SELECT user_id,auth_session_id,collaboration_session_id,permission FROM collaboration_connection_tickets WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()",
           [hashTicket(token)],
         );
-        const ticket = consumed.rows[0];
+        const ticket = pending.rows[0];
         if (!ticket || ticket.collaboration_session_id !== sessionId)
           throw new Rejection("Not authorized");
-        const user = await client.query<{ display_name: string }>(
-          "SELECT display_name FROM users WHERE id=$1",
+        const session = await boundedQuery<{
+          course_id: string;
+          lifecycle_state: string;
+        }>(
+          client,
+          "SELECT course_id,lifecycle_state FROM collaboration_sessions WHERE id=$1 FOR SHARE",
+          [sessionId],
+        );
+        if (session.rows[0]?.lifecycle_state !== "active")
+          throw new Rejection("Not authorized");
+        const courseId = session.rows[0].course_id;
+        const course = await boundedQuery<{ status: string }>(
+          client,
+          "SELECT status FROM courses WHERE id=$1",
+          [courseId],
+        );
+        if (course.rows[0]?.status !== "active")
+          throw new Rejection("Not authorized");
+        const membership = await boundedQuery(
+          client,
+          "SELECT 1 FROM course_memberships WHERE course_id=$1 AND user_id=$2 FOR SHARE",
+          [courseId, ticket.user_id],
+        );
+        if (!membership.rowCount) throw new Rejection("Not authorized");
+        const participant = await boundedQuery<{ permission: string }>(
+          client,
+          "SELECT permission FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2 FOR SHARE",
+          [sessionId, ticket.user_id],
+        );
+        if (
+          !participant.rowCount ||
+          (ticket.permission === "write" &&
+            participant.rows[0]?.permission !== "edit")
+        )
+          throw new Rejection("Not authorized");
+        const authSession = await boundedQuery(
+          client,
+          "SELECT 1 FROM sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>now() FOR SHARE",
+          [ticket.auth_session_id, ticket.user_id],
+        );
+        if (!authSession.rowCount) throw new Rejection("Not authorized");
+        const user = await boundedQuery<{ display_name: string }>(
+          client,
+          "SELECT display_name FROM users WHERE id=$1 AND deleted_at IS NULL",
           [ticket.user_id],
         );
+        if (!user.rowCount) throw new Rejection("Not authorized");
+        const consumed = await boundedQuery(
+          client,
+          "UPDATE collaboration_connection_tickets SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()",
+          [hashTicket(token)],
+        );
+        if (!consumed.rowCount || socket.readyState !== 1)
+          throw new Rejection("Not authorized");
         const context: ConnectionContext = {
           userId: ticket.user_id,
           authSessionId: ticket.auth_session_id,
@@ -445,28 +554,36 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         };
         // Hocuspocus neither applies nor broadcasts a read-only connection's updates.
         connectionConfig.readOnly = ticket.permission === "read";
-        if (!(await stillAuthorized(context)))
-          throw new Rejection("Not authorized");
-        await client.query(
-          "UPDATE collaboration_sessions SET last_active_at=now() WHERE id=$1",
-          [sessionId],
-        );
-        await client.query("COMMIT");
+        if (socket.readyState !== 1) throw new Rejection("Not authorized");
+        admissions.set(request, { client, phase: "active", socketId });
+        admissionSockets.set(socketId, request);
         return context;
       } catch (error) {
-        await client.query("ROLLBACK");
+        socket.reject("Not authorized");
+        try {
+          await boundedQuery(client, "ROLLBACK", [], 1000);
+          client.release();
+        } catch {
+          client.release(true);
+        }
         throw error;
-      } finally {
-        client.release();
       }
     },
 
-    async onLoadDocument({ document, documentName: name }) {
+    async onLoadDocument({ document, documentName: name, socketId }) {
       const sessionId = sessionIdOf(name)!;
-      const saved = await pool.query<{ yjs_state: Buffer }>(
-        "SELECT yjs_state FROM collaboration_documents WHERE collaboration_session_id=$1",
-        [sessionId],
-      );
+      let saved;
+      try {
+        saved = await boundedQuery<{ yjs_state: Buffer }>(
+          pool,
+          "SELECT yjs_state FROM collaboration_documents WHERE collaboration_session_id=$1",
+          [sessionId],
+        );
+      } catch (error) {
+        const request = admissionSockets.get(socketId);
+        if (request) server.socketFor(request)?.abort();
+        throw error;
+      }
       if (saved.rows[0])
         Y.applyUpdate(document, new Uint8Array(saved.rows[0].yjs_state));
       return document;
@@ -482,12 +599,19 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       await persist(sessionIdOf(name)!, document);
     },
 
-    async beforeSync({ type, payload, document, connection }) {
-      const context = connection.context as ConnectionContext | undefined;
-      if (!context || !(await stillAuthorized(context))) {
+    async beforeHandleMessage({ context, connection }) {
+      if (
+        admissions.has(connection.request) ||
+        !context?.userId ||
+        !(await stillAuthorized(context))
+      ) {
         close(connection, CLOSE_REASONS.removed);
         throw new Rejection("Not authorized");
       }
+    },
+
+    async beforeSync({ type, payload, document, connection }) {
+      const context = connection.context as ConnectionContext;
       // SyncStep2 (1) and Update (2) carry document changes.
       if (type !== 1 && type !== 2) return;
       // A viewer's updates are dropped unapplied, so they are not validated.
@@ -499,10 +623,41 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       }
     },
 
-    async connected({ connection, context }) {
-      if (!(await stillAuthorized(context))) {
-        close(connection, CLOSE_REASONS.removed);
-        return;
+    async connected({ connection, context, request, socketId }) {
+      const lease = admissions.get(request);
+      const socket = server.socketFor(request);
+      if (
+        !lease ||
+        lease.phase !== "active" ||
+        !socket ||
+        socket.readyState !== 1
+      ) {
+        socket?.abort();
+        throw new Rejection("Not authorized");
+      }
+      lease.phase = "committing";
+      try {
+        await boundedQuery(lease.client, "COMMIT");
+        lease.client.release();
+        lease.phase = "finished";
+        admissions.delete(request);
+        admissionSockets.delete(socketId);
+        if (!socket.confirm()) throw new Rejection("Not authorized");
+        socket.finish();
+      } catch (error) {
+        socket.abort();
+        if (lease.phase !== "finished") {
+          lease.phase = "finished";
+          admissions.delete(request);
+          admissionSockets.delete(socketId);
+          try {
+            await boundedQuery(lease.client, "ROLLBACK", [], 1000);
+            lease.client.release();
+          } catch {
+            lease.client.release(true);
+          }
+        }
+        throw error;
       }
       // Awareness relays the server-stamped identity only to other clients,
       // so each client learns its own name and color here.
@@ -526,6 +681,35 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
           name: context.displayName,
           color: context.color,
         };
+    },
+  });
+
+  const server = createCollaborationTransport({
+    hocuspocus,
+    address: options.address,
+    port: options.port ?? 3100,
+    maxPayload: MAX_MESSAGE_BYTES,
+    admissionTimeoutMs: options.admissionTimeoutMs ?? 5000,
+    onAbort(request) {
+      const work = abortAdmission(request);
+      aborting.add(work);
+      void work.finally(() => aborting.delete(work));
+    },
+    async onRequest(request, response) {
+      if (!options.metricsToken || request.url?.split("?")[0] !== "/metrics") {
+        response.writeHead(200, { "Content-Type": "text/plain" });
+        response.end("Welcome to Hocuspocus!");
+        return;
+      }
+      if (!authorized(request.headers.authorization, options.metricsToken)) {
+        response.writeHead(401, { "Content-Type": "text/plain" });
+        response.end("Unauthorized");
+      } else {
+        response.writeHead(200, {
+          "Content-Type": metrics.registry.contentType,
+        });
+        response.end(await metrics.registry.metrics());
+      }
     },
   });
 
@@ -596,6 +780,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         await bounded(server.hocuspocus.unloadDocument(document));
       }
       await bounded(server.destroy());
+      await bounded(Promise.allSettled([...aborting]));
       await bounded(Promise.allSettled([...persisting.values()]));
     },
   };

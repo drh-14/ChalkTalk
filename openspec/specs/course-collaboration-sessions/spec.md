@@ -61,7 +61,7 @@ The course page SHALL show a Collaboration tab immediately after Threads. It SHA
 - **THEN** the session appears in their course list and no post link or Post to discussion action is presented
 
 ### Requirement: Failure and race safety
-The live editor SHALL use one-use tickets and recheck current course membership, participant permission, and session state before accepting or persisting edits. On transport or service failure, unconfirmed edits SHALL NOT be presented as durable; reconnect SHALL require fresh authorization. Concurrent invitations, removal, and ending SHALL not restore revoked access.
+The live editor SHALL use one-use tickets and hold conflicting authorization locks through socket registration. It SHALL withhold document, awareness, and broadcast frames until admission succeeds and SHALL close a failed or timed-out admission before releasing those locks. A socket SHALL join no more than one document. The server SHALL perform bounded, fail-closed authorization checks for every inbound sync, awareness, awareness-query, and stateless message. On transport or service failure, unconfirmed edits SHALL NOT be presented as durable; reconnect SHALL require fresh authorization. Concurrent invitations, removal, and ending SHALL not restore revoked access. For an already established socket, a brief post-commit outbound window before notification-driven closure is permitted; the periodic sweep recovers missed notifications but does not guarantee a hard closure deadline.
 
 #### Scenario: Network drops after edit
 - **WHEN** a WebSocket disconnects before a durable save is confirmed
@@ -70,3 +70,11 @@ The live editor SHALL use one-use tickets and recheck current course membership,
 #### Scenario: Revoked ticket reconnect
 - **WHEN** a removed participant retries with an old or new ticket
 - **THEN** the connection is rejected and the document is not disclosed
+
+#### Scenario: Removal races with socket admission
+- **WHEN** removal commits before a pending socket admission finishes loading and registration
+- **THEN** the socket receives no document, awareness, or broadcast frame and cannot continue with that ticket
+
+#### Scenario: Authorization check fails during an established connection
+- **WHEN** the database check for an inbound sync, awareness, awareness-query, or stateless message fails or times out
+- **THEN** the message is not applied or answered and the socket closes

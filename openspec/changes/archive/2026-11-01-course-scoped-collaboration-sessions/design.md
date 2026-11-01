@@ -10,7 +10,8 @@ See `docs/design/2026-11-01-course-collaboration-sessions.md` for the approved a
 - Make any participant an inviter; creator or participating staff manage metadata and roster; creator departure ends before course membership deletion.
 - Keep final-save acknowledgement distinct from fallback ending; an unconfirmed end must be presented as last saved, not guaranteed complete.
 - Reuse the existing invitation email queue and hold current eligibility locks through provider acceptance. Participant removal or creator departure may wait for an in-flight send; no invitation send is accepted after revocation commits. Remove claims of staff-wide access.
-- A Hocuspocus edit authorized before a removal transaction commits may finish afterward. New edits and tickets must fail once revocation commits, and prompt socket closure begins after that commit; strict linearization of an already in-flight Yjs update is outside this change.
+- A thin Node HTTP/WebSocket transport buffers outbound Hocuspocus frames until a one-use ticket is consumed and PostgreSQL authorization locks remain held through document loading and socket registration. A failed or timed-out admission closes the socket and drops the buffer before releasing locks. One socket joins one document. Bounded, fail-closed checks cover every inbound sync, awareness, awareness-query, and stateless message.
+- A Hocuspocus edit authorized before a removal transaction commits may finish afterward. New edits and tickets must fail once revocation commits, and notification-driven socket closure begins after that commit. Established sockets may briefly receive outbound frames before closure; the 15-second sweep recovers missed signals but is not a hard deadline. A pending admission must not disclose private state if removal commits first.
 - Add a course Collaboration tab and remove post entry points/actions. Retain session URLs and home shortcuts.
 
 ## Risks and verification
