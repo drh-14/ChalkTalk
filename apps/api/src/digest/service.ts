@@ -462,7 +462,6 @@ export class DigestService {
           })),
         },
         {
-          idempotencyKey: `digest-${row.id}`,
           signal: AbortSignal.timeout(30_000),
         },
       );

@@ -41,7 +41,7 @@ let pool: Pool;
 let worker: JobWorker;
 let sequence = 0;
 const delivered: Array<{ to: string; subject: string; text: string }> = [];
-const deliveryKeys: Array<string | undefined> = [];
+const deliveryAttempts: Array<Parameters<EmailSender["send"]>[0]> = [];
 let smtpFails = false;
 let dropAfterAccept = false;
 let permanentFailure = false;
@@ -49,9 +49,9 @@ let configurationFailure = false;
 let quotaFailure = false;
 let inspectBeforeDelivery: (() => Promise<void>) | undefined;
 const emailSender: EmailSender = {
-  send: async (message, options) => {
+  send: async (message) => {
     await inspectBeforeDelivery?.();
-    deliveryKeys.push(options?.idempotencyKey);
+    deliveryAttempts.push(message);
     if (smtpFails) throw new Error("SMTP unavailable");
     if (permanentFailure)
       throw new PermanentEmailDeliveryError(
@@ -371,9 +371,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     ).toEqual({ status: "succeeded", attempts: 2 });
   });
 
-  it("commits an exact frozen duplicate email before network send and reuses its key", async () => {
+  it("commits a frozen duplicate email before network send", async () => {
     delivered.length = 0;
-    deliveryKeys.length = 0;
+    deliveryAttempts.length = 0;
     const { jobId } = await seedMerge("instructor");
     smtpFails = true;
     try {
@@ -389,7 +389,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     const initial = frozen.rows[0]?.frozen_email;
     await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [jobId]);
     expect(await worker.runOnce()).toBe(true);
-    expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
+    expect(deliveryAttempts).toHaveLength(2);
     expect(delivered).toHaveLength(1);
     expect(delivered[0]?.text).toContain("Why does this happen?");
     const finished = await pool.query<{ frozen_email: unknown }>(
@@ -483,7 +483,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
 
   it("makes no outbound call if the frozen payload cannot commit", async () => {
     delivered.length = 0;
-    deliveryKeys.length = 0;
+    deliveryAttempts.length = 0;
     const { jobId } = await seedMerge();
     await pool.query(`CREATE FUNCTION fail_email_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN IF NEW.id='${jobId}'::uuid AND NEW.frozen_email IS NOT NULL AND OLD.frozen_email IS NULL THEN
@@ -498,7 +498,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       await pool.query("DROP TRIGGER fail_email_snapshot ON jobs");
       await pool.query("DROP FUNCTION fail_email_snapshot()");
     }
-    expect(deliveryKeys).toEqual([]);
+    expect(deliveryAttempts).toEqual([]);
     expect(delivered).toEqual([]);
     expect(
       (
@@ -509,9 +509,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     ).toEqual({ status: "queued", frozen_email: null });
   });
 
-  it("retries an ambiguous accepted send with the same payload and key", async () => {
+  it("retries an ambiguous accepted send with the same payload", async () => {
     delivered.length = 0;
-    deliveryKeys.length = 0;
+    deliveryAttempts.length = 0;
     const { jobId } = await seedMerge();
     dropAfterAccept = true;
     try {
@@ -524,7 +524,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     expect(await worker.runOnce()).toBe(true);
     expect(delivered).toHaveLength(2);
     expect(delivered[1]).toEqual(delivered[0]);
-    expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
+    expect(deliveryAttempts).toHaveLength(2);
   });
 
   it.each([
@@ -678,7 +678,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
 
   it("reclaims a frozen email after a crashed worker lease expires", async () => {
     delivered.length = 0;
-    deliveryKeys.length = 0;
+    deliveryAttempts.length = 0;
     const { jobId } = await seedMerge();
     await freezeQueuedEmail(jobId);
     await pool.query(
@@ -693,7 +693,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     );
     expect(await replacement.runOnce()).toBe(true);
     expect(delivered).toHaveLength(1);
-    expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
+    expect(deliveryAttempts).toHaveLength(2);
     expect(
       (
         await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
@@ -705,7 +705,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
 
   it("retries the same frozen payload when database acknowledgment fails after send", async () => {
     delivered.length = 0;
-    deliveryKeys.length = 0;
+    deliveryAttempts.length = 0;
     const { jobId } = await seedMerge();
     await pool.query(`CREATE FUNCTION fail_email_ack() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN IF NEW.id='${jobId}'::uuid AND NEW.status='succeeded' THEN
@@ -728,7 +728,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     await retryQueuedEmail(jobId);
     expect(delivered).toHaveLength(2);
     expect(delivered[1]).toEqual(delivered[0]);
-    expect(deliveryKeys).toEqual([`job-${jobId}`, `job-${jobId}`]);
+    expect(deliveryAttempts).toHaveLength(2);
   });
 
   it("dead-letters a permanent provider rejection and removes its snapshot", async () => {
@@ -815,7 +815,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
   it("cancels a frozen duplicate email if the author address, title, or body changes", async () => {
     for (const mutation of ["address", "title", "body"] as const) {
       delivered.length = 0;
-      deliveryKeys.length = 0;
+      deliveryAttempts.length = 0;
       const { jobId, authorId, source } = await seedMerge();
       smtpFails = true;
       try {
@@ -842,7 +842,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         jobId,
       ]);
       expect(await worker.runOnce()).toBe(true);
-      expect(deliveryKeys).toHaveLength(1);
+      expect(deliveryAttempts).toHaveLength(1);
       expect(delivered).toEqual([]);
       expect(
         (
@@ -864,7 +864,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       "course-archived",
     ] as const) {
       delivered.length = 0;
-      deliveryKeys.length = 0;
+      deliveryAttempts.length = 0;
       const seeded = await seedMerge();
       await freezeQueuedEmail(seeded.jobId);
       if (invalidate === "unmerge")
@@ -896,7 +896,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           seeded.courseId,
         ]);
       await retryQueuedEmail(seeded.jobId);
-      expect(deliveryKeys).toHaveLength(1);
+      expect(deliveryAttempts).toHaveLength(1);
       expect(delivered).toEqual([]);
       expect(
         (
@@ -1764,7 +1764,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         await fresh();
         const seeded = await seedInvitation();
         delivered.length = 0;
-        deliveryKeys.length = 0;
+        deliveryAttempts.length = 0;
         await freezeQueuedEmail(seeded.jobId);
         if (invalidate === "address")
           await pool.query("UPDATE users SET email=$2 WHERE id=$1", [
@@ -1811,7 +1811,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             [seeded.courseId, seeded.taId],
           );
         await retryQueuedEmail(seeded.jobId);
-        expect(deliveryKeys).toHaveLength(1);
+        expect(deliveryAttempts).toHaveLength(1);
         expect(delivered).toEqual([]);
         expect(
           (
@@ -1838,7 +1838,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         `${seeded.sessionId}:${seeded.taId}:${Date.parse(originalAt)}`,
       ]);
       delivered.length = 0;
-      deliveryKeys.length = 0;
+      deliveryAttempts.length = 0;
       await freezeQueuedEmail(seeded.jobId);
       await seeded.sessions.remove(
         seeded.sessionId,
@@ -1859,7 +1859,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         [seeded.sessionId, seeded.jobId],
       );
       await retryQueuedEmail(seeded.jobId);
-      expect(deliveryKeys).toHaveLength(1);
+      expect(deliveryAttempts).toHaveLength(1);
       expect(delivered).toEqual([]);
     });
   });
@@ -2039,7 +2039,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         const seeded = await seedAnnouncement();
         const jobId = await announcementJob(seeded.postId, seeded.studentId);
         delivered.length = 0;
-        deliveryKeys.length = 0;
+        deliveryAttempts.length = 0;
         await freezeQueuedEmail(jobId);
         if (invalidate === "address")
           await pool.query("UPDATE users SET email=$2 WHERE id=$1", [
@@ -2071,7 +2071,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             seeded.courseId,
           ]);
         await retryQueuedEmail(jobId);
-        expect(deliveryKeys).toHaveLength(1);
+        expect(deliveryAttempts).toHaveLength(1);
         expect(delivered).toEqual([]);
         expect(
           (
@@ -2231,7 +2231,7 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
         const { id: jobId, notification_id: notificationId } =
           await answerNotificationJob(seeded.answerId);
         delivered.length = 0;
-        deliveryKeys.length = 0;
+        deliveryAttempts.length = 0;
         await freezeQueuedEmail(jobId);
         if (invalidate === "address")
           await pool.query("UPDATE users SET email=$2 WHERE id=$1", [
@@ -2287,7 +2287,7 @@ To stop these emails, turn off "Activity emails on followed posts" in this cours
             [seeded.courseId, seeded.studentId],
           );
         await retryQueuedEmail(jobId);
-        expect(deliveryKeys).toHaveLength(1);
+        expect(deliveryAttempts).toHaveLength(1);
         expect(delivered).toEqual([]);
         expect(
           (

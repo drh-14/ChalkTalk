@@ -7,12 +7,40 @@ export class EmailConfigurationError extends Error {}
 export class GmailQuotaError extends Error {}
 
 export function createEmailSender(environment: Environment): EmailSender {
+  const mimeTransport = nodemailer.createTransport({
+    streamTransport: true,
+    buffer: true,
+  });
+  const prepare: NonNullable<EmailSender["prepare"]> = async (message) => {
+    const from = message.from ?? environment.email.from;
+    const compiled = await mimeTransport.sendMail({
+      from,
+      to: message.to,
+      subject: message.subject,
+      text: message.text,
+      ...(message.html ? { html: message.html } : {}),
+      ...(message.attachments
+        ? {
+            attachments: message.attachments.map((attachment) => ({
+              filename: attachment.filename,
+              content: attachment.content,
+              contentType: attachment.contentType,
+              cid: attachment.cid,
+              contentDisposition: attachment.contentDisposition,
+            })),
+          }
+        : {}),
+    });
+    if (!Buffer.isBuffer(compiled.message))
+      throw new Error("Email MIME preparation did not produce a buffer");
+    return {
+      ...message,
+      from,
+      rawMimeBase64Url: compiled.message.toString("base64url"),
+    };
+  };
   if (environment.email.provider === "gmail") {
     const config = environment.email;
-    const mimeTransport = nodemailer.createTransport({
-      streamTransport: true,
-      buffer: true,
-    });
     let cachedToken: { token: string; expiresAt: number } | undefined;
     const timeoutSignal = (signal?: AbortSignal) =>
       signal
@@ -101,35 +129,6 @@ export function createEmailSender(environment: Environment): EmailSender {
       };
       return cachedToken.token;
     };
-    const prepare: NonNullable<EmailSender["prepare"]> = async (message) => {
-      const from = message.from ?? config.from;
-      const compiled = await mimeTransport.sendMail({
-        from,
-        to: message.to,
-        subject: message.subject,
-        text: message.text,
-        ...(message.html ? { html: message.html } : {}),
-        ...(message.attachments
-          ? {
-              attachments: message.attachments.map((attachment) => ({
-                filename: attachment.filename,
-                content: attachment.content,
-                contentType: attachment.contentType,
-                cid: attachment.cid,
-                contentDisposition: attachment.contentDisposition,
-              })),
-            }
-          : {}),
-      });
-      if (!Buffer.isBuffer(compiled.message))
-        throw new Error("Gmail MIME preparation did not produce a buffer");
-      const bytes = compiled.message;
-      return {
-        ...message,
-        from,
-        rawMimeBase64Url: bytes.toString("base64url"),
-      };
-    };
     return {
       provider: "gmail",
       defaultFrom: config.from,
@@ -184,12 +183,20 @@ export function createEmailSender(environment: Environment): EmailSender {
   return {
     provider: "smtp",
     defaultFrom: environment.email.from,
+    prepare,
     send: async (message, { signal } = {}) => {
       if (signal?.aborted) throw new Error("Email delivery was aborted");
+      const frozen = message.rawMimeBase64Url
+        ? message
+        : await prepare(message);
       const abort = () => transport.close();
       signal?.addEventListener("abort", abort, { once: true });
       try {
-        await transport.sendMail({ from: environment.email.from, ...message });
+        await transport.sendMail({
+          from: frozen.from,
+          to: frozen.to,
+          raw: Buffer.from(frozen.rawMimeBase64Url!, "base64url"),
+        });
       } finally {
         signal?.removeEventListener("abort", abort);
       }

@@ -50,14 +50,12 @@ class RecordingSender implements EmailSender {
   messages: Array<Parameters<EmailSender["send"]>[0]> = [];
   attempts: Array<{
     message: Parameters<EmailSender["send"]>[0];
-    key?: string;
   }> = [];
   fail = false;
   async send(
     message: Parameters<EmailSender["send"]>[0],
-    options?: Parameters<EmailSender["send"]>[1],
   ) {
-    this.attempts.push({ message, key: options?.idempotencyKey });
+    this.attempts.push({ message });
     if (this.fail) throw new Error("SMTP down");
     this.messages.push(message);
   }
@@ -1011,7 +1009,7 @@ integration("daily course email digest", () => {
     ).toBe("canceled");
   });
 
-  it("freezes digest bytes and key before a failed handoff, then retries exactly", async () => {
+  it("freezes digest bytes before a failed handoff, then retries exactly", async () => {
     await addQuestion(
       ids.physics,
       ids.bob,
@@ -1033,7 +1031,6 @@ integration("daily course email digest", () => {
     await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
     expect(sender.attempts).toHaveLength(2);
     expect(sender.attempts[1]).toEqual(sender.attempts[0]);
-    expect(sender.attempts[1]!.key).toBe(`digest-${stored.rows[0]!.id}`);
     expect(
       (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
         .rows[0],
@@ -1561,12 +1558,12 @@ integration("daily course email digest", () => {
     },
   );
 
-  it("retries an ambiguous accepted-then-dropped handoff with the same payload and key", async () => {
+  it("retries an ambiguous accepted-then-dropped handoff with the same payload", async () => {
     await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
     await digest.schedule(new Date("2026-10-15T00:00:00Z"));
     let attempt = 0;
-    sender.send = async (message, options) => {
-      sender.attempts.push({ message, key: options?.idempotencyKey });
+    sender.send = async (message) => {
+      sender.attempts.push({ message });
       if (++attempt === 1)
         throw new Error("response connection dropped after acceptance");
       sender.messages.push(message);

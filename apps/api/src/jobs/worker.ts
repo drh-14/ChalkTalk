@@ -198,7 +198,6 @@ export class JobWorker {
         return "canceled";
       }
       await this.emailSender!.send(frozen.message, {
-        idempotencyKey: `job-${job.id}`,
         signal: AbortSignal.timeout(30_000),
       });
       return "sent";

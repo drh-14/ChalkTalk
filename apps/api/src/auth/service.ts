@@ -32,7 +32,7 @@ export interface EmailSender {
         contentDisposition: "inline";
       }>;
     },
-    options?: { signal?: AbortSignal; idempotencyKey?: string },
+    options?: { signal?: AbortSignal },
   ): Promise<void>;
   defaultFrom?: string;
 }
