@@ -135,6 +135,7 @@ integration("collaboration server", () => {
       webSocketUrl: "wss://app.example.edu/collaboration",
       endTimeoutMs: 3000,
       endPollMs: 20,
+      rateLimits: { createPerHour: 1000, ticketsPerTenMinutes: 1000 },
     });
     fixture = await seedCourse(pool, {
       alice: "student",
@@ -1142,7 +1143,13 @@ integration("collaboration server", () => {
         encoding.writeVarUint(query, 3);
         raw.send(encoding.toUint8Array(query));
         await until(() => raw.readyState === WebSocket.CLOSED);
-        expect(frames).toHaveLength(before);
+        const decoding = await import("lib0/decoding");
+        for (const frame of frames.slice(before)) {
+          const decoder = decoding.createDecoder(frame);
+          expect(decoding.readVarString(decoder)).toBe(documentName(sessionId));
+          expect(decoding.readVarUint(decoder)).toBe(7);
+          expect(decoding.readVarString(decoder)).toBe(CLOSE_REASONS.removed);
+        }
       } finally {
         raw.terminate();
         await collaboration.stop();
@@ -1563,7 +1570,14 @@ integration("collaboration server", () => {
         alice.text.insert(0, "in-flight edit");
         await until(() => authorized);
         const current = await service.get(sessionId, fixture.users.alice!);
-        const ended = await service.update(
+        // The authorization check itself fails closed after two seconds; end
+        // sooner to exercise the unconfirmed fallback while it is still pending.
+        const shortEndService = new CollaborationSessionService(pool, {
+          webSocketUrl: "wss://app.example.edu/collaboration",
+          endTimeoutMs: 500,
+          endPollMs: 20,
+        });
+        const ended = await shortEndService.update(
           sessionId,
           fixture.users.alice!,
           `"v${current.version}"`,
