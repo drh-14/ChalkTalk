@@ -3,6 +3,7 @@
 // database named by E2E_DATABASE_URL (or DATABASE_URL) and is skipped without one.
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import process from "node:process";
 import { URL } from "node:url";
 import { expect, test } from "@playwright/test";
 import { BASE, databaseUrl, seed, signIn } from "./fixtures/live-stack.mjs";
@@ -13,10 +14,12 @@ test.skip(
   "Set E2E_DATABASE_URL or DATABASE_URL to the running stack's database",
 );
 
-const screenshots = resolve(
-  import.meta.dirname,
-  "../../docs/pr-screenshots/session-whiteboard",
-);
+const screenshots = process.env.E2E_SCREENSHOTS_DIR
+  ? resolve(process.env.E2E_SCREENSHOTS_DIR, "session-whiteboard")
+  : resolve(
+      import.meta.dirname,
+      "../../docs/pr-screenshots/session-whiteboard",
+    );
 mkdirSync(screenshots, { recursive: true });
 const own = new URL(BASE).hostname;
 // ChalkTalk's own interface fonts, which every page loads; not the whiteboard's.
@@ -196,9 +199,7 @@ test("a student and a TA draw on the session whiteboard at once, then it becomes
     student.page.waitForEvent("download"),
     student.page.getByRole("button", { name: "Export PNG" }).click(),
   ]);
-  expect(download.suggestedFilename()).toBe(
-    "shared-whiteboard-whiteboard.png",
-  );
+  expect(download.suggestedFilename()).toBe("shared-whiteboard-whiteboard.png");
 
   expect(studentRequests.external).toEqual([]);
   expect(taRequests.external).toEqual([]);

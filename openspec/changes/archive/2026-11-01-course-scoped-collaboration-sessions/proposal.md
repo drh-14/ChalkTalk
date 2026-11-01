@@ -14,6 +14,7 @@ Live collaboration is bound to individual discussion posts, so post changes can 
 ## Capabilities
 
 ### New Capabilities
+
 - `course-collaboration-sessions`: Course-level session discovery, membership, lifecycle, live authorization, migration, and UI.
 
 ### Modified Capabilities

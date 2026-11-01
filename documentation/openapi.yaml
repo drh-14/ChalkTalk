@@ -10829,7 +10829,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Create collaboration connection ticket
-      description: Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with write permission, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+      description: Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with read permission for a View participant or write permission for an Edit participant, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Only current course members who explicitly participate can obtain a ticket; nonparticipants, including staff, receive 404 not_found.
       operationId: createCollaborationConnectionTicket
       security:
         - session_cookie: []

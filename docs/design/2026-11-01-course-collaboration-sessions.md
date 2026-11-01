@@ -71,12 +71,12 @@ The database migration removes the required post association without replacing i
 
 ## Technology choices
 
-| Concern | Choice | Why | Runner-up |
-| --- | --- | --- | --- |
-| Durable authority | Existing PostgreSQL session, participant, ticket, and document tables | Keeps authorization and Yjs state in one transactional system | New service or store adds operational complexity |
-| Live editing | Existing Hocuspocus 4.x, Yjs 13.x, one-use tickets, and a thin Node HTTP/WebSocket admission adapter | Keeps the established document protocol while withholding private frames until authorization commits | Replacing the collaboration protocol would duplicate tested behavior |
-| Change signals | Existing PostgreSQL notifications plus database recheck | Propagates revocation and ending without trusting ephemeral signals | Redis adds another runtime dependency |
-| Invitations | Immediate participant row plus existing email job | Matches current invitation behavior and avoids a new acceptance state | Acceptance workflow adds state and recovery paths not requested |
+| Concern           | Choice                                                                                               | Why                                                                                                  | Runner-up                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Durable authority | Existing PostgreSQL session, participant, ticket, and document tables                                | Keeps authorization and Yjs state in one transactional system                                        | New service or store adds operational complexity                     |
+| Live editing      | Existing Hocuspocus 4.x, Yjs 13.x, one-use tickets, and a thin Node HTTP/WebSocket admission adapter | Keeps the established document protocol while withholding private frames until authorization commits | Replacing the collaboration protocol would duplicate tested behavior |
+| Change signals    | Existing PostgreSQL notifications plus database recheck                                              | Propagates revocation and ending without trusting ephemeral signals                                  | Redis adds another runtime dependency                                |
+| Invitations       | Immediate participant row plus existing email job                                                    | Matches current invitation behavior and avoids a new acceptance state                                | Acceptance workflow adds state and recovery paths not requested      |
 
 Versions above reflect the repository's `origin/main` manifests inspected on 2026-11-01; no new library is proposed.
 

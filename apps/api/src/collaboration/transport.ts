@@ -204,6 +204,8 @@ export function createCollaborationTransport<Context>(options: {
         if (value !== undefined)
           headers.set(name, Array.isArray(value) ? value.join(", ") : value);
       const request = new Request(url, { headers });
+      // The close listener must exist before handleConnection can use the socket.
+      // eslint-disable-next-line prefer-const
       let client: ReturnType<Hocuspocus<Context>["handleConnection"]>;
       const guarded = new AdmissionSocket(
         raw,

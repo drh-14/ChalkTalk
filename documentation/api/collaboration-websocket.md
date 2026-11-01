@@ -60,7 +60,7 @@ Hocuspocus reports a document-level close to the client with code `1000`; the re
 
 | Reason           | Meaning                                                                                       | Client action                                                                  |
 | ---------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `session-ended`  | The session ended, went idle, its creator left the course, or its course was archived.                 | Show the final text read-only from the snapshot route. Do not reconnect.       |
+| `session-ended`  | The session ended, went idle, its creator left the course, or its course was archived.        | Show the final text read-only from the snapshot route. Do not reconnect.       |
 | `access-removed` | The user was removed from the session, left or lost the course, or their login session ended. | Show an access-removed state. Do not reconnect.                                |
 | `invalid-update` | The client sent an oversized message or an update outside the allowed document shape.         | Keep the local text visible as unsaved; reconnect with a new ticket to resync. |
 

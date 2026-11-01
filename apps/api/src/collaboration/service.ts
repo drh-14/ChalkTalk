@@ -267,7 +267,9 @@ export class CollaborationSessionService {
         [userId],
       );
       if (!user.rowCount) throw notFound();
-      await db.query("SELECT id FROM courses WHERE id=$1 FOR SHARE", [courseId]);
+      await db.query("SELECT id FROM courses WHERE id=$1 FOR SHARE", [
+        courseId,
+      ]);
       const member = await this.membership(db, courseId, userId, true);
       if (!member) throw notFound();
       if (key !== undefined) {

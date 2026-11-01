@@ -28,7 +28,7 @@ Core features include:
 - private, autosaved drafts for unfinished new posts,
 - Markdown and LaTeX support,
 - image and document uploads,
-- live code and whiteboard collaboration sessions,
+- private live code and whiteboard sessions from each course's Collaboration tab,
 - course resources,
 - polls,
 - notifications,

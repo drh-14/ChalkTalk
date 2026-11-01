@@ -85,14 +85,19 @@ test("a student and a TA edit, see each other, and end a live session", async ({
   await expect(
     student.page.locator(".cm-ySelectionInfo", { hasText: people.ta.name }),
   ).toHaveCount(1);
-  await expect.poll(async () => (await editorText(student.page)) === (await editorText(ta.page))).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        (await editorText(student.page)) === (await editorText(ta.page)),
+    )
+    .toBe(true);
   const finalText = await editorText(ta.page);
 
   // The TA ends the session; both editors become read-only with the final text.
   ta.page.once("dialog", (dialog) => void dialog.accept());
   await ta.page.getByRole("button", { name: "End session" }).click();
   for (const { page } of [ta, student]) {
-    await expect(page.getByRole("status")).toHaveText(
+    await expect(page.locator(".session-state")).toHaveText(
       "Session ended (read-only)",
     );
     await expect(page.locator(".cm-content")).toHaveAttribute(

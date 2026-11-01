@@ -16,10 +16,12 @@ test.skip(
 );
 
 const MAILPIT = process.env.E2E_MAILPIT_URL ?? "http://127.0.0.1:8025";
-const screenshots = resolve(
-  import.meta.dirname,
-  "../../docs/pr-screenshots/session-invitations",
-);
+const screenshots = process.env.E2E_SCREENSHOTS_DIR
+  ? resolve(process.env.E2E_SCREENSHOTS_DIR, "session-invitations")
+  : resolve(
+      import.meta.dirname,
+      "../../docs/pr-screenshots/session-invitations",
+    );
 mkdirSync(screenshots, { recursive: true });
 
 /** The text of the newest email to `address`, once the worker has sent it. */

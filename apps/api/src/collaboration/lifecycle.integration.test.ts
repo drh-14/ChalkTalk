@@ -98,10 +98,13 @@ integration("collaboration session lifecycle effects", () => {
     const transition = await pool.connect();
     await transition.query("BEGIN");
     try {
-      await transition.query("UPDATE courses SET status='archived' WHERE id=$1", [
-        fixture.courseId,
-      ]);
-      await endCollaborationSessions(transition, { courseId: fixture.courseId });
+      await transition.query(
+        "UPDATE courses SET status='archived' WHERE id=$1",
+        [fixture.courseId],
+      );
+      await endCollaborationSessions(transition, {
+        courseId: fixture.courseId,
+      });
       let settled = false;
       const creating = sessions.create(fixture.courseId, fixture.users.alice!, {
         title: "Late session",
@@ -136,13 +139,15 @@ integration("collaboration session lifecycle effects", () => {
       await transition.query("BEGIN");
       try {
         if (departure === "account deletion")
-          await transition.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [
-            fixture.users.alice,
-          ]);
+          await transition.query(
+            "SELECT id FROM users WHERE id=$1 FOR UPDATE",
+            [fixture.users.alice],
+          );
         if (departure === "course removal")
-          await transition.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
-            fixture.courseId,
-          ]);
+          await transition.query(
+            "SELECT id FROM courses WHERE id=$1 FOR UPDATE",
+            [fixture.courseId],
+          );
         await endCollaborationSessions(transition, {
           creatorId: fixture.users.alice!,
           courseId: fixture.courseId,
@@ -164,9 +169,10 @@ integration("collaboration session lifecycle effects", () => {
           [fixture.courseId, fixture.users.alice],
         );
         if (departure === "account deletion")
-          await transition.query("UPDATE users SET deleted_at=now() WHERE id=$1", [
-            fixture.users.alice,
-          ]);
+          await transition.query(
+            "UPDATE users SET deleted_at=now() WHERE id=$1",
+            [fixture.users.alice],
+          );
         await transition.query("COMMIT");
         await expect(creating).rejects.toMatchObject({ status: 404 });
         const active = await pool.query(
