@@ -199,15 +199,31 @@ integration("collaboration server", () => {
       }
     });
 
-    it("does not apply pipelined updates before admission commits", async () => {
+    it("holds a pipelined update until admission commits, then persists it", async () => {
       const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
       const bobId = fixture.users.bob!;
       const ticket = (
         await service.ticket(sessionId, bobId, authSessions[bobId]!)
       ).ticket;
+      const originalCreate = collaboration.hocuspocus.createDocument.bind(
+        collaboration.hocuspocus,
+      );
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let entered = false;
+      collaboration.hocuspocus.createDocument = (async (...args) => {
+        entered = true;
+        await gate;
+        return originalCreate(...args);
+      }) as typeof collaboration.hocuspocus.createDocument;
       const raw = new WebSocket(collaboration.server.webSocketURL, {
         headers: { Origin: ORIGIN },
       });
+      const frames: Buffer[] = [];
+      raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
+      const pipelined = new Y.Doc();
       try {
         await new Promise<void>((resolve) => raw.once("open", resolve));
         const encoding = await import("lib0/encoding");
@@ -216,21 +232,43 @@ integration("collaboration server", () => {
         encoding.writeVarUint(auth, 2);
         encoding.writeVarUint(auth, 0);
         encoding.writeVarString(auth, ticket);
-        const malicious = new Y.Doc();
-        malicious.getText("content").insert(0, "pipelined edit");
+        pipelined.getText("content").insert(0, "pipelined edit");
         const update = encoding.createEncoder();
         encoding.writeVarString(update, documentName(sessionId));
         encoding.writeVarUint(update, 0);
         encoding.writeVarUint(update, 2);
-        encoding.writeVarUint8Array(update, Y.encodeStateAsUpdate(malicious));
+        encoding.writeVarUint8Array(update, Y.encodeStateAsUpdate(pipelined));
         raw.send(encoding.toUint8Array(auth));
         raw.send(encoding.toUint8Array(update));
-        await until(() => raw.readyState === WebSocket.CLOSED);
-        const alice = join("alice", sessionId);
-        await until(() => alice.provider.isSynced);
+        await until(() => entered);
+        await expect(
+          pool.query(
+            "SELECT id FROM collaboration_sessions WHERE id=$1 FOR UPDATE NOWAIT",
+            [sessionId],
+          ),
+        ).rejects.toMatchObject({ code: "55P03" });
+        expect(frames).toHaveLength(0);
         expect(alice.text.toString()).toBe("");
-        malicious.destroy();
+        expect(
+          collaboration.hocuspocus.documents
+            .get(documentName(sessionId))
+            ?.getText("content")
+            .toString(),
+        ).toBe("");
+        release();
+        await until(() => alice.text.toString() === "pipelined edit");
+        await until(async () => {
+          const stored = await pool.query<{ text_projection: string }>(
+            "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+            [sessionId],
+          );
+          return stored.rows[0]?.text_projection === "pipelined edit";
+        });
+        expect(raw.readyState).toBe(WebSocket.OPEN);
       } finally {
+        release();
+        collaboration.hocuspocus.createDocument = originalCreate;
+        pipelined.destroy();
         raw.terminate();
       }
     });
@@ -729,6 +767,17 @@ integration("collaboration server", () => {
         await until(() => bob.provider.isSynced);
         expect(bob.text.toString()).toBe("persisted before join");
         expect(bob.state.closeReason).toBeUndefined();
+        bob.text.insert(bob.text.length, " and updated after join");
+        await until(async () => {
+          const stored = await pool.query<{ text_projection: string }>(
+            "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+            [sessionId],
+          );
+          return (
+            stored.rows[0]?.text_projection ===
+            "persisted before join and updated after join"
+          );
+        });
       } finally {
         release();
         collaboration.hocuspocus.createDocument = originalCreate;
@@ -963,6 +1012,8 @@ integration("collaboration server", () => {
       const raw = new WebSocket(collaboration.server.webSocketURL, {
         headers: { Origin: ORIGIN },
       });
+      const pending = new Y.Doc();
+      pending.getText("content").insert(0, "must be dropped");
       raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
       try {
         await new Promise<void>((resolve) => raw.once("open", resolve));
@@ -977,15 +1028,23 @@ integration("collaboration server", () => {
         encoding.writeVarString(query, documentName(sessionId));
         encoding.writeVarUint(query, 3);
         raw.send(encoding.toUint8Array(query));
+        const update = encoding.createEncoder();
+        encoding.writeVarString(update, documentName(sessionId));
+        encoding.writeVarUint(update, 0);
+        encoding.writeVarUint(update, 2);
+        encoding.writeVarUint8Array(update, Y.encodeStateAsUpdate(pending));
+        raw.send(encoding.toUint8Array(update));
         await until(() => raw.readyState === WebSocket.CLOSED);
         expect(frames).toHaveLength(0);
         expect(collaboration.connectionsOf(sessionId)).toHaveLength(0);
       } finally {
         pool.query = originalQuery;
+        pending.destroy();
         raw.terminate();
       }
       const retry = join("bob", sessionId, { token: async () => ticket });
       await until(() => retry.provider.isSynced);
+      expect(retry.text.toString()).toBe("");
     });
 
     it("lets concurrent removal commit after admission timeout without sending private frames", async () => {
