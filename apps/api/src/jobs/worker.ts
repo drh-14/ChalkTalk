@@ -486,20 +486,21 @@ export class JobWorker {
         mentioned: ["You were mentioned on", "mentioned you on"],
       };
       const [subject, verb] = wording[row.kind] ?? ["Activity on", "posted on"];
-      const actorUser =
-        !row.actor_anonymous && row.actor_user_id
-          ? (
-              await client.query<{
-                display_name: string;
-                deleted_at: Date | null;
-              }>(
-                "SELECT display_name,deleted_at FROM users WHERE id=$1 FOR SHARE",
-                [row.actor_user_id],
-              )
-            ).rows[0]
-          : undefined;
+      const actorUser = row.actor_user_id
+        ? (
+            await client.query<{
+              display_name: string;
+              deleted_at: Date | null;
+            }>(
+              "SELECT display_name,deleted_at FROM users WHERE id=$1 FOR SHARE",
+              [row.actor_user_id],
+            )
+          ).rows[0]
+        : undefined;
+      if (row.actor_user_id && (!actorUser || actorUser.deleted_at))
+        return undefined;
       const actor =
-        !actorUser || actorUser.deleted_at
+        row.actor_anonymous || !actorUser
           ? "Someone"
           : clean(actorUser.display_name);
       const title = clean(row.title);
@@ -521,8 +522,11 @@ export class JobWorker {
           row.title,
           responseBody ?? row.body_markdown,
           actor,
-          actorUser && !actorUser.deleted_at
-            ? [row.actor_user_id, actorUser.display_name]
+          actorUser
+            ? [
+                row.actor_user_id,
+                row.actor_anonymous ? null : actorUser.display_name,
+              ]
             : null,
           row.course_name,
         ]),

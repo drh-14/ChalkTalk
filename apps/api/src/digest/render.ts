@@ -23,6 +23,7 @@ export type InlineImage = {
   contentDisposition: "inline";
 };
 export type DigestEntry = {
+  id?: string;
   title: string;
   url: string;
   body: string;
@@ -264,9 +265,11 @@ export async function renderDigest(input: DigestInput): Promise<{
   text: string;
   attachments: InlineImage[];
   imageIds: string[];
+  renderedItemIds: string[];
 }> {
   const attachments: InlineImage[] = [];
   const imageIds: string[] = [];
+  const renderedItemIds: string[] = [];
   let imageCount = 0;
   let imageBytes = 0;
   let equationCount = 0;
@@ -419,6 +422,7 @@ export async function renderDigest(input: DigestInput): Promise<{
       break;
     }
     html.push(entryHtml);
+    if (item.id) renderedItemIds.push(item.id);
     imageIds.push(
       ...(item.images ?? []).flatMap((image) => (image.id ? [image.id] : [])),
     );
@@ -432,5 +436,11 @@ export async function renderDigest(input: DigestInput): Promise<{
     text.push(`View remaining activity: ${input.courseUrl}`);
   }
   html.push("</main></body></html>");
-  return { html: html.join(""), text: text.join("\n"), attachments, imageIds };
+  return {
+    html: html.join(""),
+    text: text.join("\n"),
+    attachments,
+    imageIds,
+    renderedItemIds,
+  };
 }

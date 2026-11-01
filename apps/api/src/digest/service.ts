@@ -308,6 +308,7 @@ export class DigestService {
         counts,
         totalItems: items.rows[0].total_count,
         items: items.rows.map((item) => ({
+          id: item.entity_id,
           title: compact(item.title),
           body: item.body_markdown,
           url: `${this.frontendBaseUrl}/courses/${row.course_id}/posts/${item.post_id}`,
@@ -355,12 +356,14 @@ export class DigestService {
             contentDisposition: attachment.contentDisposition,
           })),
         },
-        items: items.rows.map((item) => ({
-          kind: item.kind,
-          entityId: item.entity_id,
-          bodySha256: bodySha256(item.body_markdown),
-          titleSha256: bodySha256(item.title),
-        })),
+        items: items.rows
+          .filter((item) => rendered.renderedItemIds.includes(item.entity_id))
+          .map((item) => ({
+            kind: item.kind,
+            entityId: item.entity_id,
+            bodySha256: bodySha256(item.body_markdown),
+            titleSha256: bodySha256(item.title),
+          })),
         imageIds: rendered.imageIds,
       };
       await client.query(

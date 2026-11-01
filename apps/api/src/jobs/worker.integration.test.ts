@@ -2285,6 +2285,34 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       ).toEqual({ status: "canceled", frozen_email: null });
     });
 
+    it("cancels frozen anonymous-actor mail after actor deletion", async () => {
+      await fresh();
+      const seeded = await seedAnswered();
+      const { id: jobId, notification_id: notificationId } =
+        await answerNotificationJob(seeded.answerId);
+      await pool.query(
+        "UPDATE notifications SET actor_anonymous=true WHERE id=$1",
+        [notificationId],
+      );
+      deliveryAttempts.length = 0;
+      await freezeQueuedEmail(jobId);
+      expect(deliveryAttempts[0]?.text).toMatch(/^Someone answered /);
+      expect(deliveryAttempts[0]?.text).not.toContain("Tara");
+      await pool.query("UPDATE users SET deleted_at=now() WHERE id=$1", [
+        seeded.taId,
+      ]);
+      await retryQueuedEmail(jobId);
+      expect(deliveryAttempts).toHaveLength(1);
+      expect(delivered).toEqual([]);
+      expect(
+        (
+          await pool.query("SELECT status,frozen_email FROM jobs WHERE id=$1", [
+            jobId,
+          ])
+        ).rows[0],
+      ).toEqual({ status: "canceled", frozen_email: null });
+    });
+
     it("holds the notification actor identity through provider handoff", async () => {
       await fresh();
       const seeded = await seedAnswered();

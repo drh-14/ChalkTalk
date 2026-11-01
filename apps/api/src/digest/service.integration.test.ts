@@ -1109,6 +1109,55 @@ integration("daily course email digest", () => {
     });
   });
 
+  it("ignores edits to activity omitted by the HTML cap on retry", async () => {
+    const link = `[Open](https://example.edu/${"x".repeat(95_000)})`;
+    const first = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T10:00:00Z",
+      "First retained",
+    );
+    const second = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T11:00:00Z",
+      "Second retained",
+    );
+    const omitted = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Third omitted",
+    );
+    await pool.query(
+      "UPDATE posts SET body_markdown=$1 WHERE id=ANY($2::uuid[])",
+      [link, [first, second, omitted]],
+    );
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.fail = true;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    const frozen = (
+      await pool.query<{
+        frozen_email: { items: Array<{ entityId: string }> };
+      }>("SELECT frozen_email FROM digest_outbox")
+    ).rows[0]!.frozen_email;
+    expect(frozen.items.map((item) => item.entityId)).toEqual([first, second]);
+    expect(sender.attempts[0]?.message.html).not.toContain("Third omitted");
+    await pool.query("UPDATE posts SET body_markdown='Revised' WHERE id=$1", [
+      omitted,
+    ]);
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    sender.fail = false;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+    expect(sender.attempts).toHaveLength(2);
+    expect(sender.attempts[1]).toEqual(sender.attempts[0]);
+    expect(
+      (await pool.query("SELECT status FROM digest_outbox")).rows[0].status,
+    ).toBe("sent");
+  });
+
   it("cancels an SMTP digest retry when the configured sender changes", async () => {
     await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
     sender.defaultFrom = "old@example.edu";
