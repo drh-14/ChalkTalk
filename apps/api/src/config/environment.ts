@@ -42,7 +42,6 @@ export interface Environment {
   frontendOrigins: ReadonlySet<string>;
   frontendBaseUrl: string;
   authTokenSecret: string;
-  allowedSchoolDomains: ReadonlySet<string>;
   rateLimits: {
     verificationPerEmail: number;
     verificationPerIp: number;
@@ -120,23 +119,6 @@ export function loadEnvironment(
   if (!authTokenSecret || authTokenSecret.length < 32) {
     throw new Error("AUTH_TOKEN_SECRET must contain at least 32 characters");
   }
-  const allowedSchoolDomains = new Set(
-    (source.ALLOWED_SCHOOL_DOMAINS ?? "example.edu")
-      .split(",")
-      .map((domain) => domain.trim().toLowerCase())
-      .filter(Boolean),
-  );
-  if (
-    allowedSchoolDomains.size === 0 ||
-    [...allowedSchoolDomains].some(
-      (domain) =>
-        !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
-          domain,
-        ),
-    )
-  ) {
-    throw new Error("ALLOWED_SCHOOL_DOMAINS must contain valid domain names");
-  }
 
   const observabilityEnabled = source.OBSERVABILITY_ENABLED === "true";
   if (
@@ -183,7 +165,6 @@ export function loadEnvironment(
     frontendOrigins,
     frontendBaseUrl,
     authTokenSecret,
-    allowedSchoolDomains,
     rateLimits: {
       verificationPerEmail: positiveInteger("RATE_LIMIT_VERIFICATION_EMAIL", 5),
       verificationPerIp: positiveInteger("RATE_LIMIT_VERIFICATION_IP", 100),

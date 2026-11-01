@@ -16,7 +16,6 @@ const environment = {
   frontendOrigins: new Set([origin]),
   frontendBaseUrl: origin,
   authTokenSecret: "test-secret-that-is-longer-than-thirty-two-characters",
-  allowedSchoolDomains: new Set(["example.edu"]),
   rateLimits: {
     verificationPerEmail: 5,
     verificationPerIp: 100,
