@@ -14551,7 +14551,7 @@ components:
       properties:
         email:
           type: string
-          description: Email address to verify before account creation or a same-school account email change.
+          description: Email address to verify before account creation or a same-school account email change; normalized ASCII address must be at most 254 characters.
           format: email
       additionalProperties: false
       required:

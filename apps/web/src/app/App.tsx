@@ -171,8 +171,10 @@ function SignupRequestForm({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;
-    const domain = email.trim().toLowerCase().split("@")[1] ?? "";
+    const normalizedEmail = email.trim().toLowerCase();
+    const domain = normalizedEmail.split("@")[1] ?? "";
     if (
+      normalizedEmail.length > 254 ||
       domain.length > 253 ||
       !domain.endsWith(".edu") ||
       !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(

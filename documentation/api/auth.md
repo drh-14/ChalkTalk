@@ -6,7 +6,7 @@ All browser requests originate from a deployment-configured HTTPS frontend origi
 
 ### **`POST /api/v1/account-verification-requests`**
 
-Requests verification of an account email before account creation or a same-school email change. The server normalizes the email and requires a 1–64-character ASCII dot-atom local part (nonempty RFC atext segments separated by single dots) and a valid email domain ending exactly in `.edu` (including subdomains). For every request with an eligible `.edu` domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits default to five requests per normalized email per hour and 100 requests per source IP per hour; deployments may configure both limits. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+Requests verification of an account email before account creation or a same-school email change. The server normalizes the email and requires a total normalized ASCII email length of at most 254 characters, a 1–64-character ASCII dot-atom local part (nonempty RFC atext segments separated by single dots) and a valid email domain ending exactly in `.edu` (including subdomains). For every request with an eligible `.edu` domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits default to five requests per normalized email per hour and 100 requests per source IP per hour; deployments may configure both limits. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
 
 **Authentication:** None.
 
@@ -85,7 +85,7 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 `email_domain_not_allowed`: The syntactically valid normalized email domain does not end exactly in `.edu`.
 
-`validation_failed`: The email address is syntactically malformed (for example, `.student@school.edu`, `student.@school.edu`, `student..name@school.edu`, `student,admin@school.edu`, a local part longer than 64 characters, a quoted or non-ASCII local part, `student@.edu`, or `student@bad-.edu`).
+`validation_failed`: The normalized email exceeds 254 characters or is syntactically malformed (for example, `.student@school.edu`, `student.@school.edu`, `student..name@school.edu`, `student,admin@school.edu`, a local part longer than 64 characters, a quoted or non-ASCII local part, `student@.edu`, or `student@bad-.edu`).
 
 ##### `429 Too Many Requests`
 
@@ -220,7 +220,7 @@ curl --request POST '/api/v1/users' \
 
 `email_domain_not_allowed`: The syntactically valid verified email in the token does not have a `.edu` domain.
 
-`validation_failed`: The verified email in the token has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or invalid DNS labels.
+`validation_failed`: The verified email in the token exceeds 254 normalized ASCII characters or has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or invalid DNS labels.
 
 `weak_password`: The password or another field fails validation.
 
@@ -772,7 +772,7 @@ curl --request PATCH '/api/v1/users/me' \
 
 `email_domain_not_allowed`: The syntactically valid replacement email is not in the account's current canonical `.edu` school domain.
 
-`validation_failed`: No valid editable field was supplied, or the replacement email has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or invalid DNS labels.
+`validation_failed`: No valid editable field was supplied, or the replacement email exceeds 254 normalized ASCII characters or has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or invalid DNS labels.
 
 `verification_token_invalid`: The email verification token is invalid, expired, or superseded by a later request.
 

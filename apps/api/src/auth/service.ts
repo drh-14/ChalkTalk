@@ -115,6 +115,7 @@ function requireAcademicEmail(email: string): void {
   const normalizedEmail = normalizeEmail(email);
   const localPart = normalizedEmail.slice(0, normalizedEmail.indexOf("@"));
   if (
+    normalizedEmail.length > 254 ||
     !isValidDomain(domainFor(normalizedEmail)) ||
     localPart.length > 64 ||
     !localPart

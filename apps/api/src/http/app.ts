@@ -227,9 +227,7 @@ function stringWithin(
 }
 
 function verificationRequestBody(input: unknown): JsonObject {
-  const body = strictBody(input, ["email"], ["email"]);
-  stringWithin(body.email, "Email", 1, 255);
-  return body;
+  return strictBody(input, ["email"], ["email"]);
 }
 
 function accountCreationBody(input: unknown): JsonObject & {

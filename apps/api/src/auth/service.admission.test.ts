@@ -10,6 +10,7 @@ describe("academic email admission", () => {
     '"student"@school.edu',
     "studént@school.edu",
     "student\0admin@school.edu",
+    `${"a".repeat(64)}@${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(60)}.${"e".repeat(19)}.edu`,
   ])("rejects malformed local part %j before persistence", async (email) => {
     const query = vi.fn();
     const send = vi.fn();

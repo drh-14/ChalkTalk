@@ -2,7 +2,7 @@
 
 ### Requirement: Verified account creation
 
-The system SHALL require a valid, unexpired, single-use email-verification token before creating an account. It SHALL accept verification requests and token-backed account creation only for normalized addresses whose syntactically valid domain ends exactly in `.edu`, including subdomains, without a deployment-specific allowlist. It SHALL create or locate the organization for the exact verified domain, create the user, and consume the token atomically. A rejected token SHALL not create a user or consume the token.
+The system SHALL require a valid, unexpired, single-use email-verification token before creating an account. It SHALL accept verification requests and token-backed account creation only for normalized ASCII addresses of at most 254 characters whose syntactically valid domain ends exactly in `.edu`, including subdomains, without a deployment-specific allowlist. It SHALL create or locate the organization for the exact verified domain, create the user, and consume the token atomically. A rejected token SHALL not create a user or consume the token.
 
 #### Scenario: Verify an academic email
 
@@ -13,6 +13,11 @@ The system SHALL require a valid, unexpired, single-use email-verification token
 
 - **WHEN** a client requests verification for a syntactically valid email whose domain does not end exactly in `.edu`
 - **THEN** the server returns `422 email_domain_not_allowed` without sending mail or persisting a verification token
+
+#### Scenario: Enforce the 254-character mailbox limit
+
+- **WHEN** a client requests verification for a valid 254-character normalized ASCII `.edu` email, or for an otherwise valid 255-character address
+- **THEN** the server accepts the 254-character address and returns `422 validation_failed` for the 255-character address without sending mail or persisting a verification token
 
 #### Scenario: Reject malformed email syntax
 

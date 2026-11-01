@@ -370,11 +370,20 @@ integrationTest("AuthService PostgreSQL integration", () => {
     expect(tokensAfterMalformed.rows[0]).toEqual(tokensBeforeMalformed.rows[0]);
   });
 
-  it("creates an account for a valid domain longer than the organization name limit", async () => {
-    const domain = `${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(19)}.edu`;
-    const email = `long-domain@${domain}`;
+  it("accepts a 254-character email and rejects 255 characters through HTTP", async () => {
+    const domain = `${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(61)}.edu`;
+    const email = `alice@${domain}`;
     expect(domain.length).toBeGreaterThan(200);
+    expect(email.length).toBe(254);
     const app = createApp({ environment, authService: service });
+    const countBefore = emailSender.messages.length;
+    const tooLong = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({ email: `alices@${domain}` });
+    expect(tooLong.status).toBe(422);
+    expect(tooLong.body.error.code).toBe("validation_failed");
+    expect(emailSender.messages).toHaveLength(countBefore);
     const verification = await request(app)
       .post("/api/v1/account-verification-requests")
       .set("Origin", environment.frontendBaseUrl)
