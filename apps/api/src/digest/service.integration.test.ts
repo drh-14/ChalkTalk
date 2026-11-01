@@ -873,7 +873,12 @@ integration("daily course email digest", () => {
   ] as const)(
     "holds a frozen digest for 15 minutes on %s failure",
     async (_kind, failure) => {
-      await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+      await addQuestion(
+        ids.physics,
+        ids.bob,
+        "2026-10-14T12:00:00Z",
+        "Question",
+      );
       await digest.schedule(new Date("2026-10-15T00:00:00Z"));
       let attempts = 0;
       sender.send = async () => {
