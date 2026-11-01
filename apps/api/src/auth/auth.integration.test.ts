@@ -312,7 +312,9 @@ integrationTest("AuthService PostgreSQL integration", () => {
     await service.requestVerification("Student.Name@NewSchool.EDU");
     expect(emailSender.messages.at(-1)?.to).toBe("student.name@newschool.edu");
     await service.requestVerification(`${"a".repeat(64)}@school.edu`);
-    expect(emailSender.messages.at(-1)?.to).toBe(`${"a".repeat(64)}@school.edu`);
+    expect(emailSender.messages.at(-1)?.to).toBe(
+      `${"a".repeat(64)}@school.edu`,
+    );
     await service.requestVerification("student+tag!#$%&'*=?^_`{|}~@school.edu");
     expect(emailSender.messages.at(-1)?.to).toBe(
       "student+tag!#$%&'*=?^_`{|}~@school.edu",
