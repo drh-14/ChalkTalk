@@ -733,7 +733,8 @@ integration("collaboration server", () => {
       expect(snapshot).toMatchObject({
         sessionStatus: "ended",
         content: "while True:\n    break\n",
-        finalSnapshotConfirmed: true,
+        finalSnapshotConfirmed: false,
+        lastSavedWarning: true,
       });
       const stale = new Y.Doc();
       stale.getText("content").insert(0, "older queued write");
@@ -742,12 +743,62 @@ integration("collaboration server", () => {
         service.snapshot(sessionId, fixture.users.alice!),
       ).resolves.toMatchObject({
         content: "while True:\n    break\n",
-        finalSnapshotConfirmed: true,
+        finalSnapshotConfirmed: false,
       });
       await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
       expect(
         alice.state.stateless.map((payload) => JSON.parse(payload).type),
       ).toContain("session-ended");
+    });
+
+    it("warns when an authorized update is still in flight during final capture", async () => {
+      const sessionId = await newSession("alice", []);
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      const originalQuery = pool.query.bind(pool);
+      let releaseCheck!: () => void;
+      const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
+      let held = false;
+      let authorized = false;
+      pool.query = ((sql: string, values: unknown[]) => {
+        const result = originalQuery(sql, values);
+        if (
+          !held &&
+          typeof sql === "string" &&
+          sql.includes("JOIN collaboration_participants cp") &&
+          values?.[0] === sessionId
+        ) {
+          held = true;
+          return Promise.resolve(result).then(async (value) => {
+            authorized = true;
+            await gate;
+            return value;
+          });
+        }
+        return result;
+      }) as typeof pool.query;
+      try {
+        alice.text.insert(0, "in-flight edit");
+        await until(() => authorized);
+        const current = await service.get(sessionId, fixture.users.alice!);
+        const ended = await service.update(
+          sessionId,
+          fixture.users.alice!,
+          `"v${current.version}"`,
+          { status: "ended" },
+        );
+        expect(ended.finalSnapshotConfirmed).toBe(false);
+        const snapshot = await service.snapshot(sessionId, fixture.users.alice!);
+        expect(snapshot).toMatchObject({
+          sessionStatus: "ended",
+          finalSnapshotConfirmed: false,
+          lastSavedWarning: true,
+        });
+        expect(snapshot.content).not.toContain("in-flight edit");
+      } finally {
+        releaseCheck();
+        pool.query = originalQuery;
+      }
     });
 
     it("does not claim a confirmed final snapshot when the final database flush fails", async () => {

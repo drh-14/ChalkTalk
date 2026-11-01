@@ -6,6 +6,7 @@ import { loadEnvironment } from "../config/environment.js";
 import { CourseService } from "../courses/service.js";
 import { JobWorker } from "../jobs/worker.js";
 import { PostService } from "../posts/service.js";
+import { endCollaborationSessions } from "./lifecycle.js";
 import {
   CollaborationSessionService,
   type CollaborationEvent,
@@ -91,6 +92,94 @@ integration("collaboration session lifecycle effects", () => {
       sessions.ticket(fixture.session.id, fixture.users.alice!, uuidv7()),
     ).rejects.toMatchObject({ status: 409, code: "course_archived" });
   });
+
+  it("does not create an active session after a concurrent archive sweep", async () => {
+    const fixture = await course();
+    const transition = await pool.connect();
+    await transition.query("BEGIN");
+    try {
+      await transition.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        fixture.courseId,
+      ]);
+      await endCollaborationSessions(transition, { courseId: fixture.courseId });
+      let settled = false;
+      const creating = sessions.create(fixture.courseId, fixture.users.alice!, {
+        title: "Late session",
+      });
+      void creating.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(settled).toBe(false);
+      await transition.query("COMMIT");
+      await expect(creating).rejects.toMatchObject({
+        status: 409,
+        code: "course_archived",
+      });
+      const active = await pool.query(
+        "SELECT id FROM collaboration_sessions WHERE course_id=$1 AND lifecycle_state='active'",
+        [fixture.courseId],
+      );
+      expect(active.rowCount).toBe(0);
+    } finally {
+      await transition.query("ROLLBACK");
+      transition.release();
+    }
+  });
+
+  it.each(["course removal", "account deletion"])(
+    "does not create an active session after concurrent %s",
+    async (departure) => {
+      const fixture = await course();
+      const transition = await pool.connect();
+      await transition.query("BEGIN");
+      try {
+        if (departure === "account deletion")
+          await transition.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [
+            fixture.users.alice,
+          ]);
+        if (departure === "course removal")
+          await transition.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
+            fixture.courseId,
+          ]);
+        await endCollaborationSessions(transition, {
+          creatorId: fixture.users.alice!,
+          courseId: fixture.courseId,
+        });
+        let settled = false;
+        const creating = sessions.create(
+          fixture.courseId,
+          fixture.users.alice!,
+          { title: "Late session" },
+        );
+        void creating.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(settled).toBe(false);
+        await transition.query(
+          "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+          [fixture.courseId, fixture.users.alice],
+        );
+        if (departure === "account deletion")
+          await transition.query("UPDATE users SET deleted_at=now() WHERE id=$1", [
+            fixture.users.alice,
+          ]);
+        await transition.query("COMMIT");
+        await expect(creating).rejects.toMatchObject({ status: 404 });
+        const active = await pool.query(
+          "SELECT id FROM collaboration_sessions WHERE course_id=$1 AND created_by_user_id=$2 AND lifecycle_state='active'",
+          [fixture.courseId, fixture.users.alice],
+        );
+        expect(active.rowCount).toBe(0);
+      } finally {
+        await transition.query("ROLLBACK");
+        transition.release();
+      }
+    },
+  );
 
   it("keeps a course session and its participant access when the former post is deleted", async () => {
     const fixture = await course();

@@ -262,6 +262,12 @@ export class CollaborationSessionService {
     const scope = `collaboration-session-create:${userId}:${courseId}`;
     const hash = createHash("sha256").update(JSON.stringify(body)).digest();
     return this.tx(async (db) => {
+      const user = await db.query(
+        "SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE",
+        [userId],
+      );
+      if (!user.rowCount) throw notFound();
+      await db.query("SELECT id FROM courses WHERE id=$1 FOR SHARE", [courseId]);
       const member = await this.membership(db, courseId, userId, true);
       if (!member) throw notFound();
       if (key !== undefined) {
@@ -526,10 +532,6 @@ export class CollaborationSessionService {
     });
   }
 
-  /**
-   * Marks the session ending so the collaboration server persists the final
-   * text, waits for it to confirm, then completes the end itself if needed.
-   */
   private async end(
     sessionId: string,
     userId: string,

@@ -84,7 +84,7 @@ None.
 
 `data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
 
-`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` when the collaboration server confirms the final persisted snapshot; `false` when confirmation fails or the session ended before this field existed.
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` only when persistence of every authorized edit is verified; `false` when completeness cannot be proven (including possible in-flight edits) or for legacy-ended sessions.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -552,7 +552,7 @@ None.
 
 `data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
 
-`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` when the collaboration server confirms the final persisted snapshot; `false` when confirmation fails or the session ended before this field existed.
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` only when persistence of every authorized edit is verified; `false` when completeness cannot be proven (including possible in-flight edits) or for legacy-ended sessions.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -624,7 +624,7 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`PATCH /api/v1/collaboration-sessions/{collaborationSessionId}`**
 
-Changes an active session's title or language, or ends it with status ended. Only the creator or a current TA/instructor who is also a participant may call it. Ending preserves the last persisted document; `finalSnapshotConfirmed` is `true` only if the collaboration server confirms its final flush. Otherwise the read-only snapshot shows a last-saved warning. Previously ended sessions are conservatively unconfirmed. Ending asks the collaboration server to persist the final text and waits up to 5 seconds for it to confirm; if it does not confirm in time, the session still ends with the most recently persisted text. Ended sessions become read-only and keep their final snapshot.
+Changes an active session's title or language, or ends it with status ended. Only the creator or a current TA/instructor who is also a participant may call it. Ending preserves the last persisted document. The collaboration server attempts a final flush, but it cannot prove that every authorized in-flight edit has applied, so the snapshot remains unconfirmed and shows a last-saved warning even when that flush succeeds. Previously ended sessions are also conservatively unconfirmed. Ending waits up to 5 seconds for the collaboration server; if it does not finish in time, the session still ends with the most recently persisted text. Ended sessions become read-only and keep their final snapshot.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -704,7 +704,7 @@ None.
 
 `data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
 
-`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` when the collaboration server confirms the final persisted snapshot; `false` when confirmation fails or the session ended before this field existed.
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` only when persistence of every authorized edit is verified; `false` when completeness cannot be proven (including possible in-flight edits) or for legacy-ended sessions.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -879,7 +879,7 @@ None.
 
 `data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
 
-`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` when the collaboration server confirms the final persisted snapshot; `false` when confirmation fails or the session ended before this field existed.
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` only when persistence of every authorized edit is verified; `false` when completeness cannot be proven (including possible in-flight edits) or for legacy-ended sessions.
 
 `data.endedAt` (string or null, required): End time; null while active.
 

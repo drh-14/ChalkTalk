@@ -141,16 +141,25 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
             const client = await pool.connect();
             try {
               await client.query("BEGIN");
-              const row = await client.query<{ lifecycle_state: string }>(
-                "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1 FOR UPDATE",
+              const row = await client.query<{
+                lifecycle_state: string;
+                final_snapshot_confirmed: boolean;
+              }>(
+                "SELECT lifecycle_state,final_snapshot_confirmed FROM collaboration_sessions WHERE id=$1 FOR UPDATE",
                 [sessionId],
               );
-              if (row.rows[0]?.lifecycle_state === "ending") {
+              if (
+                row.rows[0] &&
+                !row.rows[0].final_snapshot_confirmed &&
+                (row.rows[0].lifecycle_state === "ending" ||
+                  row.rows[0].lifecycle_state === "ended")
+              ) {
                 await store(client);
-                await client.query(
-                  "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=true,version=version+1,updated_at=clock_timestamp() WHERE id=$1",
-                  [sessionId],
-                );
+                if (row.rows[0].lifecycle_state === "ending")
+                  await client.query(
+                    "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=false,version=version+1,updated_at=clock_timestamp() WHERE id=$1",
+                    [sessionId],
+                  );
               }
               await client.query("COMMIT");
             } catch (error) {
@@ -164,14 +173,12 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
             try {
               await client.query("BEGIN");
               const row = await client.query<{
-                final_snapshot_confirmed: boolean;
+                lifecycle_state: string;
               }>(
-                "SELECT final_snapshot_confirmed FROM collaboration_sessions WHERE id=$1 FOR UPDATE",
+                "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1 FOR UPDATE",
                 [sessionId],
               );
-              // A delayed debounce or disconnect store must never overwrite
-              // the durable final snapshot after it has been confirmed.
-              if (row.rows[0] && !row.rows[0].final_snapshot_confirmed)
+              if (row.rows[0] && row.rows[0].lifecycle_state !== "ended")
                 await store(client);
               await client.query("COMMIT");
             } catch (error) {
@@ -220,7 +227,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   async function finishSession(sessionId: string, markEnded: boolean) {
     const document = server.hocuspocus.documents.get(documentName(sessionId));
     try {
-      if (document) await persist(sessionId, document, markEnded);
+      if (document) await persist(sessionId, document, true);
       if (markEnded && !document)
         await pool.query(
           "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=false,version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND lifecycle_state='ending'",
