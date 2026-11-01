@@ -1,8 +1,14 @@
 import { renderDigest } from "./render.js";
+import { createHash } from "node:crypto";
 import type { DigestImage, DigestImageReader } from "./images.js";
 import type { Pool, PoolClient } from "pg";
 import type { EmailSender } from "../auth/service.js";
 import type { Observability } from "../observability/index.js";
+import {
+  EmailConfigurationError,
+  GmailQuotaError,
+  PermanentEmailDeliveryError,
+} from "../auth/email.js";
 
 type OutboxRow = {
   id: string;
@@ -23,6 +29,34 @@ type ActivityRow = {
   followup_count: number;
   total_count: number;
   created_at: Date;
+};
+
+type FrozenEmail = {
+  version: 1;
+  provider: "smtp" | "gmail";
+  courseName: string;
+  message: {
+    to: string;
+    from?: string;
+    subject: string;
+    text: string;
+    html?: string;
+    rawMimeBase64Url?: string;
+    attachments?: Array<{
+      filename: string;
+      contentBase64: string;
+      contentType: "image/png";
+      cid: string;
+      contentDisposition: "inline";
+    }>;
+  };
+  items: Array<{
+    kind: ActivityRow["kind"];
+    entityId: string;
+    bodySha256: string;
+    titleSha256?: string;
+  }>;
+  imageIds: string[];
 };
 
 // All three events are creation events. Joining the active parent here also
@@ -65,6 +99,10 @@ function compact(value: string): string {
     .join("")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function bodySha256(body: string): string {
+  return createHash("sha256").update(body).digest("hex");
 }
 
 export class DigestService {
@@ -159,42 +197,15 @@ export class DigestService {
 
   private async cancel(client: PoolClient, row: OutboxRow): Promise<void> {
     await client.query(
-      `UPDATE digest_outbox SET status='canceled',locked_by=NULL,locked_until=NULL,updated_at=clock_timestamp()
+      `UPDATE digest_outbox SET status='canceled',frozen_email=NULL,locked_by=NULL,locked_until=NULL,updated_at=clock_timestamp()
         WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
       [row.id, this.workerId, row.attempts],
     );
   }
 
-  private async deliver(row: OutboxRow): Promise<void> {
-    await this.transaction(async (client) => {
-      const user = await client.query(
-        "SELECT id FROM users WHERE id=$1 FOR SHARE",
-        [row.recipient_user_id],
-      );
-      if (!user.rows[0]) return;
-      const claimed = await client.query(
-        `SELECT id FROM digest_outbox WHERE id=$1 AND status='running'
-          AND locked_by=$2 AND attempts=$3 FOR UPDATE`,
-        [row.id, this.workerId, row.attempts],
-      );
-      if (!claimed.rows[0]) return;
-      const recipient = await client.query<{
-        email: string;
-        course_name: string;
-      }>(
-        `SELECT u.email,c.name AS course_name FROM users u
-           JOIN course_memberships m ON m.user_id=u.id AND m.course_id=$2 AND m.digest_emails
-           JOIN courses c ON c.id=m.course_id
-          WHERE u.id=$1 AND u.deleted_at IS NULL AND c.status='active'
-          FOR SHARE OF m,c`,
-        [row.recipient_user_id, row.course_id],
-      );
-      if (!recipient.rows[0]) {
-        await this.cancel(client, row);
-        return;
-      }
-      const items = await client.query<ActivityRow>(
-        `WITH visible_posts AS (
+  private loadItems(client: PoolClient, row: OutboxRow) {
+    return client.query<ActivityRow>(
+      `WITH visible_posts AS (
           SELECT 'post'::text AS kind,p.id AS entity_id,p.id AS post_id,p.title,p.body_markdown,p.created_at
             FROM posts p WHERE p.type IN ('question','note') AND p.deleted_at IS NULL
               AND p.duplicate_status <> 'confirmed' AND NOT p.private AND p.scheduled_for IS NULL AND p.course_id=$1 AND p.author_user_id <> $2
@@ -217,14 +228,44 @@ export class DigestService {
          ), activity AS (
           SELECT * FROM visible_posts UNION ALL SELECT * FROM shared_answers UNION ALL SELECT * FROM replies
          )
-         SELECT kind,entity_id,post_id,title,left(body_markdown,131073) AS body_markdown,created_at,
+         SELECT kind,entity_id,post_id,title,body_markdown,created_at,
                 (count(*) FILTER (WHERE kind='post') OVER ())::integer AS post_count,
                 (count(*) FILTER (WHERE kind='answer') OVER ())::integer AS answer_count,
                 (count(*) FILTER (WHERE kind='followup') OVER ())::integer AS followup_count,
                 (count(*) OVER ())::integer AS total_count
            FROM activity ORDER BY created_at,post_id,kind,entity_id LIMIT 50`,
-        [row.course_id, row.recipient_user_id, row.activity_date],
+      [row.course_id, row.recipient_user_id, row.activity_date],
+    );
+  }
+  private async prepare(row: OutboxRow): Promise<void> {
+    await this.transaction(async (client) => {
+      const user = await client.query(
+        "SELECT id FROM users WHERE id=$1 FOR SHARE",
+        [row.recipient_user_id],
       );
+      if (!user.rows[0]) return;
+      const claimed = await client.query(
+        `SELECT id,frozen_email FROM digest_outbox WHERE id=$1 AND status='running'
+          AND locked_by=$2 AND attempts=$3 FOR UPDATE`,
+        [row.id, this.workerId, row.attempts],
+      );
+      if (!claimed.rows[0] || claimed.rows[0].frozen_email) return;
+      const recipient = await client.query<{
+        email: string;
+        course_name: string;
+      }>(
+        `SELECT u.email,c.name AS course_name FROM users u
+           JOIN course_memberships m ON m.user_id=u.id AND m.course_id=$2 AND m.digest_emails
+           JOIN courses c ON c.id=m.course_id
+          WHERE u.id=$1 AND u.deleted_at IS NULL AND c.status='active'
+          FOR SHARE OF m,c`,
+        [row.recipient_user_id, row.course_id],
+      );
+      if (!recipient.rows[0]) {
+        await this.cancel(client, row);
+        return;
+      }
+      const items = await this.loadItems(client, row);
       if (items.rows.length === 0) {
         await this.cancel(client, row);
         return;
@@ -273,6 +314,7 @@ export class DigestService {
           images: (imageRows?.rows ?? [])
             .filter((image) => image[`${item.kind}_id`] === item.entity_id)
             .map((image): DigestImage => ({
+              id: image.id,
               filename: image.file_name,
               url: `${this.frontendBaseUrl}/api/v1/attachments/${image.id}/download`,
               sizeBytes: Number(image.size_bytes),
@@ -280,16 +322,160 @@ export class DigestService {
             })),
         })),
       });
-      await this.sender.send({
+      const preparedMessage: Parameters<EmailSender["send"]>[0] = {
         to: recipient.rows[0].email,
+        ...(this.sender.defaultFrom ? { from: this.sender.defaultFrom } : {}),
         subject: `ChalkTalk daily digest: ${courseName} — ${row.activity_date}`,
-        ...rendered,
-      });
+        text: rendered.text,
+        html: rendered.html,
+        attachments: rendered.attachments,
+      };
+      const frozenMessage: Parameters<EmailSender["send"]>[0] = this.sender
+        .prepare
+        ? await this.sender.prepare(preparedMessage)
+        : preparedMessage;
+      const snapshot: FrozenEmail = {
+        version: 1,
+        provider: this.sender.provider ?? "smtp",
+        courseName: recipient.rows[0].course_name,
+        message: {
+          to: frozenMessage.to,
+          ...(frozenMessage.from ? { from: frozenMessage.from } : {}),
+          subject: frozenMessage.subject,
+          text: frozenMessage.text,
+          html: frozenMessage.html,
+          ...(frozenMessage.rawMimeBase64Url
+            ? { rawMimeBase64Url: frozenMessage.rawMimeBase64Url }
+            : {}),
+          attachments: rendered.attachments?.map((attachment) => ({
+            filename: attachment.filename,
+            contentBase64: attachment.content.toString("base64"),
+            contentType: attachment.contentType,
+            cid: attachment.cid,
+            contentDisposition: attachment.contentDisposition,
+          })),
+        },
+        items: items.rows.map((item) => ({
+          kind: item.kind,
+          entityId: item.entity_id,
+          bodySha256: bodySha256(item.body_markdown),
+          titleSha256: bodySha256(item.title),
+        })),
+        imageIds: rendered.imageIds,
+      };
       await client.query(
-        `UPDATE digest_outbox SET status='sent',sent_at=clock_timestamp(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=clock_timestamp()
+        `UPDATE digest_outbox SET frozen_email=$4::jsonb,updated_at=clock_timestamp()
+          WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
+        [row.id, this.workerId, row.attempts, JSON.stringify(snapshot)],
+      );
+    });
+  }
+
+  private async deliver(row: OutboxRow): Promise<"sent" | "canceled"> {
+    await this.prepare(row);
+    return this.transaction(async (client): Promise<"sent" | "canceled"> => {
+      const user = await client.query(
+        "SELECT id FROM users WHERE id=$1 FOR SHARE",
+        [row.recipient_user_id],
+      );
+      if (!user.rows[0]) return "canceled";
+      const claimed = await client.query<{ frozen_email: FrozenEmail | null }>(
+        `SELECT frozen_email FROM digest_outbox WHERE id=$1 AND status='running'
+          AND locked_by=$2 AND attempts=$3 FOR UPDATE`,
+        [row.id, this.workerId, row.attempts],
+      );
+      if (!claimed.rows[0]) return "canceled";
+      const snapshot = claimed.rows[0].frozen_email;
+      if (!snapshot) {
+        await this.cancel(client, row);
+        return "canceled";
+      }
+      if (snapshot.version !== 1)
+        throw new Error("Unsupported digest email snapshot version");
+      if (
+        snapshot.message.from !== this.sender.defaultFrom ||
+        snapshot.provider !== (this.sender.provider ?? "smtp")
+      ) {
+        await this.cancel(client, row);
+        return "canceled";
+      }
+      const recipient = await client.query<{
+        email: string;
+        course_name: string;
+      }>(
+        `SELECT u.email,c.name AS course_name FROM users u
+           JOIN course_memberships m ON m.user_id=u.id AND m.course_id=$2 AND m.digest_emails
+           JOIN courses c ON c.id=m.course_id
+          WHERE u.id=$1 AND u.deleted_at IS NULL AND c.status='active'
+          FOR SHARE OF m,c`,
+        [row.recipient_user_id, row.course_id],
+      );
+      if (
+        !recipient.rows[0] ||
+        recipient.rows[0].email !== snapshot.message.to ||
+        recipient.rows[0].course_name !== snapshot.courseName
+      ) {
+        await this.cancel(client, row);
+        return "canceled";
+      }
+      const items = await this.loadItems(client, row);
+      const current = new Map(
+        items.rows.map((item) => [
+          `${item.kind}:${item.entity_id}`,
+          [bodySha256(item.body_markdown), bodySha256(item.title)],
+        ]),
+      );
+      if (
+        snapshot.items.some(
+          (item) =>
+            current.get(`${item.kind}:${item.entityId}`)?.[0] !==
+              item.bodySha256 ||
+            current.get(`${item.kind}:${item.entityId}`)?.[1] !==
+              item.titleSha256,
+        )
+      ) {
+        await this.cancel(client, row);
+        return "canceled";
+      }
+      if (snapshot.imageIds.length) {
+        const attachments = await client.query<{
+          id: string;
+          deleted_at: Date | null;
+        }>(
+          `SELECT id,deleted_at FROM content_attachments WHERE id=ANY($1::uuid[]) FOR SHARE`,
+          [snapshot.imageIds],
+        );
+        if (
+          attachments.rows.length !== snapshot.imageIds.length ||
+          attachments.rows.some((attachment) => attachment.deleted_at)
+        ) {
+          await this.cancel(client, row);
+          return "canceled";
+        }
+      }
+      const { attachments, ...message } = snapshot.message;
+      await this.sender.send(
+        {
+          ...message,
+          attachments: attachments?.map((attachment) => ({
+            filename: attachment.filename,
+            content: Buffer.from(attachment.contentBase64, "base64"),
+            contentType: attachment.contentType,
+            cid: attachment.cid,
+            contentDisposition: attachment.contentDisposition,
+          })),
+        },
+        {
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+      await client.query(
+        `UPDATE digest_outbox SET status='sent',sent_at=clock_timestamp(),frozen_email=NULL,
+                locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=clock_timestamp()
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
         [row.id, this.workerId, row.attempts],
       );
+      return "sent";
     });
   }
 
@@ -301,17 +487,41 @@ export class DigestService {
     const duration = () => Number(process.hrtime.bigint() - started) / 1e9;
     this.observability?.recordJobStart("digest_delivery");
     try {
-      await this.deliver(row);
-      this.observability?.recordJob("digest_delivery", "succeeded", duration());
+      const outcome = await this.deliver(row);
+      this.observability?.recordJob(
+        "digest_delivery",
+        outcome === "sent" ? "succeeded" : "canceled",
+        duration(),
+      );
     } catch (error) {
       this.observability?.recordJob("digest_delivery", "failed", duration());
       const message =
-        error instanceof Error ? error.message : "Unknown SMTP failure";
+        error instanceof Error
+          ? error.message
+          : "Unknown email delivery failure";
+      if (error instanceof PermanentEmailDeliveryError) {
+        await this.pool.query(
+          `UPDATE digest_outbox SET status='canceled',frozen_email=NULL,locked_by=NULL,locked_until=NULL,
+                  last_error=$4,updated_at=clock_timestamp()
+            WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
+          [row.id, this.workerId, row.attempts, message.slice(0, 4000)],
+        );
+        return true;
+      }
+      const configuration =
+        error instanceof EmailConfigurationError ||
+        error instanceof GmailQuotaError;
       await this.pool.query(
-        `UPDATE digest_outbox SET status='queued',available_at=clock_timestamp() + make_interval(secs => LEAST(3600, (2 ^ LEAST($3,10))::integer)),
+        `UPDATE digest_outbox SET status='queued',available_at=clock_timestamp() + CASE WHEN $5 THEN interval '15 minutes' ELSE make_interval(secs => LEAST(3600, (2 ^ LEAST($3,10))::integer)) END,
                 locked_by=NULL,locked_until=NULL,last_error=$4,updated_at=clock_timestamp()
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-        [row.id, this.workerId, row.attempts, message.slice(0, 4000)],
+        [
+          row.id,
+          this.workerId,
+          row.attempts,
+          message.slice(0, 4000),
+          configuration,
+        ],
       );
     }
     return true;

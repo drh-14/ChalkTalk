@@ -64,6 +64,17 @@ export interface Environment {
     publicUrl: string;
     idleEndMinutes: number;
   };
+  email:
+    | { provider: "smtp"; from: string }
+    | {
+        provider: "gmail";
+        from: string;
+        gmailClientId: string;
+        gmailClientSecret: string;
+        gmailRefreshToken: string;
+        gmailTokenUrl: string;
+        gmailApiBaseUrl: string;
+      };
   smtp: {
     host: string;
     port: number;
@@ -79,6 +90,61 @@ export function loadEnvironment(
 ): Environment {
   const port = Number(source.PORT ?? "3000");
   const smtpPort = Number(source.SMTP_PORT ?? "1025");
+  const emailProvider = source.EMAIL_PROVIDER ?? "smtp";
+  if (emailProvider !== "smtp" && emailProvider !== "gmail")
+    throw new Error("EMAIL_PROVIDER must be smtp or gmail");
+  if (emailProvider === "gmail") {
+    for (const name of [
+      "GMAIL_CLIENT_ID",
+      "GMAIL_CLIENT_SECRET",
+      "GMAIL_REFRESH_TOKEN",
+      "EMAIL_FROM",
+    ])
+      if (!source[name]?.trim())
+        throw new Error(`${name} is required when EMAIL_PROVIDER=gmail`);
+  }
+  const endpointOrigin = (name: string, fallback: string): string => {
+    if (emailProvider !== "gmail" || source[name] === undefined)
+      return fallback;
+    let endpoint: URL;
+    try {
+      endpoint = new URL(source[name]);
+    } catch {
+      throw new Error(`${name} must be an HTTP or HTTPS origin`);
+    }
+    if (
+      !["http:", "https:"].includes(endpoint.protocol) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.pathname !== "/" ||
+      endpoint.search ||
+      endpoint.hash
+    )
+      throw new Error(`${name} must be an HTTP or HTTPS origin`);
+    return endpoint.origin;
+  };
+  const gmailApiBaseUrl = endpointOrigin(
+    "GMAIL_API_BASE_URL",
+    "https://gmail.googleapis.com",
+  );
+  let gmailTokenUrl = "https://oauth2.googleapis.com/token";
+  if (emailProvider === "gmail" && source.GMAIL_TOKEN_URL !== undefined) {
+    let parsed: URL;
+    try {
+      parsed = new URL(source.GMAIL_TOKEN_URL);
+    } catch {
+      throw new Error("GMAIL_TOKEN_URL must be an HTTP or HTTPS URL");
+    }
+    if (
+      !["http:", "https:"].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password ||
+      parsed.hash ||
+      parsed.search
+    )
+      throw new Error("GMAIL_TOKEN_URL must be an HTTP or HTTPS URL");
+    gmailTokenUrl = parsed.href;
+  }
   const positiveInteger = (name: string, fallback: number): number => {
     const value = Number(source[name] ?? fallback);
     if (!Number.isInteger(value) || value < 1)
@@ -90,7 +156,10 @@ export function loadEnvironment(
     throw new Error("PORT must be an integer between 1 and 65535");
   }
 
-  if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
+  if (
+    emailProvider === "smtp" &&
+    (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535)
+  ) {
     throw new Error("SMTP_PORT must be an integer between 1 and 65535");
   }
   if (
@@ -213,6 +282,21 @@ export function loadEnvironment(
       publicUrl: collaborationPublicUrl,
       idleEndMinutes,
     },
+    email:
+      emailProvider === "gmail"
+        ? {
+            provider: "gmail",
+            from: source.EMAIL_FROM!.trim(),
+            gmailClientId: source.GMAIL_CLIENT_ID!.trim(),
+            gmailClientSecret: source.GMAIL_CLIENT_SECRET!.trim(),
+            gmailRefreshToken: source.GMAIL_REFRESH_TOKEN!.trim(),
+            gmailTokenUrl,
+            gmailApiBaseUrl,
+          }
+        : {
+            provider: "smtp",
+            from: source.SMTP_FROM ?? "ChalkTalk <noreply@chalktalk.local>",
+          },
     smtp: {
       host: source.SMTP_HOST ?? "localhost",
       port: smtpPort,
