@@ -177,7 +177,21 @@ function SignupRequestForm({
       setNotice(undefined);
       return;
     }
-    const domain = normalizedEmail.split("@")[1] ?? "";
+    const emailParts = normalizedEmail.split("@");
+    const [localPart, domain = ""] = emailParts;
+    if (
+      emailParts.length !== 2 ||
+      localPart.length > 64 ||
+      !localPart
+        .split(".")
+        .every((part) => /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+$/.test(part))
+    ) {
+      setError(
+        "Use a valid email local part (1–64 characters, with single dots).",
+      );
+      setNotice(undefined);
+      return;
+    }
     if (
       domain.length > 253 ||
       !domain.endsWith(".edu") ||

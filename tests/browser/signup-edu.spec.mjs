@@ -53,6 +53,15 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
     fullPage: true,
   });
 
+  await email.fill(`${"a".repeat(65)}@school.edu`);
+  await page.getByRole("button", { name: "Send verification link" }).click();
+  await expect(page.getByRole("alert")).toContainText("1–64 characters");
+  expect(verificationRequests).toHaveLength(0);
+  await page.screenshot({
+    path: resolve(screenshots, "malformed-local-part-rejected.png"),
+    fullPage: true,
+  });
+
   await email.fill("Student@Dept.State.EDU");
   await page.getByRole("button", { name: "Send verification link" }).click();
   await expect(page.getByRole("status")).toContainText("Check your inbox");

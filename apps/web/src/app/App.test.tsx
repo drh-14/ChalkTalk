@@ -1638,6 +1638,27 @@ describe("ChalkTalk auth entry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects an overlong signup local part before sending", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(unauthenticatedResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("link", { name: "Create an account" }),
+    );
+    await user.type(
+      screen.getByLabelText("Email address"),
+      `${"a".repeat(65)}@school.edu`,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Send verification link" }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "1–64 characters",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps reset requests generic and returns a completed reset to sign in", async () => {
     const fetchMock = vi
       .fn()
