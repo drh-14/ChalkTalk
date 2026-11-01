@@ -20,9 +20,15 @@ test.afterAll(async () => await vite?.close());
 
 async function mockApp(
   page,
-  { sessions = [], creationError = false, endedSession = null } = {},
+  {
+    sessions = [],
+    creationError = false,
+    endedSession = null,
+    snapshotFailures = 0,
+  } = {},
 ) {
   const requests = [];
+  let remainingSnapshotFailures = snapshotFailures;
   await page.route("**/api/v1/**", async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -81,7 +87,12 @@ async function mockApp(
     if (
       endedSession &&
       path === `/api/v1/collaboration-sessions/${endedSession.id}/snapshot`
-    )
+    ) {
+      if (remainingSnapshotFailures-- > 0)
+        return reply(
+          { error: { code: "snapshot_unavailable", message: "Unavailable" } },
+          503,
+        );
       return reply({
         data: {
           content: "last saved code",
@@ -91,6 +102,7 @@ async function mockApp(
           lastSavedWarning: true,
         },
       });
+    }
     if (path === "/api/v1/notifications")
       return reply({ data: [], page: { nextCursor: null, hasMore: false } });
     return reply({ data: [], page: { nextCursor: null, hasMore: false } });
@@ -187,4 +199,34 @@ test("shows the last-saved warning for a legacy ended session", async ({
     path: resolve(screenshots, "course-collaboration-last-saved.png"),
     fullPage: true,
   });
+});
+
+test("shows an unconfirmed state and retry when the saved snapshot is unavailable", async ({
+  page,
+}) => {
+  const ended = {
+    ...session,
+    id: "unavailable-snapshot-session",
+    status: "ended",
+    finalSnapshotConfirmed: false,
+    endedAt: "2026-11-01T12:30:00Z",
+  };
+  await mockApp(page, { endedSession: ended, snapshotFailures: 1 });
+  await page.goto(`${origin}/courses/course-1/sessions/${ended.id}`);
+  await expect(page.getByText(/Saved snapshot unavailable/)).toBeVisible();
+  await expect(page.getByText(/local, unconfirmed edits/)).toBeVisible();
+  await expect(
+    page.getByText(/^This shows the last saved version/),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: resolve(screenshots, "course-collaboration-snapshot-unavailable.png"),
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "Retry loading saved snapshot" })
+    .click();
+  await expect(
+    page.getByText(/This shows the last saved version/),
+  ).toBeVisible();
+  await expect(page.getByText(/Saved snapshot unavailable/)).toHaveCount(0);
 });

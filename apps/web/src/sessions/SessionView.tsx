@@ -130,6 +130,9 @@ export function SessionView({
   const [self, setSelf] = useState<Presence>();
   const [viewOnly, setViewOnly] = useState(false);
   const [lastSavedWarning, setLastSavedWarning] = useState(false);
+  const [snapshotStatus, setSnapshotStatus] = useState<
+    "loading" | "available" | "unavailable"
+  >("loading");
   const [invitePermission, setInvitePermission] = useState<"edit" | "view">(
     "edit",
   );
@@ -144,6 +147,23 @@ export function SessionView({
     }
   }, [sessionId]);
 
+  const loadFinalSnapshot = useCallback(async () => {
+    setSnapshotStatus("loading");
+    try {
+      const snapshot = await getSnapshot(sessionId);
+      const finished = new Y.Doc();
+      finished.getText("content").insert(0, snapshot.content);
+      const finishedBoard = finished.getMap("whiteboard");
+      for (const element of snapshot.whiteboard ?? [])
+        finishedBoard.set(element.id, element);
+      setDocument(finished);
+      setLastSavedWarning(snapshot.lastSavedWarning);
+      setSnapshotStatus("available");
+    } catch {
+      setSnapshotStatus("unavailable");
+    }
+  }, [sessionId]);
+
   const showFinalText = useCallback(
     async (reason: "ended" | "removed") => {
       if (finalState.current) return;
@@ -153,22 +173,10 @@ export function SessionView({
       setAwareness(null);
       setState(reason);
       if (reason === "removed") return;
-      try {
-        const snapshot = await getSnapshot(sessionId);
-        setLastSavedWarning(snapshot.lastSavedWarning);
-        const finished = new Y.Doc();
-        finished.getText("content").insert(0, snapshot.content);
-        const finishedBoard = finished.getMap("whiteboard");
-        for (const element of snapshot.whiteboard ?? [])
-          finishedBoard.set(element.id, element);
-        setDocument(finished);
-      } catch {
-        // Keep the text already on screen if the snapshot cannot be read.
-        setLastSavedWarning(true);
-      }
+      await loadFinalSnapshot();
       void refresh();
     },
-    [refresh, sessionId],
+    [loadFinalSnapshot, refresh],
   );
 
   useEffect(() => {
@@ -177,13 +185,11 @@ export function SessionView({
     setSession(undefined);
     setUnavailable(false);
     setState("connecting");
+    setSnapshotStatus("loading");
     void getSession(sessionId)
       .then(async (loaded) => {
         if (!active) return;
         setSession(loaded);
-        setLastSavedWarning(
-          loaded.data.status === "ended" && !loaded.data.finalSnapshotConfirmed,
-        );
         if (loaded.data.status === "ended") {
           await showFinalText("ended");
           return;
@@ -454,11 +460,34 @@ export function SessionView({
           {error}
         </p>
       )}
-      {state === "ended" && lastSavedWarning && (
+      {state === "ended" && snapshotStatus === "loading" && (
         <p className="session-snapshot-warning" role="status">
-          This shows the last saved version. Recent edits may be missing.
+          Loading saved snapshot. The code and whiteboard shown may be local,
+          unconfirmed edits.
         </p>
       )}
+      {state === "ended" && snapshotStatus === "unavailable" && (
+        <div className="session-snapshot-warning" role="alert">
+          <p>
+            Saved snapshot unavailable. The code and whiteboard shown are local,
+            unconfirmed edits and may not match the last saved version.
+          </p>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => void loadFinalSnapshot()}
+          >
+            Retry loading saved snapshot
+          </button>
+        </div>
+      )}
+      {state === "ended" &&
+        snapshotStatus === "available" &&
+        lastSavedWarning && (
+          <p className="session-snapshot-warning" role="status">
+            This shows the last saved version. Recent edits may be missing.
+          </p>
+        )}
       <div className="session-layout">
         <div className="session-workspace">
           {state === "removed" ? (

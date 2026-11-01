@@ -93,10 +93,12 @@ function api(
     snapshot?: string;
     whiteboard?: object[];
     lastSavedWarning?: boolean;
+    snapshotFailures?: number;
     ticketPermission?: "read" | "write";
   } = {},
 ) {
   const calls: Calls = [];
+  let snapshotFailures = overrides.snapshotFailures ?? 0;
   let current = { ...session, ...overrides.session };
   vi.stubGlobal(
     "fetch",
@@ -123,7 +125,12 @@ function api(
           },
           201,
         );
-      if (url.endsWith("/snapshot"))
+      if (url.endsWith("/snapshot")) {
+        if (snapshotFailures-- > 0)
+          return json(
+            { error: { code: "snapshot_unavailable", message: "Unavailable" } },
+            503,
+          );
         return json({
           data: {
             content: overrides.snapshot ?? "final code",
@@ -133,6 +140,7 @@ function api(
             finalSnapshotConfirmed: !(overrides.lastSavedWarning ?? false),
           },
         });
+      }
       if (url.startsWith("/api/v1/courses/c-1/members"))
         return json({
           data: members,
@@ -652,4 +660,36 @@ it("warns that a legacy ended session shows its last saved snapshot", async () =
   view("bob", connect);
   expect(await screen.findByText(/Recent edits may be missing/)).toBeTruthy();
   expect(connect).not.toHaveBeenCalled();
+});
+
+it("keeps local edits unconfirmed until a failed final snapshot is retried", async () => {
+  const calls = api({
+    snapshot: "last saved code",
+    lastSavedWarning: true,
+    snapshotFailures: 1,
+  });
+  const { connect, opened } = fakeConnect();
+  view("bob", connect);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  act(() => {
+    opened.options!.document.getText("content").insert(0, "local unsaved code");
+    opened.options!.onSynced();
+    opened.options!.onClose("session-ended");
+  });
+  expect(await screen.findByText(/Saved snapshot unavailable/)).toBeTruthy();
+  expect(editor().textContent).toContain("local unsaved code");
+  expect(screen.queryByText(/^This shows the last saved version/)).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Retry loading saved snapshot" }),
+  );
+  await waitFor(() =>
+    expect(editor().textContent).toContain("last saved code"),
+  );
+  expect(editor().textContent).not.toContain("local unsaved code");
+  expect(
+    await screen.findByText(/This shows the last saved version/),
+  ).toBeTruthy();
+  expect(calls.filter((call) => call.url.endsWith("/snapshot"))).toHaveLength(
+    2,
+  );
 });

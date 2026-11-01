@@ -496,7 +496,7 @@ Live sessions are private, course-scoped shared code and whiteboard documents, i
 - `created_by_user_id`: `uuid_v7`; foreign key to `users.id`.
 - `ended_at`, `created_at`, `updated_at`: `timestamptz`; `ended_at` is non-null exactly when `lifecycle_state` is `ended`.
 - `version`: `bigint`; positive revision used for the session `ETag`.
-- `final_snapshot_confirmed`: nullable `boolean`; `NULL` while active or ending, `true` only when all authorized edits are proven durable, and `false` when completeness cannot be proven (including possible in-flight edits), finalization fails, or the session ended before migration. Ended sessions with `false` show a last-saved warning.
+- `final_snapshot_confirmed`: `boolean NOT NULL DEFAULT false`; stored as `false` while active or ending and when completeness cannot be proven (including possible in-flight edits), finalization fails, or the session ended before migration. It is `true` only when all authorized edits are proven durable. The API projects `null` for active or ending sessions; ended sessions with `false` show a last-saved warning.
 - `last_active_at`: `timestamptz`; when the session last had a connected participant, kept current by the collaboration server while anyone is connected and when the last connection closes. Active sessions idle past `COLLABORATION_IDLE_END_MINUTES` end automatically.
 - Indexes: `(course_id, created_at DESC, id DESC)` for listing; partial `(course_id)` where the session is not ended, for lifecycle sweeps; partial `(last_active_at)` where the session is active, for idle ending. Participant visibility is applied before pagination.
 
