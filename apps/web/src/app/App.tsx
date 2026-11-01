@@ -172,6 +172,11 @@ function SignupRequestForm({
     event.preventDefault();
     if (pending) return;
     const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setError("Enter an email address.");
+      setNotice(undefined);
+      return;
+    }
     if (normalizedEmail.length > 254) {
       setError("Email address must be 254 characters or fewer.");
       setNotice(undefined);
@@ -179,27 +184,35 @@ function SignupRequestForm({
     }
     const emailParts = normalizedEmail.split("@");
     const [localPart, domain = ""] = emailParts;
+    if (emailParts.length !== 2) {
+      setError("Use a valid email address with one @ sign.");
+      setNotice(undefined);
+      return;
+    }
     if (
-      emailParts.length !== 2 ||
       localPart.length > 64 ||
       !localPart
         .split(".")
         .every((part) => /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+$/.test(part))
     ) {
       setError(
-        "Use a valid email local part (1–64 characters, with single dots).",
+        "Use a valid ASCII email local part (1–64 characters, with single dots).",
       );
       setNotice(undefined);
       return;
     }
     if (
       domain.length > 253 ||
-      !domain.endsWith(".edu") ||
       !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
         domain,
       )
     ) {
-      setError("Use an email address with a valid .edu domain.");
+      setError("Use an email address with a valid domain.");
+      setNotice(undefined);
+      return;
+    }
+    if (!domain.endsWith(".edu")) {
+      setError("Use an email address with a .edu domain.");
       setNotice(undefined);
       return;
     }
@@ -215,7 +228,7 @@ function SignupRequestForm({
     }
   }
   return (
-    <form className="auth-form" onSubmit={submit}>
+    <form className="auth-form" onSubmit={submit} noValidate>
       <div className="form-heading">
         <span>Join your campus</span>
         <h2>Verify your school email</h2>

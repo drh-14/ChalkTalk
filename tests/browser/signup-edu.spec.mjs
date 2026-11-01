@@ -62,6 +62,15 @@ test("signup rejects non-.edu locally and accepts a .edu subdomain", async ({
     fullPage: true,
   });
 
+  await email.fill("student,admin@school.edu");
+  await page.getByRole("button", { name: "Send verification link" }).click();
+  await expect(page.getByRole("alert")).toContainText("valid email local part");
+  expect(verificationRequests).toHaveLength(0);
+  await page.screenshot({
+    path: resolve(screenshots, "invalid-local-punctuation-rejected.png"),
+    fullPage: true,
+  });
+
   await email.fill("Student@Dept.State.EDU");
   await page.getByRole("button", { name: "Send verification link" }).click();
   await expect(page.getByRole("status")).toContainText("Check your inbox");
