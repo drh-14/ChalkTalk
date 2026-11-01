@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import sharp from "sharp";
 import {
   S3Client,
@@ -15,7 +16,10 @@ import request from "supertest";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AuthService, type EmailSender } from "../auth/service.js";
-import { createEmailSender } from "../auth/email.js";
+import {
+  createEmailSender,
+  PermanentEmailDeliveryError,
+} from "../auth/email.js";
 import { hashOpaqueToken } from "../auth/crypto.js";
 import {
   loadEnvironment,
@@ -41,9 +45,18 @@ const environment = loadEnvironment({
 });
 
 class RecordingSender implements EmailSender {
+  defaultFrom?: string;
   messages: Array<Parameters<EmailSender["send"]>[0]> = [];
+  attempts: Array<{
+    message: Parameters<EmailSender["send"]>[0];
+    key?: string;
+  }> = [];
   fail = false;
-  async send(message: Parameters<EmailSender["send"]>[0]) {
+  async send(
+    message: Parameters<EmailSender["send"]>[0],
+    options?: Parameters<EmailSender["send"]>[1],
+  ) {
+    this.attempts.push({ message, key: options?.idempotencyKey });
     if (this.fail) throw new Error("SMTP down");
     this.messages.push(message);
   }
@@ -317,6 +330,9 @@ integration("daily course email digest", () => {
     await pool.query("DELETE FROM answers");
     await pool.query("DELETE FROM posts");
     await pool.query("UPDATE users SET version=1 WHERE id=$1", [ids.alice]);
+    await pool.query("UPDATE users SET email='alice@example.edu' WHERE id=$1", [
+      ids.alice,
+    ]);
     await pool.query("UPDATE courses SET status='active'");
     await pool.query(
       "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($3,$2,'student') ON CONFLICT DO NOTHING",
@@ -831,6 +847,22 @@ integration("daily course email digest", () => {
     );
   });
 
+  it("cancels a permanently rejected digest and clears its frozen content", async () => {
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.send = async () => {
+      throw new PermanentEmailDeliveryError(
+        "Resend rejected email: invalid_request",
+      );
+    };
+    expect(await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"))).toBe(
+      true,
+    );
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox")).rows,
+    ).toEqual([{ status: "canceled", frozen_email: null }]);
+  });
+
   it("holds course access and content through an in-flight SMTP handoff", async () => {
     const post = await addQuestion(
       ids.physics,
@@ -955,6 +987,515 @@ integration("daily course email digest", () => {
     expect(
       (await pool.query("SELECT status FROM digest_outbox")).rows[0].status,
     ).toBe("canceled");
+  });
+
+  it("freezes digest bytes and key before a failed handoff, then retries exactly", async () => {
+    await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Original title",
+    );
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.fail = true;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    const stored = await pool.query<{ frozen_email: unknown; id: string }>(
+      "SELECT id,frozen_email FROM digest_outbox",
+    );
+    expect(stored.rows[0]!.frozen_email).toBeTruthy();
+    expect(sender.attempts).toHaveLength(1);
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    sender.fail = false;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+    expect(sender.attempts).toHaveLength(2);
+    expect(sender.attempts[1]).toEqual(sender.attempts[0]);
+    expect(sender.attempts[1]!.key).toBe(`digest-${stored.rows[0]!.id}`);
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+        .rows[0],
+    ).toMatchObject({
+      status: "sent",
+      frozen_email: null,
+    });
+  });
+
+  it("cancels an SMTP digest retry when the configured sender changes", async () => {
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    sender.defaultFrom = "old@example.edu";
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.fail = true;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(sender.attempts).toHaveLength(1);
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    const replacement = new RecordingSender();
+    replacement.defaultFrom = "new@example.edu";
+    const events: string[] = [];
+    const observability = createObservability({
+      token: "digest-test-operator-token-long-enough",
+      stdout: (line) => events.push(line),
+    });
+    const retry = new DigestService(
+      pool,
+      replacement,
+      environment.frontendBaseUrl,
+      "digest-replacement",
+      observability,
+    );
+    expect(await retry.deliverOnce(new Date("2026-10-15T00:00:03Z"))).toBe(
+      true,
+    );
+    expect(replacement.attempts).toHaveLength(0);
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+        .rows[0],
+    ).toEqual({ status: "canceled", frozen_email: null });
+    expect(events.join("\n")).toContain('"outcome":"canceled"');
+    expect(events.join("\n")).not.toContain('"outcome":"succeeded"');
+    const metrics = await request(createWorkerMetricsApp(observability))
+      .get("/metrics")
+      .set("Authorization", "Bearer digest-test-operator-token-long-enough");
+    expect(metrics.text).toContain(
+      'chalktalk_jobs_total{kind="digest_delivery",outcome="canceled"} 1',
+    );
+    await observability.close();
+  });
+
+  it.each(["sender", "provider"] as const)(
+    "cancels a Resend digest retry when the configured %s changes",
+    async (change) => {
+      await addQuestion(
+        ids.physics,
+        ids.bob,
+        "2026-10-14T12:00:00Z",
+        "Question",
+      );
+      const requests: unknown[] = [];
+      const server = createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+          response.writeHead(500, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              name: "internal_server_error",
+              message: "ambiguous",
+            }),
+          );
+        });
+      });
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      try {
+        const address = server.address();
+        if (!address || typeof address === "string")
+          throw new Error("No mock port");
+        const source = {
+          AUTH_TOKEN_SECRET: secret,
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "re_local_test",
+          EMAIL_FROM: "old@example.edu",
+          RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+        };
+        const first = new DigestService(
+          pool,
+          createEmailSender(loadEnvironment(source)),
+          environment.frontendBaseUrl,
+          "digest-http-sender",
+        );
+        await first.schedule(new Date("2026-10-15T00:00:00Z"));
+        await first.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+        expect(requests).toHaveLength(1);
+        await pool.query(
+          "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+        );
+        const retry = new DigestService(
+          pool,
+          createEmailSender(
+            loadEnvironment(
+              change === "provider"
+                ? { AUTH_TOKEN_SECRET: secret, SMTP_FROM: source.EMAIL_FROM }
+                : { ...source, EMAIL_FROM: "new@example.edu" },
+            ),
+          ),
+          environment.frontendBaseUrl,
+          "digest-http-sender",
+        );
+        expect(await retry.deliverOnce(new Date("2026-10-15T00:00:03Z"))).toBe(
+          true,
+        );
+        expect(requests).toHaveLength(1);
+        expect(
+          (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+            .rows[0],
+        ).toEqual({ status: "canceled", frozen_email: null });
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
+
+  it.each([
+    [
+      "recipient email changes",
+      async (post: string) => {
+        void post;
+        await pool.query(
+          "UPDATE users SET email='alice-new@example.edu' WHERE id=$1",
+          [ids.alice],
+        );
+      },
+    ],
+    [
+      "body changes",
+      async (post: string) => {
+        await pool.query(
+          "UPDATE posts SET body_markdown='Revised body' WHERE id=$1",
+          [post],
+        );
+      },
+    ],
+    [
+      "title changes",
+      async (post: string) => {
+        await pool.query("UPDATE posts SET title='Revised title' WHERE id=$1", [
+          post,
+        ]);
+      },
+    ],
+    [
+      "content becomes private",
+      async (post: string) => {
+        await pool.query("UPDATE posts SET private=true WHERE id=$1", [post]);
+      },
+    ],
+    [
+      "content is deleted",
+      async (post: string) => {
+        await pool.query(
+          "UPDATE posts SET deleted_at=now(),author_user_id=NULL,title=NULL,body_markdown=NULL WHERE id=$1",
+          [post],
+        );
+      },
+    ],
+    [
+      "course is archived",
+      async (_post: string) => {
+        void _post;
+        await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+          ids.physics,
+        ]);
+      },
+    ],
+    [
+      "recipient opts out",
+      async (_post: string) => {
+        void _post;
+        await pool.query(
+          "UPDATE course_memberships SET digest_emails=false WHERE course_id=$1 AND user_id=$2",
+          [ids.physics, ids.alice],
+        );
+      },
+    ],
+    [
+      "recipient leaves course",
+      async (_post: string) => {
+        void _post;
+        await pool.query(
+          "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+          [ids.physics, ids.alice],
+        );
+      },
+    ],
+  ])("cancels a frozen digest when %s", async (_reason, invalidate) => {
+    const post = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Question",
+    );
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.fail = true;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(sender.attempts).toHaveLength(1);
+    await invalidate(post);
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    sender.fail = false;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+    expect(sender.attempts).toHaveLength(1);
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+        .rows[0],
+    ).toMatchObject({
+      status: "canceled",
+      frozen_email: null,
+    });
+  });
+
+  it("cancels the whole frozen digest when one of several items is edited", async () => {
+    await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Question one",
+    );
+    const second = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T13:00:00Z",
+      "Question two",
+    );
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.fail = true;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    await pool.query("UPDATE posts SET body_markdown='Changed' WHERE id=$1", [
+      second,
+    ]);
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    sender.fail = false;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+    expect(sender.attempts).toHaveLength(1);
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+        .rows[0],
+    ).toMatchObject({
+      status: "canceled",
+      frozen_email: null,
+    });
+  });
+
+  it("cancels a frozen digest after a linked image is removed", async () => {
+    const post = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Image question",
+    );
+    const image = await sharp({
+      create: {
+        width: 2,
+        height: 2,
+        channels: 3,
+        background: "red",
+      },
+    })
+      .png()
+      .toBuffer();
+    const attachmentIds = Array.from({ length: 6 }, () => uuidv7());
+    for (const id of attachmentIds) {
+      await pool.query(
+        "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$6,'image.png','image/png',$4,$5)",
+        [
+          id,
+          ids.physics,
+          post,
+          image.length,
+          createHash("sha256").update(image).digest(),
+          id,
+        ],
+      );
+    }
+    const imageDigest = new DigestService(
+      pool,
+      sender,
+      environment.frontendBaseUrl,
+      "image-retry",
+      undefined,
+      async () => image,
+    );
+    await imageDigest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.fail = true;
+    await imageDigest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    const frozen = await pool.query<{
+      frozen_email: { imageIds: string[] };
+    }>("SELECT frozen_email FROM digest_outbox");
+    expect(frozen.rows[0]!.frozen_email.imageIds).toEqual(attachmentIds);
+    await pool.query(
+      "UPDATE content_attachments SET deleted_at=now() WHERE id=$1",
+      [attachmentIds[5]],
+    );
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    sender.fail = false;
+    await imageDigest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+    expect(sender.attempts).toHaveLength(1);
+    expect(sender.messages).toHaveLength(0);
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+        .rows[0],
+    ).toEqual({ status: "canceled", frozen_email: null });
+  });
+
+  it("does not call the HTTP provider after a frozen linked image is removed", async () => {
+    const post = await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Image question",
+    );
+    const image = await sharp({
+      create: { width: 2, height: 2, channels: 3, background: "red" },
+    })
+      .png()
+      .toBuffer();
+    const attachmentIds = Array.from({ length: 6 }, () => uuidv7());
+    for (const id of attachmentIds) {
+      await pool.query(
+        "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$6,'image.png','image/png',$4,$5)",
+        [
+          id,
+          ids.physics,
+          post,
+          image.length,
+          createHash("sha256").update(image).digest(),
+          id,
+        ],
+      );
+    }
+    const requests: unknown[] = [];
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+        response.writeHead(500, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            name: "internal_server_error",
+            message: "ambiguous",
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("No mock port");
+      const liveSender = createEmailSender(
+        loadEnvironment({
+          AUTH_TOKEN_SECRET: secret,
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "re_local_test",
+          EMAIL_FROM: "sender@example.edu",
+          RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+        }),
+      );
+      const liveDigest = new DigestService(
+        pool,
+        liveSender,
+        environment.frontendBaseUrl,
+        "http-image-retry",
+        undefined,
+        async () => image,
+      );
+      await liveDigest.schedule(new Date("2026-10-15T00:00:00Z"));
+      await liveDigest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+      expect(requests).toHaveLength(1);
+      expect(
+        (
+          await pool.query<{ frozen_email: { imageIds: string[] } }>(
+            "SELECT frozen_email FROM digest_outbox",
+          )
+        ).rows[0]!.frozen_email.imageIds,
+      ).toEqual(attachmentIds);
+      await pool.query(
+        "UPDATE content_attachments SET deleted_at=now() WHERE id=$1",
+        [attachmentIds[5]],
+      );
+      await pool.query(
+        "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+      );
+      await liveDigest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+      expect(requests).toHaveLength(1);
+      expect(
+        (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+          .rows[0],
+      ).toEqual({ status: "canceled", frozen_email: null });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it.each(["answer", "followup"] as const)(
+    "cancels a frozen digest after an included %s body edit",
+    async (kind) => {
+      const post = await addQuestion(
+        ids.physics,
+        ids.bob,
+        "2026-10-14T12:00:00Z",
+        "Question",
+      );
+      const response =
+        kind === "answer"
+          ? await addAnswer(post, ids.physics, ids.bob, "2026-10-14T13:00:00Z")
+          : await addFollowup(
+              post,
+              ids.physics,
+              ids.bob,
+              "2026-10-14T13:00:00Z",
+            );
+      await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+      sender.fail = true;
+      await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+      await pool.query(
+        `UPDATE ${kind === "answer" ? "answers" : "followups"} SET body_markdown='Revised' WHERE id=$1`,
+        [response],
+      );
+      await pool.query(
+        "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+      );
+      sender.fail = false;
+      await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+      expect(sender.attempts).toHaveLength(1);
+      expect(
+        (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+          .rows[0],
+      ).toMatchObject({ status: "canceled", frozen_email: null });
+    },
+  );
+
+  it("retries an ambiguous accepted-then-dropped handoff with the same payload and key", async () => {
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    let attempt = 0;
+    sender.send = async (message, options) => {
+      sender.attempts.push({ message, key: options?.idempotencyKey });
+      if (++attempt === 1)
+        throw new Error("response connection dropped after acceptance");
+      sender.messages.push(message);
+    };
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+        .rows[0],
+    ).toMatchObject({
+      status: "queued",
+      frozen_email: expect.any(Object),
+    });
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+    expect(sender.attempts).toHaveLength(2);
+    expect(sender.attempts[1]).toEqual(sender.attempts[0]);
+    expect(sender.messages).toHaveLength(1);
   });
 
   it("records digest delivery outcomes at the retry boundary without email content", async () => {
