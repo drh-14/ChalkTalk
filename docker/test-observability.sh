@@ -88,8 +88,12 @@ worker_indexed() {
     }).catch(() => { process.exitCode = 1; });' >/dev/null 2>&1
 }
 
-metrics_check
-collaboration_metrics_check
+count=0
+until metrics_check && collaboration_metrics_check; do
+  count=$((count + 1))
+  if [ "$count" -ge 90 ]; then echo "API, worker, or collaboration metrics unavailable after 90 seconds" >&2; exit 1; fi
+  sleep 1
+done
 count=0
 until compose exec -T api node -e '
   fetch("http://prometheus:9090/api/v1/query?query=up%7Bjob%3D~%22chalktalk-%28api%7Cworker%7Ccollaboration%29%22%7D")
