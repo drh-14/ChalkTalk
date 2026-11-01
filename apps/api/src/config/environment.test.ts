@@ -9,6 +9,82 @@ const base = {
 };
 
 describe("authentication environment", () => {
+  it("uses SMTP locally and requires explicit Gmail OAuth credentials in HTTPS mode", () => {
+    expect(loadEnvironment(base).email.provider).toBe("smtp");
+    expect(() =>
+      loadEnvironment({ ...base, EMAIL_PROVIDER: "invalid" }),
+    ).toThrow("EMAIL_PROVIDER");
+    expect(() => loadEnvironment({ ...base, EMAIL_PROVIDER: "gmail" })).toThrow(
+      "GMAIL_CLIENT_ID",
+    );
+    expect(() =>
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "gmail",
+        GMAIL_CLIENT_ID: "client-id",
+      }),
+    ).toThrow("GMAIL_CLIENT_SECRET");
+    expect(() =>
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "gmail",
+        GMAIL_CLIENT_ID: "client-id",
+        GMAIL_CLIENT_SECRET: "secret",
+      }),
+    ).toThrow("GMAIL_REFRESH_TOKEN");
+    expect(
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "gmail",
+        GMAIL_CLIENT_ID: "client-id",
+        GMAIL_CLIENT_SECRET: "secret",
+        GMAIL_REFRESH_TOKEN: "refresh",
+        EMAIL_FROM: "ChalkTalk <sender@gmail.com>",
+      }).email,
+    ).toEqual({
+      provider: "gmail",
+      from: "ChalkTalk <sender@gmail.com>",
+      gmailClientId: "client-id",
+      gmailClientSecret: "secret",
+      gmailRefreshToken: "refresh",
+      gmailTokenUrl: "https://oauth2.googleapis.com/token",
+      gmailApiBaseUrl: "https://gmail.googleapis.com",
+    });
+    expect(
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "gmail",
+        GMAIL_CLIENT_ID: "client-id",
+        GMAIL_CLIENT_SECRET: "secret",
+        GMAIL_REFRESH_TOKEN: "refresh",
+        EMAIL_FROM: "sender@gmail.com",
+        GMAIL_API_BASE_URL: "http://127.0.0.1:4000/",
+        GMAIL_TOKEN_URL: "http://127.0.0.1:4001/token",
+      }).email,
+    ).toMatchObject({
+      gmailApiBaseUrl: "http://127.0.0.1:4000",
+      gmailTokenUrl: "http://127.0.0.1:4001/token",
+    });
+    for (const endpoint of [
+      "not-a-url",
+      "ftp://example.com",
+      "https://user:pass@example.com",
+      "https://example.com/path",
+      "https://example.com?x=1",
+    ]) {
+      expect(() =>
+        loadEnvironment({
+          ...base,
+          EMAIL_PROVIDER: "gmail",
+          GMAIL_CLIENT_ID: "client-id",
+          GMAIL_CLIENT_SECRET: "secret",
+          GMAIL_REFRESH_TOKEN: "refresh",
+          EMAIL_FROM: "sender@gmail.com",
+          GMAIL_API_BASE_URL: endpoint,
+        }),
+      ).toThrow("GMAIL_API_BASE_URL");
+    }
+  });
   it("disables proxy trust by default and only accepts one explicit hop", () => {
     expect(loadEnvironment(base).trustProxyHops).toBe(0);
     expect(

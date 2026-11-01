@@ -31,7 +31,7 @@ An authenticated current member SHALL be able to GET and PATCH only their own pr
 
 ### Requirement: Email delivery honors the latest preference
 
-Activity jobs SHALL be queued only when activity emails are enabled. Announcement jobs SHALL be queued only when announcement emails are enabled. Digest outbox rows SHALL be scheduled only when digest emails are enabled. Delivery SHALL recheck membership and the corresponding preference immediately before sending; an opt-out completed before that final check SHALL suppress the queued email. An activity or announcement email already in flight MAY finish after opt-out, and its SMTP delivery SHALL NOT block the preference update. Disabling email SHALL not erase in-app notifications or affect already-sent email.
+Activity jobs SHALL be queued only when activity emails are enabled. Announcement jobs SHALL be queued only when announcement emails are enabled. Digest outbox rows SHALL be scheduled only when digest emails are enabled. Delivery SHALL recheck membership and the corresponding preference immediately before sending; an opt-out completed before that final check SHALL suppress the queued email. An opt-out update MAY wait for an in-flight send holding the recipient membership lock; that already-started email MAY finish before the opt-out commits. Gmail bounds each external request to 30 seconds. Digests, duplicate notices, invitations, and private-post notifications hold that lock; public-post activity and announcement sends allow preference updates to finish during delivery. Disabling email SHALL not erase in-app notifications or affect already-sent email.
 
 #### Scenario: Opt out after queueing
 

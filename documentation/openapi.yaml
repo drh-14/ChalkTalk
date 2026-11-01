@@ -1405,7 +1405,7 @@ paths:
       tags:
         - Authentication
       summary: Request password reset email
-      description: Request password reset email. For syntactically valid requests, returns 202 no sooner than one second after processing begins whether or not the email exists or SMTP delivery succeeds, preventing account discovery through status or timing. Existing-account SMTP delivery is attempted for at most 750 milliseconds; delivery failures and timeouts are intentionally not reported to the caller.
+      description: Request password reset email. For syntactically valid requests, returns 202 no sooner than one second after processing begins whether or not the email exists or delivery succeeds, preventing account discovery through status or timing. Existing-account delivery is attempted for at most 750 milliseconds; delivery failures and timeouts are intentionally not reported to the caller.
       operationId: createPasswordResetRequest
       security: []
       responses:
@@ -1425,7 +1425,7 @@ paths:
                       requestId: req_createPasswordResetRequest
                       details: []
         "202":
-          description: Returns the same response no sooner than one second after processing begins whether or not the email exists or SMTP delivery succeeds, preventing account discovery through status or timing.
+          description: Returns the same response no sooner than one second after processing begins whether or not the email exists or delivery succeeds, preventing account discovery through status or timing.
         "400":
           description: Bad Request
           content:
@@ -4238,7 +4238,7 @@ paths:
       tags:
         - Posts
       summary: Update post
-      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm or unmerge duplicates and change pinned. Confirmation retains the source content but returns only a canonical reference. Successful confirmation of a question duplicate transactionally queues an email to its author with the question title, the active confirming staff member's name and role, and a canonical-post link. If that staff account is deleted before delivery, the email uses an unnamed role label instead; the job does not retain the staff display name. Delivery is asynchronous and SMTP failure does not undo the merge. Suggestions, note confirmations, failed updates, and unmerges do not queue this email. A confirmed source cannot be edited until unmerged; a canonical with confirmed inbound references cannot be merged. Multipart post updates are future-only; use parent-scoped attachment routes for files. A tombstone returns 404 not_found.
+      description: Update a JSON question/note post. Members may suggest duplicates. Staff may confirm or unmerge duplicates and change pinned. Confirmation retains the source content but returns only a canonical reference. Successful confirmation of a question duplicate transactionally queues an email to its author with the question title, the active confirming staff member's name and role, and a canonical-post link. If that staff account is deleted before the first delivery attempt, the email uses an unnamed role label instead; the job does not retain the staff display name. If an included staff identity changes after the email is frozen, the pending send is canceled. Delivery is asynchronous and provider failure does not undo the merge. Suggestions, note confirmations, failed updates, and unmerges do not queue this email. A confirmed source cannot be edited until unmerged; a canonical with confirmed inbound references cannot be merged. Multipart post updates are future-only; use parent-scoped attachment routes for files. A tombstone returns 404 not_found.
       x-implementation-status: text-posts-live
       operationId: updatePost
       security:
