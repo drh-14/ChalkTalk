@@ -392,6 +392,14 @@ paths:
                       message: The normalized email domain is not a valid .edu domain.
                       requestId: req_createAccountVerificationRequest
                       details: []
+                validation_failed:
+                  summary: The email address is syntactically malformed.
+                  value:
+                    error:
+                      code: validation_failed
+                      message: Email is invalid
+                      requestId: req_createAccountVerificationRequest
+                      details: []
         "429":
           description: Too Many Requests
           headers:

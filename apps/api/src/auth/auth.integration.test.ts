@@ -328,12 +328,19 @@ integrationTest("AuthService PostgreSQL integration", () => {
       expect(denied.body.error.code, email).toBe("email_domain_not_allowed");
     }
     expect(emailSender.messages).toHaveLength(countBefore);
-    const malformed = await request(app)
-      .post("/api/v1/account-verification-requests")
-      .set("Origin", environment.frontendBaseUrl)
-      .send({ email: "student@notedu" });
-    expect(malformed.status).toBe(422);
-    expect(malformed.body.error.code).toBe("validation_failed");
+    for (const email of [
+      "student@.edu",
+      "student@school.edu.",
+      "student@notedu",
+    ]) {
+      const malformed = await request(app)
+        .post("/api/v1/account-verification-requests")
+        .set("Origin", environment.frontendBaseUrl)
+        .send({ email });
+      expect(malformed.status, email).toBe(422);
+      expect(malformed.body.error.code, email).toBe("validation_failed");
+    }
+    expect(emailSender.messages).toHaveLength(countBefore);
   });
 
   it("creates an account for a valid domain longer than the organization name limit", async () => {

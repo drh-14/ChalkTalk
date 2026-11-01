@@ -85,6 +85,8 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 `email_domain_not_allowed`: The normalized email domain is not a valid `.edu` domain.
 
+`validation_failed`: The email address is syntactically malformed (for example, `student@.edu` or `student@school.edu.`).
+
 ##### `429 Too Many Requests`
 
 `rate_limited`: The configured per-email or per-source-IP request limit was exceeded. The response includes `Retry-After`.
