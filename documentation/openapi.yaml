@@ -10365,7 +10365,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Update or end collaboration session
-      description: Changes an active session's title or language, or ends it with status ended. Only the creator or participating course staff may call it. Ending asks the collaboration server to persist the final text and waits up to 5 seconds for it to confirm; if it does not confirm in time, the session still ends with the most recently persisted text. Ended sessions become read-only and keep their final snapshot.
+      description: Changes an active session's title or language, or ends it with status ended. Only the creator or participating course staff may call it. Ending asks the collaboration server to persist the final text and waits up to 5 seconds for the flush to finish. Because authorized in-flight edits may not have applied at capture, even a successful flush leaves finalSnapshotConfirmed false and the read-only snapshot shows a last-saved warning. If the flush does not finish in time, the session still ends with the most recently persisted text and the same warning.
       operationId: updateCollaborationSession
       security:
         - session_cookie: []
@@ -13538,7 +13538,7 @@ components:
           type:
             - boolean
             - "null"
-          description: Null while active or ending; true when the collaboration server confirmed the final persisted snapshot; false after unconfirmed finalization or for legacy ended sessions.
+          description: Null while active or ending; true only when every authorized edit is proven durable; false when completeness cannot be proven, including after a successful flush with possible in-flight edits, or for legacy ended sessions.
         endedAt:
           type:
             - string
@@ -13616,7 +13616,7 @@ components:
           type:
             - boolean
             - "null"
-          description: Null while active or ending; true when the collaboration server confirmed the final persisted snapshot; false after unconfirmed finalization or for legacy ended sessions.
+          description: Null while active or ending; true only when every authorized edit is proven durable; false when completeness cannot be proven, including after a successful flush with possible in-flight edits, or for legacy ended sessions.
         endedAt:
           type:
             - string
@@ -13704,7 +13704,7 @@ components:
           type:
             - boolean
             - "null"
-          description: Null while active or ending; true when the collaboration server confirmed the final persisted snapshot; false after unconfirmed finalization or for legacy ended sessions.
+          description: Null while active or ending; true only when every authorized edit is proven durable; false when completeness cannot be proven, including after a successful flush with possible in-flight edits, or for legacy ended sessions.
         endedAt:
           type:
             - string
@@ -13793,10 +13793,10 @@ components:
           type:
             - boolean
             - "null"
-          description: Null while active or ending; true if the final saved state was confirmed; false if not confirmed or for a legacy ended session.
+          description: Null while active or ending; true only when every authorized edit is proven durable; false when completeness cannot be proven, including after a successful flush with possible in-flight edits, or for a legacy ended session.
         lastSavedWarning:
           type: boolean
-          description: True when an ended session may omit recent edits because final persistence was not confirmed.
+          description: True when an ended session may omit recent edits because final snapshot completeness is unconfirmed, even if a final flush succeeded.
         content:
           type: string
           description: Plain-text projection of Y.Text('content'), at most 200,000 characters.
