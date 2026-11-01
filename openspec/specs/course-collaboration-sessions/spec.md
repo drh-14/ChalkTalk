@@ -46,6 +46,10 @@ The creator or participating staff SHALL be able to rename and end a session. A 
 - **WHEN** ending a session cannot confirm persistence of all in-memory edits
 - **THEN** remaining participants see a last-saved-version warning with the snapshot
 
+#### Scenario: Clean final flush is confirmed
+- **WHEN** a live session end drains every previously authorized in-flight edit and commits the final document snapshot
+- **THEN** the ended session reports a confirmed final snapshot without a last-saved-version warning
+
 ### Requirement: Migration preserves existing access and content
 Existing post-associated sessions SHALL retain their IDs, course, documents, roster, View/Edit permissions, and session URLs after migration, without expanding access to staff or former post readers. Previously ended sessions SHALL display the conservative last-saved warning.
 

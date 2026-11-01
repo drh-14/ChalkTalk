@@ -1,4 +1,4 @@
-import { Hocuspocus, type Document } from "@hocuspocus/server";
+import { Hocuspocus, type Connection, type Document } from "@hocuspocus/server";
 import pg, { type Pool, type PoolClient } from "pg";
 import {
   Counter,
@@ -109,6 +109,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   const metrics = createMetrics(() => server.hocuspocus.documents);
   const persisting = new Map<string, Promise<void>>();
   const failedStores = new Set<string>();
+  const processingConnections = new Map<string, Map<string, Connection>>();
   const admissions = new Map<
     Request,
     {
@@ -169,7 +170,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   function persist(
     sessionId: string,
     document: Y.Doc,
-    finalize = false,
+    finalSnapshotConfirmed?: boolean,
   ): Promise<void> {
     const previous = persisting.get(sessionId) ?? Promise.resolve();
     const next = previous
@@ -190,7 +191,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
                persistence_revision=collaboration_documents.persistence_revision+1`,
               [sessionId, state, text, whiteboard],
             );
-          if (finalize) {
+          if (finalSnapshotConfirmed !== undefined) {
             const client = await pool.connect();
             try {
               await client.query("BEGIN");
@@ -210,8 +211,8 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
                 await store(client);
                 if (row.rows[0].lifecycle_state === "ending")
                   await client.query(
-                    "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=false,version=version+1,updated_at=clock_timestamp() WHERE id=$1",
-                    [sessionId],
+                    "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=$2,version=version+1,updated_at=clock_timestamp() WHERE id=$1",
+                    [sessionId, finalSnapshotConfirmed],
                   );
               }
               await client.query("COMMIT");
@@ -284,7 +285,32 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   async function finishSession(sessionId: string, markEnded: boolean) {
     const document = server.hocuspocus.documents.get(documentName(sessionId));
     try {
-      if (document) await persist(sessionId, document, true);
+      if (document) {
+        let confirmed = false;
+        if (markEnded) {
+          const connections = [
+            ...(processingConnections.get(sessionId)?.values() ?? []),
+          ];
+          let timer: NodeJS.Timeout | undefined;
+          try {
+            confirmed = await Promise.race([
+              Promise.all(
+                connections.map((connection) =>
+                  connection.waitForPendingMessages(),
+                ),
+              ).then(() => true),
+              new Promise<false>((resolve) => {
+                timer = setTimeout(() => resolve(false), 2000);
+              }),
+            ]);
+          } catch {
+            confirmed = false;
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
+        }
+        await persist(sessionId, document, confirmed);
+      }
       if (markEnded && !document)
         await pool.query(
           "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=false,version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND lifecycle_state='ending'",
@@ -589,9 +615,14 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       return document;
     },
 
-    async onDisconnect({ documentName: name, clientsCount }) {
+    async onDisconnect({ documentName: name, clientsCount, socketId }) {
       // The idle period starts when the last participant leaves.
       const sessionId = sessionIdOf(name);
+      if (sessionId) {
+        const tracked = processingConnections.get(sessionId);
+        tracked?.delete(socketId);
+        if (tracked?.size === 0) processingConnections.delete(sessionId);
+      }
       if (sessionId && clientsCount === 0) await touch([sessionId]);
     },
 
@@ -636,6 +667,11 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         throw new Rejection("Not authorized");
       }
       lease.phase = "committing";
+      const tracked =
+        processingConnections.get(context.sessionId) ??
+        new Map<string, Connection>();
+      tracked.set(socketId, connection);
+      processingConnections.set(context.sessionId, tracked);
       try {
         await boundedQuery(lease.client, "COMMIT");
         lease.client.release();
@@ -645,6 +681,8 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         if (!socket.confirm()) throw new Rejection("Not authorized");
         socket.finish();
       } catch (error) {
+        tracked.delete(socketId);
+        if (tracked.size === 0) processingConnections.delete(context.sessionId);
         socket.abort();
         if (lease.phase !== "finished") {
           lease.phase = "finished";

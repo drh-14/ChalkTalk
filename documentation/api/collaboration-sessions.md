@@ -624,7 +624,7 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`PATCH /api/v1/collaboration-sessions/{collaborationSessionId}`**
 
-Changes an active session's title or language, or ends it with status ended. Only the creator or a current TA/instructor who is also a participant may call it. Ending preserves the last persisted document. The collaboration server attempts a final flush, but it cannot prove that every authorized in-flight edit has applied, so the snapshot remains unconfirmed and shows a last-saved warning even when that flush succeeds. Previously ended sessions are also conservatively unconfirmed. Ending waits up to 5 seconds for the collaboration server; if it does not finish in time, the session still ends with the most recently persisted text. Ended sessions become read-only and keep their final snapshot.
+Changes an active session's title or language, or ends it with status ended. Only the creator or a current TA/instructor who is also a participant may call it. Ending preserves the last persisted document. When the collaboration server drains all previously authorized in-flight messages and commits the final snapshot, it confirms the snapshot. If draining or the final flush fails or times out, the session ends with the most recently persisted text and a last-saved warning. Previously ended sessions without a confirmed flush remain conservatively unconfirmed. Ending waits up to 5 seconds for the collaboration server; ended sessions become read-only and keep their final snapshot.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 

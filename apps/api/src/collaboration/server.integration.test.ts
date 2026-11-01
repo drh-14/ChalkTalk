@@ -119,7 +119,13 @@ integration("collaboration server", () => {
     });
     provider.attach();
     opened.push(provider, websocketProvider);
-    return { provider, document, text: document.getText("content"), state };
+    return {
+      provider,
+      websocketProvider,
+      document,
+      text: document.getText("content"),
+      state,
+    };
   }
 
   beforeAll(async () => {
@@ -1285,8 +1291,8 @@ integration("collaboration server", () => {
       expect(snapshot).toMatchObject({
         sessionStatus: "ended",
         content: "while True:\n    break\n",
-        finalSnapshotConfirmed: false,
-        lastSavedWarning: true,
+        finalSnapshotConfirmed: true,
+        lastSavedWarning: false,
       });
       const stale = new Y.Doc();
       stale.getText("content").insert(0, "older queued write");
@@ -1295,12 +1301,170 @@ integration("collaboration server", () => {
         service.snapshot(sessionId, fixture.users.alice!),
       ).resolves.toMatchObject({
         content: "while True:\n    break\n",
-        finalSnapshotConfirmed: false,
+        finalSnapshotConfirmed: true,
       });
       await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
       expect(
         alice.state.stateless.map((payload) => JSON.parse(payload).type),
       ).toContain("session-ended");
+    });
+
+    it("confirms only after an authorized in-flight edit drains and is durable", async () => {
+      const sessionId = await newSession("alice", []);
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      const originalQuery = pool.query.bind(pool);
+      let releaseCheck!: () => void;
+      const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
+      let held = false;
+      let authorized = false;
+      pool.query = ((
+        sql: string | { text: string; values?: unknown[] },
+        values: unknown[],
+      ) => {
+        const result =
+          typeof sql === "string"
+            ? originalQuery(sql, values)
+            : originalQuery(sql);
+        const text = typeof sql === "string" ? sql : sql.text;
+        const parameters = typeof sql === "string" ? values : sql.values;
+        if (
+          !held &&
+          text.includes("JOIN collaboration_participants cp") &&
+          parameters?.[0] === sessionId
+        ) {
+          held = true;
+          return Promise.resolve(result).then(async (value) => {
+            authorized = true;
+            await gate;
+            return value;
+          });
+        }
+        return result;
+      }) as typeof pool.query;
+      try {
+        alice.text.insert(0, "drained before confirmation");
+        await until(() => authorized);
+        const current = await service.get(sessionId, fixture.users.alice!);
+        const ending = service.update(
+          sessionId,
+          fixture.users.alice!,
+          `"v${current.version}"`,
+          { status: "ended" },
+        );
+        await until(async () => {
+          const state = await pool.query<{ lifecycle_state: string }>(
+            "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1",
+            [sessionId],
+          );
+          return state.rows[0]?.lifecycle_state === "ending";
+        });
+        const before = await pool.query<{
+          final_snapshot_confirmed: boolean;
+        }>(
+          "SELECT final_snapshot_confirmed FROM collaboration_sessions WHERE id=$1",
+          [sessionId],
+        );
+        expect(before.rows[0]?.final_snapshot_confirmed).toBe(false);
+        releaseCheck();
+        const ended = await ending;
+        expect(ended.finalSnapshotConfirmed).toBe(true);
+        const snapshot = await service.snapshot(
+          sessionId,
+          fixture.users.alice!,
+        );
+        expect(snapshot).toMatchObject({
+          content: "drained before confirmation",
+          finalSnapshotConfirmed: true,
+          lastSavedWarning: false,
+        });
+        const durable = await pool.query<{
+          text_projection: string;
+          final_snapshot_confirmed: boolean;
+        }>(
+          `SELECT d.text_projection,s.final_snapshot_confirmed
+           FROM collaboration_sessions s JOIN collaboration_documents d ON d.collaboration_session_id=s.id
+           WHERE s.id=$1`,
+          [sessionId],
+        );
+        expect(durable.rows[0]).toEqual({
+          text_projection: "drained before confirmation",
+          final_snapshot_confirmed: true,
+        });
+      } finally {
+        releaseCheck();
+        pool.query = originalQuery;
+      }
+    });
+
+    it("includes a disconnected participant's in-flight edit before confirmation", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      const bob = join("bob", sessionId);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
+      const originalQuery = pool.query.bind(pool);
+      let releaseCheck!: () => void;
+      const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
+      let held = false;
+      let authorized = false;
+      pool.query = ((
+        sql: string | { text: string; values?: unknown[] },
+        values: unknown[],
+      ) => {
+        const result =
+          typeof sql === "string"
+            ? originalQuery(sql, values)
+            : originalQuery(sql);
+        const text = typeof sql === "string" ? sql : sql.text;
+        const parameters = typeof sql === "string" ? values : sql.values;
+        if (
+          !held &&
+          text.includes("JOIN collaboration_participants cp") &&
+          parameters?.[0] === sessionId &&
+          parameters?.[1] === fixture.users.bob
+        ) {
+          held = true;
+          return Promise.resolve(result).then(async (value) => {
+            authorized = true;
+            await gate;
+            return value;
+          });
+        }
+        return result;
+      }) as typeof pool.query;
+      try {
+        bob.text.insert(0, "disconnected edit");
+        await until(() => authorized);
+        bob.provider.destroy();
+        bob.websocketProvider.destroy();
+        await until(() => collaboration.connectionsOf(sessionId).length === 1);
+        const current = await service.get(sessionId, fixture.users.alice!);
+        const ending = service.update(
+          sessionId,
+          fixture.users.alice!,
+          `"v${current.version}"`,
+          { status: "ended" },
+        );
+        await until(async () => {
+          const state = await pool.query<{ lifecycle_state: string }>(
+            "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1",
+            [sessionId],
+          );
+          return state.rows[0]?.lifecycle_state === "ending";
+        });
+        releaseCheck();
+        const ended = await ending;
+        expect(ended.finalSnapshotConfirmed).toBe(true);
+        const snapshot = await service.snapshot(
+          sessionId,
+          fixture.users.alice!,
+        );
+        expect(snapshot.content).toContain("disconnected edit");
+        expect(snapshot.lastSavedWarning).toBe(false);
+      } finally {
+        releaseCheck();
+        pool.query = originalQuery;
+      }
     });
 
     it("warns when an authorized update is still in flight during final capture", async () => {

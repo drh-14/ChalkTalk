@@ -10365,7 +10365,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Update or end collaboration session
-      description: Changes an active session's title or language, or ends it with status ended. Only the creator or participating course staff may call it. Ending asks the collaboration server to persist the final text and waits up to 5 seconds for the flush to finish. Because authorized in-flight edits may not have applied at capture, even a successful flush leaves finalSnapshotConfirmed false and the read-only snapshot shows a last-saved warning. If the flush does not finish in time, the session still ends with the most recently persisted text and the same warning.
+      description: Changes an active session's title or language, or ends it with status ended. Only the creator or participating course staff may call it. Ending waits up to 5 seconds for the collaboration server. It confirms the final snapshot only after all previously authorized in-flight messages drain and the final text commits durably. If draining or the flush fails or times out, the session still ends with the most recently persisted text, finalSnapshotConfirmed false, and a last-saved warning.
       operationId: updateCollaborationSession
       security:
         - session_cookie: []
