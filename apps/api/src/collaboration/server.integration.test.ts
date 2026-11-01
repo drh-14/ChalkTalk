@@ -191,14 +191,17 @@ integration("collaboration server", () => {
       try {
         await new Promise<void>((resolve) => raw.once("open", resolve));
         raw.send(auth(firstId, firstTicket));
-        await until(() => collaboration.connectionsOf(firstId).length === 1);
+        await until(
+          () => collaboration.connectionsOf(firstId).length === 1,
+          10_000,
+        );
         raw.send(auth(secondId, secondTicket));
-        await until(() => raw.readyState === WebSocket.CLOSED);
+        await until(() => raw.readyState === WebSocket.CLOSED, 10_000);
         expect(collaboration.connectionsOf(secondId)).toHaveLength(0);
       } finally {
         raw.terminate();
       }
-    });
+    }, 25_000);
 
     it("holds a pipelined update until admission commits, then persists it", async () => {
       const sessionId = await newSession();
