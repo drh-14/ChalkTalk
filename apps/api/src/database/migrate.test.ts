@@ -37,9 +37,14 @@ integrationTest("runMigrations", () => {
 
   afterAll(async () => {
     await pool.query(`DROP TABLE IF EXISTS ${markerTable}`);
-    await pool.query("DELETE FROM schema_migrations WHERE name LIKE $1", [
-      `%${migrationName}%`,
-    ]);
+    if (
+      (await pool.query("SELECT to_regclass('schema_migrations') AS ledger"))
+        .rows[0]?.ledger
+    ) {
+      await pool.query("DELETE FROM schema_migrations WHERE name LIKE $1", [
+        `%${migrationName}%`,
+      ]);
+    }
     await pool.end();
     await rm(migrationDirectory, { force: true, recursive: true });
   });
