@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { AuthError } from "../auth/errors.js";
-import { canReadPost, readablePost } from "../posts/visibility.js";
 import { consumeRateLimit } from "../database/rate-limit.js";
 
 export const COLLABORATION_LANGUAGES = [
@@ -48,7 +47,7 @@ export type CollaborationSession = {
   id: string;
   courseId: string;
   status: "active" | "ended";
-  anchor: { postId: string };
+  finalSnapshotConfirmed: boolean | null;
   title: string;
   language: CollaborationLanguage;
   createdBy: string;
@@ -59,15 +58,13 @@ export type CollaborationSession = {
   version: number;
 };
 export type CreateCollaborationSession = {
-  postId: string;
-  title?: string;
+  title: string;
   language?: CollaborationLanguage;
 };
 export type UpdateCollaborationSession =
   { title?: string; language?: CollaborationLanguage } | { status: "ended" };
 export type ListCollaborationSessions = {
   status?: "active" | "ended";
-  anchorId?: string;
   cursor?: string;
   limit: number;
 };
@@ -75,7 +72,7 @@ export type ListCollaborationSessions = {
 type SessionRow = {
   id: string;
   course_id: string;
-  post_id: string;
+  final_snapshot_confirmed: boolean;
   title: string;
   language: CollaborationLanguage;
   lifecycle_state: "active" | "ending" | "ended";
@@ -154,17 +151,13 @@ export class CollaborationSessionService {
     lock = false,
   ) {
     const result = await db.query<{ role: Role; status: string }>(
-      `SELECT m.role,c.status FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m,c" : ""}`,
+      `SELECT m.role,c.status FROM course_memberships m JOIN courses c ON c.id=m.course_id WHERE m.course_id=$1 AND m.user_id=$2${lock ? " FOR SHARE OF m" : ""}`,
       [courseId, userId],
     );
     return result.rows[0];
   }
 
-  /**
-   * Loads a session the caller may see: its creator, current course staff, or
-   * a current invitee. Sessions on removed posts are visible to staff only.
-   * Anything else is reported as not found.
-   */
+  /** Loads a session only for a current course member in its participant roster. */
   private async access(
     db: Db,
     sessionId: string,
@@ -180,22 +173,11 @@ export class CollaborationSessionService {
     if (!row) throw notFound();
     const member = await this.membership(db, row.course_id, userId, lock);
     if (!member) throw notFound();
-    const staff = STAFF.has(member.role);
-    if (!staff) {
-      // A private anchor hides its sessions from members who cannot read it.
-      const post = await db.query<{ removed: boolean }>(
-        "SELECT (deleted_at IS NOT NULL OR duplicate_status='confirmed' OR (private AND author_user_id IS DISTINCT FROM $2) OR scheduled_for IS NOT NULL) AS removed FROM posts WHERE id=$1",
-        [row.post_id, userId],
-      );
-      if (post.rows[0]?.removed) throw notFound();
-      if (row.created_by_user_id !== userId) {
-        const invited = await db.query(
-          "SELECT 1 FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2",
-          [row.id, userId],
-        );
-        if (!invited.rowCount) throw notFound();
-      }
-    }
+    const participant = await db.query(
+      "SELECT 1 FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2",
+      [row.id, userId],
+    );
+    if (!participant.rowCount) throw notFound();
     return { row, role: member.role, courseStatus: member.status };
   }
 
@@ -225,7 +207,8 @@ export class CollaborationSessionService {
       id: row.id,
       courseId: row.course_id,
       status: row.lifecycle_state === "ended" ? "ended" : "active",
-      anchor: { postId: row.post_id },
+      finalSnapshotConfirmed:
+        row.lifecycle_state === "ended" ? row.final_snapshot_confirmed : null,
       title: row.title,
       language: row.language,
       createdBy: row.created_by_user_id,
@@ -317,20 +300,6 @@ export class CollaborationSessionService {
         );
       }
       if (member.status !== "active") throw archived();
-      const post = UUID_PATTERN.test(body.postId)
-        ? await db.query<{ title: string }>(
-            "SELECT title FROM posts WHERE id=$1 AND course_id=$2 AND deleted_at IS NULL AND duplicate_status<>'confirmed' AND ($4 OR (scheduled_for IS NULL AND (NOT private OR author_user_id=$3))) FOR SHARE",
-            [body.postId, courseId, userId, STAFF.has(member.role)],
-          )
-        : undefined;
-      if (!post?.rows[0])
-        throw new AuthError(
-          422,
-          "cross_course_anchor",
-          "The anchor is invalid or belongs to another course",
-        );
-      const title =
-        body.title ?? post.rows[0].title.trim().slice(0, 120).trim();
       // After the idempotent replay check, so a replay is never limited.
       await consumeRateLimit(
         db,
@@ -341,15 +310,8 @@ export class CollaborationSessionService {
       );
       const id = uuidv7();
       await db.query(
-        "INSERT INTO collaboration_sessions (id,course_id,post_id,title,language,created_by_user_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,clock_timestamp(),clock_timestamp())",
-        [
-          id,
-          courseId,
-          body.postId,
-          title,
-          body.language ?? "plaintext",
-          userId,
-        ],
+        "INSERT INTO collaboration_sessions (id,course_id,title,language,created_by_user_id,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,clock_timestamp(),clock_timestamp())",
+        [id, courseId, body.title, body.language ?? "plaintext", userId],
       );
       await db.query(
         "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id) VALUES ($1,$2,$3,$3)",
@@ -390,28 +352,18 @@ export class CollaborationSessionService {
     if (!UUID_PATTERN.test(courseId)) throw notFound();
     const member = await this.membership(this.pool, courseId, userId);
     if (!member) throw notFound();
-    const staff = STAFF.has(member.role);
-    const filters = JSON.stringify([
-      query.status ?? null,
-      query.anchorId ?? null,
-    ]);
-    const values: unknown[] = [courseId, userId, staff];
+    const filters = JSON.stringify([query.status ?? null]);
+    const values: unknown[] = [courseId, userId];
     const add = (value: unknown) => {
       values.push(value);
       return `$${values.length}`;
     };
     const clauses = [
       "s.course_id=$1",
-      "($3 OR s.created_by_user_id=$2 OR EXISTS (SELECT 1 FROM collaboration_participants cp WHERE cp.collaboration_session_id=s.id AND cp.user_id=$2))",
-      "($3 OR (p.deleted_at IS NULL AND p.duplicate_status<>'confirmed' AND p.scheduled_for IS NULL AND (NOT p.private OR p.author_user_id=$2)))",
+      "EXISTS (SELECT 1 FROM collaboration_participants cp WHERE cp.collaboration_session_id=s.id AND cp.user_id=$2)",
     ];
     if (query.status === "ended") clauses.push("s.lifecycle_state='ended'");
     if (query.status === "active") clauses.push("s.lifecycle_state<>'ended'");
-    if (query.anchorId) {
-      if (!UUID_PATTERN.test(query.anchorId))
-        return { data: [], page: { nextCursor: null, hasMore: false } };
-      clauses.push(`s.post_id=${add(query.anchorId)}`);
-    }
     if (query.cursor) {
       let decoded: {
         c?: string;
@@ -442,7 +394,7 @@ export class CollaborationSessionService {
       );
     }
     const rows = await this.pool.query<SessionRow>(
-      `SELECT s.* FROM collaboration_sessions s JOIN posts p ON p.id=s.post_id WHERE ${clauses.join(" AND ")} ORDER BY s.created_at DESC,s.id DESC LIMIT ${add(query.limit + 1)}`,
+      `SELECT s.* FROM collaboration_sessions s WHERE ${clauses.join(" AND ")} ORDER BY s.created_at DESC,s.id DESC LIMIT ${add(query.limit + 1)}`,
       values,
     );
     const hasMore = rows.rows.length > query.limit;
@@ -461,10 +413,7 @@ export class CollaborationSessionService {
   }
 
   /** The viewer's own sessions across their active courses, newest first. */
-  async listForUser(
-    userId: string,
-    query: Omit<ListCollaborationSessions, "anchorId">,
-  ) {
+  async listForUser(userId: string, query: ListCollaborationSessions) {
     // Cursors carry this scope so a course-list cursor cannot be replayed here.
     const scope = "me";
     const filters = JSON.stringify([query.status ?? null]);
@@ -473,11 +422,7 @@ export class CollaborationSessionService {
       values.push(value);
       return `$${values.length}`;
     };
-    const clauses = [
-      "p.deleted_at IS NULL",
-      "p.duplicate_status<>'confirmed'",
-      readablePost("p", "$1", "m.role"),
-    ];
+    const clauses: string[] = [];
     if (query.status === "ended") clauses.push("s.lifecycle_state='ended'");
     if (query.status === "active") clauses.push("s.lifecycle_state<>'ended'");
     if (query.cursor) {
@@ -514,10 +459,9 @@ export class CollaborationSessionService {
       `SELECT s.*,c.name AS course_name
        FROM collaboration_participants cp
        JOIN collaboration_sessions s ON s.id=cp.collaboration_session_id
-       JOIN courses c ON c.id=s.course_id AND c.status='active'
+       JOIN courses c ON c.id=s.course_id
        JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$1
-       JOIN posts p ON p.id=s.post_id
-       WHERE cp.user_id=$1 AND ${clauses.join(" AND ")}
+       WHERE cp.user_id=$1${clauses.length ? ` AND ${clauses.join(" AND ")}` : ""}
        ORDER BY s.created_at DESC,s.id DESC LIMIT ${add(query.limit + 1)}`,
       values,
     );
@@ -541,8 +485,10 @@ export class CollaborationSessionService {
   }
 
   async get(sessionId: string, userId: string) {
-    const access = await this.access(this.pool, sessionId, userId);
-    return this.project(this.pool, access.row);
+    return this.tx(async (db) => {
+      const access = await this.access(db, sessionId, userId, true);
+      return this.project(db, access.row);
+    });
   }
 
   private checkRevision(row: SessionRow, etag: string | undefined) {
@@ -637,7 +583,6 @@ export class CollaborationSessionService {
   ) {
     return this.tx(async (db) => {
       const access = await this.access(db, sessionId, userId, true);
-      this.manager(access, userId);
       this.active(access);
       const target = UUID_PATTERN.test(targetUserId)
         ? await this.membership(db, access.row.course_id, targetUserId, true)
@@ -647,22 +592,6 @@ export class CollaborationSessionService {
           422,
           "not_course_member",
           "The user is not a current member of the course",
-        );
-      const anchor = await db.query<{
-        private: boolean;
-        author_user_id: string | null;
-        scheduled_for: Date | null;
-      }>("SELECT private,author_user_id,scheduled_for FROM posts WHERE id=$1", [
-        access.row.post_id,
-      ]);
-      if (
-        anchor.rows[0] &&
-        !canReadPost(anchor.rows[0], targetUserId, target.role)
-      )
-        throw new AuthError(
-          422,
-          "invitee_cannot_read_post",
-          "Only the author and course staff can read this private post",
         );
       const inserted = await db.query<{ created_at: Date }>(
         "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id,permission) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING created_at",
@@ -737,14 +666,11 @@ export class CollaborationSessionService {
         this.options.rateLimits?.ticketsPerTenMinutes ?? 300,
         600,
       );
-      // Staff and the creator always edit; other viewers get read tickets.
-      const viewer = STAFF.has(access.role)
-        ? undefined
-        : await db.query(
-            "SELECT 1 FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2 AND permission='view'",
-            [sessionId, userId],
-          );
-      const permission = viewer?.rowCount ? "read" : "write";
+      const viewer = await db.query(
+        "SELECT 1 FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2 AND permission='view'",
+        [sessionId, userId],
+      );
+      const permission = viewer.rowCount ? "read" : "write";
       const ticket = randomBytes(32).toString("base64url");
       const issued = await db.query<{ expires_at: Date }>(
         "INSERT INTO collaboration_connection_tickets (id,token_hash,collaboration_session_id,course_id,user_id,auth_session_id,permission,issued_at,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$8,now(),now()+make_interval(secs => $7)) RETURNING expires_at",
@@ -770,29 +696,38 @@ export class CollaborationSessionService {
   }
 
   async snapshot(sessionId: string, userId: string) {
-    const access = await this.access(this.pool, sessionId, userId);
-    const document = await this.pool.query<{
-      text_projection: string;
-      whiteboard_projection: unknown[];
-      persisted_at: Date;
-    }>(
-      "SELECT text_projection,whiteboard_projection,persisted_at FROM collaboration_documents WHERE collaboration_session_id=$1",
-      [sessionId],
-    );
-    return {
-      collaborationSessionId: sessionId,
-      documentId: documentName(sessionId),
-      sessionStatus:
-        access.row.lifecycle_state === "ended"
-          ? ("ended" as const)
-          : ("active" as const),
-      content: document.rows[0]?.text_projection ?? "",
-      whiteboard: document.rows[0]?.whiteboard_projection ?? [],
-      persistedAt: (
-        document.rows[0]?.persisted_at ?? access.row.created_at
-      ).toISOString(),
-      capturedAt: new Date().toISOString(),
-    };
+    return this.tx(async (db) => {
+      const access = await this.access(db, sessionId, userId, true);
+      const document = await db.query<{
+        text_projection: string;
+        whiteboard_projection: unknown[];
+        persisted_at: Date;
+      }>(
+        "SELECT text_projection,whiteboard_projection,persisted_at FROM collaboration_documents WHERE collaboration_session_id=$1",
+        [sessionId],
+      );
+      return {
+        collaborationSessionId: sessionId,
+        documentId: documentName(sessionId),
+        sessionStatus:
+          access.row.lifecycle_state === "ended"
+            ? ("ended" as const)
+            : ("active" as const),
+        finalSnapshotConfirmed:
+          access.row.lifecycle_state === "ended"
+            ? access.row.final_snapshot_confirmed
+            : null,
+        lastSavedWarning:
+          access.row.lifecycle_state === "ended" &&
+          !access.row.final_snapshot_confirmed,
+        content: document.rows[0]?.text_projection ?? "",
+        whiteboard: document.rows[0]?.whiteboard_projection ?? [],
+        persistedAt: (
+          document.rows[0]?.persisted_at ?? access.row.created_at
+        ).toISOString(),
+        capturedAt: new Date().toISOString(),
+      };
+    });
   }
 }
 

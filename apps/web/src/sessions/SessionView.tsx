@@ -13,9 +13,7 @@ import type { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { ApiError } from "../auth/client.js";
 import { listMembers, type Membership } from "../courses/client.js";
-import { getPost } from "../posts/client.js";
 import { CodeEditor } from "./CodeEditor.js";
-import { PostToDiscussion, type PostContent } from "./PostToDiscussion.js";
 import {
   connectWithHocuspocus,
   type Connect,
@@ -79,10 +77,14 @@ function useAwarenessUsers(awareness: Awareness | null) {
 async function allMembers(courseId: string) {
   const members: Membership[] = [];
   let cursor: string | undefined;
-  for (let page = 0; page < 10; page += 1) {
+  const seen = new Set<string>();
+  for (;;) {
     const result = await listMembers(courseId, cursor);
     members.push(...result.data);
     if (!result.page.nextCursor) break;
+    if (seen.has(result.page.nextCursor))
+      throw new Error("Member list did not advance.");
+    seen.add(result.page.nextCursor);
     cursor = result.page.nextCursor;
   }
   return members;
@@ -112,6 +114,8 @@ export function SessionView({
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const [members, setMembers] = useState<Membership[]>();
+  const [memberError, setMemberError] = useState(false);
+  const [memberRetry, setMemberRetry] = useState(0);
   const [inviteeId, setInviteeId] = useState("");
   const [document, setDocument] = useState(() => new Y.Doc());
   const connection = useRef<SessionConnection | null>(null);
@@ -125,8 +129,7 @@ export function SessionView({
   const [copied, setCopied] = useState(false);
   const [self, setSelf] = useState<Presence>();
   const [viewOnly, setViewOnly] = useState(false);
-  const [anchorIsQuestion, setAnchorIsQuestion] = useState(false);
-  const [posting, setPosting] = useState<PostContent>();
+  const [lastSavedWarning, setLastSavedWarning] = useState(false);
   const [invitePermission, setInvitePermission] = useState<"edit" | "view">(
     "edit",
   );
@@ -152,6 +155,7 @@ export function SessionView({
       if (reason === "removed") return;
       try {
         const snapshot = await getSnapshot(sessionId);
+        setLastSavedWarning(snapshot.lastSavedWarning);
         const finished = new Y.Doc();
         finished.getText("content").insert(0, snapshot.content);
         const finishedBoard = finished.getMap("whiteboard");
@@ -160,6 +164,7 @@ export function SessionView({
         setDocument(finished);
       } catch {
         // Keep the text already on screen if the snapshot cannot be read.
+        setLastSavedWarning(true);
       }
       void refresh();
     },
@@ -176,6 +181,9 @@ export function SessionView({
       .then(async (loaded) => {
         if (!active) return;
         setSession(loaded);
+        setLastSavedWarning(
+          loaded.data.status === "ended" && !loaded.data.finalSnapshotConfirmed,
+        );
         if (loaded.data.status === "ended") {
           await showFinalText("ended");
           return;
@@ -272,36 +280,23 @@ export function SessionView({
   }, [sessionId, csrfToken, connect]);
 
   const manager = Boolean(
-    session && (staff || session.data.createdBy === viewerId),
+    session &&
+    (session.data.createdBy === viewerId ||
+      (staff &&
+        session.data.participants.some(
+          (participant) => participant.userId === viewerId,
+        ))),
   );
   const editable =
     (state === "connected" || state === "reconnecting") && !viewOnly;
-  const postPath = session
-    ? `/courses/${encodeURIComponent(courseId)}/posts/${encodeURIComponent(session.data.anchor.postId)}`
-    : `/courses/${encodeURIComponent(courseId)}`;
-
-  // Answers and followups exist only on questions.
-  const anchorPostId = session?.data.anchor.postId;
-  useEffect(() => {
-    if (!anchorPostId) return;
-    let active = true;
-    void getPost(anchorPostId)
-      .then((post) => {
-        if (active)
-          setAnchorIsQuestion("type" in post && post.type === "question");
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [anchorPostId]);
+  const collaborationPath = `/courses/${encodeURIComponent(courseId)}/collaboration`;
 
   useEffect(() => {
-    if (!manager || state === "ended" || state === "removed" || members) return;
+    if (!session || state === "ended" || state === "removed" || members) return;
     void allMembers(courseId)
       .then(setMembers)
-      .catch(() => setMembers([]));
-  }, [courseId, manager, members, state]);
+      .catch(() => setMemberError(true));
+  }, [courseId, session, members, state, memberRetry]);
 
   async function act(work: () => Promise<void>) {
     if (pending) return;
@@ -357,12 +352,10 @@ export function SessionView({
         <h2 id="session-heading">This session isn't available</h2>
         <p>It may not exist, or you may not have been invited.</p>
         <a
-          href={`/courses/${encodeURIComponent(courseId)}`}
-          onClick={(event) =>
-            follow(event, `/courses/${encodeURIComponent(courseId)}`)
-          }
+          href={collaborationPath}
+          onClick={(event) => follow(event, collaborationPath)}
         >
-          Back to discussion
+          Back to Collaboration
         </a>
       </section>
     );
@@ -388,7 +381,6 @@ export function SessionView({
     if (self) colors.set(viewerId, self.color);
   }
   const sessionActive = state !== "ended" && state !== "removed";
-  const canPost = sessionActive && !viewOnly && anchorIsQuestion;
   const languageLabel = SESSION_LANGUAGES.find(
     (option) => option.value === session.data.language,
   )?.label;
@@ -409,10 +401,10 @@ export function SessionView({
         <div>
           <a
             className="session-back"
-            href={postPath}
-            onClick={(event) => follow(event, postPath)}
+            href={collaborationPath}
+            onClick={(event) => follow(event, collaborationPath)}
           >
-            Back to post
+            Back to Collaboration
           </a>
           <h2 id="session-heading">{session.data.title}</h2>
           <p className="session-meta">Live session</p>
@@ -460,6 +452,11 @@ export function SessionView({
       {error && (
         <p className="form-message error" role="alert">
           {error}
+        </p>
+      )}
+      {state === "ended" && lastSavedWarning && (
+        <p className="session-snapshot-warning" role="status">
+          This shows the last saved version. Recent edits may be missing.
         </p>
       )}
       <div className="session-layout">
@@ -526,21 +523,6 @@ export function SessionView({
                       {languageLabel}
                     </span>
                   )}
-                  {canPost && (
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() =>
-                        setPosting({
-                          kind: "code",
-                          code: text.toString(),
-                          language: session.data.language,
-                        })
-                      }
-                    >
-                      Post to discussion
-                    </button>
-                  )}
                   <button
                     type="button"
                     className="button secondary"
@@ -594,11 +576,6 @@ export function SessionView({
                       visible={tab === "whiteboard"}
                       title={session.data.title}
                       actions={boardActions}
-                      onPost={
-                        canPost
-                          ? (file) => setPosting({ kind: "board", file })
-                          : undefined
-                      }
                     />
                   </Suspense>
                 )}
@@ -610,7 +587,7 @@ export function SessionView({
           <section aria-labelledby="participants-heading">
             <div className="session-side-heading">
               <h3 id="participants-heading">Participants</h3>
-              {manager && sessionActive && !inviting && (
+              {sessionActive && !inviting && (
                 <button
                   type="button"
                   className="text-button"
@@ -620,7 +597,7 @@ export function SessionView({
                 </button>
               )}
             </div>
-            {manager && sessionActive && inviting && (
+            {sessionActive && inviting && (
               <form
                 className="session-invite"
                 onSubmit={(event) => {
@@ -642,6 +619,21 @@ export function SessionView({
                 }}
               >
                 <label htmlFor="session-invitee">Invite a course member</label>
+                {memberError && (
+                  <p className="form-message error" role="alert">
+                    Could not load course members.
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => {
+                        setMemberError(false);
+                        setMemberRetry((value) => value + 1);
+                      }}
+                    >
+                      Retry members
+                    </button>
+                  </p>
+                )}
                 <select
                   id="session-invitee"
                   value={inviteeId}
@@ -653,7 +645,9 @@ export function SessionView({
                       ? invitable.length
                         ? "Choose a member"
                         : "Everyone is already here"
-                      : "Loading members…"}
+                      : memberError
+                        ? "Members unavailable"
+                        : "Loading members…"}
                   </option>
                   {invitable.map((member) => (
                     <option key={member.user.id} value={member.user.id}>
@@ -762,18 +756,6 @@ export function SessionView({
           </section>
         </aside>
       </div>
-      {posting && (
-        <PostToDiscussion
-          postId={session.data.anchor.postId}
-          postPath={postPath}
-          sessionTitle={session.data.title}
-          staff={staff}
-          csrfToken={csrfToken}
-          content={posting}
-          onClose={() => setPosting(undefined)}
-          onNavigate={onNavigate}
-        />
-      )}
     </section>
   );
 }

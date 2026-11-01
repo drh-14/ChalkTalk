@@ -84,12 +84,13 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   const { pool } = options;
   const metrics = createMetrics(() => server.hocuspocus.documents);
   const persisting = new Map<string, Promise<void>>();
+  const failedStores = new Set<string>();
   let listener: pg.Client | undefined;
   let sweepTimer: NodeJS.Timeout | undefined;
   let retryTimer: NodeJS.Timeout | undefined;
   let stopped = false;
 
-  /** Rechecks, from current rows, that a connected user may still edit. */
+  /** Rechecks current membership, participation, and ticket permission. */
   async function stillAuthorized(context: ConnectionContext): Promise<boolean> {
     const result = await pool.query(
       `SELECT 1
@@ -98,21 +99,25 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
        JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$2
        JOIN sessions a ON a.id=$3 AND a.user_id=$2 AND a.revoked_at IS NULL AND a.expires_at>now()
        JOIN users u ON u.id=$2 AND u.deleted_at IS NULL
-       JOIN posts p ON p.id=s.post_id
+       JOIN collaboration_participants cp ON cp.collaboration_session_id=s.id AND cp.user_id=$2
        WHERE s.id=$1 AND s.lifecycle_state='active'
-         AND (m.role IN ('ta','instructor') OR (
-           p.deleted_at IS NULL AND p.duplicate_status<>'confirmed'
-           AND p.scheduled_for IS NULL AND (NOT p.private OR p.author_user_id=$2) AND (
-             s.created_by_user_id=$2 OR EXISTS (
-               SELECT 1 FROM collaboration_participants cp
-               WHERE cp.collaboration_session_id=s.id AND cp.user_id=$2))))`,
-      [context.sessionId, context.userId, context.authSessionId],
+         AND ($4='read' OR cp.permission='edit')`,
+      [
+        context.sessionId,
+        context.userId,
+        context.authSessionId,
+        context.permission,
+      ],
     );
     return Boolean(result.rowCount);
   }
 
   /** Serializes stores per session so an older state never overwrites a newer one. */
-  function persist(sessionId: string, document: Y.Doc): Promise<void> {
+  function persist(
+    sessionId: string,
+    document: Y.Doc,
+    finalize = false,
+  ): Promise<void> {
     const previous = persisting.get(sessionId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
@@ -122,18 +127,67 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
         const text = document.getText("content").toString();
         const whiteboard = JSON.stringify(whiteboardProjection(document));
         try {
-          await pool.query(
-            `INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,whiteboard_projection,persisted_at,persistence_revision)
+          const store = async (db: Pick<Pool, "query">) =>
+            db.query(
+              `INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection,whiteboard_projection,persisted_at,persistence_revision)
              VALUES ($1,$2,$3,$4,clock_timestamp(),1)
              ON CONFLICT (collaboration_session_id) DO UPDATE SET yjs_state=excluded.yjs_state,
                text_projection=excluded.text_projection,
                whiteboard_projection=excluded.whiteboard_projection,persisted_at=excluded.persisted_at,
                persistence_revision=collaboration_documents.persistence_revision+1`,
-            [sessionId, state, text, whiteboard],
-          );
+              [sessionId, state, text, whiteboard],
+            );
+          if (finalize) {
+            const client = await pool.connect();
+            try {
+              await client.query("BEGIN");
+              const row = await client.query<{ lifecycle_state: string }>(
+                "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1 FOR UPDATE",
+                [sessionId],
+              );
+              if (row.rows[0]?.lifecycle_state === "ending") {
+                await store(client);
+                await client.query(
+                  "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=true,version=version+1,updated_at=clock_timestamp() WHERE id=$1",
+                  [sessionId],
+                );
+              }
+              await client.query("COMMIT");
+            } catch (error) {
+              await client.query("ROLLBACK");
+              throw error;
+            } finally {
+              client.release();
+            }
+          } else {
+            const client = await pool.connect();
+            try {
+              await client.query("BEGIN");
+              const row = await client.query<{
+                final_snapshot_confirmed: boolean;
+              }>(
+                "SELECT final_snapshot_confirmed FROM collaboration_sessions WHERE id=$1 FOR UPDATE",
+                [sessionId],
+              );
+              // A delayed debounce or disconnect store must never overwrite
+              // the durable final snapshot after it has been confirmed.
+              if (row.rows[0] && !row.rows[0].final_snapshot_confirmed)
+                await store(client);
+              await client.query("COMMIT");
+            } catch (error) {
+              await client.query("ROLLBACK");
+              throw error;
+            } finally {
+              client.release();
+            }
+          }
+          failedStores.delete(sessionId);
         } catch (error) {
           // A session removed with its post or course has nothing left to store.
-          if ((error as { code?: string }).code !== "23503") throw error;
+          if ((error as { code?: string }).code !== "23503") {
+            failedStores.add(sessionId);
+            throw error;
+          }
         } finally {
           stopTimer();
         }
@@ -165,15 +219,20 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
 
   async function finishSession(sessionId: string, markEnded: boolean) {
     const document = server.hocuspocus.documents.get(documentName(sessionId));
-    if (document) await persist(sessionId, document);
-    if (markEnded)
-      await pool.query(
-        "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND lifecycle_state='ending'",
-        [sessionId],
-      );
-    if (document) {
-      document.broadcastStateless(JSON.stringify({ type: "session-ended" }));
-      closeAll(document, CLOSE_REASONS.ended);
+    try {
+      if (document) await persist(sessionId, document, markEnded);
+      if (markEnded && !document)
+        await pool.query(
+          "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=false,version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND lifecycle_state='ending'",
+          [sessionId],
+        );
+    } finally {
+      // A failed store must not leave editors connected to an ending session.
+      // The API's timeout fallback keeps its snapshot explicitly unconfirmed.
+      if (document) {
+        document.broadcastStateless(JSON.stringify({ type: "session-ended" }));
+        closeAll(document, CLOSE_REASONS.ended);
+      }
     }
   }
 
@@ -243,7 +302,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     await touch(connected);
     const ended = await pool.query<{ id: string }>(
       `UPDATE collaboration_sessions
-       SET lifecycle_state='ended',ended_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp()
+       SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=false,version=version+1,updated_at=clock_timestamp()
        WHERE lifecycle_state='active'
          AND last_active_at < now() - make_interval(mins => $1)
          AND NOT (id = ANY($2::uuid[]))
@@ -261,6 +320,20 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
 
   async function sweep() {
     await recheck(() => true);
+    for (const sessionId of failedStores) {
+      const document = server.hocuspocus.documents.get(documentName(sessionId));
+      if (!document) {
+        failedStores.delete(sessionId);
+        continue;
+      }
+      try {
+        await persist(sessionId, document);
+        if (document.getConnectionsCount() === 0)
+          await server.hocuspocus.unloadDocument(document);
+      } catch {
+        // Keep the in-memory document and retry at the next sweep.
+      }
+    }
     await endIdle();
   }
 
@@ -405,12 +478,13 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     async beforeSync({ type, payload, document, connection }) {
       // SyncStep2 (1) and Update (2) carry document changes.
       if (type !== 1 && type !== 2) return;
+      const context = connection.context as ConnectionContext | undefined;
+      if (!context || !(await stillAuthorized(context))) {
+        close(connection, CLOSE_REASONS.removed);
+        throw new Rejection("Not authorized");
+      }
       // A viewer's updates are dropped unapplied, so they are not validated.
-      if (
-        (connection.context as ConnectionContext | undefined)?.permission ===
-        "read"
-      )
-        return;
+      if (context.permission === "read") return;
       if (!acceptsUpdate(document, payload, MAX_DOCUMENT_CHARACTERS)) {
         metrics.rejectedUpdates.inc();
         close(connection, CLOSE_REASONS.invalid);
@@ -468,15 +542,50 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     },
     async stop() {
       stopped = true;
+      const deadline = Date.now() + 5000;
+      const bounded = async <T>(work: Promise<T>): Promise<T> => {
+        let timeout: NodeJS.Timeout | undefined;
+        try {
+          return await Promise.race([
+            work,
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      "Collaboration shutdown timed out; unsaved document state may remain",
+                    ),
+                  ),
+                Math.max(1, deadline - Date.now()),
+              );
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+      };
       if (sweepTimer) clearInterval(sweepTimer);
       if (retryTimer) clearTimeout(retryTimer);
       const current = listener;
       listener = undefined;
-      await current?.end().catch(() => undefined);
+      if (current) await bounded(current.end().catch(() => undefined));
       server.hocuspocus.flushPendingStores();
-      await Promise.allSettled([...persisting.values()]);
-      await server.destroy();
-      await Promise.allSettled([...persisting.values()]);
+      await bounded(Promise.allSettled([...persisting.values()]));
+      // Hocuspocus keeps a document in memory after a failed store. Retry it
+      // once on clean shutdown, then unload disconnected documents so a
+      // recovered database does not leave destroy() waiting indefinitely.
+      for (const [name, document] of server.hocuspocus.documents) {
+        const sessionId = sessionIdOf(name);
+        if (!sessionId || document.getConnectionsCount() > 0) continue;
+        try {
+          await bounded(persist(sessionId, document));
+        } catch (error) {
+          console.error("Collaboration document is not durably stored", error);
+        }
+        await bounded(server.hocuspocus.unloadDocument(document));
+      }
+      await bounded(server.destroy());
+      await bounded(Promise.allSettled([...persisting.values()]));
     },
   };
 }

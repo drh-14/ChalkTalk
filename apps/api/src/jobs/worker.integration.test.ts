@@ -957,17 +957,11 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         "INSERT INTO course_memberships (course_id,user_id,role,activity_emails) VALUES ($1,$2,'student',true),($1,$3,'ta',false)",
         [courseId, studentId, taId],
       );
-      const post = await new PostService(pool).create(courseId, studentId, {
-        type: "question",
-        title: "Loops",
-        bodyMarkdown: "Body",
-      });
       const sessions = new CollaborationSessionService(pool, {
         webSocketUrl: "wss://app.example.edu/collaboration",
       });
       const session = (
         await sessions.create(courseId, studentId, {
-          postId: post.value.id,
           title: "Why does my\nloop never stop?",
         })
       ).value;
@@ -998,7 +992,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         {
           to: `ta-${sequence}@jobs.example.edu`,
           subject: "Sam Student invited you to a live session",
-          text: `Sam Student invited you to the live session "Why does my loop never stop?" in CS ${sequence}.\n\nhttps://app.example.edu/courses/${courseId}/sessions/${sessionId}\n\nOnly invited participants and course staff can open it.`,
+          text: `Sam Student invited you to the live session "Why does my loop never stop?" in CS ${sequence}.\n\nhttps://app.example.edu/courses/${courseId}/sessions/${sessionId}\n\nOnly current session participants can open it.`,
         },
       ]);
       expect(await status(jobId)).toBe("succeeded");
@@ -1034,6 +1028,127 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       await first.sessions.invite(first.sessionId, first.studentId, first.taId);
       while (await worker.runOnce());
       expect(delivered).toHaveLength(1);
+    });
+
+    it("sends a current invitation when its noncreator inviter has left the course", async () => {
+      await fresh();
+      const seeded = await seedInvitation();
+      const otherUserId = uuidv7();
+      await pool.query(
+        "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,'Pat Participant','x')",
+        [
+          otherUserId,
+          organizationId,
+          `participant-${sequence}@jobs.example.edu`,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student')",
+        [seeded.courseId, otherUserId],
+      );
+      await seeded.sessions.invite(
+        seeded.sessionId,
+        seeded.studentId,
+        otherUserId,
+      );
+      await seeded.sessions.remove(
+        seeded.sessionId,
+        seeded.studentId,
+        seeded.taId,
+      );
+      await seeded.sessions.invite(seeded.sessionId, otherUserId, seeded.taId);
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [seeded.courseId, otherUserId],
+      );
+      while (await worker.runOnce());
+      expect(delivered).toEqual([
+        expect.objectContaining({
+          to: `ta-${sequence}@jobs.example.edu`,
+          subject: "Pat Participant invited you to a live session",
+        }),
+      ]);
+    });
+
+    it("serializes invitation delivery with participant removal", async () => {
+      await fresh();
+      const seeded = await seedInvitation();
+      let startSend!: () => void;
+      let releaseSend!: () => void;
+      const started = new Promise<void>((resolve) => {
+        startSend = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        releaseSend = resolve;
+      });
+      const slowWorker = new JobWorker(
+        pool,
+        "slow-invitation-worker",
+        {
+          send: async (message) => {
+            startSend();
+            await held;
+            delivered.push(message);
+          },
+        },
+        "https://app.example.edu",
+      );
+      const sending = slowWorker.runOnce();
+      await started;
+      let removalCommitted = false;
+      const removing = seeded.sessions
+        .remove(seeded.sessionId, seeded.studentId, seeded.taId)
+        .then(() => {
+          removalCommitted = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(removalCommitted).toBe(false);
+      releaseSend();
+      await sending;
+      await removing;
+      expect(delivered).toHaveLength(1);
+      expect(await status(seeded.jobId)).toBe("succeeded");
+    });
+
+    it("cancels an invitation retry after a network drop and committed removal", async () => {
+      await fresh();
+      const seeded = await seedInvitation();
+      let startSend!: () => void;
+      let releaseSend!: () => void;
+      const started = new Promise<void>((resolve) => {
+        startSend = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        releaseSend = resolve;
+      });
+      const failingWorker = new JobWorker(
+        pool,
+        "dropped-invitation-worker",
+        {
+          send: async () => {
+            startSend();
+            await held;
+            throw new Error("network dropped before acceptance");
+          },
+        },
+        "https://app.example.edu",
+      );
+      const sending = failingWorker.runOnce();
+      await started;
+      const removing = seeded.sessions.remove(
+        seeded.sessionId,
+        seeded.studentId,
+        seeded.taId,
+      );
+      releaseSend();
+      await sending;
+      await removing;
+      await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
+        seeded.jobId,
+      ]);
+      expect(await worker.runOnce()).toBe(true);
+      expect(delivered).toEqual([]);
+      expect(await status(seeded.jobId)).toBe("succeeded");
     });
   });
 

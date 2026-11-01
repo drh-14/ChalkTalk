@@ -16,7 +16,6 @@ import { Discussion } from "./views.js";
 // These tests own their mocked requests; the live session lists have their own tests.
 vi.mock("../sessions/LiveSessionLists.js", () => ({
   YourLiveSessions: () => null,
-  CourseLiveSessions: () => null,
 }));
 
 Range.prototype.getClientRects = () => [] as unknown as DOMRectList;

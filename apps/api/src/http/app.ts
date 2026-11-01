@@ -928,13 +928,9 @@ function collaborationLanguage(value: unknown): CollaborationLanguage {
 }
 
 function collaborationCreateBody(value: unknown): CreateCollaborationSession {
-  const body = strictBody(value, ["anchor", "title", "language"], ["anchor"]);
-  const anchor = strictBody(body.anchor, ["postId"], ["postId"]);
+  const body = strictBody(value, ["title", "language"], ["title"]);
   return {
-    postId: stringWithin(anchor.postId, "Anchor", 1, 255),
-    ...(body.title === undefined
-      ? {}
-      : { title: collaborationTitle(body.title) }),
+    title: collaborationTitle(body.title),
     ...(body.language === undefined
       ? {}
       : { language: collaborationLanguage(body.language) }),
@@ -965,20 +961,12 @@ function collaborationListQuery(query: Request["query"]) {
     key: "status",
     values: ["active", "ended"],
   });
-  if (query.anchorType !== undefined && query.anchorType !== "post")
-    throw new AuthError(400, "invalid_request", "Filter is invalid");
-  if (
-    query.anchorId !== undefined &&
-    (typeof query.anchorId !== "string" ||
-      query.anchorId.length < 1 ||
-      query.anchorId.length > 255)
-  )
+  if (query.anchorType !== undefined || query.anchorId !== undefined)
     throw new AuthError(400, "invalid_request", "Filter is invalid");
   return {
     limit,
     cursor,
     status: filter as "active" | "ended" | undefined,
-    anchorId: query.anchorId as string | undefined,
   };
 }
 

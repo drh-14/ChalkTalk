@@ -36,6 +36,7 @@ import { useThreadEvents } from "../threads/live.js";
 import { CourseStatistics } from "../statistics/views.js";
 import { Discussion } from "../posts/views.js";
 import { SessionView } from "../sessions/SessionView.js";
+import { CourseCollaboration } from "../sessions/SessionsPanel.js";
 import { YourLiveSessions } from "../sessions/LiveSessionLists.js";
 import { sessionRoute } from "../sessions/client.js";
 import { NotificationBell } from "../notifications/NotificationBell.js";
@@ -1048,11 +1049,13 @@ function CourseFrame({
         ? "resources"
         : route.name === "course-threads"
           ? "threads"
-          : route.name === "course-statistics"
-            ? "statistics"
-            : route.name === "course-session"
-              ? "session"
-              : "discussion";
+          : route.name === "course-collaboration"
+            ? "collaboration"
+            : route.name === "course-statistics"
+              ? "statistics"
+              : route.name === "course-session"
+                ? "session"
+                : "discussion";
   const discussionPath = `/courses/${encodeURIComponent(courseId)}`;
   const tabs = [
     { key: "discussion", label: "Discussion", path: discussionPath },
@@ -1060,6 +1063,11 @@ function CourseFrame({
       key: "threads",
       label: "Threads",
       path: `${discussionPath}/threads`,
+    },
+    {
+      key: "collaboration",
+      label: "Collaboration",
+      path: `${discussionPath}/collaboration`,
     },
     {
       key: "resources",
@@ -1113,7 +1121,7 @@ function CourseFrame({
                 href={tab.path}
                 aria-current={
                   section === tab.key ||
-                  (section === "session" && tab.key === "discussion")
+                  (section === "session" && tab.key === "collaboration")
                     ? "page"
                     : undefined
                 }
@@ -1180,6 +1188,16 @@ function CourseFrame({
             staff={staff === true}
             csrfToken={session.csrfToken}
             onNavigate={onNavigate}
+          />
+        ) : section === "collaboration" ? (
+          <CourseCollaboration
+            key={courseId}
+            courseId={courseId}
+            active={visibleCourse.data.status === "active"}
+            csrfToken={session.csrfToken}
+            onOpen={(sessionId) =>
+              onNavigate(sessionRoute(courseId, sessionId))
+            }
           />
         ) : section === "resources" ? (
           <CourseResourcesArea
@@ -1325,6 +1343,7 @@ export function App() {
           route.name === "course-settings" ||
           route.name === "course-resources" ||
           route.name === "course-threads" ||
+          route.name === "course-collaboration" ||
           route.name === "course-statistics" ||
           route.name === "course-session"
         )
@@ -1384,6 +1403,7 @@ export function App() {
       route.name === "course-settings" ||
       route.name === "course-resources" ||
       route.name === "course-threads" ||
+      route.name === "course-collaboration" ||
       route.name === "course-statistics" ||
       route.name === "course-session") &&
     route.courseId &&

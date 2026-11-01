@@ -8,7 +8,9 @@ Live sessions are edited over a WebSocket served by the collaboration server, a 
 2. Open `webSocketUrl`. It contains no credentials. The browser's `Origin` must exactly match a configured HTTPS frontend origin.
 3. Join the document named `documentId` (`collaboration-session:{collaborationSessionId}`), sending `ticket` as the Hocuspocus authentication token.
 
-The server consumes the ticket in the same database transaction that accepts the connection. A ticket is accepted only once, only before `expiresAt`, only for its own document, and only while its login session is valid, the course and session are active, and the user is still the creator, a current course TA or instructor, or a current invitee. Identity comes only from the ticket; the server never accepts a client-supplied user ID, role, or name.
+The server consumes the ticket in the same database transaction that accepts the connection. A ticket is accepted only once, only before `expiresAt`, only for its own document, and only while its login session is valid, the course and session are active, and the user is still a current course member and an explicit session participant. Identity comes only from the ticket; the server never accepts a client-supplied user ID, role, or name.
+
+The server rechecks membership, participant permission, and lifecycle before accepting or persisting edits. Removing a participant revokes unused tickets and closes their active connection promptly. An edit authorized before removal commits may finish afterward; new tickets and edits are denied once removal commits. A disconnected client must obtain a fresh ticket and cannot replay edits after access is revoked.
 
 ## Document
 
@@ -40,7 +42,7 @@ The collaboration server records when each session last had a connected particip
 
 ## Presence
 
-Clients publish cursor and selection positions through Yjs awareness. On the whiteboard they also publish `whiteboardPointer`: `{ x, y, tool, button }` in scene coordinates, with `tool` either `pointer` or `laser` and `button` either `up` or `down`, or `null` after leaving the whiteboard. Before applying or relaying any awareness update, the server overwrites each state's `user` field with `{ userId, name, color }` from the authenticated connection, so cursor and pointer labels always show the participant's real account display name. Sessions are private, so participants see each other's names even when the anchor post is anonymous.
+Clients publish cursor and selection positions through Yjs awareness. On the whiteboard they also publish `whiteboardPointer`: `{ x, y, tool, button }` in scene coordinates, with `tool` either `pointer` or `laser` and `button` either `up` or `down`, or `null` after leaving the whiteboard. Before applying or relaying any awareness update, the server overwrites each state's `user` field with `{ userId, name, color }` from the authenticated connection, so cursor and pointer labels always show the participant's real account display name. Sessions are private; participants see one another's real account display names.
 
 ## Server messages
 
@@ -58,7 +60,7 @@ Hocuspocus reports a document-level close to the client with code `1000`; the re
 
 | Reason           | Meaning                                                                                       | Client action                                                                  |
 | ---------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `session-ended`  | The session ended, went idle, or its course was archived or its post removed.                 | Show the final text read-only from the snapshot route. Do not reconnect.       |
+| `session-ended`  | The session ended, went idle, its creator left the course, or its course was archived.                 | Show the final text read-only from the snapshot route. Do not reconnect.       |
 | `access-removed` | The user was removed from the session, left or lost the course, or their login session ended. | Show an access-removed state. Do not reconnect.                                |
 | `invalid-update` | The client sent an oversized message or an update outside the allowed document shape.         | Keep the local text visible as unsaved; reconnect with a new ticket to resync. |
 
@@ -68,4 +70,4 @@ An authentication failure is reported through the provider's authentication-fail
 
 Tickets are single-use. After any disconnect that is not one of the final reasons above, request a new ticket before reconnecting. Local edits made while disconnected merge into the document on reconnect if the user is still authorized and the session is still active.
 
-Thread conversations are not collaboration-session anchors.
+Collaboration sessions belong to courses rather than posts or Thread conversations. Post edits, merges, and deletion do not end or delete them.

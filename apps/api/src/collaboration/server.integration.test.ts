@@ -63,7 +63,7 @@ integration("collaboration server", () => {
   async function newSession(creator = "alice", invitees: string[] = ["bob"]) {
     const session = (
       await service.create(fixture.courseId, fixture.users[creator]!, {
-        postId: fixture.postId,
+        title: "Course collaboration",
         language: "python",
       })
     ).value;
@@ -155,11 +155,11 @@ integration("collaboration server", () => {
   afterAll(async () => {
     await collaboration?.stop();
     await database?.drop();
-  });
+  }, 30_000);
 
   describe("authentication", () => {
     it("accepts a valid ticket once and rejects its reuse", async () => {
-      const sessionId = await newSession();
+      const sessionId = await newSession("alice", ["bob", "tim"]);
       const ticket = (
         await service.ticket(
           sessionId,
@@ -280,6 +280,37 @@ integration("collaboration server", () => {
       const again = join("bob", sessionId);
       await until(() => again.provider.isSynced);
       await until(() => again.text.toString() === "print('hello')\n# bye");
+    });
+
+    it("retries a failed document store after database recovery", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      await pool.query(`CREATE FUNCTION reject_collaboration_store() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated storage outage'; END $$`);
+      await pool.query(`CREATE TRIGGER reject_collaboration_store
+        BEFORE INSERT OR UPDATE ON collaboration_documents
+        FOR EACH ROW EXECUTE FUNCTION reject_collaboration_store()`);
+      try {
+        alice.text.insert(0, "recovered text");
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        const before = await pool.query(
+          "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+          [sessionId],
+        );
+        expect(before.rowCount).toBe(0);
+      } finally {
+        await pool.query(
+          "DROP TRIGGER reject_collaboration_store ON collaboration_documents",
+        );
+        await pool.query("DROP FUNCTION reject_collaboration_store()");
+      }
+      await collaboration.sweep();
+      const after = await pool.query<{ text_projection: string }>(
+        "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+        [sessionId],
+      );
+      expect(after.rows[0]?.text_projection).toBe("recovered text");
     });
 
     it("rejects oversized, out-of-schema, and too-long updates without applying them", async () => {
@@ -494,7 +525,7 @@ integration("collaboration server", () => {
       client.document.getMap("whiteboard");
 
     it("merges drawings, rejects unsafe elements without broadcast, and persists a projection", async () => {
-      const sessionId = await newSession();
+      const sessionId = await newSession("alice", ["bob", "tim"]);
       const alice = join("alice", sessionId);
       const bob = join("bob", sessionId);
       await until(() => alice.provider.isSynced && bob.provider.isSynced);
@@ -590,12 +621,23 @@ integration("collaboration server", () => {
   describe("revocation and ending", () => {
     it("closes a removed invitee within 5 seconds", async () => {
       const sessionId = await newSession();
+      const alice = join("alice", sessionId);
       const bob = join("bob", sessionId);
-      await until(() => bob.provider.isSynced);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
       await service.remove(sessionId, fixture.users.alice!, fixture.users.bob!);
       const elapsed = await until(() => bob.state.closeReason !== undefined);
       expect(bob.state.closeReason).toBe(CLOSE_REASONS.removed);
       expect(elapsed).toBeLessThan(5000);
+      await expect(
+        service.ticket(
+          sessionId,
+          fixture.users.bob!,
+          authSessions[fixture.users.bob!]!,
+        ),
+      ).rejects.toMatchObject({ status: 404 });
+      bob.text.insert(0, "after removal");
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(alice.text.toString()).not.toContain("after removal");
     });
 
     it("closes a member who leaves the course and a user who logs out", async () => {
@@ -626,12 +668,11 @@ integration("collaboration server", () => {
       ]);
     });
 
-    it("closes and refuses a classmate once the anchor post is private", async () => {
+    it("does not grant staff override access and ignores the former post privacy", async () => {
       const sessionId = await newSession("alice", ["bob", "tim"]);
       const bob = join("bob", sessionId);
       const tim = join("tim", sessionId);
       await until(() => bob.provider.isSynced && tim.provider.isSynced);
-      // The API never makes a public post private; this checks the server's own rule.
       await pool.query("UPDATE posts SET private=true WHERE id=$1", [
         fixture.postId,
       ]);
@@ -640,13 +681,16 @@ integration("collaboration server", () => {
           fixture.users.bob!,
           fixture.users.tim!,
         ]);
-        await until(() => bob.state.closeReason === CLOSE_REASONS.removed);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(bob.state.closeReason).toBeUndefined();
         expect(tim.state.closeReason).toBeUndefined();
-        const again = join("bob", sessionId);
-        await until(
-          () => again.state.authFailed || again.state.closeReason !== undefined,
-        );
-        expect(again.provider.isSynced).toBe(false);
+        await expect(
+          service.ticket(
+            sessionId,
+            fixture.users.ina!,
+            authSessions[fixture.users.ina!]!,
+          ),
+        ).rejects.toMatchObject({ status: 404 });
       } finally {
         await pool.query("UPDATE posts SET private=false WHERE id=$1", [
           fixture.postId,
@@ -689,11 +733,64 @@ integration("collaboration server", () => {
       expect(snapshot).toMatchObject({
         sessionStatus: "ended",
         content: "while True:\n    break\n",
+        finalSnapshotConfirmed: true,
+      });
+      const stale = new Y.Doc();
+      stale.getText("content").insert(0, "older queued write");
+      await collaboration.persist(sessionId, stale);
+      await expect(
+        service.snapshot(sessionId, fixture.users.alice!),
+      ).resolves.toMatchObject({
+        content: "while True:\n    break\n",
+        finalSnapshotConfirmed: true,
       });
       await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
       expect(
         alice.state.stateless.map((payload) => JSON.parse(payload).type),
       ).toContain("session-ended");
+    });
+
+    it("does not claim a confirmed final snapshot when the final database flush fails", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      alice.text.insert(0, "possibly unsaved");
+      await pool.query(`CREATE FUNCTION reject_collaboration_store() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated storage outage'; END $$`);
+      await pool.query(`CREATE TRIGGER reject_collaboration_store
+        BEFORE INSERT OR UPDATE ON collaboration_documents
+        FOR EACH ROW EXECUTE FUNCTION reject_collaboration_store()`);
+      try {
+        const current = await service.get(sessionId, fixture.users.alice!);
+        const ended = await service.update(
+          sessionId,
+          fixture.users.alice!,
+          `"v${current.version}"`,
+          { status: "ended" },
+        );
+        expect(ended.finalSnapshotConfirmed).toBe(false);
+        const stored = await pool.query<{
+          lifecycle_state: string;
+          final_snapshot_confirmed: boolean;
+        }>(
+          "SELECT lifecycle_state,final_snapshot_confirmed FROM collaboration_sessions WHERE id=$1",
+          [sessionId],
+        );
+        expect(stored.rows[0]).toMatchObject({
+          lifecycle_state: "ended",
+          final_snapshot_confirmed: false,
+        });
+        await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
+        const shutdownStarted = Date.now();
+        await collaboration.stop();
+        expect(Date.now() - shutdownStarted).toBeLessThan(5000);
+      } finally {
+        await pool.query(
+          "DROP TRIGGER reject_collaboration_store ON collaboration_documents",
+        );
+        await pool.query("DROP FUNCTION reject_collaboration_store()");
+        await startServer();
+      }
     });
 
     it("rejects a document name that is not a session", async () => {

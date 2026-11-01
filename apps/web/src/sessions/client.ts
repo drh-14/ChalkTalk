@@ -13,29 +13,6 @@ export const SESSION_LANGUAGES = [
 ] as const;
 export type SessionLanguage = (typeof SESSION_LANGUAGES)[number]["value"];
 
-const TAG_LANGUAGES: Record<string, SessionLanguage> = {
-  python: "python",
-  py: "python",
-  java: "java",
-  c: "c",
-  cpp: "cpp",
-  "c++": "cpp",
-  javascript: "javascript",
-  js: "javascript",
-  typescript: "typescript",
-  ts: "typescript",
-  sql: "sql",
-};
-
-/** The first post tag that names a session language, else plain text. */
-export function languageFromTags(tags: readonly string[]): SessionLanguage {
-  for (const tag of tags) {
-    const language = TAG_LANGUAGES[tag.trim().toLowerCase()];
-    if (language) return language;
-  }
-  return "plaintext";
-}
-
 export type SessionParticipant = {
   userId: string;
   displayName: string;
@@ -46,7 +23,7 @@ export type CodeSession = {
   id: string;
   courseId: string;
   status: "active" | "ended";
-  anchor: { postId: string };
+  finalSnapshotConfirmed: boolean | null;
   title: string;
   language: SessionLanguage;
   createdBy: string;
@@ -74,6 +51,8 @@ export type SessionSnapshot = {
   whiteboard: ({ id: string; type: string } & Record<string, unknown>)[];
   persistedAt: string;
   capturedAt: string;
+  finalSnapshotConfirmed: boolean | null;
+  lastSavedWarning: boolean;
 };
 
 async function receive<T>(response: Response): Promise<T> {
@@ -140,17 +119,12 @@ const sessionPath = (sessionId: string) =>
 export async function listSessions(
   courseId: string,
   options: {
-    postId?: string;
     status?: "active" | "ended";
     cursor?: string;
     signal?: AbortSignal;
   } = {},
 ): Promise<Page<CodeSession>> {
   const query = new URLSearchParams();
-  if (options.postId) {
-    query.set("anchorType", "post");
-    query.set("anchorId", options.postId);
-  }
   if (options.status) query.set("status", options.status);
   if (options.cursor) query.set("cursor", options.cursor);
   const suffix = query.size ? `?${query}` : "";
@@ -179,7 +153,7 @@ export async function listMySessions(
 
 export async function createSession(
   courseId: string,
-  input: { postId: string; language: SessionLanguage; title?: string },
+  input: { language: SessionLanguage; title: string },
   csrfToken: string,
 ): Promise<Versioned<CodeSession>> {
   return versioned(
@@ -188,9 +162,8 @@ export async function createSession(
       `/api/v1/courses/${encodeURIComponent(courseId)}/collaboration-sessions`,
       csrfToken,
       {
-        anchor: { postId: input.postId },
         language: input.language,
-        ...(input.title?.trim() ? { title: input.title.trim() } : {}),
+        title: input.title.trim(),
       },
       { "Idempotency-Key": crypto.randomUUID() },
     ),
