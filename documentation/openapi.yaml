@@ -334,8 +334,8 @@ paths:
       summary: Request account email verification
       description:
         Request account email verification before account creation or a same-school
-        email change. The server enforces the deployment's allowed school-domain policy
-        and returns the same response for every allowed-domain request. If delivery
+        email change. The server requires a valid email domain ending exactly in .edu (including subdomains)
+        and returns the same response for every eligible .edu request. If delivery
         is appropriate, it sends a deployment-configured HTTPS link to the web client
         containing a 30-minute, single-use opaque token; clients cannot supply a redirect
         destination. Tokens are stored only as hashes, and the latest request invalidates
@@ -385,11 +385,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 email_domain_not_allowed:
-                  summary: The normalized email domain is not allowed by this deployment.
+                  summary: The normalized email domain is not a valid .edu domain.
                   value:
                     error:
                       code: email_domain_not_allowed
-                      message: The normalized email domain is not allowed by this deployment.
+                      message: The normalized email domain is not a valid .edu domain.
                       requestId: req_createAccountVerificationRequest
                       details: []
         "429":
@@ -542,6 +542,14 @@ paths:
                     error:
                       code: verification_token_invalid
                       message: The verification token is invalid, expired, or superseded by a later request.
+                      requestId: req_createAccount
+                      details: []
+                email_domain_not_allowed:
+                  summary: The verified email in the token is not a valid .edu address.
+                  value:
+                    error:
+                      code: email_domain_not_allowed
+                      message: Email must use a valid .edu domain
                       requestId: req_createAccount
                       details: []
                 weak_password:
@@ -1076,11 +1084,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 email_domain_not_allowed:
-                  summary: The replacement email does not use the account's current canonical school domain.
+                  summary: The replacement email is not a valid .edu address in the account's current canonical school domain.
                   value:
                     error:
                       code: email_domain_not_allowed
-                      message: The replacement email does not use the account's current canonical school domain.
+                      message: The replacement email is not a valid .edu address in the account's current canonical school domain.
                       requestId: req_updateCurrentUser
                       details: []
                 validation_failed:

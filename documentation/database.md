@@ -7,7 +7,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 ### `organizations`
 
 - `id`: `uuid_v7`; primary key.
-- `domain`: `varchar(253)`; unique school domain, stored normalized (trimmed and lowercased).
+- `domain`: `varchar(253)`; unique exact school domain, stored normalized (trimmed and lowercased). New accounts require a verified, syntactically valid `.edu` email domain (including subdomains) at the authentication API boundary; existing non-`.edu` accounts remain stored for login and password reset.
 - `name`: `varchar(200)`.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.

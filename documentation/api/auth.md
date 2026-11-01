@@ -6,7 +6,7 @@ All browser requests originate from a deployment-configured HTTPS frontend origi
 
 ### **`POST /api/v1/account-verification-requests`**
 
-Requests verification of an account email before account creation or a same-school email change. The server normalizes the email and enforces the deployment's allowed school-domain policy. For every request with an allowed domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits default to five requests per normalized email per hour and 100 requests per source IP per hour; deployments may configure both limits. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+Requests verification of an account email before account creation or a same-school email change. The server normalizes the email and enforces a valid email domain ending exactly in `.edu` (including subdomains). For every request with an eligible `.edu` domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits default to five requests per normalized email per hour and 100 requests per source IP per hour; deployments may configure both limits. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
 
 **Authentication:** None.
 
@@ -83,7 +83,7 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 ##### `422 Unprocessable Content`
 
-`email_domain_not_allowed`: The normalized email domain is not allowed by this deployment.
+`email_domain_not_allowed`: The normalized email domain is not a valid `.edu` domain.
 
 ##### `429 Too Many Requests`
 
@@ -103,7 +103,7 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 ### **`POST /api/v1/users`**
 
-Creates an account from a verified email token. The server hashes the supplied opaque token to locate a valid, unexpired proof, derives the normalized verified email from that proof, and never accepts an email separately. It atomically creates the account, finds or creates the organization for the canonical school domain, assigns it directly through `users.organization_id`, and consumes the single-use proof. ChalkTalk has no organization-membership table. A failed transaction consumes nothing. The password is accepted only at this boundary and is never returned. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+Creates an account from a verified email token. The server hashes the supplied opaque token to locate a valid, unexpired proof, derives the normalized verified email from that proof, rechecks its valid `.edu` domain, and never accepts an email separately. It atomically creates the account, finds or creates the organization for the canonical school domain, assigns it directly through `users.organization_id`, and consumes the single-use proof. ChalkTalk has no organization-membership table. A failed transaction consumes nothing. The password is accepted only at this boundary and is never returned. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
 
 **Authentication:** None.
 
@@ -215,6 +215,8 @@ curl --request POST '/api/v1/users' \
 ##### `422 Unprocessable Content`
 
 `verification_token_invalid`: The verification token is invalid, expired, or superseded by a later request.
+
+`email_domain_not_allowed`: The verified email in the token is not a valid `.edu` address.
 
 `weak_password`: The password or another field fails validation.
 
@@ -643,7 +645,7 @@ curl --request GET '/api/v1/users/me' \
 
 ### **`PATCH /api/v1/users/me`**
 
-Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have the same canonical school domain as the account's current email. The server updates the account and consumes the proof atomically; its direct organization association and course memberships do not change. A failed transaction consumes nothing.
+Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have a valid `.edu` domain matching the account's current canonical school domain exactly. The server updates the account and consumes the proof atomically; its direct organization association and course memberships do not change. A failed transaction consumes nothing.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -764,7 +766,7 @@ curl --request PATCH '/api/v1/users/me' \
 
 ##### `422 Unprocessable Content`
 
-`email_domain_not_allowed`: The replacement email does not use the account's current canonical school domain.
+`email_domain_not_allowed`: The replacement email is not a valid `.edu` address in the account's current canonical school domain.
 
 `validation_failed`: No valid editable field was supplied.
 

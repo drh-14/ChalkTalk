@@ -1,4 +1,6 @@
 import { v7 as uuidv7 } from "uuid";
+import { randomUUID } from "node:crypto";
+import argon2 from "argon2";
 import { Pool, type PoolClient } from "pg";
 import request from "supertest";
 import {
@@ -12,6 +14,7 @@ import {
 import { createApp } from "../http/app.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { SESSION_COOKIE_NAME } from "./crypto.js";
+import { hashOpaqueToken } from "./crypto.js";
 import { AuthService, type EmailSender, userEtag } from "./service.js";
 import { loadEnvironment, type Environment } from "../config/environment.js";
 
@@ -189,7 +192,6 @@ integrationTest("AuthService PostgreSQL integration", () => {
     await runMigrations(pool, getMigrationDirectory());
     environment = loadEnvironment({
       AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-      ALLOWED_SCHOOL_DOMAINS: "example.edu",
       FRONTEND_ORIGINS: "https://app.example.edu",
       FRONTEND_BASE_URL: "https://app.example.edu",
     });
@@ -294,6 +296,144 @@ integrationTest("AuthService PostgreSQL integration", () => {
       { organization_id: expect.any(String), domain: "example.edu" },
     ]);
     expect(memberships.rows[0]!.exists).toBe(false);
+  });
+
+  it("admits valid .edu subdomains regardless of deployment allowlist, but rejects lookalikes and malformed labels", async () => {
+    const app = createApp({ environment, authService: service });
+    const accepted = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("Idempotency-Key", "academic-subdomain")
+      .send({ email: " Student@Dept.State.EDU " });
+    expect(accepted.status).toBe(202);
+    expect(emailSender.messages.at(-1)?.to).toBe("student@dept.state.edu");
+    await service.requestVerification("Another@NewSchool.EDU");
+    expect(emailSender.messages.at(-1)?.to).toBe("another@newschool.edu");
+
+    const countBefore = emailSender.messages.length;
+    for (const email of [
+      "student@school.edu.evil",
+      "student@school.education",
+      "student@bad-.edu",
+      "student@-bad.edu",
+      "student@bad..edu",
+      "student@bad_.edu",
+    ]) {
+      const denied = await request(app)
+        .post("/api/v1/account-verification-requests")
+        .set("Origin", environment.frontendBaseUrl)
+        .set("Idempotency-Key", `reject-${email}`)
+        .send({ email });
+      expect(denied.status, email).toBe(422);
+      expect(denied.body.error.code, email).toBe("email_domain_not_allowed");
+    }
+    expect(emailSender.messages).toHaveLength(countBefore);
+    const malformed = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({ email: "student@notedu" });
+    expect(malformed.status).toBe(422);
+    expect(malformed.body.error.code).toBe("validation_failed");
+  });
+
+  it("rejects a pre-policy non-.edu verification token without creating an account or consuming it", async () => {
+    const token = "legacy-nonacademic-verification-token";
+    await pool.query(
+      `INSERT INTO email_verification_tokens (id, email, token_hash, expires_at)
+       VALUES ($1, $2, $3, now() + interval '30 minutes')`,
+      [
+        randomUUID(),
+        "legacy@example.com",
+        hashOpaqueToken(token, environment.authTokenSecret),
+      ],
+    );
+    const app = createApp({ environment, authService: service });
+    const response = await request(app)
+      .post("/api/v1/users")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({
+        verificationToken: token,
+        password: "correct horse battery staple",
+        displayName: "Legacy",
+      });
+    expect(response.status).toBe(422);
+    expect(response.body.error.code).toBe("email_domain_not_allowed");
+    const idempotent = await request(app)
+      .post("/api/v1/users")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("Idempotency-Key", "legacy-token-creation")
+      .send({
+        verificationToken: token,
+        password: "correct horse battery staple",
+        displayName: "Legacy",
+      });
+    expect(idempotent.status).toBe(422);
+    expect(idempotent.body.error.code).toBe("email_domain_not_allowed");
+    const persisted = await pool.query<{ users: string; tokens: string }>(
+      `SELECT (SELECT count(*)::text FROM users WHERE email='legacy@example.com') AS users,
+              (SELECT count(*)::text FROM email_verification_tokens WHERE email='legacy@example.com' AND consumed_at IS NULL) AS tokens`,
+    );
+    expect(persisted.rows[0]).toEqual({ users: "0", tokens: "1" });
+  });
+
+  it("rejects a pre-policy non-.edu email-change token without changing the user or consuming proof", async () => {
+    const user = await createVerifiedUser("academic-change@example.edu");
+    const login = await service.login(
+      user.email,
+      "correct horse battery staple",
+    );
+    const token = "legacy-email-change-token";
+    await pool.query(
+      `INSERT INTO email_verification_tokens (id, email, token_hash, expires_at)
+       VALUES ($1, $2, $3, now() + interval '30 minutes')`,
+      [
+        randomUUID(),
+        "academic-change@example.com",
+        hashOpaqueToken(token, environment.authTokenSecret),
+      ],
+    );
+    await expect(
+      service.updateProfile(login.credential, userEtag(login.session.user), {
+        emailVerificationToken: token,
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "email_domain_not_allowed" });
+    const state = await pool.query<{
+      email: string;
+      version: number;
+      consumed_at: Date | null;
+    }>(
+      `SELECT u.email, u.version, t.consumed_at FROM users u CROSS JOIN email_verification_tokens t
+       WHERE u.id=$1 AND t.token_hash=$2`,
+      [user.id, hashOpaqueToken(token, environment.authTokenSecret)],
+    );
+    expect(state.rows[0]).toMatchObject({
+      email: user.email,
+      version: user.version,
+      consumed_at: null,
+    });
+  });
+
+  it("keeps login and password reset available to legacy non-.edu accounts", async () => {
+    const organizationId = uuidv7();
+    const email = "legacy-user@example.com";
+    await pool.query(
+      "INSERT INTO organizations (id,domain,name) VALUES ($1,$2,$3)",
+      [organizationId, "example.com", "Legacy"],
+    );
+    await pool.query(
+      "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,$4,$5)",
+      [
+        uuidv7(),
+        organizationId,
+        email,
+        "Legacy",
+        await argon2.hash("correct horse battery staple"),
+      ],
+    );
+    const login = await service.login(email, "correct horse battery staple");
+    expect(login.session.user.email).toBe(email);
+    await service.requestPasswordReset(email);
+    expect(emailSender.messages.at(-1)?.to).toBe(email);
   });
 
   it("returns 202 for known and unknown password-reset requests when SMTP fails", async () => {
@@ -523,7 +663,6 @@ integrationTest("AuthService PostgreSQL integration", () => {
   it("enforces profile email-change ETags and rejects a verified cross-school replacement", async () => {
     const emailChangeEnvironment = loadEnvironment({
       AUTH_TOKEN_SECRET: environment.authTokenSecret,
-      ALLOWED_SCHOOL_DOMAINS: "example.edu,other.edu",
       FRONTEND_ORIGINS: environment.frontendBaseUrl,
       FRONTEND_BASE_URL: environment.frontendBaseUrl,
     });
