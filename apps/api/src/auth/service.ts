@@ -92,7 +92,7 @@ export function normalizeEmail(value: unknown): string {
   if (typeof value !== "string")
     throw new AuthError(422, "validation_failed", "Email is required");
   const email = value.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@.]+$/.test(email)) {
+  if (!/^[^\s@]+@[^\s@]+$/.test(email) || !isValidDomain(domainFor(email))) {
     throw new AuthError(422, "validation_failed", "Email is invalid");
   }
   return email;
@@ -102,10 +102,9 @@ function domainFor(email: string): string {
   return email.slice(email.lastIndexOf("@") + 1);
 }
 
-function isAcademicDomain(domain: string): boolean {
+function isValidDomain(domain: string): boolean {
   return (
     domain.length <= 253 &&
-    domain.endsWith(".edu") &&
     /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
       domain,
     )
@@ -113,7 +112,7 @@ function isAcademicDomain(domain: string): boolean {
 }
 
 function requireAcademicEmail(email: string): void {
-  if (!isAcademicDomain(domainFor(email)))
+  if (!domainFor(normalizeEmail(email)).endsWith(".edu"))
     throw new AuthError(
       422,
       "email_domain_not_allowed",
@@ -710,10 +709,8 @@ export class AuthService {
             "verification_token_invalid",
             "Verification token is invalid",
           );
-        if (
-          !isAcademicDomain(domainFor(proof.email)) ||
-          domainFor(proof.email) !== domainFor(session.user.email)
-        )
+        requireAcademicEmail(proof.email);
+        if (domainFor(proof.email) !== domainFor(session.user.email))
           throw new AuthError(
             422,
             "email_domain_not_allowed",

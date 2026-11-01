@@ -9,15 +9,20 @@ The system SHALL require a valid, unexpired, single-use email-verification token
 - **WHEN** a client requests verification for a valid mixed-case address under a `.edu` domain or subdomain
 - **THEN** the server normalizes it and sends verification without requiring a configured school domain
 
-#### Scenario: Reject a nonacademic or invalid DNS domain
+#### Scenario: Reject a nonacademic domain
 
-- **WHEN** a client requests verification for a syntactically valid email whose domain does not end exactly in `.edu` or has invalid DNS labels
+- **WHEN** a client requests verification for a syntactically valid email whose domain does not end exactly in `.edu`
 - **THEN** the server returns `422 email_domain_not_allowed` without sending mail or persisting a verification token
 
 #### Scenario: Reject malformed email syntax
 
-- **WHEN** a client requests verification for an email with malformed syntax, such as `student@.edu` or `student@school.edu.`
+- **WHEN** a client requests verification for an email with malformed syntax or DNS labels, such as `student@.edu`, `student@school.edu.`, `student@bad..edu`, or `student@bad-.edu`
 - **THEN** the server returns `422 validation_failed` without sending mail or persisting a verification token
+
+#### Scenario: Reject a malformed legacy verification token
+
+- **WHEN** a previously issued verification token with malformed email syntax or DNS labels is submitted for account creation or an email change
+- **THEN** the server returns `422 validation_failed` without creating or changing a user or consuming the token
 
 #### Scenario: Reject a legacy nonacademic verification token
 

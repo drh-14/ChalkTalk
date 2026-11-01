@@ -385,7 +385,7 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 email_domain_not_allowed:
-                  summary: The normalized email domain is not a valid .edu domain.
+                  summary: The syntactically valid normalized email domain does not end exactly in .edu.
                   value:
                     error:
                       code: email_domain_not_allowed
@@ -553,11 +553,19 @@ paths:
                       requestId: req_createAccount
                       details: []
                 email_domain_not_allowed:
-                  summary: The verified email in the token is not a valid .edu address.
+                  summary: The syntactically valid verified email in the token does not have a .edu domain.
                   value:
                     error:
                       code: email_domain_not_allowed
                       message: Email must use a valid .edu domain
+                      requestId: req_createAccount
+                      details: []
+                validation_failed:
+                  summary: The verified email in the token has malformed syntax or DNS labels.
+                  value:
+                    error:
+                      code: validation_failed
+                      message: Email is invalid
                       requestId: req_createAccount
                       details: []
                 weak_password:
@@ -1092,7 +1100,7 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 email_domain_not_allowed:
-                  summary: The replacement email is not a valid .edu address in the account's current canonical school domain.
+                  summary: The syntactically valid replacement email is not in the account's current canonical .edu school domain.
                   value:
                     error:
                       code: email_domain_not_allowed
@@ -1100,7 +1108,7 @@ paths:
                       requestId: req_updateCurrentUser
                       details: []
                 validation_failed:
-                  summary: No valid editable field was supplied.
+                  summary: No valid editable field was supplied, or the replacement email has malformed syntax or DNS labels.
                   value:
                     error:
                       code: validation_failed

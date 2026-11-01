@@ -314,10 +314,7 @@ integrationTest("AuthService PostgreSQL integration", () => {
     for (const email of [
       "student@school.edu.evil",
       "student@school.education",
-      "student@bad-.edu",
-      "student@-bad.edu",
-      "student@bad..edu",
-      "student@bad_.edu",
+      "student@example.com",
     ]) {
       const denied = await request(app)
         .post("/api/v1/account-verification-requests")
@@ -332,6 +329,11 @@ integrationTest("AuthService PostgreSQL integration", () => {
       "student@.edu",
       "student@school.edu.",
       "student@notedu",
+      "student@bad-.edu",
+      "student@-bad.edu",
+      "student@bad..edu",
+      "student@bad_.edu",
+      `student@${"a".repeat(64)}.edu`,
     ]) {
       const malformed = await request(app)
         .post("/api/v1/account-verification-requests")
@@ -412,6 +414,43 @@ integrationTest("AuthService PostgreSQL integration", () => {
               (SELECT count(*)::text FROM email_verification_tokens WHERE email='legacy@example.com' AND consumed_at IS NULL) AS tokens`,
     );
     expect(persisted.rows[0]).toEqual({ users: "0", tokens: "1" });
+  });
+
+  it("rejects malformed-domain tokens for account creation and email changes", async () => {
+    const user = await createVerifiedUser("malformed-proof@example.edu");
+    const login = await service.login(user.email, "correct horse battery staple");
+    const token = "malformed-domain-verification-token";
+    await pool.query(
+      `INSERT INTO email_verification_tokens (id, email, token_hash, expires_at)
+       VALUES ($1, $2, $3, now() + interval '30 minutes')`,
+      [
+        randomUUID(),
+        "malformed-proof@bad-.edu",
+        hashOpaqueToken(token, environment.authTokenSecret),
+      ],
+    );
+    const app = createApp({ environment, authService: service });
+    const creation = await request(app)
+      .post("/api/v1/users")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({
+        verificationToken: token,
+        password: "correct horse battery staple",
+        displayName: "Malformed Proof",
+      });
+    expect(creation.status).toBe(422);
+    expect(creation.body.error.code).toBe("validation_failed");
+    await expect(
+      service.updateProfile(login.credential, userEtag(login.session.user), {
+        emailVerificationToken: token,
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "validation_failed" });
+    const state = await pool.query<{ consumed_at: Date | null; email: string }>(
+      `SELECT t.consumed_at, u.email FROM email_verification_tokens t CROSS JOIN users u
+       WHERE t.token_hash=$1 AND u.id=$2`,
+      [hashOpaqueToken(token, environment.authTokenSecret), user.id],
+    );
+    expect(state.rows[0]).toEqual({ consumed_at: null, email: user.email });
   });
 
   it("rejects a pre-policy non-.edu email-change token without changing the user or consuming proof", async () => {
