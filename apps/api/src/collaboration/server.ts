@@ -483,13 +483,13 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     },
 
     async beforeSync({ type, payload, document, connection }) {
-      // SyncStep2 (1) and Update (2) carry document changes.
-      if (type !== 1 && type !== 2) return;
       const context = connection.context as ConnectionContext | undefined;
       if (!context || !(await stillAuthorized(context))) {
         close(connection, CLOSE_REASONS.removed);
         throw new Rejection("Not authorized");
       }
+      // SyncStep2 (1) and Update (2) carry document changes.
+      if (type !== 1 && type !== 2) return;
       // A viewer's updates are dropped unapplied, so they are not validated.
       if (context.permission === "read") return;
       if (!acceptsUpdate(document, payload, MAX_DOCUMENT_CHARACTERS)) {
@@ -500,6 +500,10 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     },
 
     async connected({ connection, context }) {
+      if (!(await stillAuthorized(context))) {
+        close(connection, CLOSE_REASONS.removed);
+        return;
+      }
       // Awareness relays the server-stamped identity only to other clients,
       // so each client learns its own name and color here.
       connection.sendStateless(

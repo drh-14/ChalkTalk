@@ -44,7 +44,7 @@ integration("collaboration server", () => {
   const authSessions: Record<string, string> = {};
   const opened: { destroy(): unknown }[] = [];
 
-  function startServer() {
+  function startServer(listenerRetryMs = 100) {
     collaboration = createCollaborationServer({
       pool,
       databaseUrl: url!,
@@ -54,7 +54,7 @@ integration("collaboration server", () => {
       debounce: 300,
       maxDebounce: 800,
       sweepIntervalMs: 60_000,
-      listenerRetryMs: 100,
+      listenerRetryMs,
       metricsToken: METRICS_TOKEN,
     });
     return collaboration.start();
@@ -619,6 +619,67 @@ integration("collaboration server", () => {
   });
 
   describe("revocation and ending", () => {
+    it("withholds private state when removal commits before socket registration", async () => {
+      await collaboration.stop();
+      await startServer(60_000);
+      await collaboration.dropListener();
+      const sessionId = await newSession();
+      const saved = new Y.Doc();
+      saved.getText("content").insert(0, "private document state");
+      await pool.query(
+        "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection) VALUES ($1,$2,$3)",
+        [
+          sessionId,
+          Buffer.from(Y.encodeStateAsUpdate(saved)),
+          "private document state",
+        ],
+      );
+      saved.destroy();
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const originalQuery = pool.query.bind(pool);
+      let releaseLoad!: () => void;
+      const gate = new Promise<void>((resolve) => (releaseLoad = resolve));
+      let loadStarted = false;
+      pool.query = ((sql: string, values: unknown[]) => {
+        const result = originalQuery(sql, values);
+        if (
+          typeof sql === "string" &&
+          sql.includes("SELECT yjs_state FROM collaboration_documents") &&
+          values?.[0] === sessionId
+        )
+          return Promise.resolve(result).then(async (value) => {
+            loadStarted = true;
+            await gate;
+            return value;
+          });
+        return result;
+      }) as typeof pool.query;
+      try {
+        const bob = join("bob", sessionId, { token: async () => ticket });
+        await until(() => loadStarted);
+        expect(collaboration.connectionsOf(sessionId)).toHaveLength(0);
+        await service.remove(sessionId, fixture.users.alice!, bobId);
+        releaseLoad();
+        const elapsed = await until(
+          () => bob.state.closeReason === CLOSE_REASONS.removed,
+        );
+        expect(elapsed).toBeLessThan(5000);
+        expect(bob.provider.isSynced).toBe(false);
+        expect(bob.text.toString()).toBe("");
+        await expect(
+          service.ticket(sessionId, bobId, authSessions[bobId]!),
+        ).rejects.toMatchObject({ status: 404 });
+      } finally {
+        releaseLoad();
+        pool.query = originalQuery;
+        await collaboration.stop();
+        await startServer();
+      }
+    });
+
     it("closes a removed invitee within 5 seconds", async () => {
       const sessionId = await newSession();
       const alice = join("alice", sessionId);
