@@ -46,7 +46,8 @@ describe("SMTP sender", () => {
       if (!address || typeof address === "string") throw new Error("No port");
       const sender = createEmailSender(
         loadEnvironment({
-          AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
+          AUTH_TOKEN_SECRET:
+            "a-long-enough-authentication-secret-for-email-tests",
           SMTP_HOST: "127.0.0.1",
           SMTP_PORT: String(address.port),
           SMTP_FROM: "ChalkTalk <sender@example.edu>",

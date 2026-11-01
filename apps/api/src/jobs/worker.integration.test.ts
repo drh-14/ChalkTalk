@@ -865,6 +865,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     ] as const) {
       delivered.length = 0;
       deliveryAttempts.length = 0;
+      // Other lifecycle cases may leave a retry due; this case must claim
+      // only the email whose invalidation it is about to exercise.
+      await pool.query("DELETE FROM jobs WHERE status='queued'");
       const seeded = await seedMerge();
       await freezeQueuedEmail(seeded.jobId);
       if (invalidate === "unmerge")

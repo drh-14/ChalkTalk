@@ -77,6 +77,8 @@ if (!clientId || !clientSecret) {
           !tokenResponse.ok ||
           typeof tokens.refresh_token !== "string" ||
           !tokens.refresh_token ||
+          // OAuth tokens must not contain control bytes in the dotenv file.
+          // eslint-disable-next-line no-control-regex
           /[\u0000-\u001f\u007f]/.test(tokens.refresh_token)
         )
           throw new Error("Google did not return an offline refresh token");

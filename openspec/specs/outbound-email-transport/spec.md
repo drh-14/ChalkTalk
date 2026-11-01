@@ -29,7 +29,7 @@ The system SHALL support SMTP for local Mailpit and Gmail API HTTPS when explici
 
 - **WHEN** Gmail mode is selected with valid alternate API and OAuth endpoints
 - **THEN** the Gmail client sends to that origin with the configured OAuth credentials and sender
-- **WHEN** the alternate endpoint is malformed or contains credentials, a path, query, or fragment
+- **WHEN** the alternate API origin is malformed or contains credentials, a path, query, or fragment, or the token URL is malformed or contains credentials, a query, or a fragment
 - **THEN** application startup fails clearly
 
 ### Requirement: Durable identical queued retries

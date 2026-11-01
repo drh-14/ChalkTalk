@@ -52,9 +52,7 @@ class RecordingSender implements EmailSender {
     message: Parameters<EmailSender["send"]>[0];
   }> = [];
   fail = false;
-  async send(
-    message: Parameters<EmailSender["send"]>[0],
-  ) {
+  async send(message: Parameters<EmailSender["send"]>[0]) {
     this.attempts.push({ message });
     if (this.fail) throw new Error("SMTP down");
     this.messages.push(message);

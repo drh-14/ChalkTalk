@@ -33,9 +33,7 @@ async function start(refreshToken = "fake-private-refresh-token") {
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     received.push(new URLSearchParams(Buffer.concat(chunks).toString()));
     response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      JSON.stringify({ refresh_token: refreshToken }),
-    );
+    response.end(JSON.stringify({ refresh_token: refreshToken }));
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
