@@ -25,7 +25,7 @@ integration("collaboration session schema", () => {
       for (const name of await readdir(source)) {
         if (
           name.endsWith(".sql") &&
-          name < "054_course_scoped_collaboration.sql"
+          name < "055_course_scoped_collaboration.sql"
         )
           await copyFile(join(source, name), join(legacyDirectory, name));
       }
