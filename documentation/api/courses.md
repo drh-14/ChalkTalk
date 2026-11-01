@@ -833,4 +833,4 @@ Updates one or more of `activityEmails`, `announcementEmails`, or `digestEmails`
 { "digestEmails": false }
 ```
 
-Activity, announcement, and digest queueing use the corresponding choice. Delivery checks the latest choice again before sending: an opt-out completed before that check suppresses queued email. An activity or announcement email already in flight may still finish, and its SMTP delivery does not block the preference update.
+Activity, announcement, and digest queueing use the corresponding choice. Delivery checks the latest choice again before sending: an opt-out completed before that check suppresses queued email. An opt-out update may wait for an in-flight digest, duplicate-notice, invitation, or private-post send holding the recipient membership lock. The already-started email may finish before the update commits. Public-post activity and announcement sends allow preference updates to finish during delivery. Gmail bounds each external request to 30 seconds; do not treat a pending preference response as a committed opt-out.

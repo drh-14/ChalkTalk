@@ -1,3 +1,5 @@
+-- Extensions live in public across concurrently migrated test schemas.
+SELECT pg_advisory_xact_lock(724023007);
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
 CREATE INDEX posts_title_trgm_idx ON posts USING gin (title public.gin_trgm_ops)
