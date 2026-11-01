@@ -167,21 +167,35 @@ export class JobWorker {
   }
 
   private async sendCollaborationInvitationEmail(job: Job): Promise<void> {
-    if (!this.emailSender || !this.frontendBaseUrl)
+    const emailSender = this.emailSender;
+    if (!emailSender || !this.frontendBaseUrl)
       throw new Error("Invitation email delivery is not configured");
     const { sessionId, inviteeUserId, inviterUserId } = job.payload;
     if (!sessionId || !inviteeUserId || !inviterUserId)
       throw new Error("Invitation email job payload is invalid");
-    // Sends only while the invitation that queued this job still stands.
-    const invitation = await this.pool.query<{
-      title: string;
-      course_id: string;
-      course_name: string;
-      email: string;
-      inviter_name: string;
-      invited_at_ms: string;
-    }>(
-      `SELECT s.title,s.course_id,c.name AS course_name,invitee.email,
+    // The same rows used by removal, course departure, and session ending stay
+    // locked through delivery. A revocation can only commit before this final
+    // check (canceling the email) or after the send has completed.
+    await this.transaction(async (client) => {
+      const claimed = await client.query(
+        "SELECT id FROM jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",
+        [job.id, this.workerId, job.attempts],
+      );
+      if (!claimed.rows[0]) return;
+      const finish = () =>
+        client.query(
+          "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=now() WHERE id=$1",
+          [job.id],
+        );
+      const invitation = await client.query<{
+        title: string;
+        course_id: string;
+        course_name: string;
+        email: string;
+        inviter_name: string | null;
+        invited_at_ms: string;
+      }>(
+        `SELECT s.title,s.course_id,c.name AS course_name,invitee.email,
               inviter.display_name AS inviter_name,
               floor(extract(epoch FROM cp.created_at)*1000)::bigint AS invited_at_ms
        FROM collaboration_sessions s
@@ -189,27 +203,32 @@ export class JobWorker {
        JOIN collaboration_participants cp ON cp.collaboration_session_id=s.id AND cp.user_id=$2
        JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$2
        JOIN users invitee ON invitee.id=$2 AND invitee.deleted_at IS NULL
-       JOIN users inviter ON inviter.id=$3 AND inviter.deleted_at IS NULL
-       WHERE s.id=$1 AND s.lifecycle_state='active'`,
-      [sessionId, inviteeUserId, inviterUserId],
-    );
-    const row = invitation.rows[0];
-    if (
-      !row ||
-      job.deduplicationKey !==
-        `${sessionId}:${inviteeUserId}:${row.invited_at_ms}`
-    )
-      return;
-    const clean = (value: string) => value.replace(/\s+/g, " ").trim();
-    const inviter = clean(row.inviter_name);
-    const url = new URL(
-      `/courses/${encodeURIComponent(row.course_id)}/sessions/${encodeURIComponent(sessionId)}`,
-      this.frontendBaseUrl,
-    ).toString();
-    await this.emailSender.send({
-      to: row.email,
-      subject: `${inviter} invited you to a live session`,
-      text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly invited participants and course staff can open it.`,
+       LEFT JOIN users inviter ON inviter.id=$3 AND inviter.deleted_at IS NULL
+       WHERE s.id=$1 AND s.lifecycle_state='active'
+       FOR SHARE OF s,c,cp,m,invitee`,
+        [sessionId, inviteeUserId, inviterUserId],
+      );
+      const row = invitation.rows[0];
+      if (
+        row &&
+        job.deduplicationKey ===
+          `${sessionId}:${inviteeUserId}:${row.invited_at_ms}`
+      ) {
+        const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+        const inviter = row.inviter_name
+          ? clean(row.inviter_name)
+          : "A course member";
+        const url = new URL(
+          `/courses/${encodeURIComponent(row.course_id)}/sessions/${encodeURIComponent(sessionId)}`,
+          this.frontendBaseUrl,
+        ).toString();
+        await emailSender.send({
+          to: row.email,
+          subject: `${inviter} invited you to a live session`,
+          text: `${inviter} invited you to the live session "${clean(row.title)}" in ${clean(row.course_name)}.\n\n${url}\n\nOnly current session participants can open it.`,
+        });
+      }
+      await finish();
     });
   }
 

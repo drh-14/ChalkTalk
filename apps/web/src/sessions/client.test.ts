@@ -4,7 +4,6 @@ import {
   createTicket,
   getSession,
   getSnapshot,
-  languageFromTags,
   inviteParticipant,
   listSessions,
   removeParticipant,
@@ -17,7 +16,7 @@ const session = {
   id: "s-1",
   courseId: "c-1",
   status: "active",
-  anchor: { postId: "p-1" },
+  finalSnapshotConfirmed: true,
   title: "Loops",
   language: "python",
   createdBy: "u-1",
@@ -46,19 +45,17 @@ function mockFetch(response: Response) {
 const call = (fetchMock: ReturnType<typeof vi.fn>) =>
   fetchMock.mock.calls[0] as [string, RequestInit];
 
-it("lists a post's sessions with the anchor filter and credentials", async () => {
+it("lists a course's participant sessions with credentials", async () => {
   const fetchMock = mockFetch(
     json({ data: [session], page: { nextCursor: null, hasMore: false } }),
   );
   await expect(
-    listSessions("c-1", { postId: "p-1", status: "active" }),
+    listSessions("c-1", { status: "active" }),
   ).resolves.toMatchObject({
     data: [session],
   });
   const [url, init] = call(fetchMock);
-  expect(url).toBe(
-    "/api/v1/courses/c-1/collaboration-sessions?anchorType=post&anchorId=p-1&status=active",
-  );
+  expect(url).toBe("/api/v1/courses/c-1/collaboration-sessions?status=active");
   expect(init).toMatchObject({ credentials: "include" });
 });
 
@@ -66,7 +63,7 @@ it("creates a session with CSRF, an idempotency key, and a trimmed title", async
   const fetchMock = mockFetch(json({ data: session }, 201, { ETag: '"v1"' }));
   const result = await createSession(
     "c-1",
-    { postId: "p-1", language: "python", title: "  Loops  " },
+    { language: "python", title: "  Loops  " },
     "csrf",
   );
   expect(result.etag).toBe('"v1"');
@@ -79,22 +76,8 @@ it("creates a session with CSRF, an idempotency key, and a trimmed title", async
     "Idempotency-Key": expect.any(String),
   });
   expect(JSON.parse(String(init.body))).toEqual({
-    anchor: { postId: "p-1" },
     language: "python",
     title: "Loops",
-  });
-});
-
-it("omits a blank title so the server uses the post title", async () => {
-  const fetchMock = mockFetch(json({ data: session }, 201));
-  await createSession(
-    "c-1",
-    { postId: "p-1", language: "java", title: "   " },
-    "csrf",
-  );
-  expect(JSON.parse(String(call(fetchMock)[1].body))).toEqual({
-    anchor: { postId: "p-1" },
-    language: "java",
   });
 });
 
@@ -171,7 +154,9 @@ it("surfaces API errors with their code", async () => {
 it("routes a direct session link", () => {
   expect(sessionRoute("c-1", "s-1")).toBe("/courses/c-1/sessions/s-1");
   expect(routeForPath("/courses/c-1/sessions/s-1")).toBe("course-session");
-  expect(routeForPath("/courses/c-1/sessions")).toBe("landing");
+  expect(routeForPath("/courses/c-1/collaboration")).toBe(
+    "course-collaboration",
+  );
   expect(
     routeFromLocation(
       new URL("https://app.example.edu/courses/c-1/sessions/s-1"),
@@ -181,12 +166,4 @@ it("routes a direct session link", () => {
     courseId: "c-1",
     sessionId: "s-1",
   });
-});
-
-it("picks the first tag that names a session language", () => {
-  expect(languageFromTags(["hw2", "Python", "java"])).toBe("python");
-  expect(languageFromTags(["C++"])).toBe("cpp");
-  expect(languageFromTags([" js "])).toBe("javascript");
-  expect(languageFromTags(["recursion"])).toBe("plaintext");
-  expect(languageFromTags([])).toBe("plaintext");
 });

@@ -897,6 +897,10 @@ export class CourseService {
             "Course must retain an instructor",
           );
       }
+      await endCollaborationSessions(client, {
+        creatorId: targetId,
+        courseId,
+      });
       await client.query(
         "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
         [courseId, targetId],

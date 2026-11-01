@@ -1,10 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import {
-  listMySessions,
-  listSessions,
-  type CodeSession,
-  type MySession,
-} from "./client.js";
+import { listMySessions, type CodeSession, type MySession } from "./client.js";
 
 const names = (session: CodeSession) =>
   session.participants.map((participant) => participant.displayName).join(", ");
@@ -73,65 +68,6 @@ export function YourLiveSessions({
             </li>
           );
         })}
-      </ul>
-    </section>
-  );
-}
-
-/**
- * Active sessions in a course: a student's own, or every session for staff,
- * so TAs and instructors can see what is running during office hours.
- */
-export function CourseLiveSessions({
-  courseId,
-  staff,
-  onOpen,
-}: {
-  courseId: string;
-  staff: boolean;
-  onOpen: (courseId: string, sessionId: string) => void;
-}) {
-  const headingId = useId();
-  const [sessions, setSessions] = useState<CodeSession[]>([]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setSessions([]);
-    void listSessions(courseId, {
-      status: "active",
-      signal: controller.signal,
-    })
-      .then((page) => setSessions(page.data))
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [courseId]);
-
-  if (!sessions.length) return null;
-  return (
-    <section className="course-live-sessions" aria-labelledby={headingId}>
-      <div className="course-live-sessions-heading">
-        <h2 id={headingId}>
-          <span className="live-sessions-dot" aria-hidden="true" />
-          Live sessions
-        </h2>
-        <span className="live-sessions-meta">
-          {staff
-            ? `${sessions.length} running in this course`
-            : sessions.length === 1
-              ? "1 active"
-              : `${sessions.length} active`}
-        </span>
-      </div>
-      <ul className="live-sessions-list">
-        {sessions.map((session) => (
-          <li key={session.id}>
-            <div>
-              <strong>{session.title}</strong>
-              <span className="live-sessions-meta">{names(session)}</span>
-            </div>
-            <JoinButton session={session} onOpen={onOpen} />
-          </li>
-        ))}
       </ul>
     </section>
   );

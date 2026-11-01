@@ -9,7 +9,10 @@ import {
   tokensMatch,
 } from "./crypto.js";
 import { AuthError } from "./errors.js";
-import { collaborationAccessChanged } from "../collaboration/lifecycle.js";
+import {
+  collaborationAccessChanged,
+  endCollaborationSessions,
+} from "../collaboration/lifecycle.js";
 
 export interface EmailSender {
   send(
@@ -974,6 +977,7 @@ export class AuthService {
         "DELETE FROM question_creation_daily_counts WHERE user_id = $1",
         [session.user.id],
       );
+      await endCollaborationSessions(client, { creatorId: session.user.id });
       await client.query("DELETE FROM course_memberships WHERE user_id = $1", [
         session.user.id,
       ]);

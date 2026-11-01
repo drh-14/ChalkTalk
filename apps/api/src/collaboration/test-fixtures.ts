@@ -6,7 +6,11 @@ import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 export type FixtureRole = "student" | "ta" | "instructor";
 
 /** An isolated, fully migrated schema for one collaboration test file. */
-export async function createTestSchema(url: string, label: string) {
+export async function createTestSchema(
+  url: string,
+  label: string,
+  migrationDirectory = getMigrationDirectory(),
+) {
   const schema = `${label}_${process.pid}_${Date.now()}`;
   const admin = new Pool({ connectionString: url });
   await admin.query(`CREATE SCHEMA "${schema}"`);
@@ -14,7 +18,7 @@ export async function createTestSchema(url: string, label: string) {
     connectionString: url,
     options: `--search_path="${schema}"`,
   });
-  await runMigrations(pool, getMigrationDirectory());
+  await runMigrations(pool, migrationDirectory);
   return {
     schema,
     pool,

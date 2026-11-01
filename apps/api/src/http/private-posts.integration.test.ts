@@ -285,42 +285,34 @@ integration("private posts HTTP contract", () => {
     }
   });
 
-  it("limits live sessions on a private post to people who can read it", async () => {
-    const postId = await privateQuestion();
+  it("keeps course collaboration independent of private-post visibility", async () => {
+    await privateQuestion();
     const sessions = new CollaborationSessionService(pool, {
       webSocketUrl: "wss://app.example.edu/collaboration",
     });
-    await expect(
-      sessions.create(ids.course, ids.classmate, {
-        postId,
-        language: "python",
-      }),
-    ).rejects.toMatchObject({ status: 422, code: "cross_course_anchor" });
     const session = await sessions.create(ids.course, ids.asker, {
-      postId,
+      title: "Course collaboration",
       language: "python",
     });
     const sessionId = session.value.id;
     await expect(
       sessions.invite(sessionId, ids.asker, ids.classmate),
-    ).rejects.toMatchObject({ status: 422, code: "invitee_cannot_read_post" });
-    await expect(
-      sessions.invite(sessionId, ids.asker, ids.ta),
     ).resolves.toBeDefined();
-    // A classmate added behind the service's back still cannot reach it.
-    await pool.query(
-      "INSERT INTO collaboration_participants (collaboration_session_id,course_id,user_id,invited_by_user_id,permission) VALUES ($1,$2,$3,$4,'edit')",
-      [sessionId, ids.course, ids.classmate, ids.asker],
+    await expect(sessions.get(sessionId, ids.classmate)).resolves.toMatchObject(
+      {
+        id: sessionId,
+      },
     );
-    await expect(sessions.get(sessionId, ids.classmate)).rejects.toMatchObject({
+    // Course staff do not gain access merely from their role or the post.
+    await expect(sessions.get(sessionId, ids.ta)).rejects.toMatchObject({
       status: 404,
     });
     const listed = await sessions.list(ids.course, ids.classmate, {
       limit: 25,
     });
-    expect(listed.data.map((item) => item.id)).not.toContain(sessionId);
+    expect(listed.data.map((item) => item.id)).toContain(sessionId);
     const mine = await sessions.listForUser(ids.classmate, { limit: 25 });
-    expect(mine.data.map((item) => item.id)).not.toContain(sessionId);
+    expect(mine.data.map((item) => item.id)).toContain(sessionId);
   });
 
   it("notifies only members who can still read the post", async () => {

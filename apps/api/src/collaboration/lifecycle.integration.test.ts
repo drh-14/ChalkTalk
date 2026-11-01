@@ -6,6 +6,7 @@ import { loadEnvironment } from "../config/environment.js";
 import { CourseService } from "../courses/service.js";
 import { JobWorker } from "../jobs/worker.js";
 import { PostService } from "../posts/service.js";
+import { endCollaborationSessions } from "./lifecycle.js";
 import {
   CollaborationSessionService,
   type CollaborationEvent,
@@ -37,7 +38,7 @@ integration("collaboration session lifecycle effects", () => {
     });
     const session = (
       await sessions.create(fixture.courseId, fixture.users.alice!, {
-        postId: fixture.postId,
+        title: "Course collaboration",
       })
     ).value;
     await sessions.invite(session.id, fixture.users.alice!, fixture.users.bob!);
@@ -92,7 +93,101 @@ integration("collaboration session lifecycle effects", () => {
     ).rejects.toMatchObject({ status: 409, code: "course_archived" });
   });
 
-  it("ends sessions and hides them from students when the post is deleted", async () => {
+  it("does not create an active session after a concurrent archive sweep", async () => {
+    const fixture = await course();
+    const transition = await pool.connect();
+    await transition.query("BEGIN");
+    try {
+      await transition.query(
+        "UPDATE courses SET status='archived' WHERE id=$1",
+        [fixture.courseId],
+      );
+      await endCollaborationSessions(transition, {
+        courseId: fixture.courseId,
+      });
+      let settled = false;
+      const creating = sessions.create(fixture.courseId, fixture.users.alice!, {
+        title: "Late session",
+      });
+      void creating.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(settled).toBe(false);
+      await transition.query("COMMIT");
+      await expect(creating).rejects.toMatchObject({
+        status: 409,
+        code: "course_archived",
+      });
+      const active = await pool.query(
+        "SELECT id FROM collaboration_sessions WHERE course_id=$1 AND lifecycle_state='active'",
+        [fixture.courseId],
+      );
+      expect(active.rowCount).toBe(0);
+    } finally {
+      await transition.query("ROLLBACK");
+      transition.release();
+    }
+  });
+
+  it.each(["course removal", "account deletion"])(
+    "does not create an active session after concurrent %s",
+    async (departure) => {
+      const fixture = await course();
+      const transition = await pool.connect();
+      await transition.query("BEGIN");
+      try {
+        if (departure === "account deletion")
+          await transition.query(
+            "SELECT id FROM users WHERE id=$1 FOR UPDATE",
+            [fixture.users.alice],
+          );
+        if (departure === "course removal")
+          await transition.query(
+            "SELECT id FROM courses WHERE id=$1 FOR UPDATE",
+            [fixture.courseId],
+          );
+        await endCollaborationSessions(transition, {
+          creatorId: fixture.users.alice!,
+          courseId: fixture.courseId,
+        });
+        let settled = false;
+        const creating = sessions.create(
+          fixture.courseId,
+          fixture.users.alice!,
+          { title: "Late session" },
+        );
+        void creating.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(settled).toBe(false);
+        await transition.query(
+          "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+          [fixture.courseId, fixture.users.alice],
+        );
+        if (departure === "account deletion")
+          await transition.query(
+            "UPDATE users SET deleted_at=now() WHERE id=$1",
+            [fixture.users.alice],
+          );
+        await transition.query("COMMIT");
+        await expect(creating).rejects.toMatchObject({ status: 404 });
+        const active = await pool.query(
+          "SELECT id FROM collaboration_sessions WHERE course_id=$1 AND created_by_user_id=$2 AND lifecycle_state='active'",
+          [fixture.courseId, fixture.users.alice],
+        );
+        expect(active.rowCount).toBe(0);
+      } finally {
+        await transition.query("ROLLBACK");
+        transition.release();
+      }
+    },
+  );
+
+  it("keeps a course session and its participant access when the former post is deleted", async () => {
     const fixture = await course();
     await new PostService(pool).delete(
       fixture.postId,
@@ -100,22 +195,20 @@ integration("collaboration session lifecycle effects", () => {
       await etag("posts", "id=$1", [fixture.postId]),
     );
     await settle();
-    expect((await state(fixture.session.id)).lifecycle_state).toBe("ended");
-    expect(events).toContainEqual({
+    expect((await state(fixture.session.id)).lifecycle_state).toBe("active");
+    expect(events).not.toContainEqual({
       type: "session_ended",
       sessionId: fixture.session.id,
     });
     await expect(
       sessions.get(fixture.session.id, fixture.users.alice!),
-    ).rejects.toMatchObject({ status: 404 });
+    ).resolves.toMatchObject({ status: "active" });
     await expect(
       sessions.get(fixture.session.id, fixture.users.tim!),
-    ).resolves.toMatchObject({
-      status: "ended",
-    });
+    ).rejects.toMatchObject({ status: 404 });
   });
 
-  it("ends sessions when the post is confirmed as a duplicate", async () => {
+  it("keeps a course session when its former post is merged", async () => {
     const fixture = await course();
     const canonical = uuidv7();
     await pool.query(
@@ -129,10 +222,10 @@ integration("collaboration session lifecycle effects", () => {
       { duplicateStatus: "confirmed", duplicateOfPostId: canonical } as never,
     );
     await settle();
-    expect((await state(fixture.session.id)).lifecycle_state).toBe("ended");
+    expect((await state(fixture.session.id)).lifecycle_state).toBe("active");
     await expect(
       sessions.get(fixture.session.id, fixture.users.bob!),
-    ).rejects.toMatchObject({ status: 404 });
+    ).resolves.toMatchObject({ status: "active" });
   });
 
   it("revokes access when an invitee leaves the course", async () => {
@@ -164,13 +257,54 @@ integration("collaboration session lifecycle effects", () => {
     });
   });
 
-  it("keeps a demoted TA's own sessions only", async () => {
+  it("ends a creator's sessions when they leave, preserving a last-saved snapshot for invitees", async () => {
+    const fixture = await course();
+    await pool.query(
+      "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection) VALUES ($1,$2,$3)",
+      [fixture.session.id, Buffer.from([0, 0]), "Earlier saved text"],
+    );
+    await new CourseService(pool).removeMember(
+      fixture.courseId,
+      fixture.users.alice!,
+      fixture.users.alice!,
+      undefined,
+      true,
+    );
+    await settle();
+    expect(await state(fixture.session.id)).toMatchObject({
+      lifecycle_state: "ended",
+    });
+    expect(events).toContainEqual({
+      type: "session_ended",
+      sessionId: fixture.session.id,
+    });
+    await expect(
+      sessions.snapshot(fixture.session.id, fixture.users.bob!),
+    ).resolves.toMatchObject({
+      sessionStatus: "ended",
+      content: "Earlier saved text",
+      finalSnapshotConfirmed: false,
+    });
+    await expect(
+      sessions.get(fixture.session.id, fixture.users.alice!),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("does not grant a TA access unless invited, and retains invited access after demotion", async () => {
     const fixture = await course();
     const own = (
       await sessions.create(fixture.courseId, fixture.users.tim!, {
-        postId: fixture.postId,
+        title: "TA collaboration",
       })
     ).value;
+    await expect(
+      sessions.get(fixture.session.id, fixture.users.tim!),
+    ).rejects.toMatchObject({ status: 404 });
+    await sessions.invite(
+      fixture.session.id,
+      fixture.users.alice!,
+      fixture.users.tim!,
+    );
     await expect(
       sessions.get(fixture.session.id, fixture.users.tim!),
     ).resolves.toBeTruthy();
@@ -192,9 +326,7 @@ integration("collaboration session lifecycle effects", () => {
     });
     await expect(
       sessions.get(fixture.session.id, fixture.users.tim!),
-    ).rejects.toMatchObject({
-      status: 404,
-    });
+    ).resolves.toMatchObject({ status: "active" });
     await expect(
       sessions.get(own.id, fixture.users.tim!),
     ).resolves.toMatchObject({

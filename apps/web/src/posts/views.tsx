@@ -9,9 +9,6 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError } from "../auth/client.js";
-import { ActiveSessionLink, SessionsPanel } from "../sessions/SessionsPanel.js";
-import { CourseLiveSessions } from "../sessions/LiveSessionLists.js";
-import { sessionRoute, type CodeSession } from "../sessions/client.js";
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { MentionContext, mentionSuggestions } from "./mentions.js";
@@ -2454,10 +2451,6 @@ function DiscussionContent({
     detail.duplicateStatus !== "confirmed" &&
     (staff || (!!userId && detail.author.userId === userId));
   const [editingPostId, setEditingPostId] = useState<string>();
-  const [postSessions, setPostSessions] = useState<{
-    postId: string;
-    sessions: CodeSession[];
-  }>();
   const [mergePending, setMergePending] = useState(false);
   const [selectedReviewId, setSelectedReviewId] = useState<string>();
   const [reviewDetail, setReviewDetail] = useState<Post>();
@@ -3196,13 +3189,6 @@ function DiscussionContent({
           </header>
         )}
         {courseError && <p role="alert">{courseError}</p>}
-        <CourseLiveSessions
-          courseId={courseId}
-          staff={staff}
-          onOpen={(sessionCourseId, sessionId) =>
-            navigate(sessionRoute(sessionCourseId, sessionId))
-          }
-        />
         <div
           className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}${desktopFilters && filtersCollapsed ? " filters-collapsed" : ""}`}
         >
@@ -4046,18 +4032,6 @@ function DiscussionContent({
                             active={tags}
                             onSelect={selectTag}
                           />
-                          {postView === "posts" && (
-                            <ActiveSessionLink
-                              sessions={
-                                postSessions?.postId === detail.id
-                                  ? postSessions.sessions
-                                  : undefined
-                              }
-                              onOpen={(sessionId) =>
-                                navigate(sessionRoute(courseId, sessionId))
-                              }
-                            />
-                          )}
                           <div className="post-markdown">
                             <PostBody bodyMarkdown={detail.bodyMarkdown} />
                             {detail.type === "poll" && detail.options && (
@@ -4231,21 +4205,6 @@ function DiscussionContent({
                           discussionLocked={detail.discussionLocked}
                           csrfToken={csrfToken}
                           onActivity={() => void refreshFollowing(detail.id)}
-                        />
-                      )}
-                      {postView === "posts" && (
-                        <SessionsPanel
-                          courseId={courseId}
-                          postId={detail.id}
-                          tags={detail.tags}
-                          onLoaded={(sessions) =>
-                            setPostSessions({ postId: detail.id, sessions })
-                          }
-                          courseStatus={course?.status}
-                          csrfToken={csrfToken}
-                          onOpen={(sessionId) =>
-                            navigate(sessionRoute(courseId, sessionId))
-                          }
                         />
                       )}
                     </article>

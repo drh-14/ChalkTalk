@@ -44,7 +44,7 @@ integration("collaboration server", () => {
   const authSessions: Record<string, string> = {};
   const opened: { destroy(): unknown }[] = [];
 
-  function startServer() {
+  function startServer(listenerRetryMs = 100, admissionTimeoutMs = 5000) {
     collaboration = createCollaborationServer({
       pool,
       databaseUrl: url!,
@@ -54,7 +54,8 @@ integration("collaboration server", () => {
       debounce: 300,
       maxDebounce: 800,
       sweepIntervalMs: 60_000,
-      listenerRetryMs: 100,
+      listenerRetryMs,
+      admissionTimeoutMs,
       metricsToken: METRICS_TOKEN,
     });
     return collaboration.start();
@@ -63,7 +64,7 @@ integration("collaboration server", () => {
   async function newSession(creator = "alice", invitees: string[] = ["bob"]) {
     const session = (
       await service.create(fixture.courseId, fixture.users[creator]!, {
-        postId: fixture.postId,
+        title: "Course collaboration",
         language: "python",
       })
     ).value;
@@ -118,7 +119,13 @@ integration("collaboration server", () => {
     });
     provider.attach();
     opened.push(provider, websocketProvider);
-    return { provider, document, text: document.getText("content"), state };
+    return {
+      provider,
+      websocketProvider,
+      document,
+      text: document.getText("content"),
+      state,
+    };
   }
 
   beforeAll(async () => {
@@ -128,6 +135,7 @@ integration("collaboration server", () => {
       webSocketUrl: "wss://app.example.edu/collaboration",
       endTimeoutMs: 3000,
       endPollMs: 20,
+      rateLimits: { createPerHour: 1000, ticketsPerTenMinutes: 1000 },
     });
     fixture = await seedCourse(pool, {
       alice: "student",
@@ -155,11 +163,122 @@ integration("collaboration server", () => {
   afterAll(async () => {
     await collaboration?.stop();
     await database?.drop();
-  });
+  }, 30_000);
 
   describe("authentication", () => {
-    it("accepts a valid ticket once and rejects its reuse", async () => {
+    it("closes a socket that requests a second document", async () => {
+      const firstId = await newSession();
+      const secondId = await newSession();
+      const aliceId = fixture.users.alice!;
+      const firstTicket = (
+        await service.ticket(firstId, aliceId, authSessions[aliceId]!)
+      ).ticket;
+      const secondTicket = (
+        await service.ticket(secondId, aliceId, authSessions[aliceId]!)
+      ).ticket;
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      const encoding = await import("lib0/encoding");
+      const auth = (name: string, token: string) => {
+        const encoder = encoding.createEncoder();
+        encoding.writeVarString(encoder, documentName(name));
+        encoding.writeVarUint(encoder, 2);
+        encoding.writeVarUint(encoder, 0);
+        encoding.writeVarString(encoder, token);
+        return encoding.toUint8Array(encoder);
+      };
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        raw.send(auth(firstId, firstTicket));
+        await until(
+          () => collaboration.connectionsOf(firstId).length === 1,
+          10_000,
+        );
+        raw.send(auth(secondId, secondTicket));
+        await until(() => raw.readyState === WebSocket.CLOSED, 10_000);
+        expect(collaboration.connectionsOf(secondId)).toHaveLength(0);
+      } finally {
+        raw.terminate();
+      }
+    }, 25_000);
+
+    it("holds a pipelined update until admission commits, then persists it", async () => {
       const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const originalCreate = collaboration.hocuspocus.createDocument.bind(
+        collaboration.hocuspocus,
+      );
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let entered = false;
+      collaboration.hocuspocus.createDocument = (async (...args) => {
+        entered = true;
+        await gate;
+        return originalCreate(...args);
+      }) as typeof collaboration.hocuspocus.createDocument;
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      const frames: Buffer[] = [];
+      raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
+      const pipelined = new Y.Doc();
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const auth = encoding.createEncoder();
+        encoding.writeVarString(auth, documentName(sessionId));
+        encoding.writeVarUint(auth, 2);
+        encoding.writeVarUint(auth, 0);
+        encoding.writeVarString(auth, ticket);
+        pipelined.getText("content").insert(0, "pipelined edit");
+        const update = encoding.createEncoder();
+        encoding.writeVarString(update, documentName(sessionId));
+        encoding.writeVarUint(update, 0);
+        encoding.writeVarUint(update, 2);
+        encoding.writeVarUint8Array(update, Y.encodeStateAsUpdate(pipelined));
+        raw.send(encoding.toUint8Array(auth));
+        raw.send(encoding.toUint8Array(update));
+        await until(() => entered);
+        await expect(
+          pool.query(
+            "SELECT id FROM collaboration_sessions WHERE id=$1 FOR UPDATE NOWAIT",
+            [sessionId],
+          ),
+        ).rejects.toMatchObject({ code: "55P03" });
+        expect(frames).toHaveLength(0);
+        expect(alice.text.toString()).toBe("");
+        expect(
+          collaboration.hocuspocus.documents
+            .get(documentName(sessionId))
+            ?.getText("content")
+            .toString(),
+        ).toBe("");
+        release();
+        await until(() => alice.text.toString() === "pipelined edit");
+        await until(async () => {
+          const stored = await pool.query<{ text_projection: string }>(
+            "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+            [sessionId],
+          );
+          return stored.rows[0]?.text_projection === "pipelined edit";
+        });
+        expect(raw.readyState).toBe(WebSocket.OPEN);
+      } finally {
+        release();
+        collaboration.hocuspocus.createDocument = originalCreate;
+        pipelined.destroy();
+        raw.terminate();
+      }
+    });
+
+    it("accepts a valid ticket once and rejects its reuse", async () => {
+      const sessionId = await newSession("alice", ["bob", "tim"]);
       const ticket = (
         await service.ticket(
           sessionId,
@@ -280,6 +399,37 @@ integration("collaboration server", () => {
       const again = join("bob", sessionId);
       await until(() => again.provider.isSynced);
       await until(() => again.text.toString() === "print('hello')\n# bye");
+    });
+
+    it("retries a failed document store after database recovery", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      await pool.query(`CREATE FUNCTION reject_collaboration_store() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated storage outage'; END $$`);
+      await pool.query(`CREATE TRIGGER reject_collaboration_store
+        BEFORE INSERT OR UPDATE ON collaboration_documents
+        FOR EACH ROW EXECUTE FUNCTION reject_collaboration_store()`);
+      try {
+        alice.text.insert(0, "recovered text");
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        const before = await pool.query(
+          "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+          [sessionId],
+        );
+        expect(before.rowCount).toBe(0);
+      } finally {
+        await pool.query(
+          "DROP TRIGGER reject_collaboration_store ON collaboration_documents",
+        );
+        await pool.query("DROP FUNCTION reject_collaboration_store()");
+      }
+      await collaboration.sweep();
+      const after = await pool.query<{ text_projection: string }>(
+        "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+        [sessionId],
+      );
+      expect(after.rows[0]?.text_projection).toBe("recovered text");
     });
 
     it("rejects oversized, out-of-schema, and too-long updates without applying them", async () => {
@@ -494,7 +644,7 @@ integration("collaboration server", () => {
       client.document.getMap("whiteboard");
 
     it("merges drawings, rejects unsafe elements without broadcast, and persists a projection", async () => {
-      const sessionId = await newSession();
+      const sessionId = await newSession("alice", ["bob", "tim"]);
       const alice = join("alice", sessionId);
       const bob = join("bob", sessionId);
       await until(() => alice.provider.isSynced && bob.provider.isSynced);
@@ -588,14 +738,533 @@ integration("collaboration server", () => {
   });
 
   describe("revocation and ending", () => {
+    it("replays ordinary provider handshake messages after admission", async () => {
+      const sessionId = await newSession();
+      const saved = new Y.Doc();
+      saved.getText("content").insert(0, "persisted before join");
+      await pool.query(
+        "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection) VALUES ($1,$2,$3)",
+        [
+          sessionId,
+          Buffer.from(Y.encodeStateAsUpdate(saved)),
+          "persisted before join",
+        ],
+      );
+      saved.destroy();
+      const originalCreate = collaboration.hocuspocus.createDocument.bind(
+        collaboration.hocuspocus,
+      );
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let entered = false;
+      collaboration.hocuspocus.createDocument = (async (...args) => {
+        entered = true;
+        await gate;
+        return originalCreate(...args);
+      }) as typeof collaboration.hocuspocus.createDocument;
+      try {
+        const bob = join("bob", sessionId);
+        await until(() => entered);
+        expect(bob.provider.isSynced).toBe(false);
+        expect(bob.state.closeReason).toBeUndefined();
+        release();
+        await until(() => bob.provider.isSynced);
+        expect(bob.text.toString()).toBe("persisted before join");
+        expect(bob.state.closeReason).toBeUndefined();
+        bob.text.insert(bob.text.length, " and updated after join");
+        await until(async () => {
+          const stored = await pool.query<{ text_projection: string }>(
+            "SELECT text_projection FROM collaboration_documents WHERE collaboration_session_id=$1",
+            [sessionId],
+          );
+          return (
+            stored.rows[0]?.text_projection ===
+            "persisted before join and updated after join"
+          );
+        });
+      } finally {
+        release();
+        collaboration.hocuspocus.createDocument = originalCreate;
+      }
+    });
+
+    it("holds removal until a paused admission either registers or aborts", async () => {
+      await collaboration.stop();
+      await startServer(60_000);
+      await collaboration.dropListener();
+      const sessionId = await newSession();
+      const saved = new Y.Doc();
+      saved.getText("content").insert(0, "private document state");
+      await pool.query(
+        "INSERT INTO collaboration_documents (collaboration_session_id,yjs_state,text_projection) VALUES ($1,$2,$3)",
+        [
+          sessionId,
+          Buffer.from(Y.encodeStateAsUpdate(saved)),
+          "private document state",
+        ],
+      );
+      saved.destroy();
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const originalQuery = pool.query.bind(pool);
+      let releaseLoad!: () => void;
+      const gate = new Promise<void>((resolve) => (releaseLoad = resolve));
+      let loadStarted = false;
+      pool.query = ((
+        sql: string | { text: string; values?: unknown[] },
+        values: unknown[],
+      ) => {
+        const result =
+          typeof sql === "string"
+            ? originalQuery(sql, values)
+            : originalQuery(sql);
+        const text = typeof sql === "string" ? sql : sql.text;
+        const parameters = typeof sql === "string" ? values : sql.values;
+        if (
+          text.includes("SELECT yjs_state FROM collaboration_documents") &&
+          parameters?.[0] === sessionId
+        )
+          return Promise.resolve(result).then(async (value) => {
+            loadStarted = true;
+            await gate;
+            return value;
+          });
+        return result;
+      }) as typeof pool.query;
+      try {
+        const bob = join("bob", sessionId, { token: async () => ticket });
+        await until(() => loadStarted);
+        expect(collaboration.connectionsOf(sessionId)).toHaveLength(0);
+        let removed = false;
+        const removal = service
+          .remove(sessionId, fixture.users.alice!, bobId)
+          .then(() => {
+            removed = true;
+          });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(removed).toBe(false);
+        releaseLoad();
+        await removal;
+        await collaboration.sweep();
+        const elapsed = await until(
+          () => bob.state.closeReason === CLOSE_REASONS.removed,
+        );
+        expect(elapsed).toBeLessThan(5000);
+        await expect(
+          service.ticket(sessionId, bobId, authSessions[bobId]!),
+        ).rejects.toMatchObject({ status: 404 });
+      } finally {
+        releaseLoad();
+        pool.query = originalQuery;
+        await collaboration.stop();
+        await startServer();
+      }
+    });
+
+    it("buffers every outbound frame while document registration is paused", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      alice.text.insert(0, "private content");
+      alice.provider.setAwarenessField("whiteboardPointer", { x: 7, y: 9 });
+      const originalCreate = collaboration.hocuspocus.createDocument.bind(
+        collaboration.hocuspocus,
+      );
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let entered = false;
+      collaboration.hocuspocus.createDocument = (async (...args) => {
+        entered = true;
+        await gate;
+        return originalCreate(...args);
+      }) as typeof collaboration.hocuspocus.createDocument;
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const frames: Buffer[] = [];
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const encoder = encoding.createEncoder();
+        encoding.writeVarString(encoder, documentName(sessionId));
+        encoding.writeVarUint(encoder, 2);
+        encoding.writeVarUint(encoder, 0);
+        encoding.writeVarString(encoder, ticket);
+        raw.send(encoding.toUint8Array(encoder));
+        const sync = encoding.createEncoder();
+        encoding.writeVarString(sync, documentName(sessionId));
+        encoding.writeVarUint(sync, 0);
+        encoding.writeVarUint(sync, 0);
+        encoding.writeVarUint8Array(sync, Y.encodeStateVector(new Y.Doc()));
+        raw.send(encoding.toUint8Array(sync));
+        const awarenessQuery = encoding.createEncoder();
+        encoding.writeVarString(awarenessQuery, documentName(sessionId));
+        encoding.writeVarUint(awarenessQuery, 3);
+        raw.send(encoding.toUint8Array(awarenessQuery));
+        await until(() => entered);
+        alice.text.insert(alice.text.length, " broadcast");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(frames).toHaveLength(0);
+        let removed = false;
+        const removal = service
+          .remove(sessionId, fixture.users.alice!, bobId)
+          .then(() => {
+            removed = true;
+          });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(removed).toBe(false);
+        expect(frames).toHaveLength(0);
+        release();
+        await removal;
+        await until(() => raw.readyState === WebSocket.CLOSED);
+      } finally {
+        release();
+        collaboration.hocuspocus.createDocument = originalCreate;
+        raw.terminate();
+      }
+    });
+
+    it("drops a timed-out admission and permits a ticket retry without leaking locks", async () => {
+      await collaboration.stop();
+      await startServer(100, 3000);
+      const sessionId = await newSession();
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const originalCreate = collaboration.hocuspocus.createDocument.bind(
+        collaboration.hocuspocus,
+      );
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let entered = false;
+      collaboration.hocuspocus.createDocument = (async (...args) => {
+        entered = true;
+        await gate;
+        return originalCreate(...args);
+      }) as typeof collaboration.hocuspocus.createDocument;
+      const frames: Buffer[] = [];
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const encoder = encoding.createEncoder();
+        encoding.writeVarString(encoder, documentName(sessionId));
+        encoding.writeVarUint(encoder, 2);
+        encoding.writeVarUint(encoder, 0);
+        encoding.writeVarString(encoder, ticket);
+        raw.send(encoding.toUint8Array(encoder));
+        const sync = encoding.createEncoder();
+        encoding.writeVarString(sync, documentName(sessionId));
+        encoding.writeVarUint(sync, 0);
+        encoding.writeVarUint(sync, 0);
+        encoding.writeVarUint8Array(sync, Y.encodeStateVector(new Y.Doc()));
+        raw.send(encoding.toUint8Array(sync));
+        const awarenessQuery = encoding.createEncoder();
+        encoding.writeVarString(awarenessQuery, documentName(sessionId));
+        encoding.writeVarUint(awarenessQuery, 3);
+        raw.send(encoding.toUint8Array(awarenessQuery));
+        await until(() => entered);
+        await until(() => raw.readyState === WebSocket.CLOSED);
+        expect(frames).toHaveLength(0);
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(frames).toHaveLength(0);
+        collaboration.hocuspocus.createDocument = originalCreate;
+        const retry = join("bob", sessionId, { token: async () => ticket });
+        await until(() => retry.provider.isSynced);
+        await service.remove(sessionId, fixture.users.alice!, bobId);
+        await until(() => retry.state.closeReason === CLOSE_REASONS.removed);
+      } finally {
+        release();
+        collaboration.hocuspocus.createDocument = originalCreate;
+        raw.terminate();
+        await collaboration.stop();
+        await startServer();
+      }
+    });
+
+    it("drops queued inbound messages when document loading fails", async () => {
+      const sessionId = await newSession();
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const originalQuery = pool.query.bind(pool);
+      pool.query = ((
+        sql: string | { text: string; values?: unknown[] },
+        values: unknown[],
+      ) => {
+        const text = typeof sql === "string" ? sql : sql.text;
+        if (text.includes("SELECT yjs_state FROM collaboration_documents"))
+          return Promise.reject(new Error("document load failed"));
+        return typeof sql === "string"
+          ? originalQuery(sql, values)
+          : originalQuery(sql);
+      }) as typeof pool.query;
+      const frames: Buffer[] = [];
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      const pending = new Y.Doc();
+      pending.getText("content").insert(0, "must be dropped");
+      raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const auth = encoding.createEncoder();
+        encoding.writeVarString(auth, documentName(sessionId));
+        encoding.writeVarUint(auth, 2);
+        encoding.writeVarUint(auth, 0);
+        encoding.writeVarString(auth, ticket);
+        raw.send(encoding.toUint8Array(auth));
+        const query = encoding.createEncoder();
+        encoding.writeVarString(query, documentName(sessionId));
+        encoding.writeVarUint(query, 3);
+        raw.send(encoding.toUint8Array(query));
+        const update = encoding.createEncoder();
+        encoding.writeVarString(update, documentName(sessionId));
+        encoding.writeVarUint(update, 0);
+        encoding.writeVarUint(update, 2);
+        encoding.writeVarUint8Array(update, Y.encodeStateAsUpdate(pending));
+        raw.send(encoding.toUint8Array(update));
+        await until(() => raw.readyState === WebSocket.CLOSED);
+        expect(frames).toHaveLength(0);
+        expect(collaboration.connectionsOf(sessionId)).toHaveLength(0);
+      } finally {
+        pool.query = originalQuery;
+        pending.destroy();
+        raw.terminate();
+      }
+      const retry = join("bob", sessionId, { token: async () => ticket });
+      await until(() => retry.provider.isSynced);
+      expect(retry.text.toString()).toBe("");
+    });
+
+    it("lets concurrent removal commit after admission timeout without sending private frames", async () => {
+      await collaboration.stop();
+      await startServer(100, 3000);
+      const sessionId = await newSession();
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const originalCreate = collaboration.hocuspocus.createDocument.bind(
+        collaboration.hocuspocus,
+      );
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let entered = false;
+      collaboration.hocuspocus.createDocument = (async (...args) => {
+        entered = true;
+        await gate;
+        return originalCreate(...args);
+      }) as typeof collaboration.hocuspocus.createDocument;
+      const frames: Buffer[] = [];
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const auth = encoding.createEncoder();
+        encoding.writeVarString(auth, documentName(sessionId));
+        encoding.writeVarUint(auth, 2);
+        encoding.writeVarUint(auth, 0);
+        encoding.writeVarString(auth, ticket);
+        raw.send(encoding.toUint8Array(auth));
+        await until(() => entered);
+        let removed = false;
+        const removal = service
+          .remove(sessionId, fixture.users.alice!, bobId)
+          .then(() => {
+            removed = true;
+          });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(removed).toBe(false);
+        expect(frames).toHaveLength(0);
+        await until(() => raw.readyState === WebSocket.CLOSED);
+        await removal;
+        expect(frames).toHaveLength(0);
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(frames).toHaveLength(0);
+      } finally {
+        release();
+        collaboration.hocuspocus.createDocument = originalCreate;
+        raw.terminate();
+        await collaboration.stop();
+        await startServer();
+      }
+    });
+
+    it("rejects awareness queries after removal when notifications are unavailable", async () => {
+      await collaboration.stop();
+      await startServer(60_000);
+      await collaboration.dropListener();
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      alice.provider.setAwarenessField("whiteboardPointer", { x: 2, y: 3 });
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const frames: Buffer[] = [];
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      raw.on("message", (data) => frames.push(Buffer.from(data as Buffer)));
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const auth = encoding.createEncoder();
+        encoding.writeVarString(auth, documentName(sessionId));
+        encoding.writeVarUint(auth, 2);
+        encoding.writeVarUint(auth, 0);
+        encoding.writeVarString(auth, ticket);
+        raw.send(encoding.toUint8Array(auth));
+        await until(() => frames.length > 0);
+        await until(() => collaboration.connectionsOf(sessionId).length === 2);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await service.remove(sessionId, fixture.users.alice!, bobId);
+        expect(raw.readyState).toBe(WebSocket.OPEN);
+        const before = frames.length;
+        const query = encoding.createEncoder();
+        encoding.writeVarString(query, documentName(sessionId));
+        encoding.writeVarUint(query, 3);
+        raw.send(encoding.toUint8Array(query));
+        await until(() => raw.readyState === WebSocket.CLOSED);
+        const decoding = await import("lib0/decoding");
+        for (const frame of frames.slice(before)) {
+          const decoder = decoding.createDecoder(frame);
+          expect(decoding.readVarString(decoder)).toBe(documentName(sessionId));
+          expect(decoding.readVarUint(decoder)).toBe(7);
+          expect(decoding.readVarString(decoder)).toBe(CLOSE_REASONS.removed);
+        }
+      } finally {
+        raw.terminate();
+        await collaboration.stop();
+        await startServer();
+      }
+    });
+
+    it("fails closed on a database authorization error for non-sync messages", async () => {
+      const sessionId = await newSession();
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      const originalQuery = pool.query.bind(pool);
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const auth = encoding.createEncoder();
+        encoding.writeVarString(auth, documentName(sessionId));
+        encoding.writeVarUint(auth, 2);
+        encoding.writeVarUint(auth, 0);
+        encoding.writeVarString(auth, ticket);
+        raw.send(encoding.toUint8Array(auth));
+        await until(() => collaboration.connectionsOf(sessionId).length === 1);
+        pool.query = ((
+          sql: string | { text: string; values?: unknown[] },
+          values: unknown[],
+        ) => {
+          const text = typeof sql === "string" ? sql : sql.text;
+          if (text.includes("JOIN collaboration_participants cp"))
+            return Promise.reject(new Error("database unavailable"));
+          return typeof sql === "string"
+            ? originalQuery(sql, values)
+            : originalQuery(sql);
+        }) as typeof pool.query;
+        const query = encoding.createEncoder();
+        encoding.writeVarString(query, documentName(sessionId));
+        encoding.writeVarUint(query, 3);
+        raw.send(encoding.toUint8Array(query));
+        await until(() => raw.readyState === WebSocket.CLOSED);
+      } finally {
+        pool.query = originalQuery;
+        raw.terminate();
+      }
+    });
+
+    it("closes an established socket when authorization waits indefinitely for a database client", async () => {
+      const sessionId = await newSession();
+      const bobId = fixture.users.bob!;
+      const ticket = (
+        await service.ticket(sessionId, bobId, authSessions[bobId]!)
+      ).ticket;
+      const raw = new WebSocket(collaboration.server.webSocketURL, {
+        headers: { Origin: ORIGIN },
+      });
+      const originalQuery = pool.query.bind(pool);
+      try {
+        await new Promise<void>((resolve) => raw.once("open", resolve));
+        const encoding = await import("lib0/encoding");
+        const auth = encoding.createEncoder();
+        encoding.writeVarString(auth, documentName(sessionId));
+        encoding.writeVarUint(auth, 2);
+        encoding.writeVarUint(auth, 0);
+        encoding.writeVarString(auth, ticket);
+        raw.send(encoding.toUint8Array(auth));
+        await until(() => collaboration.connectionsOf(sessionId).length === 1);
+        pool.query = ((
+          sql: string | { text: string; values?: unknown[] },
+          values: unknown[],
+        ) => {
+          const text = typeof sql === "string" ? sql : sql.text;
+          if (text.includes("JOIN collaboration_participants cp"))
+            return new Promise(() => undefined);
+          return typeof sql === "string"
+            ? originalQuery(sql, values)
+            : originalQuery(sql);
+        }) as typeof pool.query;
+        const query = encoding.createEncoder();
+        encoding.writeVarString(query, documentName(sessionId));
+        encoding.writeVarUint(query, 3);
+        const started = Date.now();
+        raw.send(encoding.toUint8Array(query));
+        await until(() => raw.readyState === WebSocket.CLOSED);
+        expect(Date.now() - started).toBeLessThan(4000);
+      } finally {
+        pool.query = originalQuery;
+        raw.terminate();
+      }
+    });
+
     it("closes a removed invitee within 5 seconds", async () => {
       const sessionId = await newSession();
+      const alice = join("alice", sessionId);
       const bob = join("bob", sessionId);
-      await until(() => bob.provider.isSynced);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
       await service.remove(sessionId, fixture.users.alice!, fixture.users.bob!);
       const elapsed = await until(() => bob.state.closeReason !== undefined);
       expect(bob.state.closeReason).toBe(CLOSE_REASONS.removed);
       expect(elapsed).toBeLessThan(5000);
+      await expect(
+        service.ticket(
+          sessionId,
+          fixture.users.bob!,
+          authSessions[fixture.users.bob!]!,
+        ),
+      ).rejects.toMatchObject({ status: 404 });
+      bob.text.insert(0, "after removal");
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(alice.text.toString()).not.toContain("after removal");
     });
 
     it("closes a member who leaves the course and a user who logs out", async () => {
@@ -626,12 +1295,11 @@ integration("collaboration server", () => {
       ]);
     });
 
-    it("closes and refuses a classmate once the anchor post is private", async () => {
+    it("does not grant staff override access and ignores the former post privacy", async () => {
       const sessionId = await newSession("alice", ["bob", "tim"]);
       const bob = join("bob", sessionId);
       const tim = join("tim", sessionId);
       await until(() => bob.provider.isSynced && tim.provider.isSynced);
-      // The API never makes a public post private; this checks the server's own rule.
       await pool.query("UPDATE posts SET private=true WHERE id=$1", [
         fixture.postId,
       ]);
@@ -640,13 +1308,16 @@ integration("collaboration server", () => {
           fixture.users.bob!,
           fixture.users.tim!,
         ]);
-        await until(() => bob.state.closeReason === CLOSE_REASONS.removed);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(bob.state.closeReason).toBeUndefined();
         expect(tim.state.closeReason).toBeUndefined();
-        const again = join("bob", sessionId);
-        await until(
-          () => again.state.authFailed || again.state.closeReason !== undefined,
-        );
-        expect(again.provider.isSynced).toBe(false);
+        await expect(
+          service.ticket(
+            sessionId,
+            fixture.users.ina!,
+            authSessions[fixture.users.ina!]!,
+          ),
+        ).rejects.toMatchObject({ status: 404 });
       } finally {
         await pool.query("UPDATE posts SET private=false WHERE id=$1", [
           fixture.postId,
@@ -689,12 +1360,298 @@ integration("collaboration server", () => {
       expect(snapshot).toMatchObject({
         sessionStatus: "ended",
         content: "while True:\n    break\n",
+        finalSnapshotConfirmed: true,
+        lastSavedWarning: false,
+      });
+      const stale = new Y.Doc();
+      stale.getText("content").insert(0, "older queued write");
+      await collaboration.persist(sessionId, stale);
+      await expect(
+        service.snapshot(sessionId, fixture.users.alice!),
+      ).resolves.toMatchObject({
+        content: "while True:\n    break\n",
+        finalSnapshotConfirmed: true,
       });
       await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
       expect(
         alice.state.stateless.map((payload) => JSON.parse(payload).type),
       ).toContain("session-ended");
     });
+
+    it("confirms only after an authorized in-flight edit drains and is durable", async () => {
+      const sessionId = await newSession("alice", []);
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      await collaboration.connectionsOf(sessionId)[0]!.waitForPendingMessages();
+      const originalQuery = pool.query.bind(pool);
+      let releaseCheck!: () => void;
+      const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
+      let held = false;
+      let authorized = false;
+      pool.query = ((
+        sql: string | { text: string; values?: unknown[] },
+        values: unknown[],
+      ) => {
+        const result =
+          typeof sql === "string"
+            ? originalQuery(sql, values)
+            : originalQuery(sql);
+        const text = typeof sql === "string" ? sql : sql.text;
+        const parameters = typeof sql === "string" ? values : sql.values;
+        if (
+          !held &&
+          text.includes("JOIN collaboration_participants cp") &&
+          parameters?.[0] === sessionId
+        ) {
+          held = true;
+          return Promise.resolve(result).then(async (value) => {
+            authorized = true;
+            await gate;
+            return value;
+          });
+        }
+        return result;
+      }) as typeof pool.query;
+      try {
+        alice.text.insert(0, "drained before confirmation");
+        await until(() => authorized);
+        const current = await service.get(sessionId, fixture.users.alice!);
+        const ending = service.update(
+          sessionId,
+          fixture.users.alice!,
+          `"v${current.version}"`,
+          { status: "ended" },
+        );
+        await until(async () => {
+          const state = await pool.query<{ lifecycle_state: string }>(
+            "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1",
+            [sessionId],
+          );
+          return state.rows[0]?.lifecycle_state === "ending";
+        });
+        const before = await pool.query<{
+          final_snapshot_confirmed: boolean;
+        }>(
+          "SELECT final_snapshot_confirmed FROM collaboration_sessions WHERE id=$1",
+          [sessionId],
+        );
+        expect(before.rows[0]?.final_snapshot_confirmed).toBe(false);
+        releaseCheck();
+        const ended = await ending;
+        expect(ended.finalSnapshotConfirmed).toBe(true);
+        const snapshot = await service.snapshot(
+          sessionId,
+          fixture.users.alice!,
+        );
+        expect(snapshot).toMatchObject({
+          content: "drained before confirmation",
+          finalSnapshotConfirmed: true,
+          lastSavedWarning: false,
+        });
+        const durable = await pool.query<{
+          text_projection: string;
+          final_snapshot_confirmed: boolean;
+        }>(
+          `SELECT d.text_projection,s.final_snapshot_confirmed
+           FROM collaboration_sessions s JOIN collaboration_documents d ON d.collaboration_session_id=s.id
+           WHERE s.id=$1`,
+          [sessionId],
+        );
+        expect(durable.rows[0]).toEqual({
+          text_projection: "drained before confirmation",
+          final_snapshot_confirmed: true,
+        });
+      } finally {
+        releaseCheck();
+        pool.query = originalQuery;
+      }
+    });
+
+    it("includes a disconnected participant's in-flight edit before confirmation", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      const bob = join("bob", sessionId);
+      await until(() => alice.provider.isSynced && bob.provider.isSynced);
+      await Promise.all(
+        collaboration
+          .connectionsOf(sessionId)
+          .map((connection) => connection.waitForPendingMessages()),
+      );
+      const originalQuery = pool.query.bind(pool);
+      let releaseCheck!: () => void;
+      const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
+      let held = false;
+      let authorized = false;
+      pool.query = ((
+        sql: string | { text: string; values?: unknown[] },
+        values: unknown[],
+      ) => {
+        const result =
+          typeof sql === "string"
+            ? originalQuery(sql, values)
+            : originalQuery(sql);
+        const text = typeof sql === "string" ? sql : sql.text;
+        const parameters = typeof sql === "string" ? values : sql.values;
+        if (
+          !held &&
+          text.includes("JOIN collaboration_participants cp") &&
+          parameters?.[0] === sessionId &&
+          parameters?.[1] === fixture.users.bob
+        ) {
+          held = true;
+          return Promise.resolve(result).then(async (value) => {
+            authorized = true;
+            await gate;
+            return value;
+          });
+        }
+        return result;
+      }) as typeof pool.query;
+      try {
+        bob.text.insert(0, "disconnected edit");
+        await until(() => authorized);
+        bob.provider.destroy();
+        bob.websocketProvider.destroy();
+        await until(() => collaboration.connectionsOf(sessionId).length === 1);
+        const current = await service.get(sessionId, fixture.users.alice!);
+        const ending = service.update(
+          sessionId,
+          fixture.users.alice!,
+          `"v${current.version}"`,
+          { status: "ended" },
+        );
+        await until(async () => {
+          const state = await pool.query<{ lifecycle_state: string }>(
+            "SELECT lifecycle_state FROM collaboration_sessions WHERE id=$1",
+            [sessionId],
+          );
+          return state.rows[0]?.lifecycle_state === "ending";
+        });
+        releaseCheck();
+        const ended = await ending;
+        expect(ended.finalSnapshotConfirmed).toBe(true);
+        const snapshot = await service.snapshot(
+          sessionId,
+          fixture.users.alice!,
+        );
+        expect(snapshot.content).toContain("disconnected edit");
+        expect(snapshot.lastSavedWarning).toBe(false);
+      } finally {
+        releaseCheck();
+        pool.query = originalQuery;
+      }
+    });
+
+    it("warns when an authorized update is still in flight during final capture", async () => {
+      const sessionId = await newSession("alice", []);
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      await collaboration.connectionsOf(sessionId)[0]!.waitForPendingMessages();
+      const originalQuery = pool.query.bind(pool);
+      let releaseCheck!: () => void;
+      const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
+      let held = false;
+      let authorized = false;
+      pool.query = ((
+        sql: string | { text: string; values?: unknown[] },
+        values: unknown[],
+      ) => {
+        const result =
+          typeof sql === "string"
+            ? originalQuery(sql, values)
+            : originalQuery(sql);
+        const text = typeof sql === "string" ? sql : sql.text;
+        const parameters = typeof sql === "string" ? values : sql.values;
+        if (
+          !held &&
+          text.includes("JOIN collaboration_participants cp") &&
+          parameters?.[0] === sessionId
+        ) {
+          held = true;
+          return Promise.resolve(result).then(async (value) => {
+            authorized = true;
+            await gate;
+            return value;
+          });
+        }
+        return result;
+      }) as typeof pool.query;
+      try {
+        alice.text.insert(0, "in-flight edit");
+        await until(() => authorized);
+        const current = await service.get(sessionId, fixture.users.alice!);
+        // The authorization check itself fails closed after two seconds; end
+        // sooner to exercise the unconfirmed fallback while it is still pending.
+        const shortEndService = new CollaborationSessionService(pool, {
+          webSocketUrl: "wss://app.example.edu/collaboration",
+          endTimeoutMs: 500,
+          endPollMs: 20,
+        });
+        const ended = await shortEndService.update(
+          sessionId,
+          fixture.users.alice!,
+          `"v${current.version}"`,
+          { status: "ended" },
+        );
+        expect(ended.finalSnapshotConfirmed).toBe(false);
+        const snapshot = await service.snapshot(
+          sessionId,
+          fixture.users.alice!,
+        );
+        expect(snapshot).toMatchObject({
+          sessionStatus: "ended",
+          finalSnapshotConfirmed: false,
+          lastSavedWarning: true,
+        });
+        expect(snapshot.content).not.toContain("in-flight edit");
+      } finally {
+        releaseCheck();
+        pool.query = originalQuery;
+      }
+    });
+
+    it("does not claim a confirmed final snapshot when the final database flush fails", async () => {
+      const sessionId = await newSession();
+      const alice = join("alice", sessionId);
+      await until(() => alice.provider.isSynced);
+      alice.text.insert(0, "possibly unsaved");
+      await pool.query(`CREATE FUNCTION reject_collaboration_store() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated storage outage'; END $$`);
+      await pool.query(`CREATE TRIGGER reject_collaboration_store
+        BEFORE INSERT OR UPDATE ON collaboration_documents
+        FOR EACH ROW EXECUTE FUNCTION reject_collaboration_store()`);
+      try {
+        const current = await service.get(sessionId, fixture.users.alice!);
+        const ended = await service.update(
+          sessionId,
+          fixture.users.alice!,
+          `"v${current.version}"`,
+          { status: "ended" },
+        );
+        expect(ended.finalSnapshotConfirmed).toBe(false);
+        const stored = await pool.query<{
+          lifecycle_state: string;
+          final_snapshot_confirmed: boolean;
+        }>(
+          "SELECT lifecycle_state,final_snapshot_confirmed FROM collaboration_sessions WHERE id=$1",
+          [sessionId],
+        );
+        expect(stored.rows[0]).toMatchObject({
+          lifecycle_state: "ended",
+          final_snapshot_confirmed: false,
+        });
+        await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
+        const shutdownStarted = Date.now();
+        await collaboration.stop();
+        expect(Date.now() - shutdownStarted).toBeLessThan(5000);
+      } finally {
+        await pool.query(
+          "DROP TRIGGER reject_collaboration_store ON collaboration_documents",
+        );
+        await pool.query("DROP FUNCTION reject_collaboration_store()");
+        await startServer();
+      }
+    }, 20_000);
 
     it("rejects a document name that is not a session", async () => {
       const sessionId = await newSession();
