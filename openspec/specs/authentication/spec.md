@@ -45,6 +45,11 @@ The system SHALL require a valid, unexpired, single-use email-verification token
 - **WHEN** a client submits a token that was already consumed, expired, or superseded
 - **THEN** the system rejects account creation without creating a user
 
+#### Scenario: Preserve legacy email access
+
+- **WHEN** an existing non-`.edu` user whose previously accepted local part contains consecutive dots logs in or requests a password reset
+- **THEN** historical email normalization finds the account and allows both flows, while a new verification request for that address returns `422 validation_failed`
+
 ### Requirement: Browser session authentication
 
 The system SHALL authenticate users with an opaque, server-side session credential in an HttpOnly cookie and SHALL return a session-bound CSRF token after successful login.

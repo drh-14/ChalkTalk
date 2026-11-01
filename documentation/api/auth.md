@@ -343,7 +343,7 @@ curl --request POST '/api/v1/sessions' \
 
 ##### `422 Unprocessable Content`
 
-`validation_failed`: The email or password field is malformed.
+`validation_failed`: The email or password field is malformed. Legacy accounts retain the historical, broader email normalization for login, including previously accepted consecutive dots in the local part.
 
 ##### `429 Too Many Requests`
 

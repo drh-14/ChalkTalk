@@ -92,14 +92,7 @@ export function normalizeEmail(value: unknown): string {
   if (typeof value !== "string")
     throw new AuthError(422, "validation_failed", "Email is required");
   const email = value.trim().toLowerCase();
-  const localPart = email.slice(0, email.indexOf("@"));
-  if (
-    !/^[^\s@]+@[^\s@]+$/.test(email) ||
-    localPart.startsWith(".") ||
-    localPart.endsWith(".") ||
-    localPart.includes("..") ||
-    !isValidDomain(domainFor(email))
-  ) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new AuthError(422, "validation_failed", "Email is invalid");
   }
   return email;
@@ -122,6 +115,7 @@ function requireAcademicEmail(email: string): void {
   const normalizedEmail = normalizeEmail(email);
   const localPart = normalizedEmail.slice(0, normalizedEmail.indexOf("@"));
   if (
+    !isValidDomain(domainFor(normalizedEmail)) ||
     localPart.length > 64 ||
     !localPart
       .split(".")

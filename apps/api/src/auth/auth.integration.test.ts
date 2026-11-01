@@ -530,9 +530,9 @@ integrationTest("AuthService PostgreSQL integration", () => {
     });
   });
 
-  it("keeps login and password reset available to legacy non-.edu accounts", async () => {
+  it("keeps login and password reset available to legacy non-.edu double-dot accounts", async () => {
     const organizationId = uuidv7();
-    const email = "legacy-user@example.com";
+    const email = "john..smith@example.com";
     await pool.query(
       "INSERT INTO organizations (id,domain,name) VALUES ($1,$2,$3)",
       [organizationId, "example.com", "Legacy"],
@@ -551,6 +551,31 @@ integrationTest("AuthService PostgreSQL integration", () => {
     expect(login.session.user.email).toBe(email);
     await service.requestPasswordReset(email);
     expect(emailSender.messages.at(-1)?.to).toBe(email);
+
+    const app = createApp({ environment, authService: service });
+    const sessionResponse = await request(app)
+      .post("/api/v1/sessions")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({
+        email: " John..Smith@Example.COM ",
+        password: "correct horse battery staple",
+      });
+    expect(sessionResponse.status).toBe(201);
+    expect(sessionResponse.body.data.user.email).toBe(email);
+
+    const resetResponse = await request(app)
+      .post("/api/v1/password-reset-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({ email: " John..Smith@Example.COM " });
+    expect(resetResponse.status).toBe(202);
+    expect(emailSender.messages.at(-1)?.to).toBe(email);
+
+    const verificationResponse = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({ email });
+    expect(verificationResponse.status).toBe(422);
+    expect(verificationResponse.body.error.code).toBe("validation_failed");
   });
 
   it("returns 202 for known and unknown password-reset requests when SMTP fails", async () => {

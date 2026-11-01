@@ -28,8 +28,8 @@ describe("academic email admission", () => {
   });
 
   it("preserves legacy email normalization for login and reset", () => {
-    expect(normalizeEmail(" Student,Admin@Example.COM ")).toBe(
-      "student,admin@example.com",
+    expect(normalizeEmail(" John..Smith@Example.COM ")).toBe(
+      "john..smith@example.com",
     );
   });
 });

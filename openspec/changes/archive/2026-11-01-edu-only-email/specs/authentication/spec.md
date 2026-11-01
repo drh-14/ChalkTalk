@@ -39,6 +39,11 @@ The system SHALL require a valid, unexpired, single-use email-verification token
 - **WHEN** a client submits a token that was already consumed, expired, or superseded
 - **THEN** the system rejects account creation without creating a user
 
+#### Scenario: Preserve legacy email access
+
+- **WHEN** an existing non-`.edu` user whose previously accepted local part contains consecutive dots logs in or requests a password reset
+- **THEN** historical email normalization finds the account and allows both flows, while a new verification request for that address returns `422 validation_failed`
+
 ### Requirement: Profile and account deletion
 
 The system SHALL allow an authenticated user to update their display name and verified same-school `.edu` email with optimistic concurrency. An email-change token for a different domain or non-`.edu` address SHALL fail with `422 email_domain_not_allowed` without consuming the token or changing the user. Existing non-`.edu` users SHALL retain login and password-reset access. It SHALL require the current password for account deletion and reject deletion when the user is the final instructor of a course.
