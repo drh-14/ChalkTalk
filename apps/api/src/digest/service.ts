@@ -30,6 +30,7 @@ type ActivityRow = {
 type FrozenEmail = {
   version: 1;
   provider: "smtp" | "resend";
+  courseName: string;
   message: {
     to: string;
     from?: string;
@@ -319,6 +320,7 @@ export class DigestService {
       const snapshot: FrozenEmail = {
         version: 1,
         provider: this.sender.provider ?? "smtp",
+        courseName: recipient.rows[0].course_name,
         message: {
           to: recipient.rows[0].email,
           ...(this.sender.defaultFrom ? { from: this.sender.defaultFrom } : {}),
@@ -377,8 +379,11 @@ export class DigestService {
         await this.cancel(client, row);
         return "canceled";
       }
-      const recipient = await client.query<{ email: string }>(
-        `SELECT u.email FROM users u
+      const recipient = await client.query<{
+        email: string;
+        course_name: string;
+      }>(
+        `SELECT u.email,c.name AS course_name FROM users u
            JOIN course_memberships m ON m.user_id=u.id AND m.course_id=$2 AND m.digest_emails
            JOIN courses c ON c.id=m.course_id
           WHERE u.id=$1 AND u.deleted_at IS NULL AND c.status='active'
@@ -387,7 +392,8 @@ export class DigestService {
       );
       if (
         !recipient.rows[0] ||
-        recipient.rows[0].email !== snapshot.message.to
+        recipient.rows[0].email !== snapshot.message.to ||
+        recipient.rows[0].course_name !== snapshot.courseName
       ) {
         await this.cancel(client, row);
         return "canceled";

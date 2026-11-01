@@ -333,7 +333,10 @@ integration("daily course email digest", () => {
     await pool.query("UPDATE users SET email='alice@example.edu' WHERE id=$1", [
       ids.alice,
     ]);
-    await pool.query("UPDATE courses SET status='active'");
+    await pool.query(
+      "UPDATE courses SET status='active',name=CASE id WHEN $1 THEN 'Physics' ELSE 'Chemistry' END WHERE id IN ($1,$2)",
+      [ids.physics, ids.chemistry],
+    );
     await pool.query(
       "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($3,$2,'student') ON CONFLICT DO NOTHING",
       [ids.physics, ids.alice, ids.chemistry],
@@ -1239,6 +1242,38 @@ integration("daily course email digest", () => {
       status: "canceled",
       frozen_email: null,
     });
+  });
+
+  it("cancels and scrubs a frozen digest when its course is renamed before retry", async () => {
+    await addQuestion(
+      ids.physics,
+      ids.bob,
+      "2026-10-14T12:00:00Z",
+      "Question",
+    );
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    sender.fail = true;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(sender.attempts).toHaveLength(1);
+    expect(
+      (await pool.query("SELECT frozen_email FROM digest_outbox")).rows[0]
+        .frozen_email.courseName,
+    ).toBe("Physics");
+
+    await pool.query("UPDATE courses SET name='Mechanics' WHERE id=$1", [
+      ids.physics,
+    ]);
+    await pool.query(
+      "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+    );
+    sender.fail = false;
+    await digest.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+
+    expect(sender.attempts).toHaveLength(1);
+    expect(
+      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
+        .rows[0],
+    ).toEqual({ status: "canceled", frozen_email: null });
   });
 
   it("cancels the whole frozen digest when one of several items is edited", async () => {
