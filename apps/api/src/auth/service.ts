@@ -442,9 +442,9 @@ export class AuthService {
     requireAcademicEmail(proof.email);
     const domain = domainFor(proof.email);
     const organization = await client.query<{ id: string }>(
-      `INSERT INTO organizations (id, domain, name) VALUES ($1, $2, $2)
+      `INSERT INTO organizations (id, domain, name) VALUES ($1, $2, $3)
          ON CONFLICT (domain) DO UPDATE SET domain = EXCLUDED.domain RETURNING id`,
-      [uuidv7(), domain],
+      [uuidv7(), domain, domain.slice(0, 200)],
     );
     try {
       const userResult = await client.query<UserRow>(

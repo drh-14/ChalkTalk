@@ -336,6 +336,39 @@ integrationTest("AuthService PostgreSQL integration", () => {
     expect(malformed.body.error.code).toBe("validation_failed");
   });
 
+  it("creates an account for a valid domain longer than the organization name limit", async () => {
+    const domain = `${"a".repeat(60)}.${"b".repeat(60)}.${"c".repeat(60)}.${"d".repeat(19)}.edu`;
+    const email = `long-domain@${domain}`;
+    expect(domain.length).toBeGreaterThan(200);
+    const app = createApp({ environment, authService: service });
+    const verification = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({ email });
+    expect(verification.status).toBe(202);
+
+    const creation = await request(app)
+      .post("/api/v1/users")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({
+        verificationToken: tokenFrom(emailSender.messages.at(-1)!),
+        password: "correct horse battery staple",
+        displayName: "Long Domain Student",
+      });
+    expect(creation.status).toBe(201);
+    expect(creation.body.data.email).toBe(email);
+
+    const organization = await pool.query<{ domain: string; name: string }>(
+      `SELECT o.domain, o.name FROM users u
+       JOIN organizations o ON o.id = u.organization_id
+       WHERE u.email = $1`,
+      [email],
+    );
+    expect(organization.rows).toEqual([
+      { domain, name: domain.slice(0, 200) },
+    ]);
+  });
+
   it("rejects a pre-policy non-.edu verification token without creating an account or consuming it", async () => {
     const token = "legacy-nonacademic-verification-token";
     await pool.query(
