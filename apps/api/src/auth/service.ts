@@ -92,7 +92,14 @@ export function normalizeEmail(value: unknown): string {
   if (typeof value !== "string")
     throw new AuthError(422, "validation_failed", "Email is required");
   const email = value.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+$/.test(email) || !isValidDomain(domainFor(email))) {
+  const localPart = email.slice(0, email.indexOf("@"));
+  if (
+    !/^[^\s@]+@[^\s@]+$/.test(email) ||
+    localPart.startsWith(".") ||
+    localPart.endsWith(".") ||
+    localPart.includes("..") ||
+    !isValidDomain(domainFor(email))
+  ) {
     throw new AuthError(422, "validation_failed", "Email is invalid");
   }
   return email;

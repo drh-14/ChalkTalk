@@ -85,7 +85,7 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 `email_domain_not_allowed`: The syntactically valid normalized email domain does not end exactly in `.edu`.
 
-`validation_failed`: The email address is syntactically malformed (for example, `student@.edu`, `student@school.edu.`, or `student@bad-.edu`).
+`validation_failed`: The email address is syntactically malformed (for example, `.student@school.edu`, `student.@school.edu`, `student..name@school.edu`, `student@.edu`, or `student@bad-.edu`).
 
 ##### `429 Too Many Requests`
 
@@ -220,7 +220,7 @@ curl --request POST '/api/v1/users' \
 
 `email_domain_not_allowed`: The syntactically valid verified email in the token does not have a `.edu` domain.
 
-`validation_failed`: The verified email in the token has malformed syntax or DNS labels.
+`validation_failed`: The verified email in the token has malformed syntax, including invalid local-part dots, or DNS labels.
 
 `weak_password`: The password or another field fails validation.
 
@@ -772,7 +772,7 @@ curl --request PATCH '/api/v1/users/me' \
 
 `email_domain_not_allowed`: The syntactically valid replacement email is not in the account's current canonical `.edu` school domain.
 
-`validation_failed`: No valid editable field was supplied, or the replacement email has malformed syntax or DNS labels.
+`validation_failed`: No valid editable field was supplied, or the replacement email has malformed syntax, including invalid local-part dots, or DNS labels.
 
 `verification_token_invalid`: The email verification token is invalid, expired, or superseded by a later request.
 
