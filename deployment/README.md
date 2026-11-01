@@ -6,7 +6,7 @@ This is a **runnable starting point**, not a production-readiness guarantee. It 
 
 - Public: Caddy on TCP 80/443 and UDP 443. It obtains/renews the domain's TLS certificate, serves compiled React assets, proxies `/api/*` to Express and `/collaboration` to the WebSocket service.
 - Private: compiled API, worker, collaboration server, one-shot migration job, PostgreSQL 17 and SeaweedFS. Only Caddy publishes host ports; PostgreSQL and SeaweedFS use named volumes. `edge` provides internet egress to the API/worker for SES; `data` is an internal network.
-- The existing email code sends via AWS SES SMTP on port 465. This stack does not start Mailpit or send a test message by itself.
+- This stack uses the application's default SMTP provider with AWS SES on port 465. It does not start Mailpit or send a test message by itself.
 
 ## Prepare a pinned release
 
