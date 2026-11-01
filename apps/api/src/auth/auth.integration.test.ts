@@ -423,7 +423,10 @@ integrationTest("AuthService PostgreSQL integration", () => {
 
   it("rejects malformed email tokens for account creation and email changes", async () => {
     const user = await createVerifiedUser("malformed-proof@example.edu");
-    const login = await service.login(user.email, "correct horse battery staple");
+    const login = await service.login(
+      user.email,
+      "correct horse battery staple",
+    );
     const app = createApp({ environment, authService: service });
     for (const [index, email] of [
       "malformed-proof@bad-.edu",
@@ -435,7 +438,11 @@ integrationTest("AuthService PostgreSQL integration", () => {
       await pool.query(
         `INSERT INTO email_verification_tokens (id, email, token_hash, expires_at)
          VALUES ($1, $2, $3, now() + interval '30 minutes')`,
-        [randomUUID(), email, hashOpaqueToken(token, environment.authTokenSecret)],
+        [
+          randomUUID(),
+          email,
+          hashOpaqueToken(token, environment.authTokenSecret),
+        ],
       );
       const creation = await request(app)
         .post("/api/v1/users")
@@ -452,7 +459,10 @@ integrationTest("AuthService PostgreSQL integration", () => {
           emailVerificationToken: token,
         }),
       ).rejects.toMatchObject({ status: 422, code: "validation_failed" });
-      const state = await pool.query<{ consumed_at: Date | null; email: string }>(
+      const state = await pool.query<{
+        consumed_at: Date | null;
+        email: string;
+      }>(
         `SELECT t.consumed_at, u.email FROM email_verification_tokens t CROSS JOIN users u
          WHERE t.token_hash=$1 AND u.id=$2`,
         [hashOpaqueToken(token, environment.authTokenSecret), user.id],
