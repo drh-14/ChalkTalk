@@ -532,6 +532,8 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     "recipient",
     "identity",
     "content",
+    "body",
+    "access",
     "sender",
     "provider",
   ] as const)(
@@ -645,6 +647,16 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           await pool.query(
             "UPDATE posts SET title='Changed title' WHERE id=$1",
             [seeded.source.value.id],
+          );
+        } else if (change === "body") {
+          await pool.query(
+            "UPDATE posts SET body_markdown='Changed body' WHERE id=$1",
+            [seeded.source.value.id],
+          );
+        } else if (change === "access") {
+          await pool.query(
+            "UPDATE posts SET private=true WHERE id=$1",
+            [seeded.canonical.value.id],
           );
         }
         await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
