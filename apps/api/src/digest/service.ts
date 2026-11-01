@@ -4,7 +4,11 @@ import type { DigestImage, DigestImageReader } from "./images.js";
 import type { Pool, PoolClient } from "pg";
 import type { EmailSender } from "../auth/service.js";
 import type { Observability } from "../observability/index.js";
-import { PermanentEmailDeliveryError } from "../auth/email.js";
+import {
+  EmailConfigurationError,
+  GmailQuotaError,
+  PermanentEmailDeliveryError,
+} from "../auth/email.js";
 
 type OutboxRow = {
   id: string;
@@ -504,11 +508,20 @@ export class DigestService {
         );
         return true;
       }
+      const configuration =
+        error instanceof EmailConfigurationError ||
+        error instanceof GmailQuotaError;
       await this.pool.query(
-        `UPDATE digest_outbox SET status='queued',available_at=clock_timestamp() + make_interval(secs => LEAST(3600, (2 ^ LEAST($3,10))::integer)),
+        `UPDATE digest_outbox SET status='queued',available_at=clock_timestamp() + CASE WHEN $5 THEN interval '15 minutes' ELSE make_interval(secs => LEAST(3600, (2 ^ LEAST($3,10))::integer)) END,
                 locked_by=NULL,locked_until=NULL,last_error=$4,updated_at=clock_timestamp()
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-        [row.id, this.workerId, row.attempts, message.slice(0, 4000)],
+        [
+          row.id,
+          this.workerId,
+          row.attempts,
+          message.slice(0, 4000),
+          configuration,
+        ],
       );
     }
     return true;

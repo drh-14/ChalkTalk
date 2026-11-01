@@ -19,6 +19,7 @@ import { AuthService, type EmailSender } from "../auth/service.js";
 import {
   createEmailSender,
   EmailConfigurationError,
+  GmailQuotaError,
   PermanentEmailDeliveryError,
 } from "../auth/email.js";
 import { hashOpaqueToken } from "../auth/crypto.js";
@@ -863,23 +864,51 @@ integration("daily course email digest", () => {
     ).toEqual([{ status: "canceled", frozen_email: null }]);
   });
 
-  it("keeps an eligible frozen digest queued when Gmail OAuth needs operator repair", async () => {
-    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
-    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
-    sender.send = async () => {
-      throw new EmailConfigurationError("Gmail OAuth needs operator action");
-    };
-    expect(await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"))).toBe(
-      true,
-    );
-    expect(
-      (await pool.query("SELECT status,frozen_email FROM digest_outbox"))
-        .rows[0],
-    ).toMatchObject({
-      status: "queued",
-      frozen_email: { version: 1 },
-    });
-  });
+  it.each([
+    [
+      "Gmail OAuth",
+      () => new EmailConfigurationError("Gmail OAuth needs operator action"),
+    ],
+    ["Gmail quota", () => new GmailQuotaError("Gmail quota exceeded")],
+  ] as const)(
+    "holds a frozen digest for 15 minutes on %s failure",
+    async (_kind, failure) => {
+      await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+      await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+      let attempts = 0;
+      sender.send = async () => {
+        attempts++;
+        throw failure();
+      };
+      expect(await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"))).toBe(
+        true,
+      );
+      const queued = (
+        await pool.query<{
+          status: string;
+          attempts: number;
+          frozen_email: { version: number } | null;
+          available_at: Date;
+          updated_at: Date;
+        }>(
+          "SELECT status,attempts,frozen_email,available_at,updated_at FROM digest_outbox",
+        )
+      ).rows[0]!;
+      expect(queued).toMatchObject({
+        status: "queued",
+        attempts: 1,
+        frozen_email: { version: 1 },
+      });
+      expect(
+        queued.available_at.getTime() - queued.updated_at.getTime(),
+      ).toBeGreaterThanOrEqual(899_000);
+      expect(
+        queued.available_at.getTime() - queued.updated_at.getTime(),
+      ).toBeLessThanOrEqual(901_000);
+      expect(await digest.deliverOnce(new Date())).toBe(false);
+      expect(attempts).toBe(1);
+    },
+  );
 
   it("holds course access and content through an in-flight SMTP handoff", async () => {
     const post = await addQuestion(
