@@ -1,4 +1,5 @@
 -- Run explicitly only on deployments that enable semantic search and provide pgvector.
+SELECT pg_advisory_xact_lock(724023007);
 CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
 
 CREATE TABLE IF NOT EXISTS post_embeddings (
