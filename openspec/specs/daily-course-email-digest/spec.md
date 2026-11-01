@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Deliver an automatic email for each course with relevant previous-day discussion activity, with durable recovery after scheduler or SMTP outages.
+Deliver an automatic email for each course with relevant previous-day discussion activity, with durable recovery after scheduler or email-provider outages.
 
 ## Requirements
 
@@ -51,7 +51,7 @@ The system SHALL generate at most one durable digest intent per recipient, activ
 
 ### Requirement: Durable midnight dispatch and recovery
 
-The system SHALL start dispatch of eligible previous-day digests at or after 00:00 UTC. It SHALL recover eligible dates missed since deployment and retry failed provider sends using durable unique intents and expiring claims. Before the first network send it SHALL persist the exact composed digest including sender, recipient, HTML, plain text, and inline CID image bytes and exact RFC 2822 MIME bytes. Every retry SHALL use the original provider and reuse that payload and its MIME bytes, while rechecking the recipient address, active membership, course digest preference, course status and name, current visibility, title, and body of every included item, and every linked or embedded image represented in the message. If the course name changes, any included item becomes inaccessible or its title or body changes, or a represented image is deleted, the whole frozen digest SHALL be canceled. A sender-address or selected-provider change SHALL also cancel and scrub the frozen digest before any provider call. It SHALL record success only after provider acceptance and SHALL clear the snapshot after success or cancellation. Gmail offers no idempotency key, so an ambiguous accepted send may be delivered twice on retry.
+The system SHALL start dispatch of eligible previous-day digests at or after 00:00 UTC. It SHALL recover eligible dates missed since deployment and retry failed provider sends using durable unique intents and expiring claims. Before the first network send it SHALL persist the exact composed digest including sender, recipient, HTML, plain text, and inline CID image bytes and exact RFC 2822 MIME bytes. Every retry SHALL use the original provider and reuse that payload and its MIME bytes, while rechecking the recipient address, active membership, course digest preference, course status and name, current visibility, title, and body of every item retained in the rendered message, and every linked or embedded image represented in the message. If the course name changes, any included item becomes inaccessible or its title or body changes, or a represented image is deleted, the whole frozen digest SHALL be canceled. A sender-address or selected-provider change SHALL also cancel and scrub the frozen digest before any provider call. It SHALL record success only after provider acceptance and SHALL clear the snapshot after success or cancellation. Gmail offers no idempotency key, so an ambiguous accepted send may be delivered twice on retry.
 
 #### Scenario: API process restart
 
