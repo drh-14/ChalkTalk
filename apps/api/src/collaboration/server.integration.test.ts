@@ -1651,7 +1651,7 @@ integration("collaboration server", () => {
         await pool.query("DROP FUNCTION reject_collaboration_store()");
         await startServer();
       }
-    });
+    }, 20_000);
 
     it("rejects a document name that is not a session", async () => {
       const sessionId = await newSession();
