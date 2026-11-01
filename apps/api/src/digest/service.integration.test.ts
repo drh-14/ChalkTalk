@@ -1245,12 +1245,7 @@ integration("daily course email digest", () => {
   });
 
   it("cancels and scrubs a frozen digest when its course is renamed before retry", async () => {
-    await addQuestion(
-      ids.physics,
-      ids.bob,
-      "2026-10-14T12:00:00Z",
-      "Question",
-    );
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
     await digest.schedule(new Date("2026-10-15T00:00:00Z"));
     sender.fail = true;
     await digest.deliverOnce(new Date("2026-10-15T00:00:01Z"));
