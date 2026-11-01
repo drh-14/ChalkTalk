@@ -80,7 +80,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 - `(recipient_user_id, course_id, activity_date)`: unique key preventing duplicate queued intents.
 - `status`: `queued`, `running`, `sent`, or `canceled`.
 - `attempts`, `available_at`, `locked_by`, `locked_until`, `last_error`, `sent_at`, `created_at`, `updated_at`: claim, retry, and delivery state.
-- `frozen_email`: nullable `jsonb`; versioned exact email payload (including base64-encoded inline images), original provider, recipient address, item-title and body hashes, and IDs of all represented images, including linked images. Committed before the first provider handoff, reused with a stable delivery key on retries, and cleared on send or cancellation. Retries cancel rather than recompose if the recipient address, eligibility, or any included item title/body/access changes, or a represented image is deleted.
+- `frozen_email`: nullable `jsonb`; versioned exact email payload (including base64-encoded inline images), original provider, recipient address, course name, item-title and body hashes, and IDs of all represented images, including linked images. Committed before the first provider handoff, reused with a stable delivery key on retries, and cleared on send or cancellation. Retries cancel rather than recompose if the recipient address, eligibility, course name, or any included item title/body/access changes, or a represented image is deleted.
 
 For delivery and visibility behavior, see the [daily course email digest](api/daily-course-email-digest.md).
 
