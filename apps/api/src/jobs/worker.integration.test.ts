@@ -654,10 +654,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             [seeded.source.value.id],
           );
         } else if (change === "access") {
-          await pool.query(
-            "UPDATE posts SET private=true WHERE id=$1",
-            [seeded.canonical.value.id],
-          );
+          await pool.query("UPDATE posts SET private=true WHERE id=$1", [
+            seeded.canonical.value.id,
+          ]);
         }
         await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
           seeded.jobId,
