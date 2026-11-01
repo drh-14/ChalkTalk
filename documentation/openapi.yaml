@@ -393,7 +393,7 @@ paths:
                       requestId: req_createAccountVerificationRequest
                       details: []
                 validation_failed:
-                  summary: The email address is syntactically malformed.
+                  summary: The email address has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form.
                   value:
                     error:
                       code: validation_failed
@@ -561,7 +561,7 @@ paths:
                       requestId: req_createAccount
                       details: []
                 validation_failed:
-                  summary: The verified email in the token has malformed syntax or DNS labels.
+                  summary: The verified email in the token has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or DNS labels.
                   value:
                     error:
                       code: validation_failed
@@ -1108,7 +1108,7 @@ paths:
                       requestId: req_updateCurrentUser
                       details: []
                 validation_failed:
-                  summary: No valid editable field was supplied, or the replacement email has malformed syntax or DNS labels.
+                  summary: No valid editable field was supplied, or the replacement email has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or DNS labels.
                   value:
                     error:
                       code: validation_failed

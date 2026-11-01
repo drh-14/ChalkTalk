@@ -10,7 +10,7 @@ The auth service currently checks an environment allowlist at verification reque
 
 ## Decisions
 
-- Use a single server-side domain validator over the normalized email domain. Require valid ASCII DNS labels and a terminal `.edu` label, not `endsWith("edu")` on the whole address. Apply at verification, token consumption for account creation, and profile email change.
+- Use one server-side admission check over the normalized address. Require a 1–64-character ASCII dot-atom local part, valid ASCII DNS labels, and a terminal `.edu` label, not `endsWith("edu")` on the whole address. Apply at verification, token consumption for account creation, and profile email change; retain the permissive normalizer for legacy login and reset.
 - Keep client validation in the signup form for immediate feedback; server remains authoritative. HTML `type=email` provides syntax assistance but not the `.edu` policy.
 - Remove the allowlist field and environment parser; ignore legacy deployment values only by removing them from templates and documentation.
 - Retain `domainFor(proof.email)` for exact-domain organization identity and same-domain profile checks.

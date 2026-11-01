@@ -16,7 +16,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 
 - `id`: `uuid_v7`; primary key.
 - `organization_id`: `uuid_v7`; foreign key to `organizations.id`.
-- `email`: `varchar(320)`; unique while active and stored normalized (trimmed and lowercased).
+- `email`: `varchar(320)`; unique while active and stored normalized (trimmed and lowercased). Newly admitted addresses require a 1–64-character ASCII dot-atom local part and a valid `.edu` domain; legacy addresses remain usable for login and password reset.
 - `display_name`: `varchar(100)`.
 - `password_hash`: `text`.
 - `deleted_at`: `timestamptz`, nullable.
@@ -27,7 +27,7 @@ ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally includ
 ### `email_verification_tokens`
 
 - `id`: `uuid_v7`; primary key.
-- `email`: `varchar(320)`; stored normalized (trimmed and lowercased).
+- `email`: `varchar(320)`; stored normalized (trimmed and lowercased). Verification requests require a 1–64-character ASCII dot-atom local part and a valid `.edu` domain; token consumers revalidate this policy.
 - `token_hash`: `bytea`; unique.
 - `expires_at`, `consumed_at`, `superseded_at`: `timestamptz`; the latter two are nullable.
 - `consumed_by_user_id`: `uuid_v7`, nullable; foreign key to `users.id`.

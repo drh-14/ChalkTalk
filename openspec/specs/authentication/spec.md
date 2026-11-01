@@ -22,12 +22,12 @@ The system SHALL require a valid, unexpired, single-use email-verification token
 
 #### Scenario: Reject malformed email syntax
 
-- **WHEN** a client requests verification for an email with malformed syntax or DNS labels, such as `.student@school.edu`, `student.@school.edu`, `student..name@school.edu`, `student@.edu`, `student@school.edu.`, `student@bad..edu`, or `student@bad-.edu`
+- **WHEN** a client requests verification for an email with malformed syntax or DNS labels, including a local part outside the 1–64-character ASCII dot-atom form such as `.student@school.edu`, `student..name@school.edu`, `student,admin@school.edu`, a quoted or internationalized local part, or a domain such as `student@.edu`, `student@school.edu.`, `student@bad..edu`, or `student@bad-.edu`
 - **THEN** the server returns `422 validation_failed` without sending mail or persisting a verification token
 
 #### Scenario: Reject a malformed legacy verification token
 
-- **WHEN** a previously issued verification token with malformed email syntax, including invalid local-part dots, or DNS labels is submitted for account creation or an email change
+- **WHEN** a previously issued verification token with malformed email syntax, including a local part outside the 1–64-character ASCII dot-atom form, or invalid DNS labels is submitted for account creation or an email change
 - **THEN** the server returns `422 validation_failed` without creating or changing a user or consuming the token
 
 #### Scenario: Reject a legacy nonacademic verification token

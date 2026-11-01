@@ -119,7 +119,16 @@ function isValidDomain(domain: string): boolean {
 }
 
 function requireAcademicEmail(email: string): void {
-  if (!domainFor(normalizeEmail(email)).endsWith(".edu"))
+  const normalizedEmail = normalizeEmail(email);
+  const localPart = normalizedEmail.slice(0, normalizedEmail.indexOf("@"));
+  if (
+    localPart.length > 64 ||
+    !localPart
+      .split(".")
+      .every((part) => /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+$/.test(part))
+  )
+    throw new AuthError(422, "validation_failed", "Email is invalid");
+  if (!domainFor(normalizedEmail).endsWith(".edu"))
     throw new AuthError(
       422,
       "email_domain_not_allowed",

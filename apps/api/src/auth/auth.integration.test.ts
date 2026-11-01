@@ -311,6 +311,12 @@ integrationTest("AuthService PostgreSQL integration", () => {
     expect(emailSender.messages.at(-1)?.to).toBe("another@newschool.edu");
     await service.requestVerification("Student.Name@NewSchool.EDU");
     expect(emailSender.messages.at(-1)?.to).toBe("student.name@newschool.edu");
+    await service.requestVerification(`${"a".repeat(64)}@school.edu`);
+    expect(emailSender.messages.at(-1)?.to).toBe(`${"a".repeat(64)}@school.edu`);
+    await service.requestVerification("student+tag!#$%&'*=?^_`{|}~@school.edu");
+    expect(emailSender.messages.at(-1)?.to).toBe(
+      "student+tag!#$%&'*=?^_`{|}~@school.edu",
+    );
 
     const countBefore = emailSender.messages.length;
     for (const email of [
@@ -327,6 +333,9 @@ integrationTest("AuthService PostgreSQL integration", () => {
       expect(denied.body.error.code, email).toBe("email_domain_not_allowed");
     }
     expect(emailSender.messages).toHaveLength(countBefore);
+    const tokensBeforeMalformed = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM email_verification_tokens",
+    );
     for (const email of [
       "student@.edu",
       "student@school.edu.",
@@ -339,6 +348,11 @@ integrationTest("AuthService PostgreSQL integration", () => {
       ".student@school.edu",
       "student.@school.edu",
       "student..name@school.edu",
+      "student,admin@school.edu",
+      `${"a".repeat(65)}@school.edu`,
+      '"student"@school.edu',
+      "studént@school.edu",
+      "student\0admin@school.edu",
     ]) {
       const malformed = await request(app)
         .post("/api/v1/account-verification-requests")
@@ -348,6 +362,10 @@ integrationTest("AuthService PostgreSQL integration", () => {
       expect(malformed.body.error.code, email).toBe("validation_failed");
     }
     expect(emailSender.messages).toHaveLength(countBefore);
+    const tokensAfterMalformed = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM email_verification_tokens",
+    );
+    expect(tokensAfterMalformed.rows[0]).toEqual(tokensBeforeMalformed.rows[0]);
   });
 
   it("creates an account for a valid domain longer than the organization name limit", async () => {
@@ -433,6 +451,10 @@ integrationTest("AuthService PostgreSQL integration", () => {
       ".malformed-proof@example.edu",
       "malformed-proof.@example.edu",
       "malformed..proof@example.edu",
+      "malformed,proof@example.edu",
+      `${"a".repeat(65)}@example.edu`,
+      '"malformed"@example.edu',
+      "malforméd@example.edu",
     ].entries()) {
       const token = `malformed-verification-token-${index}`;
       await pool.query(
