@@ -71,7 +71,7 @@ The system SHALL authenticate users with an opaque, server-side session credenti
 
 ### Requirement: Session and credential lifecycle
 
-The system SHALL support reading the current session, signing out, changing a password, and resetting a forgotten password. Credential-changing operations SHALL revoke affected sessions according to the API contract. For syntactically valid password-reset requests, the system SHALL return the same `202` response no sooner than one second after processing starts whether or not the email exists; existing-account SMTP delivery SHALL be bounded at 750 ms and failures or timeouts SHALL remain hidden.
+The system SHALL support reading the current session, signing out, changing a password, and resetting a forgotten password. Credential-changing operations SHALL revoke affected sessions according to the API contract. For syntactically valid password-reset requests, the system SHALL return the same `202` response no sooner than one second after processing starts whether or not the email exists; existing-account email delivery SHALL be bounded at 750 ms and failures or timeouts SHALL remain hidden.
 
 #### Scenario: Sign out
 

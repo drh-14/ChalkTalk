@@ -15,22 +15,29 @@ import {
 } from "../collaboration/lifecycle.js";
 
 export interface EmailSender {
+  provider?: "smtp" | "resend";
+  prepare?(
+    message: Parameters<EmailSender["send"]>[0],
+  ): Promise<Parameters<EmailSender["send"]>[0]>;
   send(
     message: {
+      from?: string;
       to: string;
       subject: string;
       text: string;
       html?: string;
+      rawMimeBase64Url?: string;
       attachments?: Array<{
         filename: string;
-        content: Buffer;
+        content: Buffer | string;
         contentType: "image/png";
         cid: string;
         contentDisposition: "inline";
       }>;
     },
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; idempotencyKey?: string },
   ): Promise<void>;
+  defaultFrom?: string;
 }
 
 export interface PasswordResetTiming {
