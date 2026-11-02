@@ -4,22 +4,26 @@ import { CollaborationSessionService } from "./service.js";
 type Db = Pool | PoolClient;
 
 /**
- * Ends every unfinished session of a course or post. Called inside the
- * transaction that archives or deletes the course, or removes the post; the
- * notification is delivered on commit so the collaboration server persists the
- * final text and closes the editors.
+ * Ends every unfinished session of a course. Called inside the transaction
+ * that archives or deletes the course. The notification is delivered on commit
+ * so the collaboration server closes the editors. A direct end cannot prove a
+ * final editor flush, so the saved snapshot remains explicitly unconfirmed.
  */
 export async function endCollaborationSessions(
   db: Db,
-  scope: { courseId: string } | { postId: string },
+  scope: { courseId: string } | { creatorId: string; courseId?: string },
 ) {
-  const [column, id] =
-    "courseId" in scope
-      ? ["course_id", scope.courseId]
-      : ["post_id", scope.postId];
+  const byCreator = "creatorId" in scope;
   const ended = await db.query<{ id: string }>(
-    `UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE ${column}=$1 AND lifecycle_state<>'ended' RETURNING id`,
-    [id],
+    `UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=clock_timestamp(),final_snapshot_confirmed=false,version=version+1,updated_at=clock_timestamp()
+     WHERE ${byCreator ? "created_by_user_id=$1" : "course_id=$1"}
+       ${byCreator && scope.courseId ? "AND course_id=$2" : ""}
+       AND lifecycle_state<>'ended' RETURNING id`,
+    byCreator
+      ? scope.courseId
+        ? [scope.creatorId, scope.courseId]
+        : [scope.creatorId]
+      : [scope.courseId],
   );
   for (const row of ended.rows)
     await CollaborationSessionService.notify(db, {

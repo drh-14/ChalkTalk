@@ -124,7 +124,7 @@ Instructors can upload or link resources relating to the course, such as syllabu
 Uploaded documents can be divided into instructor-defined regions, such as a diagram or paragraph on a given page. Each region is independently searchable and can be directly linked to from posts, responses, and followups. Text within a defined region is extracted via OCR to support search.
 
 **Live Collaborative Sessions**  
-Any user can start a live, shared code editor session, linked to a post, for use during office hours or collaborative debugging. Multiple participants can edit the same session concurrently, with changes merging in real time without conflict.
+Course collaboration sessions are independent of posts; see the [current collaboration design](design.md#threads-resources-and-live-collaboration).
 
 **Statistics**  
 Course statistics are compiled per course in a statistics tab. These statistics include:

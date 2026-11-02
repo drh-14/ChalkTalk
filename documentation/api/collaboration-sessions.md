@@ -1,16 +1,16 @@
 ## Collaboration Sessions
 
-Live sessions are private, temporary shared code and whiteboard documents anchored to a post. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. A session is visible only to its creator, current course TAs and instructors, and current course members invited to it; anyone else receives `404 not_found`, exactly as for an absent session. A session on a [private post](posts.md) is also hidden from, and cannot be joined by, any member who cannot read that post. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket. Thread conversations are not valid session anchors.
+Live sessions are private, course-scoped shared code and whiteboard documents, independent of posts and Threads. A session nobody has been connected to for `COLLABORATION_IDLE_END_MINUTES` (default 120) ends automatically. Only current course members with an explicit participant row can discover, open, or receive tickets for it; nonparticipants, including course staff, receive `404 not_found`. Existing sessions retain their IDs, documents, and roster when detached from posts. Editing happens over the [collaboration WebSocket](collaboration-websocket.md) after obtaining a one-use connection ticket.
 
 <a id="createCollaborationSession"></a>
 
 ### **`POST /api/v1/courses/{courseId}/collaboration-sessions`**
 
-Creates an active, private live session anchored to a readable post in an active course. The creator becomes the first participant. The text starts empty. Create a separate one-use connection ticket before opening the collaboration WebSocket.
+Creates an active, private live session in an active course. The creator becomes the first participant. The text starts empty. Create a separate one-use connection ticket before opening the collaboration WebSocket.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Current member of an active course who can read the anchor post.
+**Access:** Any current member of an active course.
 
 **Request media:** `application/json`
 
@@ -40,11 +40,7 @@ None.
 
 ##### `CreateCollaborationSessionRequest` (required)
 
-`anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
-
-`anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
-
-`title` (string, optional, 1–120 characters): Optional title, 1 to 120 characters after trimming; defaults to the post title.
+`title` (string, required, 1–120 characters): Session title, 1 to 120 characters after trimming.
 
 `language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, optional): Syntax-highlighting language. The editor never runs code.
 
@@ -72,10 +68,6 @@ None.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
-
-`data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
-
 `data.title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
 
 `data.language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
@@ -90,7 +82,9 @@ None.
 
 `data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
-`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
+
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` only when persistence of every authorized edit is verified; `false` when completeness cannot be proven (including possible in-flight edits) or for legacy-ended sessions.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -110,7 +104,7 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
     --header 'Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000' \
     --header 'X-CSRF-Token: opaque_csrf_token' \
     --header 'Content-Type: application/json' \
-    --data '{"anchor":{"postId":"post_123"},"language":"python"}'
+    --data '{"title":"Office hours workspace","language":"python"}'
 ```
 
 #### Example success response
@@ -121,10 +115,7 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
     "id": "collab_123",
     "courseId": "course_123",
     "status": "active",
-    "anchor": {
-      "postId": "post_123"
-    },
-    "title": "Why does my loop never stop?",
+    "title": "Office hours workspace",
     "language": "python",
     "createdBy": "user_123",
     "participants": [
@@ -135,6 +126,7 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
         "permission": "edit"
       }
     ],
+    "finalSnapshotConfirmed": null,
     "endedAt": null,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
@@ -165,8 +157,6 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
 
 ##### `422 Unprocessable Content`
 
-`cross_course_anchor`: The anchor is invalid, belongs to another course, or is a private post the caller cannot read.
-
 `validation_failed`: The request body is invalid.
 
 ##### `429 Too Many Requests`
@@ -187,11 +177,11 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
 
 ### **`GET /api/v1/courses/{courseId}/collaboration-sessions`**
 
-Lists the course's collaboration sessions visible to the caller, newest first. Hidden sessions are excluded before pagination and hasMore are calculated. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Lists the course's sessions in which the caller currently participates, newest first. Nonparticipant sessions, including those visible to no staff member, are excluded before pagination and `hasMore` are calculated.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Course member. Results include only sessions the caller created, was invited to, or can open as current course staff.
+**Access:** Current course member. Results include only sessions with a current participant row for the caller.
 
 **Request media:** None.
 
@@ -208,10 +198,6 @@ Lists the course's collaboration sessions visible to the caller, newest first. H
 #### Query parameters
 
 `status` (enum: active, ended, optional): Filter by session state.
-
-`anchorType` (enum: post, optional): Filter by anchor kind. Only post anchors exist.
-
-`anchorId` (string, optional; minimum length 1, maximum length 255): Filter by the anchored post ID.
 
 `cursor` (string, optional; minimum length 1, maximum length 2048): Opaque cursor returned by the previous page.
 
@@ -243,10 +229,6 @@ None.
 
 `data[].status` (enum: active, ended, required): Session lifecycle state.
 
-`data[].anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
-
-`data[].anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
-
 `data[].title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
 
 `data[].language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
@@ -261,7 +243,9 @@ None.
 
 `data[].participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
-`data[].participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+`data[].participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
+
+`data[].finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` for a confirmed final snapshot; `false` for an unconfirmed or legacy-ended snapshot.
 
 `data[].endedAt` (string or null, required): End time; null while active.
 
@@ -280,7 +264,7 @@ None.
 #### Example request
 
 ```bash
-curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=active&anchorType=post&anchorId=post_123' \
+curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=active' \
     --header 'Accept: application/json' \
     --header 'Cookie: __Host-chalktalk_session=opaque_session'
 ```
@@ -294,10 +278,7 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=act
       "id": "collab_123",
       "courseId": "course_123",
       "status": "active",
-      "anchor": {
-        "postId": "post_123"
-      },
-      "title": "Why does my loop never stop?",
+      "title": "Office hours workspace",
       "language": "python",
       "createdBy": "user_123",
       "participants": [
@@ -314,6 +295,7 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=act
           "permission": "edit"
         }
       ],
+      "finalSnapshotConfirmed": null,
       "endedAt": null,
       "createdAt": "2026-09-20T14:30:00Z",
       "updatedAt": "2026-09-20T14:30:00Z",
@@ -351,7 +333,7 @@ curl --request GET '/api/v1/courses/course_123/collaboration-sessions?status=act
 
 ### **`GET /api/v1/users/me/collaboration-sessions`**
 
-Lists the sessions the caller created or was invited to, newest first, across courses that are active and of which the caller is still a member. Sessions whose post is deleted or a confirmed duplicate are excluded before pagination and hasMore are calculated. Staff see only their own sessions here; the [course list](#listCourseCollaborationSessions) shows every session in a course.
+Lists sessions in which the caller currently participates, newest first, across courses of which the caller is still a member. Staff do not see nonparticipant sessions here or in the [course list](#listCourseCollaborationSessions). Post deletion and merging do not change session visibility.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -405,10 +387,6 @@ None.
 
 `data[].status` (enum: active, ended, required): Session lifecycle state.
 
-`data[].anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
-
-`data[].anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
-
 `data[].title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
 
 `data[].language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
@@ -423,7 +401,9 @@ None.
 
 `data[].participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
-`data[].participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+`data[].participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
+
+`data[].finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` for a confirmed final snapshot; `false` for an unconfirmed or legacy-ended snapshot.
 
 `data[].endedAt` (string or null, required): End time; null while active.
 
@@ -457,10 +437,7 @@ curl --request GET '/api/v1/users/me/collaboration-sessions?status=active' \
       "courseId": "course_123",
       "courseName": "CS 101",
       "status": "active",
-      "anchor": {
-        "postId": "post_123"
-      },
-      "title": "Why does my loop never stop?",
+      "title": "Office hours workspace",
       "language": "python",
       "createdBy": "user_123",
       "participants": [
@@ -477,6 +454,7 @@ curl --request GET '/api/v1/users/me/collaboration-sessions?status=active' \
           "permission": "edit"
         }
       ],
+      "finalSnapshotConfirmed": null,
       "endedAt": null,
       "createdAt": "2026-09-20T14:30:00Z",
       "updatedAt": "2026-09-20T14:30:00Z",
@@ -510,11 +488,11 @@ curl --request GET '/api/v1/users/me/collaboration-sessions?status=active' \
 
 ### **`GET /api/v1/collaboration-sessions/{collaborationSessionId}`**
 
-Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Retrieves a collaboration session for a current participant. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session. Nonparticipants, including staff, receive `404 not_found`.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Session creator, current course TA or instructor, or current invitee.
+**Access:** Current course member who is a session participant.
 
 **Request media:** None.
 
@@ -558,10 +536,6 @@ None.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
-
-`data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
-
 `data.title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
 
 `data.language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
@@ -576,7 +550,9 @@ None.
 
 `data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
-`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
+
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` only when persistence of every authorized edit is verified; `false` when completeness cannot be proven (including possible in-flight edits) or for legacy-ended sessions.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -602,10 +578,7 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123' \
     "id": "collab_123",
     "courseId": "course_123",
     "status": "active",
-    "anchor": {
-      "postId": "post_123"
-    },
-    "title": "Why does my loop never stop?",
+    "title": "Office hours workspace",
     "language": "python",
     "createdBy": "user_123",
     "participants": [
@@ -622,6 +595,7 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123' \
         "permission": "edit"
       }
     ],
+    "finalSnapshotConfirmed": null,
     "endedAt": null,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
@@ -650,11 +624,11 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`PATCH /api/v1/collaboration-sessions/{collaborationSessionId}`**
 
-Changes an active session's title or language, or ends it with status ended. Only the session creator or current course staff may call it. Ending asks the collaboration server to persist the final text and waits up to 5 seconds for it to confirm; if it does not confirm in time, the session still ends with the most recently persisted text. Ended sessions become read-only and keep their final snapshot.
+Changes an active session's title or language, or ends it with status ended. Only the creator or a current TA/instructor who is also a participant may call it. Ending preserves the last persisted document. When the collaboration server drains all previously authorized in-flight messages and commits the final snapshot, it confirms the snapshot. If draining or the final flush fails or times out, the session ends with the most recently persisted text and a last-saved warning. Previously ended sessions without a confirmed flush remain conservatively unconfirmed. Ending waits up to 5 seconds for the collaboration server; ended sessions become read-only and keep their final snapshot.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Session creator or current course TA or instructor.
+**Access:** Session creator or participating current course TA/instructor.
 
 **Request media:** `application/json`
 
@@ -714,10 +688,6 @@ None.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
-
-`data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
-
 `data.title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
 
 `data.language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
@@ -732,7 +702,9 @@ None.
 
 `data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
-`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
+
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` only when persistence of every authorized edit is verified; `false` when completeness cannot be proven (including possible in-flight edits) or for legacy-ended sessions.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -763,10 +735,7 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
     "id": "collab_123",
     "courseId": "course_123",
     "status": "active",
-    "anchor": {
-      "postId": "post_123"
-    },
-    "title": "Why does my loop never stop?",
+    "title": "Office hours workspace",
     "language": "java",
     "createdBy": "user_123",
     "participants": [
@@ -783,6 +752,7 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
         "permission": "edit"
       }
     ],
+    "finalSnapshotConfirmed": null,
     "endedAt": null,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
@@ -801,7 +771,7 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
 
-`forbidden`: The caller is not the session creator or course staff.
+`forbidden`: The caller is not the creator or participating course staff.
 
 ##### `404 Not Found`
 
@@ -835,11 +805,11 @@ curl --request PATCH '/api/v1/collaboration-sessions/collab_123' \
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/participants`**
 
-Invites a current course member to an active session as an editor or, with `permission: "view"`, as a viewer whose connection is read-only. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication and leaves their permission unchanged; to change it, remove and re-invite them. Course staff always edit, whatever permission they were invited with. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only if the session and course are still active and the invitee is still a participant and member when it runs. Inviting an existing participant sends no email.
+Invites a current course member to an active session as an editor or, with `permission: "view"`, as a viewer whose connection is read-only. Any current participant may invite. Inviting an existing participant succeeds without duplication and leaves their permission unchanged; to change it, the creator or participating staff must remove and re-invite them. Invited staff retain their assigned View/Edit permission. A new invitation emails the invitee a link to the session, naming who invited them, the session, and the course; the job worker sends it only while the session and course are active and the invitee is still a participant and member. The worker holds eligibility locks through email-provider acceptance, so participant removal or creator departure may wait for an in-flight send before committing; no new invitation send is accepted after that commit. Inviting an existing participant sends no email.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Session creator or current course TA or instructor.
+**Access:** Any current participant in an active course.
 
 **Request media:** `application/json`
 
@@ -893,10 +863,6 @@ None.
 
 `data.status` (enum: active, ended, required): Session lifecycle state.
 
-`data.anchor` (object, required): A same-course post anchor. Thread conversations are not valid session anchors.
-
-`data.anchor.postId` (string, required, 1–255 characters): Opaque stable identifier.
-
 `data.title` (string, required, 1–120 characters): Session title, trimmed, 1 to 120 characters.
 
 `data.language` (enum: plaintext, python, java, c, cpp, javascript, typescript, sql, required): Syntax-highlighting language. The editor never runs code.
@@ -911,7 +877,9 @@ None.
 
 `data.participants[].role` (enum: creator, invitee, required): The participant's role in the session.
 
-`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+`data.participants[].permission` (enum: edit, view, required): Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
+
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` only when persistence of every authorized edit is verified; `false` when completeness cannot be proven (including possible in-flight edits) or for legacy-ended sessions.
 
 `data.endedAt` (string or null, required): End time; null while active.
 
@@ -941,10 +909,7 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
     "id": "collab_123",
     "courseId": "course_123",
     "status": "active",
-    "anchor": {
-      "postId": "post_123"
-    },
-    "title": "Why does my loop never stop?",
+    "title": "Office hours workspace",
     "language": "python",
     "createdBy": "user_123",
     "participants": [
@@ -961,6 +926,7 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
         "permission": "edit"
       }
     ],
+    "finalSnapshotConfirmed": null,
     "endedAt": null,
     "createdAt": "2026-09-20T14:30:00Z",
     "updatedAt": "2026-09-20T14:30:00Z",
@@ -979,8 +945,6 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
 
 `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
 
-`forbidden`: The caller is not the session creator or course staff.
-
 ##### `404 Not Found`
 
 `not_found`: The course, collaboration session, or participant is absent or hidden.
@@ -995,8 +959,6 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
 
 `not_course_member`: The user is not a current member of the course.
 
-`invitee_cannot_read_post`: The session is on a private post, and the user is neither its author nor course staff.
-
 `validation_failed`: The request body is invalid.
 
 ##### `500 Internal Server Error`
@@ -1009,11 +971,11 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/participants' \
 
 ### **`DELETE /api/v1/collaboration-sessions/{collaborationSessionId}/participants/{userId}`**
 
-Removes an invitee from an active session. Only the session creator or current course staff may remove. The invitee's unused tickets are revoked and their open connections close within 5 seconds.
+Removes an invitee from an active session. Only the creator or participating current course staff may remove. An in-flight invitation email send may delay the removal commit. Once removal commits, the invitee's unused tickets are revoked, new tickets and edits are denied, and open connections close promptly. An email accepted by the provider before commit may arrive later; no new invitation send is accepted after commit.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Session creator or current course TA or instructor.
+**Access:** Session creator or participating current course TA/instructor.
 
 **Request media:** None.
 
@@ -1074,7 +1036,7 @@ curl --request DELETE '/api/v1/collaboration-sessions/collab_123/participants/us
 
 `csrf_validation_failed`: The request origin or CSRF token is missing, invalid, or does not match the session.
 
-`forbidden`: The caller is not the session creator or course staff.
+`forbidden`: The caller is not the creator or participating course staff.
 
 ##### `404 Not Found`
 
@@ -1098,11 +1060,11 @@ curl --request DELETE '/api/v1/collaboration-sessions/collab_123/participants/us
 
 ### **`POST /api/v1/collaboration-sessions/{collaborationSessionId}/connection-tickets`**
 
-Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with `read` permission for a viewer and `write` otherwise, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with `read` permission for a View participant and `write` for an Edit participant, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Nonparticipants, including course staff, receive `404 not_found`.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Session creator, current course TA or instructor, or current invitee, while the course and session are active.
+**Access:** Current course member who is a participant, while the course and session are active.
 
 **Request media:** None.
 
@@ -1216,11 +1178,11 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-ticket
 
 ### **`GET /api/v1/collaboration-sessions/{collaborationSessionId}/snapshot`**
 
-Retrieves the most recently persisted plain text of an active or ended session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+Retrieves the most recently persisted plain text of an active or ended session for a current participant. Nonparticipants, including course staff, receive `404 not_found`.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Session creator, current course TA or instructor, or current invitee.
+**Access:** Current course member who is a session participant.
 
 **Request media:** None.
 
@@ -1264,6 +1226,10 @@ None.
 
 `data.sessionStatus` (enum: active, ended, required): Collaboration-session state when the snapshot was captured.
 
+`data.finalSnapshotConfirmed` (boolean or null, required): `null` while active or ending; `true` for a confirmed final snapshot; `false` for an unconfirmed or legacy-ended snapshot.
+
+`data.lastSavedWarning` (boolean, required): True for an ended session without a confirmed final snapshot, warning that recent edits may be missing.
+
 `data.content` (string, required, at most 200000 characters): Plain-text projection of Y.Text('content'), at most 200,000 characters.
 
 `data.whiteboard` (array of objects, required, at most 5000 items): Non-deleted whiteboard elements as last persisted, in drawing order (fractional index, then id). Each is an Excalidraw 0.18 element with at least `id` and `type` (rectangle, ellipse, diamond, line, arrow, freedraw, or text); other fields are kept as drawn. See the [collaboration WebSocket protocol](collaboration-websocket.md#whiteboard) for the element rules.
@@ -1288,6 +1254,8 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123/snapshot' \
     "collaborationSessionId": "collab_123",
     "documentId": "collaboration-session:collab_123",
     "sessionStatus": "active",
+    "finalSnapshotConfirmed": null,
+    "lastSavedWarning": false,
     "content": "for i in range(3):\n    print(i)\n",
     "whiteboard": [
       {

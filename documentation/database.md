@@ -483,22 +483,22 @@ Threads are public topic boards managed by course staff. Conversations are separ
 
 ## Collaboration
 
-Live sessions are private, temporary shared code and whiteboard documents anchored to a post. They do not attach to Threads or conversations.
+Live sessions are private, course-scoped shared code and whiteboard documents, independent of posts and Threads. Migration preserves existing session IDs, document state, participant rows, and permissions while dropping the post association. Post edits, merges, and deletion do not end or delete sessions.
 
 ### `collaboration_sessions`
 
 - `id`: `uuid_v7`; primary key.
 - `course_id`: `uuid_v7`; foreign key to `courses.id`, deleted with the course.
 - `(course_id, id)`: unique key used by course-bound participants and tickets.
-- `post_id`: `uuid_v7`; with `course_id`, foreign key to `posts(course_id, id)`, deleted with the post row.
 - `title`: `text`; trimmed, 1–120 characters.
 - `language`: `text`; one of `plaintext`, `python`, `java`, `c`, `cpp`, `javascript`, `typescript`, or `sql`; defaults to `plaintext`.
 - `lifecycle_state`: `text`; `active`, `ending`, or `ended`. `ending` is held only while the collaboration server persists the final text.
 - `created_by_user_id`: `uuid_v7`; foreign key to `users.id`.
 - `ended_at`, `created_at`, `updated_at`: `timestamptz`; `ended_at` is non-null exactly when `lifecycle_state` is `ended`.
 - `version`: `bigint`; positive revision used for the session `ETag`.
+- `final_snapshot_confirmed`: `boolean NOT NULL DEFAULT false`; stored as `false` while active or ending and when completeness cannot be proven (including possible in-flight edits), finalization fails, or the session ended before migration. It is `true` only when all authorized edits are proven durable. The API projects `null` for active or ending sessions; ended sessions with `false` show a last-saved warning.
 - `last_active_at`: `timestamptz`; when the session last had a connected participant, kept current by the collaboration server while anyone is connected and when the last connection closes. Active sessions idle past `COLLABORATION_IDLE_END_MINUTES` end automatically.
-- Indexes: `(post_id, created_at DESC, id DESC)` and `(course_id, created_at DESC, id DESC)` for listing; partial `(course_id)` where the session is not ended, for lifecycle sweeps; partial `(last_active_at)` where the session is active, for idle ending.
+- Indexes: `(course_id, created_at DESC, id DESC)` for listing; partial `(course_id)` where the session is not ended, for lifecycle sweeps; partial `(last_active_at)` where the session is active, for idle ending. Participant visibility is applied before pagination.
 
 ### `collaboration_documents`
 
@@ -515,11 +515,11 @@ Live sessions are private, temporary shared code and whiteboard documents anchor
 - `(course_id, collaboration_session_id)`: foreign key to `collaboration_sessions(course_id, id)`, deleted with the session.
 - `(course_id, user_id)`: foreign key to `course_memberships(course_id, user_id)`, deleted with the membership, so leaving or being removed from a course removes session access.
 - `invited_by_user_id`: `uuid_v7`; foreign key to `users.id`. The creator's row names the creator.
-- `permission`: `text`; `edit` (default) or `view`. Viewers get `read` connection tickets unless they are course staff; the creator's row is always `edit`.
+- `permission`: `text`; `edit` (default) or `view`. Viewers, including staff, get `read` connection tickets; the creator's row is always `edit`.
 - `created_at`: `timestamptz`.
 - Index: `(course_id, user_id)`.
 
-Course staff can open any session in their course without a participant row; access is checked against current membership and role.
+No staff access override exists: current course membership and an explicit participant row are required for session discovery, details, snapshot, ticket, and WebSocket access. Any participant may invite a current course member. Only the creator or participating current staff may rename/end a session or remove an invitee. The creator cannot be removed. Creator course departure ends an active session before membership deletion; the final persisted snapshot remains available to remaining participants.
 
 ### `collaboration_connection_tickets`
 

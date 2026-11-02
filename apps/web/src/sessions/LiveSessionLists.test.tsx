@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { CourseLiveSessions, YourLiveSessions } from "./LiveSessionLists.js";
+import { YourLiveSessions } from "./LiveSessionLists.js";
 
 const session = (
   id: string,
@@ -83,29 +83,4 @@ it("shows nothing on the home page without active sessions", async () => {
   );
   await waitFor(() => expect(urls).toHaveLength(1));
   expect(container.innerHTML).toBe("");
-});
-
-it("lists a course's active sessions with participants for staff", async () => {
-  const urls = api([session("s-1"), session("s-2")]);
-  const onOpen = vi.fn();
-  render(<CourseLiveSessions courseId="c-1" staff onOpen={onOpen} />);
-  expect(
-    await screen.findByRole("heading", { name: "Live sessions" }),
-  ).toBeTruthy();
-  expect(urls).toEqual([
-    "/api/v1/courses/c-1/collaboration-sessions?status=active",
-  ]);
-  expect(screen.getByText("2 running in this course")).toBeTruthy();
-  expect(screen.getAllByText("Sam, Tara")).toHaveLength(2);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Join Session s-1" }),
-  );
-  expect(onOpen).toHaveBeenCalledWith("c-1", "s-1");
-});
-
-it("tells a student how many of their own sessions are active", async () => {
-  api([session("s-1")]);
-  render(<CourseLiveSessions courseId="c-1" staff={false} onOpen={vi.fn()} />);
-  expect(await screen.findByText("1 active")).toBeTruthy();
-  expect(screen.queryByText(/running in this course/)).toBeNull();
 });

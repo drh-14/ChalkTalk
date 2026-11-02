@@ -15,7 +15,6 @@ import { App } from "./App.js";
 // notification bell have their own tests.
 vi.mock("../sessions/LiveSessionLists.js", () => ({
   YourLiveSessions: () => null,
-  CourseLiveSessions: () => null,
 }));
 vi.mock("../notifications/NotificationBell.js", () => ({
   NotificationBell: () => null,
@@ -464,6 +463,7 @@ describe("ChalkTalk auth entry", () => {
     expect(tabs.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "Discussion",
       "Threads",
+      "Collaboration",
       "Course resources",
       "Course settings",
     ]);

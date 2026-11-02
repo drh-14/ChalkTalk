@@ -20,11 +20,11 @@ info:
     Answer bodies support explicit save-only versioned REST editing; followups and
     replies also use REST only. Saved questions, notes, answers, and followups
     support separate parent-scoped file attachments; create/update text requests
-    remain JSON-only. Private post-anchored live sessions are live through the
-    collaboration-session routes and the collaboration WebSocket. Public course
-    Threads are live through REST and a separate API-owned WebSocket. Multipart
-    post create/update, download refresh, and Thread-anchored collaboration
-    sessions remain unavailable.
+    remain JSON-only. Private, participant-only course collaboration sessions
+    are live through the collaboration-session routes and the collaboration
+    WebSocket. Public course Threads are live through REST and a separate
+    API-owned WebSocket. Multipart post create/update and download refresh
+    remain unavailable.
   license:
     name: MIT
     identifier: MIT
@@ -9289,7 +9289,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Create collaboration session in course
-      description: Creates an active, private live session anchored to a readable post in an active course. The creator becomes the first participant. The text starts empty. Create a separate one-use connection ticket before opening the collaboration WebSocket.
+      description: Creates an active, private live session in an active course. The creator becomes the first participant. The text starts empty. Create a separate one-use connection ticket before opening the collaboration WebSocket.
       operationId: createCollaborationSession
       security:
         - session_cookie: []
@@ -9305,8 +9305,7 @@ paths:
             schema:
               "$ref": "#/components/schemas/CreateCollaborationSessionRequest"
             example:
-              anchor:
-                postId: post_123
+              title: Office hours workspace
               language: python
       responses:
         "201":
@@ -9325,15 +9324,15 @@ paths:
                   id: collab_123
                   courseId: course_123
                   status: active
-                  anchor:
-                    postId: post_123
-                  title: Why does my loop never stop?
+                  title: Office hours workspace
                   language: python
                   createdBy: user_123
                   participants:
                     - userId: user_123
                       displayName: Ada Lovelace
                       role: creator
+                      permission: edit
+                  finalSnapshotConfirmed: null
                   endedAt: null
                   createdAt: "2026-09-20T14:30:00Z"
                   updatedAt: "2026-09-20T14:30:00Z"
@@ -9413,14 +9412,6 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
-                cross_course_anchor:
-                  summary: The anchor is invalid or belongs to another course.
-                  value:
-                    error:
-                      code: cross_course_anchor
-                      message: The anchor is invalid or belongs to another course.
-                      requestId: req_createCollaborationSession
-                      details: []
                 validation_failed:
                   summary: The request body is invalid.
                   value:
@@ -9481,7 +9472,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: List collaboration sessions in course
-      description: Lists the course's collaboration sessions visible to the caller, newest first. Hidden sessions are excluded before pagination and hasMore are calculated. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+      description: Lists only the course sessions in which the caller currently participates, newest first. Nonparticipant sessions are excluded before pagination and hasMore are calculated, including for course staff.
       operationId: listCourseCollaborationSessions
       security:
         - session_cookie: []
@@ -9496,22 +9487,6 @@ paths:
             enum:
               - active
               - ended
-        - name: anchorType
-          in: query
-          required: false
-          description: Filter by anchor kind. Only post anchors exist.
-          schema:
-            type: string
-            enum:
-              - post
-        - name: anchorId
-          in: query
-          required: false
-          description: Filter by the anchored post ID.
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 255
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
       responses:
@@ -9526,9 +9501,7 @@ paths:
                   - id: collab_123
                     courseId: course_123
                     status: active
-                    anchor:
-                      postId: post_123
-                    title: Why does my loop never stop?
+                    title: Office hours workspace
                     language: python
                     createdBy: user_123
                     participants:
@@ -9540,6 +9513,7 @@ paths:
                         displayName: Grace Hopper
                         role: invitee
                         permission: edit
+                    finalSnapshotConfirmed: null
                     endedAt: null
                     createdAt: "2026-09-20T14:30:00Z"
                     updatedAt: "2026-09-20T14:30:00Z"
@@ -10230,7 +10204,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: List the caller's collaboration sessions
-      description: Lists the sessions the caller created or was invited to, newest first, across courses that are active and of which the caller is still a member. Sessions whose post is deleted or a confirmed duplicate are excluded. Staff see only their own sessions here; the course list shows every session in a course.
+      description: Lists sessions in which the caller currently participates across courses of which they are still a member. Staff have no nonparticipant override; post changes do not affect session visibility.
       operationId: listMyCollaborationSessions
       security:
         - session_cookie: []
@@ -10259,9 +10233,7 @@ paths:
                     courseId: course_123
                     courseName: CS 101
                     status: active
-                    anchor:
-                      postId: post_123
-                    title: Why does my loop never stop?
+                    title: Office hours workspace
                     language: python
                     createdBy: user_123
                     participants:
@@ -10273,6 +10245,7 @@ paths:
                         displayName: Grace Hopper
                         role: invitee
                         permission: edit
+                    finalSnapshotConfirmed: null
                     endedAt: null
                     createdAt: "2026-09-20T14:30:00Z"
                     updatedAt: "2026-09-20T14:30:00Z"
@@ -10330,7 +10303,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Retrieve collaboration session
-      description: Retrieves a collaboration session. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+      description: Retrieves a collaboration session for a current participant. Use the connection-ticket endpoint to obtain short-lived WebSocket credentials for an active session. Nonparticipants, including staff, receive 404 not_found.
       operationId: getCollaborationSession
       security:
         - session_cookie: []
@@ -10351,18 +10324,19 @@ paths:
                   id: collab_123
                   courseId: course_123
                   status: active
-                  anchor:
-                    postId: post_123
-                  title: Why does my loop never stop?
+                  title: Office hours workspace
                   language: python
                   createdBy: user_123
                   participants:
                     - userId: user_123
                       displayName: Ada Lovelace
                       role: creator
+                      permission: edit
                     - userId: user_456
                       displayName: Grace Hopper
                       role: invitee
+                      permission: edit
+                  finalSnapshotConfirmed: null
                   endedAt: null
                   createdAt: "2026-09-20T14:30:00Z"
                   updatedAt: "2026-09-20T14:30:00Z"
@@ -10416,7 +10390,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Update or end collaboration session
-      description: Changes an active session's title or language, or ends it with status ended. Only the session creator or current course staff may call it. Ending asks the collaboration server to persist the final text and waits up to 5 seconds for it to confirm; if it does not confirm in time, the session still ends with the most recently persisted text. Ended sessions become read-only and keep their final snapshot.
+      description: Changes an active session's title or language, or ends it with status ended. Only the creator or participating course staff may call it. Ending waits up to 5 seconds for the collaboration server. It confirms the final snapshot only after all previously authorized in-flight messages drain and the final text commits durably. If draining or the flush fails or times out, the session still ends with the most recently persisted text, finalSnapshotConfirmed false, and a last-saved warning.
       operationId: updateCollaborationSession
       security:
         - session_cookie: []
@@ -10448,18 +10422,19 @@ paths:
                   id: collab_123
                   courseId: course_123
                   status: active
-                  anchor:
-                    postId: post_123
-                  title: Why does my loop never stop?
+                  title: Office hours workspace
                   language: java
                   createdBy: user_123
                   participants:
                     - userId: user_123
                       displayName: Ada Lovelace
                       role: creator
+                      permission: edit
                     - userId: user_456
                       displayName: Grace Hopper
                       role: invitee
+                      permission: edit
+                  finalSnapshotConfirmed: null
                   endedAt: null
                   createdAt: "2026-09-20T14:30:00Z"
                   updatedAt: "2026-09-20T14:30:00Z"
@@ -10495,11 +10470,11 @@ paths:
                       requestId: req_updateCollaborationSession
                       details: []
                 forbidden:
-                  summary: The caller is not the session creator or course staff.
+                  summary: The caller is not the creator or participating course staff.
                   value:
                     error:
                       code: forbidden
-                      message: The caller is not the session creator or course staff.
+                      message: The caller is not the creator or participating course staff.
                       requestId: req_updateCollaborationSession
                       details: []
         "404":
@@ -10605,7 +10580,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Invite collaboration participant
-      description: Invites a current course member to an active session. Only the session creator or current course staff may invite. Inviting an existing participant succeeds without duplication.
+      description: Invites a current course member to an active session. Any current participant may invite. Inviting an existing participant succeeds without duplication; invited staff retain View/Edit permission. The worker holds eligibility locks through email-provider acceptance, so participant removal or creator departure may wait for an in-flight send before committing; no new invitation send is accepted after that commit.
       operationId: inviteCollaborationParticipant
       security:
         - session_cookie: []
@@ -10636,18 +10611,19 @@ paths:
                   id: collab_123
                   courseId: course_123
                   status: active
-                  anchor:
-                    postId: post_123
-                  title: Why does my loop never stop?
+                  title: Office hours workspace
                   language: python
                   createdBy: user_123
                   participants:
                     - userId: user_123
                       displayName: Ada Lovelace
                       role: creator
+                      permission: edit
                     - userId: user_456
                       displayName: Grace Hopper
                       role: invitee
+                      permission: edit
+                  finalSnapshotConfirmed: null
                   endedAt: null
                   createdAt: "2026-09-20T14:30:00Z"
                   updatedAt: "2026-09-20T14:30:00Z"
@@ -10680,14 +10656,6 @@ paths:
                     error:
                       code: csrf_validation_failed
                       message: The request origin or CSRF token is missing, invalid, or does not match the session.
-                      requestId: req_inviteCollaborationParticipant
-                      details: []
-                forbidden:
-                  summary: The caller is not the session creator or course staff.
-                  value:
-                    error:
-                      code: forbidden
-                      message: The caller is not the session creator or course staff.
                       requestId: req_inviteCollaborationParticipant
                       details: []
         "404":
@@ -10735,14 +10703,6 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
-                invitee_cannot_read_post:
-                  summary: The session is on a private post, and the user is neither its author nor course staff.
-                  value:
-                    error:
-                      code: invitee_cannot_read_post
-                      message: The session is on a private post, and the user is neither its author nor course staff.
-                      requestId: req_inviteCollaborationParticipant
-                      details: []
                 not_course_member:
                   summary: The user is not a current member of the course.
                   value:
@@ -10779,7 +10739,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Remove collaboration participant
-      description: Removes an invitee from an active session. Only the session creator or current course staff may remove. The invitee's unused tickets are revoked and their open connections close within 5 seconds.
+      description: Removes an invitee from an active session. Only the creator or participating course staff may remove. An in-flight invitation email send may delay the removal commit. Once removal commits, unused tickets are revoked, new tickets and edits are denied, and open connections close promptly. An email accepted before commit may arrive later; no new invitation send is accepted after commit.
       operationId: removeCollaborationParticipant
       security:
         - session_cookie: []
@@ -10822,11 +10782,11 @@ paths:
                       requestId: req_removeCollaborationParticipant
                       details: []
                 forbidden:
-                  summary: The caller is not the session creator or course staff.
+                  summary: The caller is not the creator or participating course staff.
                   value:
                     error:
                       code: forbidden
-                      message: The caller is not the session creator or course staff.
+                      message: The caller is not the creator or participating course staff.
                       requestId: req_removeCollaborationParticipant
                       details: []
         "404":
@@ -10894,7 +10854,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Create collaboration connection ticket
-      description: Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with write permission, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+      description: Creates a short-lived, one-use ticket for an active session in an active course. The ticket is bound to the authenticated login session, user, and collaboration session with read permission for a View participant or write permission for an Edit participant, expires five minutes after issue, and is stored only as a hash. See the collaboration WebSocket protocol. Only current course members who explicitly participate can obtain a ticket; nonparticipants, including staff, receive 404 not_found.
       operationId: createCollaborationConnectionTicket
       security:
         - session_cookie: []
@@ -11040,7 +11000,7 @@ paths:
       tags:
         - Collaboration Sessions
       summary: Retrieve collaboration snapshot
-      description: Retrieves the most recently persisted plain text of an active or ended session. Visible only to the session creator, current course TAs and instructors, and current course members invited to the session; anyone else receives 404 not_found.
+      description: Retrieves the most recently persisted plain text of an active or ended session for a current participant. Nonparticipants, including staff, receive 404 not_found.
       operationId: getCollaborationSessionSnapshot
       security:
         - session_cookie: []
@@ -11061,6 +11021,8 @@ paths:
                   collaborationSessionId: collab_123
                   documentId: collaboration-session:collab_123
                   sessionStatus: active
+                  finalSnapshotConfirmed: null
+                  lastSavedWarning: false
                   content: |
                     for i in range(3):
                         print(i)
@@ -11756,7 +11718,6 @@ components:
                 - resource_not_ready
                 - parent_archived
                 - session_ended
-                - cross_course_anchor
             message:
               type: string
               description: Human-readable summary of the error.
@@ -13521,20 +13482,6 @@ components:
         - updatedAt
         - version
         - extractedText
-    CollaborationAnchor:
-      type: object
-      properties:
-        postId:
-          type: string
-          description: Opaque stable identifier.
-          minLength: 1
-          maxLength: 255
-          examples:
-            - 01J8Z5M6N7P8Q9R0S1T2V3W4X5
-      additionalProperties: false
-      required:
-        - postId
-      description: A same-course post anchor. Thread conversation anchors are not supported.
     CollaborationLanguage:
       type: string
       description: Syntax-highlighting language. The editor never runs code.
@@ -13566,7 +13513,7 @@ components:
             - invitee
         permission:
           type: string
-          description: Whether the participant edits or only views. The creator always edits; course staff always edit whatever they were invited with.
+          description: Whether the participant edits or only views. The creator always edits; staff invited with View remain read-only.
           enum:
             - edit
             - view
@@ -13595,8 +13542,6 @@ components:
           enum:
             - active
             - ended
-        anchor:
-          "$ref": "#/components/schemas/CollaborationAnchor"
         title:
           type: string
           description: Session title, trimmed, 1 to 120 characters.
@@ -13614,6 +13559,11 @@ components:
           description: The creator and invited participants.
           items:
             "$ref": "#/components/schemas/CollaborationParticipant"
+        finalSnapshotConfirmed:
+          type:
+            - boolean
+            - "null"
+          description: Null while active or ending; true only when every authorized edit is proven durable; false when completeness cannot be proven, including after a successful flush with possible in-flight edits, or for legacy ended sessions.
         endedAt:
           type:
             - string
@@ -13637,11 +13587,11 @@ components:
         - id
         - courseId
         - status
-        - anchor
         - title
         - language
         - createdBy
         - participants
+        - finalSnapshotConfirmed
         - endedAt
         - createdAt
         - updatedAt
@@ -13670,8 +13620,6 @@ components:
           enum:
             - active
             - ended
-        anchor:
-          "$ref": "#/components/schemas/CollaborationAnchor"
         title:
           type: string
           description: Session title, trimmed, 1 to 120 characters.
@@ -13689,6 +13637,11 @@ components:
           description: The creator and invited participants.
           items:
             "$ref": "#/components/schemas/CollaborationParticipant"
+        finalSnapshotConfirmed:
+          type:
+            - boolean
+            - "null"
+          description: Null while active or ending; true only when every authorized edit is proven durable; false when completeness cannot be proven, including after a successful flush with possible in-flight edits, or for legacy ended sessions.
         endedAt:
           type:
             - string
@@ -13713,11 +13666,11 @@ components:
         - id
         - courseId
         - status
-        - anchor
         - title
         - language
         - createdBy
         - participants
+        - finalSnapshotConfirmed
         - endedAt
         - createdAt
         - updatedAt
@@ -13755,8 +13708,6 @@ components:
           enum:
             - active
             - ended
-        anchor:
-          "$ref": "#/components/schemas/CollaborationAnchor"
         title:
           type: string
           description: Session title, trimmed, 1 to 120 characters.
@@ -13774,6 +13725,11 @@ components:
           description: The creator and invited participants.
           items:
             "$ref": "#/components/schemas/CollaborationParticipant"
+        finalSnapshotConfirmed:
+          type:
+            - boolean
+            - "null"
+          description: Null while active or ending; true only when every authorized edit is proven durable; false when completeness cannot be proven, including after a successful flush with possible in-flight edits, or for legacy ended sessions.
         endedAt:
           type:
             - string
@@ -13797,11 +13753,11 @@ components:
         - id
         - courseId
         - status
-        - anchor
         - title
         - language
         - createdBy
         - participants
+        - finalSnapshotConfirmed
         - endedAt
         - createdAt
         - updatedAt
@@ -13858,6 +13814,14 @@ components:
           enum:
             - active
             - ended
+        finalSnapshotConfirmed:
+          type:
+            - boolean
+            - "null"
+          description: Null while active or ending; true only when every authorized edit is proven durable; false when completeness cannot be proven, including after a successful flush with possible in-flight edits, or for a legacy ended session.
+        lastSavedWarning:
+          type: boolean
+          description: True when an ended session may omit recent edits because final snapshot completeness is unconfirmed, even if a final flush succeeded.
         content:
           type: string
           description: Plain-text projection of Y.Text('content'), at most 200,000 characters.
@@ -13881,6 +13845,8 @@ components:
         - collaborationSessionId
         - documentId
         - sessionStatus
+        - finalSnapshotConfirmed
+        - lastSavedWarning
         - content
         - whiteboard
         - persistedAt
@@ -15390,18 +15356,16 @@ components:
     CreateCollaborationSessionRequest:
       type: object
       properties:
-        anchor:
-          "$ref": "#/components/schemas/CollaborationAnchor"
         title:
           type: string
-          description: Optional title, 1 to 120 characters after trimming; defaults to the post title.
+          description: Required session title, 1 to 120 characters after trimming.
           minLength: 1
           maxLength: 120
         language:
           "$ref": "#/components/schemas/CollaborationLanguage"
       additionalProperties: false
       required:
-        - anchor
+        - title
     UpdateCollaborationSessionRequest:
       type: object
       properties:

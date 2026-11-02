@@ -51,10 +51,7 @@ integration("collaboration session HTTP contract", () => {
       .set("Origin", environment.frontendBaseUrl)
       .set("X-CSRF-Token", "csrf");
   const as = (name: string) => course.users[name]!;
-  const create = (
-    name: string,
-    body: object = { anchor: { postId: course.postId } },
-  ) =>
+  const create = (name: string, body: object = { title: "Team coding" }) =>
     unsafe(
       request(app(as(name))).post(
         `/api/v1/courses/${course.courseId}/collaboration-sessions`,
@@ -66,7 +63,7 @@ integration("collaboration session HTTP contract", () => {
       .set("Cookie", cookie);
   async function started(name = "alice") {
     const response = await create(name, {
-      anchor: { postId: course.postId },
+      title: "Python session",
       language: "python",
     });
     expect(response.status).toBe(201);
@@ -117,6 +114,26 @@ integration("collaboration session HTTP contract", () => {
   afterAll(async () => database?.drop());
 
   describe("creating", () => {
+    it("creates a course session without a post and rejects legacy anchors", async () => {
+      const response = await create("alice", {
+        title: "Team coding",
+        language: "python",
+      });
+      expect(response.status).toBe(201);
+      expect(response.body.data).toMatchObject({
+        courseId: course.courseId,
+        title: "Team coding",
+        language: "python",
+        finalSnapshotConfirmed: null,
+      });
+      expect(response.body.data).not.toHaveProperty("anchor");
+      const legacy = await create("alice", {
+        title: "Legacy",
+        anchor: { postId: course.postId },
+      });
+      expect(legacy.status).toBe(422);
+    });
+
     it("creates an active session with defaults, Location, and ETag", async () => {
       const response = await create("alice");
       expect(response.status).toBe(201);
@@ -127,8 +144,7 @@ integration("collaboration session HTTP contract", () => {
       expect(response.body.data).toMatchObject({
         courseId: course.courseId,
         status: "active",
-        anchor: { postId: course.postId },
-        title: "Why does my loop never stop?",
+        title: "Team coding",
         language: "plaintext",
         createdBy: as("alice"),
         participants: [
@@ -141,7 +157,6 @@ integration("collaboration session HTTP contract", () => {
 
     it("accepts a trimmed title and a supported language", async () => {
       const response = await create("alice", {
-        anchor: { postId: course.postId },
         title: "  Office hours  ",
         language: "java",
       });
@@ -153,29 +168,16 @@ integration("collaboration session HTTP contract", () => {
 
     it("rejects invalid bodies with validation_failed", async () => {
       for (const body of [
-        { anchor: { postId: course.postId }, language: "rust" },
-        { anchor: { postId: course.postId }, title: "   " },
-        { anchor: { postId: course.postId }, title: "x".repeat(121) },
+        { title: "Team coding", language: "rust" },
+        { title: "   " },
+        { title: "x".repeat(121) },
         { anchor: { subchannelId: course.postId } },
-        { anchor: { postId: course.postId }, extra: true },
+        { title: "Team coding", extra: true },
         {},
       ]) {
         const response = await create("alice", body);
         expect(response.status).toBe(422);
         expect(response.body.error.code).toBe("validation_failed");
-      }
-    });
-
-    it("rejects deleted, duplicate, foreign, and malformed anchors", async () => {
-      const deleted = uuidv7();
-      await pool.query(
-        "INSERT INTO posts (id,course_id,type,deleted_at) VALUES ($1,$2,'question',now())",
-        [deleted, course.courseId],
-      );
-      for (const postId of [deleted, other.postId, "not-a-uuid"]) {
-        const response = await create("alice", { anchor: { postId } });
-        expect(response.status).toBe(422);
-        expect(response.body.error.code).toBe("cross_course_anchor");
       }
     });
 
@@ -192,7 +194,7 @@ integration("collaboration session HTTP contract", () => {
         request(app(as("zed"))).post(
           `/api/v1/courses/${archived.courseId}/collaboration-sessions`,
         ),
-      ).send({ anchor: { postId: archived.postId } });
+      ).send({ title: "Archived session" });
       expect(response.status).toBe(409);
       expect(response.body.error.code).toBe("course_archived");
     });
@@ -204,7 +206,7 @@ integration("collaboration session HTTP contract", () => {
       expect(replay.status).toBe(201);
       expect(replay.body.data.id).toBe(first.body.data.id);
       const reused = await create("alice", {
-        anchor: { postId: course.postId },
+        title: "SQL session",
         language: "sql",
       }).set("Idempotency-Key", key);
       expect(reused.status).toBe(409);
@@ -215,28 +217,37 @@ integration("collaboration session HTTP contract", () => {
       const unauthenticated = await request(app(as("alice")))
         .post(`/api/v1/courses/${course.courseId}/collaboration-sessions`)
         .set("Origin", environment.frontendBaseUrl)
-        .send({ anchor: { postId: course.postId } });
+        .send({ title: "Team coding" });
       expect(unauthenticated.status).toBe(401);
       const noCsrf = await request(app(as("alice")))
         .post(`/api/v1/courses/${course.courseId}/collaboration-sessions`)
         .set("Cookie", cookie)
         .set("Origin", environment.frontendBaseUrl)
-        .send({ anchor: { postId: course.postId } });
+        .send({ title: "Team coding" });
       expect(noCsrf.status).toBe(403);
       expect(noCsrf.body.error.code).toBe("csrf_validation_failed");
     });
   });
 
   describe("visibility", () => {
-    it("hides a session from uninvited members and shows it to staff", async () => {
+    it("hides a session from all nonparticipants, including staff", async () => {
       const session = await started();
       const path = `/api/v1/collaboration-sessions/${session.id}`;
       expect((await get("bob", path)).status).toBe(404);
       expect((await get("olga", path)).status).toBe(404);
-      expect((await get("tim", path)).status).toBe(200);
+      expect((await get("tim", path)).status).toBe(404);
       const own = await get("alice", path);
       expect(own.status).toBe(200);
       expect(own.headers.etag).toBe('"v1"');
+      expect(
+        (await patch("tim", session.id, '"v1"', { title: "Intrusion" })).status,
+      ).toBe(404);
+      const deniedTicket = await unsafe(
+        request(app(as("tim"))).post(
+          `/api/v1/collaboration-sessions/${session.id}/connection-tickets`,
+        ),
+      );
+      expect(deniedTicket.status).toBe(404);
     });
 
     it("lists only visible sessions and excludes hidden ones before hasMore", async () => {
@@ -244,7 +255,7 @@ integration("collaboration session HTTP contract", () => {
       const hidden = await started("alice");
       const list = await get(
         "carol",
-        `/api/v1/courses/${course.courseId}/collaboration-sessions?limit=1&status=active&anchorType=post&anchorId=${course.postId}`,
+        `/api/v1/courses/${course.courseId}/collaboration-sessions?limit=1&status=active`,
       );
       expect(list.status).toBe(200);
       expect(list.body.data.map((s: { id: string }) => s.id)).toEqual([
@@ -255,13 +266,9 @@ integration("collaboration session HTTP contract", () => {
         "tim",
         `/api/v1/courses/${course.courseId}/collaboration-sessions?limit=1`,
       );
-      expect(staff.body.data[0].id).toBe(hidden.id);
-      expect(staff.body.page.hasMore).toBe(true);
-      const next = await get(
-        "tim",
-        `/api/v1/courses/${course.courseId}/collaboration-sessions?limit=1&cursor=${staff.body.page.nextCursor}`,
-      );
-      expect(next.body.data[0].id).toBe(mine.id);
+      expect(staff.body.data).toEqual([]);
+      expect(staff.body.page.hasMore).toBe(false);
+      expect(hidden.id).not.toBe(mine.id);
     });
 
     it("rejects invalid list parameters and foreign cursors", async () => {
@@ -277,9 +284,12 @@ integration("collaboration session HTTP contract", () => {
         expect(response.body.error.code).toBe("invalid_request");
       }
       const staff = await get("tim", `${base}?limit=1`);
+      expect(staff.body.page.nextCursor).toBeNull();
+      await invite("alice", (await started()).id, as("tim"));
+      const staffWithSession = await get("tim", `${base}?limit=1`);
       const replayed = await get(
         "ina",
-        `${base}?limit=1&cursor=${staff.body.page.nextCursor}`,
+        `${base}?limit=1&cursor=${staffWithSession.body.page.nextCursor}`,
       );
       expect(replayed.status).toBe(400);
       expect((await get("olga", base)).status).toBe(404);
@@ -287,7 +297,7 @@ integration("collaboration session HTTP contract", () => {
   });
 
   describe("invitations", () => {
-    it("lets the creator and staff invite, idempotently, and grants access", async () => {
+    it("lets participants invite, idempotently, and grants access", async () => {
       const session = await started();
       const invited = await invite("alice", session.id, as("bob"));
       expect(invited.status).toBe(200);
@@ -306,7 +316,7 @@ integration("collaboration session HTTP contract", () => {
           permission: "edit",
         },
       ]);
-      const again = await invite("tim", session.id, as("bob"));
+      const again = await invite("bob", session.id, as("bob"));
       expect(again.body.data.participants).toHaveLength(2);
       expect(again.body.data.version).toBe(2);
       expect(
@@ -315,17 +325,16 @@ integration("collaboration session HTTP contract", () => {
       ).toBe(200);
     });
 
-    it("rejects invitees managing others, non-members, and the creator's removal", async () => {
+    it("allows invitees to invite but not manage, and forbids nonparticipants", async () => {
       const session = await started();
       await invite("alice", session.id, as("bob"));
       const byInvitee = await invite("bob", session.id, as("carol"));
-      expect(byInvitee.status).toBe(403);
-      expect(byInvitee.body.error.code).toBe("forbidden");
+      expect(byInvitee.status).toBe(200);
       const outsider = await invite("alice", session.id, as("olga"));
       expect(outsider.status).toBe(422);
       expect(outsider.body.error.code).toBe("not_course_member");
       const creator = await unsafe(
-        request(app(as("tim"))).delete(
+        request(app(as("alice"))).delete(
           `/api/v1/collaboration-sessions/${session.id}/participants/${as("alice")}`,
         ),
       );
@@ -337,6 +346,7 @@ integration("collaboration session HTTP contract", () => {
         ),
       );
       expect(removeByInvitee.status).toBe(403);
+      expect((await invite("tim", session.id, as("bob"))).status).toBe(404);
     });
 
     it("removes an invitee, revokes their tickets, and hides the session from them", async () => {
@@ -373,9 +383,30 @@ integration("collaboration session HTTP contract", () => {
   });
 
   describe("updating and ending", () => {
+    it("lets participating staff manage while preserving a View ticket", async () => {
+      const session = await started();
+      const invited = await unsafe(
+        request(app(as("alice"))).post(
+          `/api/v1/collaboration-sessions/${session.id}/participants`,
+        ),
+      ).send({ userId: as("tim"), permission: "view" });
+      expect(invited.status).toBe(200);
+      const changed = await patch("tim", session.id, invited.headers.etag, {
+        title: "Staff-managed",
+      });
+      expect(changed.status).toBe(200);
+      const ticket = await unsafe(
+        request(app(as("tim"))).post(
+          `/api/v1/collaboration-sessions/${session.id}/connection-tickets`,
+        ),
+      );
+      expect(ticket.status).toBe(201);
+      expect(ticket.body.data.permission).toBe("read");
+    });
+
     it("changes title and language with If-Match", async () => {
       const session = await started();
-      const updated = await patch("tim", session.id, '"v1"', {
+      const updated = await patch("alice", session.id, '"v1"', {
         language: "java",
         title: "Loops",
       });
@@ -419,6 +450,15 @@ integration("collaboration session HTTP contract", () => {
       expect(Date.now() - startedAt).toBeLessThan(5000);
       expect(ended.body.data.status).toBe("ended");
       expect(ended.body.data.endedAt).not.toBeNull();
+      expect(ended.body.data.finalSnapshotConfirmed).toBe(false);
+      const fallbackSnapshot = await get(
+        "alice",
+        `/api/v1/collaboration-sessions/${session.id}/snapshot`,
+      );
+      expect(fallbackSnapshot.body.data).toMatchObject({
+        finalSnapshotConfirmed: false,
+        lastSavedWarning: true,
+      });
       const again = await patch("alice", session.id, ended.headers.etag, {
         status: "ended",
       });
@@ -474,19 +514,92 @@ integration("collaboration session HTTP contract", () => {
         const event = JSON.parse(message.payload!);
         if (event.type === "session_ending" && event.sessionId === session.id)
           void pool.query(
-            "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=now(),version=version+1 WHERE id=$1",
+            "UPDATE collaboration_sessions SET lifecycle_state='ended',ended_at=now(),final_snapshot_confirmed=true,version=version+1 WHERE id=$1",
             [session.id],
           );
       });
-      const ended = await patch("ina", session.id, '"v1"', { status: "ended" });
+      const ended = await patch("alice", session.id, '"v1"', {
+        status: "ended",
+      });
       listener.release();
       expect(ended.status).toBe(200);
       expect(ended.body.data.status).toBe("ended");
       expect(ended.body.data.version).toBe(3);
+      expect(ended.body.data.finalSnapshotConfirmed).toBe(true);
     });
   });
 
   describe("tickets and snapshots", () => {
+    it("does not deadlock a concurrent course archive with ticket issuance", async () => {
+      const session = await started();
+      const archive = await pool.connect();
+      await archive.query("BEGIN");
+      try {
+        await archive.query(
+          "UPDATE courses SET status='archived' WHERE id=$1",
+          [course.courseId],
+        );
+        // The uncommitted course update holds its row while the ticket
+        // transaction locks the session. Neither transaction may wait for
+        // the other's lock in the opposite order.
+        const issued = await Promise.race([
+          service.ticket(session.id, as("alice"), authSessions[as("alice")]!),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("ticket blocked by archive")),
+              2000,
+            ),
+          ),
+        ]);
+        expect(issued.permission).toBe("write");
+        await archive.query("COMMIT");
+        const denied = await unsafe(
+          request(app(as("alice"))).post(
+            `/api/v1/collaboration-sessions/${session.id}/connection-tickets`,
+          ),
+        );
+        expect(denied.status).toBe(409);
+      } finally {
+        await archive.query("ROLLBACK");
+        archive.release();
+        await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+          course.courseId,
+        ]);
+      }
+    });
+
+    it("keeps archived course sessions readable but disables new tickets and invites", async () => {
+      const session = await started();
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        course.courseId,
+      ]);
+      try {
+        const list = await get(
+          "alice",
+          `/api/v1/courses/${course.courseId}/collaboration-sessions`,
+        );
+        expect(list.status).toBe(200);
+        expect(
+          list.body.data.some((item: { id: string }) => item.id === session.id),
+        ).toBe(true);
+        expect(
+          (await get("alice", `/api/v1/collaboration-sessions/${session.id}`))
+            .status,
+        ).toBe(200);
+        expect((await invite("alice", session.id, as("bob"))).status).toBe(409);
+        const ticket = await unsafe(
+          request(app(as("alice"))).post(
+            `/api/v1/collaboration-sessions/${session.id}/connection-tickets`,
+          ),
+        );
+        expect(ticket.status).toBe(409);
+      } finally {
+        await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+          course.courseId,
+        ]);
+      }
+    });
+
     it("issues a hashed, five-minute, no-store ticket bound to the login session", async () => {
       const session = await started();
       const response = await unsafe(
@@ -534,6 +647,8 @@ integration("collaboration session HTTP contract", () => {
         collaborationSessionId: session.id,
         documentId: `collaboration-session:${session.id}`,
         sessionStatus: "active",
+        finalSnapshotConfirmed: null,
+        lastSavedWarning: false,
         content: "",
         whiteboard: [],
       });
@@ -545,6 +660,7 @@ integration("collaboration session HTTP contract", () => {
           JSON.stringify([{ id: "r1", type: "rectangle", index: "a0" }]),
         ],
       );
+      await invite("alice", session.id, as("tim"));
       const saved = await get(
         "tim",
         `/api/v1/collaboration-sessions/${session.id}/snapshot`,
@@ -626,7 +742,7 @@ integration("collaboration session HTTP contract", () => {
       await invite("bob", here.id, as("tim"));
       const elsewhere = (
         await service.create(other.courseId, as("olga"), {
-          postId: other.postId,
+          title: "Other course session",
         })
       ).value;
       await service.invite(elsewhere.id, as("olga"), as("tim"));
@@ -647,7 +763,6 @@ integration("collaboration session HTTP contract", () => {
         courseId: other.courseId,
         courseName: "Second course",
         status: "active",
-        anchor: { postId: other.postId },
         participants: expect.arrayContaining([
           expect.objectContaining({ userId: as("tim"), role: "invitee" }),
         ]),
@@ -696,7 +811,7 @@ integration("collaboration session HTTP contract", () => {
         here.id,
       );
 
-      // Archived courses, left courses, and deleted posts drop out.
+      // Archived courses remain readable, while leaving revokes access.
       await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
         other.courseId,
       ]);
@@ -706,7 +821,7 @@ integration("collaboration session HTTP contract", () => {
       );
       expect(
         archived.body.data.map((item: { id: string }) => item.id),
-      ).not.toContain(elsewhere.id);
+      ).toContain(elsewhere.id);
       await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
         other.courseId,
       ]);
@@ -729,7 +844,7 @@ integration("collaboration session HTTP contract", () => {
         "UPDATE posts SET deleted_at=now(),author_user_id=NULL,title=NULL,body_markdown=NULL WHERE id=$1",
         [other.postId],
       );
-      expect(await visible()).not.toContain(elsewhere.id);
+      expect(await visible()).toContain(elsewhere.id);
     });
 
     it("requires a signed-in user", async () => {
@@ -784,7 +899,7 @@ integration("collaboration session HTTP contract", () => {
           ),
         );
         return (key ? test.set("Idempotency-Key", key) : test).send({
-          anchor: { postId: own.postId },
+          title: "Rita session",
         });
       };
       const count = async () =>
@@ -901,7 +1016,7 @@ integration("collaboration session HTTP contract", () => {
         alice: "write",
         bob: "write",
         carol: "read",
-        tim: "write",
+        tim: "read",
       });
       const stored = await pool.query<{ permission: string }>(
         "SELECT permission FROM collaboration_connection_tickets WHERE collaboration_session_id=$1 AND user_id=$2",

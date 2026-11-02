@@ -42,7 +42,7 @@ const session = {
   id: "s-1",
   courseId: "c-1",
   status: "active",
-  anchor: { postId: "p-1" },
+  finalSnapshotConfirmed: true,
   title: "Why does my loop never stop?",
   language: "python",
   createdBy: "alice",
@@ -92,11 +92,13 @@ function api(
     sessionStatus?: number;
     snapshot?: string;
     whiteboard?: object[];
+    lastSavedWarning?: boolean;
+    snapshotFailures?: number;
     ticketPermission?: "read" | "write";
-    postType?: "question" | "note";
   } = {},
 ) {
   const calls: Calls = [];
+  let snapshotFailures = overrides.snapshotFailures ?? 0;
   let current = { ...session, ...overrides.session };
   vi.stubGlobal(
     "fetch",
@@ -123,18 +125,22 @@ function api(
           },
           201,
         );
-      if (url === "/api/v1/posts/p-1" && overrides.postType)
-        return json({
-          data: { id: "p-1", courseId: "c-1", type: overrides.postType },
-        });
-      if (url.endsWith("/snapshot"))
+      if (url.endsWith("/snapshot")) {
+        if (snapshotFailures-- > 0)
+          return json(
+            { error: { code: "snapshot_unavailable", message: "Unavailable" } },
+            503,
+          );
         return json({
           data: {
             content: overrides.snapshot ?? "final code",
             whiteboard: overrides.whiteboard ?? [],
             sessionStatus: "ended",
+            lastSavedWarning: overrides.lastSavedWarning ?? false,
+            finalSnapshotConfirmed: !(overrides.lastSavedWarning ?? false),
           },
         });
+      }
       if (url.startsWith("/api/v1/courses/c-1/members"))
         return json({
           data: members,
@@ -267,17 +273,29 @@ it("opens an ended session read-only without connecting", async () => {
   expect(connect).not.toHaveBeenCalled();
 });
 
-it("shows management controls to the creator and staff only", async () => {
+it("lets any participant invite, but only creator or participating staff manage", async () => {
   api();
   const invitee = fakeConnect();
   view("bob", invitee.connect);
   await screen.findByRole("heading", { name: "Why does my loop never stop?" });
   expect(screen.queryByRole("button", { name: "End session" })).toBeNull();
-  expect(screen.queryByLabelText("Invite a course member")).toBeNull();
+  expect(await screen.findByRole("button", { name: "+ Invite" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Remove Bob" })).toBeNull();
   cleanup();
 
-  api();
+  api({
+    session: {
+      participants: [
+        ...session.participants,
+        {
+          userId: "tim",
+          displayName: "Tim",
+          role: "invitee",
+          permission: "view",
+        },
+      ],
+    },
+  });
   const staff = fakeConnect();
   view("tim", staff.connect, true);
   await screen.findByRole("button", { name: "End session" });
@@ -310,6 +328,78 @@ it("invites from course members who are not yet participants", async () => {
     permission: "edit",
   });
   expect(invite.init!.headers).toMatchObject({ "X-CSRF-Token": "csrf" });
+});
+
+it("loads invitees beyond the former ten-page roster limit", async () => {
+  api();
+  const original = globalThis.fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/v1/courses/c-1/members")) {
+        const cursor = new URL(url, "https://example.edu").searchParams.get(
+          "cursor",
+        );
+        const page = cursor ? Number(cursor) : 0;
+        return json({
+          data: [
+            {
+              id: `m-${page}`,
+              courseId: "c-1",
+              user: { id: `user-${page}`, displayName: `Member ${page}` },
+              role: "student",
+            },
+          ],
+          page: {
+            nextCursor: page < 11 ? String(page + 1) : null,
+            hasMore: page < 11,
+          },
+        });
+      }
+      return original(url, init);
+    }),
+  );
+  const { connect } = fakeConnect();
+  view("alice", connect);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "+ Invite" }),
+  );
+  const picker = await screen.findByLabelText("Invite a course member");
+  expect(
+    await within(picker).findByRole("option", { name: "Member 11 (student)" }),
+  ).toBeTruthy();
+});
+
+it("offers retry when the invitee roster request fails", async () => {
+  api();
+  const original = globalThis.fetch;
+  let failures = 1;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/v1/courses/c-1/members") && failures-- > 0)
+        return json(
+          { error: { code: "unavailable", message: "Roster unavailable" } },
+          503,
+        );
+      return original(url, init);
+    }),
+  );
+  const { connect } = fakeConnect();
+  view("alice", connect);
+  await userEvent.click(
+    await screen.findByRole("button", { name: "+ Invite" }),
+  );
+  expect(
+    await screen.findByText("Could not load course members."),
+  ).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Retry members" }));
+  expect(
+    await within(screen.getByLabelText("Invite a course member")).findByRole(
+      "option",
+      { name: "Tim (TA)" },
+    ),
+  ).toBeTruthy();
 });
 
 it("changes the language and ends the session with the current ETag", async () => {
@@ -545,30 +635,61 @@ it("keeps a viewer read-only and marks viewers in the participant list", async (
   );
 });
 
-it("offers posting to the discussion only on questions and only to editors", async () => {
-  const post = () =>
-    screen.queryByRole("button", { name: "Post to discussion" });
-  for (const [postType, ticketPermission, offered] of [
-    ["question", "write", true],
-    ["note", "write", false],
-    ["question", "read", false],
-  ] as const) {
-    api({ postType, ticketPermission });
-    const { connect, opened } = fakeConnect();
-    view("bob", connect);
-    await waitFor(() => expect(connect).toHaveBeenCalled());
-    act(() => opened.options!.onSynced());
-    if (offered) {
-      await userEvent.click(
-        await screen.findByRole("button", { name: "Post to discussion" }),
-      );
-      expect(
-        screen.getByRole("dialog", { name: "Post code to the discussion" }),
-      ).toBeTruthy();
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(post()).toBeNull();
-    }
-    cleanup();
-  }
+it("returns to Collaboration without post actions", async () => {
+  api();
+  const { connect } = fakeConnect();
+  const onNavigate = view("bob", connect);
+  const back = await screen.findByRole("link", {
+    name: "Back to Collaboration",
+  });
+  expect(back.getAttribute("href")).toBe("/courses/c-1/collaboration");
+  expect(
+    screen.queryByRole("button", { name: "Post to discussion" }),
+  ).toBeNull();
+  await userEvent.click(back);
+  expect(onNavigate).toHaveBeenCalledWith("/courses/c-1/collaboration");
+});
+
+it("warns that a legacy ended session shows its last saved snapshot", async () => {
+  api({
+    session: { status: "ended", finalSnapshotConfirmed: false },
+    snapshot: "last saved",
+    lastSavedWarning: true,
+  });
+  const { connect } = fakeConnect();
+  view("bob", connect);
+  expect(await screen.findByText(/Recent edits may be missing/)).toBeTruthy();
+  expect(connect).not.toHaveBeenCalled();
+});
+
+it("keeps local edits unconfirmed until a failed final snapshot is retried", async () => {
+  const calls = api({
+    snapshot: "last saved code",
+    lastSavedWarning: true,
+    snapshotFailures: 1,
+  });
+  const { connect, opened } = fakeConnect();
+  view("bob", connect);
+  await waitFor(() => expect(connect).toHaveBeenCalled());
+  act(() => {
+    opened.options!.document.getText("content").insert(0, "local unsaved code");
+    opened.options!.onSynced();
+    opened.options!.onClose("session-ended");
+  });
+  expect(await screen.findByText(/Saved snapshot unavailable/)).toBeTruthy();
+  expect(editor().textContent).toContain("local unsaved code");
+  expect(screen.queryByText(/^This shows the last saved version/)).toBeNull();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Retry loading saved snapshot" }),
+  );
+  await waitFor(() =>
+    expect(editor().textContent).toContain("last saved code"),
+  );
+  expect(editor().textContent).not.toContain("local unsaved code");
+  expect(
+    await screen.findByText(/This shows the last saved version/),
+  ).toBeTruthy();
+  expect(calls.filter((call) => call.url.endsWith("/snapshot"))).toHaveLength(
+    2,
+  );
 });

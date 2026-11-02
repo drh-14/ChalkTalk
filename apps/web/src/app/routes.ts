@@ -11,6 +11,7 @@ export type RouteName =
   | "course-settings"
   | "course-resources"
   | "course-threads"
+  | "course-collaboration"
   | "course-statistics"
   | "course-session";
 
@@ -128,6 +129,8 @@ export function routeForPath(pathname: string): RouteName {
   )
     return "course-threads";
   if (/^\/courses\/[^/]+\/posts\/[^/]+$/.test(pathname)) return "post";
+  if (/^\/courses\/[^/]+\/collaboration$/.test(pathname))
+    return "course-collaboration";
   if (/^\/courses\/[^/]+\/sessions\/[^/]+$/.test(pathname))
     return "course-session";
   if (/^\/courses\/[^/]+\/statistics$/.test(pathname))
@@ -168,6 +171,7 @@ export function routeFromLocation(location: URL): Route {
   if (
     name === "course-settings" ||
     name === "course-resources" ||
+    name === "course-collaboration" ||
     name === "course-statistics"
   )
     return { name, courseId };
