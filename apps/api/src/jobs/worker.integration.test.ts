@@ -1810,6 +1810,49 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       expect(delivered).toEqual([]);
     });
 
+    it.each(["renamed", "deleted"] as const)(
+      "holds the invitation inviter identity through provider handoff when %s",
+      async (change) => {
+        await fresh();
+        const seeded = await seedInvitation();
+        let enterDelivery!: () => void;
+        let releaseDelivery!: () => void;
+        const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
+        const released = new Promise<void>(
+          (resolve) => (releaseDelivery = resolve),
+        );
+        inspectBeforeDelivery = async () => {
+          enterDelivery();
+          await released;
+        };
+        try {
+          const send = worker.runOnce();
+          await entered;
+          const changeIdentity = pool.query(
+            change === "renamed"
+              ? "UPDATE users SET display_name='Renamed Inviter' WHERE id=$1"
+              : "UPDATE users SET deleted_at=now() WHERE id=$1",
+            [seeded.studentId],
+          );
+          const order = await Promise.race([
+            changeIdentity.then(() => "committed"),
+            new Promise<string>((resolve) =>
+              setTimeout(() => resolve("waiting"), 100),
+            ),
+          ]);
+          releaseDelivery();
+          await send;
+          await changeIdentity;
+          expect(order).toBe("waiting");
+          expect(delivered).toHaveLength(1);
+          expect(await status(seeded.jobId)).toBe("succeeded");
+        } finally {
+          releaseDelivery();
+          inspectBeforeDelivery = undefined;
+        }
+      },
+    );
+
     it("retries a frozen invitation after its inviter leaves the course", async () => {
       await fresh();
       const seeded = await seedInvitation();

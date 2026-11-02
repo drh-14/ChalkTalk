@@ -293,12 +293,10 @@ export class JobWorker {
         course_id: string;
         course_name: string;
         email: string;
-        inviter_name: string | null;
         invited_at_ms: string;
         invited_at_exact: string;
       }>(
         `SELECT s.title,s.course_id,c.name AS course_name,invitee.email,
-              inviter.display_name AS inviter_name,
               floor(extract(epoch FROM cp.created_at)*1000)::bigint AS invited_at_ms,
               cp.created_at::text AS invited_at_exact
        FROM collaboration_sessions s
@@ -306,10 +304,9 @@ export class JobWorker {
        JOIN collaboration_participants cp ON cp.collaboration_session_id=s.id AND cp.user_id=$2
        JOIN course_memberships m ON m.course_id=s.course_id AND m.user_id=$2
        JOIN users invitee ON invitee.id=$2 AND invitee.deleted_at IS NULL
-       LEFT JOIN users inviter ON inviter.id=$3 AND inviter.deleted_at IS NULL
        WHERE s.id=$1 AND s.lifecycle_state='active'
        FOR SHARE OF s,c,cp,m,invitee`,
-        [sessionId, inviteeUserId, inviterUserId],
+        [sessionId, inviteeUserId],
       );
       const row = invitation.rows[0];
       if (
@@ -319,10 +316,18 @@ export class JobWorker {
             `${sessionId}:${inviteeUserId}:${row.invited_at_ms}`)
       )
         return undefined;
+      const inviterIdentity = await client.query<{
+        display_name: string;
+        deleted_at: Date | null;
+      }>("SELECT display_name,deleted_at FROM users WHERE id=$1 FOR SHARE", [
+        inviterUserId,
+      ]);
       const clean = (value: string) => value.replace(/\s+/g, " ").trim();
-      const inviter = row.inviter_name
-        ? clean(row.inviter_name)
-        : "A course member";
+      const inviterRow = inviterIdentity.rows[0];
+      const inviter =
+        inviterRow && !inviterRow.deleted_at
+          ? clean(inviterRow.display_name)
+          : "A course member";
       const url = new URL(
         `/courses/${encodeURIComponent(row.course_id)}/sessions/${encodeURIComponent(sessionId)}`,
         this.frontendBaseUrl,
