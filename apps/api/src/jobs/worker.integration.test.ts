@@ -1853,6 +1853,81 @@ integration("JobWorker PostgreSQL lifecycle", () => {
       },
     );
 
+    it.each(["renamed", "deleted"] as const)(
+      "holds the invitation inviter identity through a live HTTP handoff when %s",
+      async (change) => {
+        await fresh();
+        const seeded = await seedInvitation();
+        let enterDelivery!: () => void;
+        let releaseDelivery!: () => void;
+        const entered = new Promise<void>(
+          (resolve) => (enterDelivery = resolve),
+        );
+        const released = new Promise<void>(
+          (resolve) => (releaseDelivery = resolve),
+        );
+        let requests = 0;
+        const server = createServer(async (request, response) => {
+          for await (const _chunk of request) {
+            // Read the complete provider payload before accepting the message.
+          }
+          requests += 1;
+          enterDelivery();
+          await released;
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ id: "invitation-accepted" }));
+        });
+        await new Promise<void>((resolve) =>
+          server.listen(0, "127.0.0.1", resolve),
+        );
+        try {
+          const address = server.address();
+          if (!address || typeof address === "string")
+            throw new Error("No mock port");
+          const liveWorker = new JobWorker(
+            pool,
+            "invitation-http-worker",
+            createEmailSender(
+              loadEnvironment({
+                AUTH_TOKEN_SECRET:
+                  "test-secret-that-is-longer-than-thirty-two-characters",
+                EMAIL_PROVIDER: "resend",
+                RESEND_API_KEY: "re_mock_secret",
+                EMAIL_FROM: "sender@example.edu",
+                RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+              }),
+            ),
+            "https://app.example.edu",
+          );
+          const send = liveWorker.runOnce();
+          await entered;
+          const changeIdentity = pool.query(
+            change === "renamed"
+              ? "UPDATE users SET display_name='Renamed Inviter' WHERE id=$1"
+              : "UPDATE users SET deleted_at=now() WHERE id=$1",
+            [seeded.studentId],
+          );
+          const order = await Promise.race([
+            changeIdentity.then(() => "committed"),
+            new Promise<string>((resolve) =>
+              setTimeout(() => resolve("waiting"), 100),
+            ),
+          ]);
+          expect(order).toBe("waiting");
+          releaseDelivery();
+          expect(await send).toBe(true);
+          await changeIdentity;
+          expect(requests).toBe(1);
+          expect(await status(seeded.jobId)).toBe("succeeded");
+        } finally {
+          releaseDelivery();
+          await new Promise<void>((resolve, reject) =>
+            server.close((error) => (error ? reject(error) : resolve())),
+          );
+        }
+      },
+    );
+
     it("retries a frozen invitation after its inviter leaves the course", async () => {
       await fresh();
       const seeded = await seedInvitation();
