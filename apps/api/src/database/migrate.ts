@@ -96,8 +96,13 @@ export async function runMigrations(
   directory: string,
 ): Promise<void> {
   const client = await pool.connect();
+  let locked = false;
 
   try {
+    await client.query(
+      "SELECT pg_advisory_lock(hashtext('chalktalk_schema_migrations'))",
+    );
+    locked = true;
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         name text PRIMARY KEY,
@@ -131,7 +136,14 @@ export async function runMigrations(
       }
     }
   } finally {
-    client.release();
+    try {
+      if (locked)
+        await client.query(
+          "SELECT pg_advisory_unlock(hashtext('chalktalk_schema_migrations'))",
+        );
+    } finally {
+      client.release();
+    }
   }
 }
 
