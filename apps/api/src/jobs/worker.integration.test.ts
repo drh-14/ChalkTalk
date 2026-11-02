@@ -1817,7 +1817,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         const seeded = await seedInvitation();
         let enterDelivery!: () => void;
         let releaseDelivery!: () => void;
-        const entered = new Promise<void>((resolve) => (enterDelivery = resolve));
+        const entered = new Promise<void>(
+          (resolve) => (enterDelivery = resolve),
+        );
         const released = new Promise<void>(
           (resolve) => (releaseDelivery = resolve),
         );
@@ -1870,6 +1872,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         const server = createServer(async (request, response) => {
           for await (const _chunk of request) {
             // Read the complete provider payload before accepting the message.
+            void _chunk;
           }
           requests += 1;
           enterDelivery();
