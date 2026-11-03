@@ -18,7 +18,7 @@ An active session that has had no connected participant for the configured idle 
 
 ### Requirement: Session creation and tickets are rate limited
 
-Creating sessions SHALL be limited per user to `RATE_LIMIT_COLLABORATION_CREATE_USER` per hour (default 30), and requesting connection tickets SHALL be limited per user to `RATE_LIMIT_COLLABORATION_TICKET_USER` per 10 minutes (default 300). A request over a limit SHALL get `429 rate_limited` with a `Retry-After` header in seconds and SHALL have no other effect. Idempotent replays of a session creation SHALL not count against the limit. The web app SHALL show the error message when starting a session is limited.
+Creating sessions and requesting connection tickets SHALL use the fixed per-user thresholds and windows in the authentication specification. A request over a limit SHALL get `429 rate_limited` with a `Retry-After` header in seconds and SHALL have no other effect. Idempotent replays of a session creation SHALL not count against the limit. The web app SHALL show the error message when starting a session is limited.
 
 #### Scenario: A script creates sessions in a loop
 

@@ -43,7 +43,7 @@ RETURNING id
 - **Create.** `CollaborationSessionService.create` consumes `collaboration-create:<userId>` (3,600-second window) only when it is not replaying an idempotency record.
 - **Tickets.** `CollaborationSessionService.ticket` consumes `collaboration-ticket:<userId>` (600-second window) before issuing a ticket.
 
-Limits come from `RATE_LIMIT_COLLABORATION_CREATE_USER` and `RATE_LIMIT_COLLABORATION_TICKET_USER` through the service's options. Each limit runs in the request's transaction, so a limited request changes nothing else.
+Limits come from `apps/api/src/config/constants.ts` through the service's options. Each limit runs in the request's transaction, so a limited request changes nothing else.
 
 ### D4. Collaboration metrics on the Hocuspocus port
 

@@ -1,4 +1,9 @@
 import type { S3ClientConfig } from "@aws-sdk/client-s3";
+import {
+  FRONTEND_BASE_URL_DEFAULT,
+  FRONTEND_ORIGINS_DEFAULT,
+  RATE_LIMITS,
+} from "./constants.js";
 
 export function loadObjectStorageConfig(
   source: NodeJS.ProcessEnv = process.env,
@@ -137,7 +142,7 @@ export function loadEnvironment(
   const trustProxyHops = source.TRUST_PROXY_HOPS === "1" ? 1 : 0;
 
   const frontendOrigins = new Set(
-    (source.FRONTEND_ORIGINS ?? "https://localhost:5173")
+    (source.FRONTEND_ORIGINS ?? FRONTEND_ORIGINS_DEFAULT)
       .split(",")
       .map((origin) => origin.trim())
       .filter(Boolean),
@@ -149,7 +154,7 @@ export function loadEnvironment(
       throw new Error("FRONTEND_ORIGINS must contain HTTPS origins only");
     }
   }
-  const frontendBaseUrl = source.FRONTEND_BASE_URL ?? "https://localhost:5173";
+  const frontendBaseUrl = source.FRONTEND_BASE_URL ?? FRONTEND_BASE_URL_DEFAULT;
   if (!frontendOrigins.has(frontendBaseUrl))
     throw new Error("FRONTEND_BASE_URL must be one of FRONTEND_ORIGINS");
   const authTokenSecret = source.AUTH_TOKEN_SECRET;
@@ -202,23 +207,7 @@ export function loadEnvironment(
     frontendOrigins,
     frontendBaseUrl,
     authTokenSecret,
-    rateLimits: {
-      verificationPerEmail: positiveInteger("RATE_LIMIT_VERIFICATION_EMAIL", 5),
-      verificationPerIp: positiveInteger("RATE_LIMIT_VERIFICATION_IP", 100),
-      loginPerEmail: positiveInteger("RATE_LIMIT_LOGIN_EMAIL", 10),
-      loginPerIp: positiveInteger("RATE_LIMIT_LOGIN_IP", 100),
-      resetPerEmail: positiveInteger("RATE_LIMIT_RESET_EMAIL", 5),
-      resetPerIp: positiveInteger("RATE_LIMIT_RESET_IP", 100),
-      signupPerIp: positiveInteger("RATE_LIMIT_SIGNUP_IP", 100),
-      collaborationCreatePerUser: positiveInteger(
-        "RATE_LIMIT_COLLABORATION_CREATE_USER",
-        30,
-      ),
-      collaborationTicketPerUser: positiveInteger(
-        "RATE_LIMIT_COLLABORATION_TICKET_USER",
-        300,
-      ),
-    },
+    rateLimits: RATE_LIMITS,
     observability: {
       enabled: observabilityEnabled,
       metricsToken: observabilityEnabled ? source.METRICS_TOKEN : undefined,
