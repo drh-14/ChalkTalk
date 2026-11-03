@@ -158,6 +158,35 @@
 .resource-sort {
   max-width: 16rem;
 }
+.resource-search {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-weight: 600;
+  margin: 1.5rem 0 1rem;
+}
+.resource-search input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font-weight: 400;
+}
+.resource-snippet {
+  margin: 0.5rem 0 0;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+.resource-snippet mark {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+  padding: 0 0.1em;
+  border-radius: 0.2em;
+}
+.resource-text-status {
+  color: var(--accent-ink);
+  font-style: italic;
+}
 .resource-section {
   border-top: 1px solid var(--line);
   padding-top: 1rem;

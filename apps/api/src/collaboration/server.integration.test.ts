@@ -176,10 +176,10 @@ integration("collaboration server", () => {
       const secondTicket = (
         await service.ticket(secondId, aliceId, authSessions[aliceId]!)
       ).ticket;
+      const encoding = await import("lib0/encoding");
       const raw = new WebSocket(collaboration.server.webSocketURL, {
         headers: { Origin: ORIGIN },
       });
-      const encoding = await import("lib0/encoding");
       const auth = (name: string, token: string) => {
         const encoder = encoding.createEncoder();
         encoding.writeVarString(encoder, documentName(name));

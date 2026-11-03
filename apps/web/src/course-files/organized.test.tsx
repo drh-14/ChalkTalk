@@ -73,7 +73,9 @@ describe("organized course resources", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<CourseResources courseId="course" canUpload csrfToken="csrf" />);
+    render(
+      <CourseResources courseId="course" canUpload staff csrfToken="csrf" />,
+    );
     await screen.findByText("No course resources yet.");
     for (let i = 1; i <= 2; i++) {
       await user.type(
@@ -129,7 +131,9 @@ describe("organized course resources", () => {
       type: "text/plain",
       lastModified: 1,
     });
-    render(<CourseResources courseId="course" canUpload csrfToken="csrf" />);
+    render(
+      <CourseResources courseId="course" canUpload staff csrfToken="csrf" />,
+    );
     await screen.findByText("No course resources yet.");
     await user.upload(screen.getByLabelText("Choose a course file"), file);
     await user.click(screen.getByRole("button", { name: "Upload file" }));
@@ -170,7 +174,9 @@ describe("organized course resources", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<CourseResources courseId="course" canUpload csrfToken="csrf" />);
+    render(
+      <CourseResources courseId="course" canUpload staff csrfToken="csrf" />,
+    );
     await screen.findByText("No course resources yet.");
     const picker = screen.getByLabelText("Choose a course file");
     await user.upload(
@@ -190,7 +196,9 @@ describe("organized course resources", () => {
   it("keeps a failed replacement key only for its unchanged request", async () => {
     fixture();
     const user = userEvent.setup();
-    render(<CourseResources courseId="course" canUpload csrfToken="csrf" />);
+    render(
+      <CourseResources courseId="course" canUpload staff csrfToken="csrf" />,
+    );
     await screen.findByRole("link", { name: "Week one" });
     await user.click(screen.getByRole("button", { name: "Edit Week one" }));
     const editor = screen.getByRole("form", { name: "Edit resource" });
@@ -272,7 +280,12 @@ describe("organized course resources", () => {
       ),
     );
     render(
-      <CourseResources courseId="course" canUpload={false} csrfToken="csrf" />,
+      <CourseResources
+        courseId="course"
+        canUpload={false}
+        staff={false}
+        csrfToken="csrf"
+      />,
     );
     const section = await screen.findByRole("region", { name: "Later" });
     expect(
@@ -286,7 +299,12 @@ describe("organized course resources", () => {
   it("groups resource title links under actual instructor-created sections", async () => {
     fixture();
     render(
-      <CourseResources courseId="course" canUpload={false} csrfToken="csrf" />,
+      <CourseResources
+        courseId="course"
+        canUpload={false}
+        staff={false}
+        csrfToken="csrf"
+      />,
     );
     await screen.findByRole("heading", { name: "Reading material" });
     expect(
@@ -306,7 +324,9 @@ describe("organized course resources", () => {
       ),
     );
     const user = userEvent.setup();
-    render(<CourseResources courseId="course" canUpload csrfToken="csrf" />);
+    render(
+      <CourseResources courseId="course" canUpload staff csrfToken="csrf" />,
+    );
     await screen.findByText("No course resources yet.");
     expect(screen.queryByText("Homework Solutions")).toBeNull();
     await user.type(
@@ -318,7 +338,9 @@ describe("organized course resources", () => {
   it("keeps metadata draft visible when a conditional save fails", async () => {
     fixture();
     const user = userEvent.setup();
-    render(<CourseResources courseId="course" canUpload csrfToken="csrf" />);
+    render(
+      <CourseResources courseId="course" canUpload staff csrfToken="csrf" />,
+    );
     await screen.findByRole("link", { name: "Week one" });
     await user.click(screen.getByRole("button", { name: "Edit Week one" }));
     const editor = screen.getByRole("form", { name: "Edit resource" });

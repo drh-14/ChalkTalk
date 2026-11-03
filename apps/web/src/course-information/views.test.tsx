@@ -54,6 +54,7 @@ describe("course information and staff", () => {
       <CourseResourcesArea
         courseId="course"
         canEdit={false}
+        staff={false}
         csrfToken="csrf"
       />,
     );
@@ -79,6 +80,7 @@ describe("course information and staff", () => {
       <CourseResourcesArea
         courseId="course"
         canEdit={false}
+        staff={false}
         csrfToken="csrf"
       />,
     );
@@ -92,7 +94,9 @@ describe("course information and staff", () => {
   it("retains an instructor draft after a stale save and requires explicit reload", async () => {
     fixture();
     const user = userEvent.setup();
-    render(<CourseResourcesArea courseId="course" canEdit csrfToken="csrf" />);
+    render(
+      <CourseResourcesArea courseId="course" canEdit staff csrfToken="csrf" />,
+    );
     await user.click(screen.getByRole("tab", { name: "Course information" }));
     await user.click(
       await screen.findByRole("button", { name: "Edit course information" }),
@@ -127,7 +131,9 @@ describe("course information and staff", () => {
   it("sends conditional instructor saves with csrf and shows formatted saved text", async () => {
     const requests = fixture();
     const user = userEvent.setup();
-    render(<CourseResourcesArea courseId="course" canEdit csrfToken="csrf" />);
+    render(
+      <CourseResourcesArea courseId="course" canEdit staff csrfToken="csrf" />,
+    );
     await user.click(screen.getByRole("tab", { name: "Course information" }));
     await user.click(
       await screen.findByRole("button", { name: "Edit course information" }),
@@ -149,6 +155,7 @@ describe("course information and staff", () => {
       <CourseResourcesArea
         courseId="course"
         canEdit={false}
+        staff={false}
         csrfToken="csrf"
       />,
     );

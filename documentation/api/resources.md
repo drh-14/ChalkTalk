@@ -2,7 +2,7 @@
 
 ### Implemented course files
 
-The Course Resources tab uses immutable `course_files` plus named external links, not the deferred resource catalog described below. All routes require the `__Host-chalktalk_session` cookie; unsafe routes additionally require an allowed `Origin` and session-bound `X-CSRF-Token`. Error responses use the common `{ error: { code, message, requestId, details } }` envelope. Public file metadata is exactly `{ id, courseId, fileName, mediaType, sizeBytes, createdAt }`; no storage key, checksum or uploader identity is exposed.
+The Course Resources tab uses a sectioned catalog backed by immutable `course_files` and named external links. The region-based contracts below remain deferred. All routes require the `__Host-chalktalk_session` cookie; unsafe routes additionally require an allowed `Origin` and session-bound `X-CSRF-Token`. Error responses use the common `{ error: { code, message, requestId, details } }` envelope. Standalone file metadata follows the [CourseFile schema](../openapi.yaml#/components/schemas/CourseFile); no storage key, checksum or uploader identity is exposed.
 
 #### `GET /api/v1/courses/{courseId}/files`
 
@@ -29,31 +29,86 @@ Existing original-byte download: current members of active or archived courses o
 
 #### `DELETE /api/v1/courses/{courseId}/files/{fileId}`
 
-Existing deletion remains API-only: original uploader who is still a current instructor in an active course only. Success `204` atomically hides metadata and queues durable object deletion; later reads return `404`. Other instructors and non-instructors receive `403 permission_denied`; archived courses receive `409 course_archived`. The Course Resources UI does not expose deletion.
+Existing standalone file deletion remains API-only: original uploader who is still a current instructor in an active course only. Success `204` atomically hides metadata and queues durable object deletion; later reads return `404`. Other instructors and non-instructors receive `403 permission_denied`; archived courses receive `409 course_archived`. The catalog's removal controls use course-scoped resource routes instead of this legacy endpoint.
 
-### Implemented flat course resources
+### Implemented course resource catalog
 
-The same Resources page lists original files and named external links in one flat list. Only active-course instructors can create entries; current members can read active or archived courses. External URLs are never fetched by the server. There are no sections, categories, descriptions, visibility settings, or link deletion controls.
+The Resources page groups files and named external links under instructor-created sections. For catalog editing and visibility rules, see the [organized resource specification](../../openspec/specs/organized-course-resources/spec.md). External URLs are never fetched by the server.
 
 <a id="listCourseResources"></a>
 
 #### `GET /api/v1/courses/{courseId}/resources`
 
-Success `200 application/json` with `Cache-Control: private, no-store` returns `{ data: [...], page: { hasMore, nextCursor } }`. Upload entries contain `kind: "upload"` plus the exact public file metadata above. Link entries contain exactly `{ kind: "link", id, courseId, title, url, createdAt }`; creator identity is not exposed. Files are actual live `course_files`, not wrapper catalog rows. Deleted files and other courses' entries are excluded. Missing, deleting or inaccessible courses return `404`; missing authentication returns `401`.
+See the [OpenAPI list operation](../openapi.yaml#/paths/~1courses~1{courseId}~1resources/get) for query fields, response headers, pagination and errors. Entries use the [CourseResource schema](../openapi.yaml#/components/schemas/CourseResource); a resource's stable `id` and its current upload's `fileId` can differ.
 
-Only single `limit` (decimal integer 1–100; default 25) and `cursor` (1–2048 character opaque cursor) query fields are accepted. Order is exact database creation time descending, file/link ID descending, then kind descending (`upload` before `link` when both timestamp and ID match). Cursors preserve microseconds and bind both endpoint and course; invalid, repeated, unknown or foreign query values return `400 invalid_request`. Pagination is not a snapshot of concurrent changes. Filenames themselves download original bytes; named links open a new tab with `noopener noreferrer`.
+Upload entries returned by catalog listing and single-resource reads include `textStatus`, defined by [ResourceTextStatus](../openapi.yaml#/components/schemas/ResourceTextStatus). Link entries have no such field. See [Search course resources](#searchCourseResources) for how extraction affects matching.
+
+File titles download original bytes; named links open a new tab with `noopener noreferrer`.
 
 <a id="createResource"></a>
 
 #### `POST /api/v1/courses/{courseId}/resources`
 
-Current active-course instructors only. Requires session cookie, allowed `Origin`, session `X-CSRF-Token` and `Content-Type: application/json`. Supply exactly `{ "kind": "link", "title": "Course handbook", "url": "https://example.edu/handbook" }`. Title is trimmed, nonblank and at most 200 Unicode code points. URL is at most 2048 Unicode code points, must start with absolute HTTP(S), have a hostname, and contain no credentials, raw Unicode whitespace (including surrounding whitespace), C0/C1 controls or backslashes. Percent-encoded bytes and ordinary non-ASCII path characters are allowed. The server never fetches or previews it.
+See the [OpenAPI create operation](../openapi.yaml#/paths/~1courses~1{courseId}~1resources/post) for authentication, accepted link and catalog metadata, URL validation, idempotency, responses and errors. The server never fetches or previews the target.
 
-Success `201` returns `{ data: { kind: "link", id, courseId, title, url, createdAt } }` with collection `Location: /api/v1/courses/{courseId}/resources`. Optional `Idempotency-Key` (1–255 characters) binds creator, course, trimmed title and accepted URL for 24 hours transactionally. Identical authorized current-instructor retries replay the original `201` while the link remains visible, including after archival; changed input returns `409 idempotency_key_reused`. Expired keys can create a new link. New archived/deleting writes return `409 course_archived`; noninstructors/nonmembers receive `403 permission_denied`; missing authentication `401`, invalid Origin/CSRF `403`, non-JSON media or invalid fields/kind/URL/title/key `422 validation_failed`, unavailable service `503`. Failed writes do not retain a link or idempotency response.
+<a id="searchCourseResources"></a>
+
+#### `GET /api/v1/courses/{courseId}/resources/search`
+
+Searches catalog resources by title and by text extracted from each upload's current file. Current members (student, TA or instructor) of active or archived courses only; requires the `__Host-chalktalk_session` cookie. Missing, deleting and inaccessible courses, including after membership removal, return `404 not_found`; missing authentication returns `401 authentication_required`; an unavailable service returns `503 service_unavailable`.
+
+Extraction runs on catalog uploads and replacements and backfills existing live catalog files at migration time. PDFs use their text layer with OCR for scanned pages; PNG, JPEG and WebP use OCR; text and Markdown use UTF-8 decoding; DOCX and PPTX use document, slide and speaker-note text without OCR of embedded images. Extraction is self-hosted and does not send content to an external service. Course syllabus files and discussion attachments are outside this pipeline. For deployment limits, see [resource extraction configuration](../../README.md#environment-variables).
+
+Query fields (each at most once; any other field returns `400 invalid_request`):
+
+- `q` (required): trimmed and whitespace-collapsed, 1–200 Unicode code points.
+- `limit` (optional): decimal integer from 1 to 50; default 20.
+- `cursor` (optional): the opaque `nextCursor` from a previous page, 1–2048 characters. It is valid only for the same course, normalized query and viewer access level (staff or class); anything else returns `400 invalid_request`.
+
+Matching uses word stems (`english` configuration, `websearch_to_tsquery` syntax) against resource titles and against the ready extracted text of each upload's current file. Title words also match close misspellings when the query uses no operators (quotes, `OR` or `-`) and every query word of three or more characters that is not a stop word closely matches the title. Links match on title only; their URLs are never fetched. Text from files whose `textStatus` is not `ready` is not searched, though their titles are. Results are ordered with title matches first, then by relevance, then resource ID.
+
+Visibility is applied before ranking and pagination with the same rules as catalog reads: staff-only sections and items are visible only to current TAs and instructors, removed resources never match, and a replaced file's text stops matching as soon as the replacement commits. Pagination is not a snapshot of concurrent changes.
+
+Success is `200 application/json` with `Cache-Control: private, no-store`:
+
+```json
+{
+  "data": [
+    {
+      "resource": {
+        "kind": "upload",
+        "id": "0193f6a2-6c1e-7b3a-9f0e-2b1c4d5e6f70",
+        "courseId": "0193f6a2-6c1e-7b3a-9f0e-2b1c4d5e6f71",
+        "title": "Lecture 7",
+        "fileId": "0193f6a2-6c1e-7b3a-9f0e-2b1c4d5e6f70",
+        "fileName": "lecture-7.pdf",
+        "mediaType": "application/pdf",
+        "sizeBytes": 482113,
+        "textStatus": "ready",
+        "createdAt": "2026-10-31T14:00:00.000Z",
+        "sectionId": null,
+        "visibility": "class",
+        "position": 0,
+        "version": 1
+      },
+      "match": {
+        "inTitle": false,
+        "snippet": {
+          "text": "Today we prove that the eigenvalues of a real symmetric matrix are real.",
+          "highlights": [{ "start": 24, "length": 11 }]
+        }
+      }
+    }
+  ],
+  "page": { "hasMore": false, "nextCursor": null }
+}
+```
+
+`resource` is exactly the catalog entry. `match.inTitle` is true when the title matched (including a misspelling). `match.snippet` is null unless extracted text matched; otherwise `text` is a plain-text excerpt of at most 300 characters and `highlights` are ordered, non-overlapping `{ start, length }` ranges in UTF-16 code units into `text`. Snippets never contain markup; markup-like source text such as `<b>` is returned verbatim as text and must be rendered as text.
 
 ### Deferred resource catalog operations
 
-The following single-resource and region contracts remain deferred; they are not used by the implemented flat files-and-links page. In particular, no custom titles/descriptions for files, sections or OCR are implemented.
+The following global `/resources/{resourceId}` and region contracts remain deferred; the implemented catalog uses course-scoped resource routes. Region-level OCR and descriptions remain deferred; whole-file text extraction is covered by [Search course resources](#searchCourseResources).
 
 <a id="getResource"></a>
 

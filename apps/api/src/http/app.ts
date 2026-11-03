@@ -2712,6 +2712,47 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/courses/:courseId/resources/search",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const { q, limit, cursor } = request.query;
+        if (
+          Object.keys(request.query).some(
+            (key) => !["q", "limit", "cursor"].includes(key),
+          ) ||
+          typeof q !== "string" ||
+          (limit !== undefined &&
+            (typeof limit !== "string" || !/^[1-9]\d{0,2}$/.test(limit))) ||
+          (cursor !== undefined &&
+            (typeof cursor !== "string" ||
+              cursor.length < 1 ||
+              cursor.length > 2048))
+        )
+          throw new AuthError(400, "invalid_request", "Search is invalid");
+        if (!courseResourceService)
+          throw new AuthError(
+            503,
+            "service_unavailable",
+            "Resource service is unavailable",
+          );
+        const value = await courseResourceService.search(
+          param(request.params.courseId),
+          current.session.user.id,
+          {
+            q,
+            limit: limit === undefined ? undefined : Number(limit),
+            cursor: cursor as string | undefined,
+          },
+        );
+        response.set("Cache-Control", "private, no-store").json(value);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/courses/:courseId/resources/:resourceId",
     optionalReadOrigin,
     async (request, response, next) => {

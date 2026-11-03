@@ -33,7 +33,7 @@ suite("organized resource migration", () => {
           options: `--search_path="${schema}"`,
         });
         for (const name of await readdir(getMigrationDirectory()))
-          if (name.endsWith(".sql") && !name.startsWith("029_"))
+          if (name.endsWith(".sql") && name < "029_")
             await copyFile(
               join(getMigrationDirectory(), name),
               join(directory, name),
