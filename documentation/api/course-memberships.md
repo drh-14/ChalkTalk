@@ -52,7 +52,7 @@ None.
 
 `Location` (string): Relative URL of the created resource or deletion status resource.
 
-`ETag` (string): Opaque membership validator containing a private incarnation and revision; return it unchanged in a later `If-Match` request. Idempotent replay returns the original ETag even after leave/rejoin.
+`ETag` (string): Opaque membership validator containing a private incarnation and revision; return it unchanged in a later `If-Match` request. Version-only membership tags from before this change cannot authorize conditional writes. Idempotent replay returns the original ETag even after leave/rejoin.
 
 #### Response body
 
