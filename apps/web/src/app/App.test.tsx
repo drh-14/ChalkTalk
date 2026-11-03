@@ -1512,6 +1512,13 @@ describe("ChalkTalk auth entry", () => {
     render(<App />);
     await screen.findByRole("button", { name: "Delete course" });
     await user.click(screen.getByRole("button", { name: "Delete course" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete course" });
+    expect(within(dialog).getByText(/Linear Algebra II/)).toBeTruthy();
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Delete course permanently",
+      }),
+    );
 
     expect((await screen.findByRole("status")).textContent).toContain(
       "being deleted",

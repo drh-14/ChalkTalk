@@ -809,9 +809,9 @@ curl --request DELETE '/api/v1/courses/course_123' \
 
 ### **`GET /api/v1/courses/{courseId}/members/me/email-preferences`**
 
-Returns the authenticated current member's independent email choices for this course, and an `ETag` of the membership version. Other members cannot read these choices. A nonmember receives `404 not_found`; unauthenticated access receives `401 authentication_required`.
+Returns the authenticated current member's independent email choices for this course, and an opaque incarnation-aware membership `ETag`. Other members cannot read these choices. A nonmember receives `404 not_found`; unauthenticated access receives `401 authentication_required`.
 
-**Success:** `200 OK`, `application/json`, `ETag: "vN"`.
+**Success:** `200 OK`, `application/json`, `ETag: "m:<uuid>:vN"`.
 
 ```json
 {

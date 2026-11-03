@@ -12,6 +12,8 @@ Teaching assistants and instructors can collaboratively maintain staff answers, 
 
 Instructors can turn off new anonymous or private contributions and pause follow-up resolution in a course's settings. Existing contributions and resolution markers remain visible to their authorized readers.
 
+In course settings, an instructor must confirm the named member before removing them or the named course before deleting it. Cancel or Escape leaves it unchanged; if the course or membership changed meanwhile, review the refreshed details and confirm again before retrying.
+
 Staff can pause new discussion and voting on an individual question or poll without hiding its existing content.
 
 Core features include:
