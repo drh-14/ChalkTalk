@@ -291,6 +291,7 @@ test("a stale course deletion refreshes and requires another confirmation", asyn
   await expect(trigger).toBeFocused();
   await page.screenshot({
     path: resolve(screenshots, "stale-course-retry.png"),
+    fullPage: true,
   });
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByRole("dialog")).toContainText(
