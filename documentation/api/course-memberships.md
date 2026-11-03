@@ -52,7 +52,7 @@ None.
 
 `Location` (string): Relative URL of the created resource or deletion status resource.
 
-`ETag` (string): Opaque revision token representing the created resource state; return it unchanged in a later `If-Match` request.
+`ETag` (string): Opaque membership validator containing a private incarnation and revision; return it unchanged in a later `If-Match` request. Idempotent replay returns the original ETag even after leave/rejoin.
 
 #### Response body
 
@@ -70,7 +70,7 @@ None.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
-`data.version` (integer, required): Revision number used to construct the resource ETag.
+`data.version` (integer, required): Numeric membership revision; the opaque ETag also distinguishes leave/rejoin incarnations.
 
 #### Example request
 
@@ -198,7 +198,7 @@ None specific to this operation.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
-`data.version` (integer, required): Revision number used to construct the resource ETag.
+`data.version` (integer, required): Numeric membership revision; the opaque ETag also distinguishes leave/rejoin incarnations.
 
 `page` (object, required): Pagination details for the current result set.
 
@@ -301,7 +301,7 @@ None.
 
 #### Response headers
 
-`ETag` (string): Opaque revision token for a later `If-Match` request.
+`ETag` (string): Opaque membership validator; use it unchanged for conditional role changes or removal. An older tag cannot authorize a rejoined membership.
 
 #### Response body
 
@@ -319,7 +319,7 @@ None.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
-`data.version` (integer, required): Revision number used to construct the resource ETag.
+`data.version` (integer, required): Numeric membership revision; the opaque ETag also distinguishes leave/rejoin incarnations.
 
 #### Example request
 
@@ -420,7 +420,7 @@ None.
 
 #### Response headers
 
-`ETag` (string): Opaque revision token representing the returned resource state; return it unchanged in a later `If-Match` request.
+`ETag` (string): Opaque membership validator containing a private incarnation and revision; return it unchanged in a later `If-Match` request.
 
 #### Response body
 
@@ -438,7 +438,7 @@ None.
 
 `data.updatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
 
-`data.version` (integer, required): Revision number used to construct the resource ETag.
+`data.version` (integer, required): Numeric membership revision; the opaque ETag also distinguishes leave/rejoin incarnations.
 
 #### Example request
 
@@ -448,7 +448,7 @@ curl --request PATCH '/api/v1/courses/course_123/members/user_123' \
     --header 'Origin: https://app.example.edu' \
     --header 'Cookie: __Host-chalktalk_session=opaque_session' \
     --header 'X-CSRF-Token: opaque_csrf_token' \
-    --header 'If-Match: "v3"' \
+    --header 'If-Match: "m:550e8400-e29b-41d4-a716-446655440000:v3"' \
     --header 'Content-Type: application/json' \
     --data '{"role":"ta"}'
 ```
@@ -576,7 +576,7 @@ curl --request DELETE '/api/v1/courses/course_123/members/user_123' \
     --header 'Origin: https://app.example.edu' \
     --header 'Cookie: __Host-chalktalk_session=opaque_session' \
     --header 'X-CSRF-Token: opaque_csrf_token' \
-    --header 'If-Match: "v3"'
+    --header 'If-Match: "m:550e8400-e29b-41d4-a716-446655440000:v3"'
 ```
 
 #### Example success response

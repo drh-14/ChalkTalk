@@ -51,7 +51,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
     const course = await service.create(organization, owner, "Compilers");
     expect(course.joinCode).toMatch(/^[A-Z0-9]{8}$/);
     const membership = await service.join(course.id, guest, course.joinCode);
-    expect(membership.role).toBe("student");
+    expect(membership.value.role).toBe("student");
     await expect(
       service.removeMember(course.id, owner, owner, undefined, true),
     ).rejects.toMatchObject({
@@ -178,6 +178,106 @@ integration("CourseService PostgreSQL lifecycle", () => {
       ),
     ).rejects.toMatchObject({ status: 409, code: "idempotency_key_reused" });
   });
+  it("replays the exact join response after a role change, removal, and rejoin", async () => {
+    const course = await service.create(organization, owner, "Join replay");
+    const body = { joinCode: course.joinCode };
+    const first = await service.joinIdempotently(
+      course.id,
+      guest,
+      course.joinCode!,
+      "replay-key",
+      body,
+    );
+    expect(first.etag).toMatch(/^"m:[0-9a-f-]{36}:v1"$/);
+    const updated = await service.updateMember(
+      course.id,
+      owner,
+      guest,
+      first.etag,
+      "ta",
+    );
+    expect(updated.etag).not.toBe(first.etag);
+    await service.removeMember(course.id, owner, guest, updated.etag);
+    const rejoined = await service.join(course.id, guest, course.joinCode!);
+    const replay = await service.joinIdempotently(
+      course.id,
+      guest,
+      course.joinCode!,
+      "replay-key",
+      body,
+    );
+    expect(replay).toEqual(first);
+    expect(replay.etag).not.toBe(rejoined.etag);
+    await expect(
+      service.removeMember(course.id, owner, guest, replay.etag),
+    ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+    await pool.query(
+      "UPDATE idempotency_records SET response_headers=$3 WHERE scope=$1 AND key=$2",
+      [`course-join:${guest}:${course.id}`, "replay-key", { ETag: '"v1"' }],
+    );
+    await expect(
+      service.joinIdempotently(
+        course.id,
+        guest,
+        course.joinCode!,
+        "replay-key",
+        body,
+      ),
+    ).rejects.toThrow("Stored course join response ETag is invalid");
+    await pool.query(
+      "UPDATE idempotency_records SET response_headers=$3 WHERE scope=$1 AND key=$2",
+      [
+        `course-join:${guest}:${course.id}`,
+        "replay-key",
+        { ETag: '"v1"', legacyMembershipEtag: true },
+      ],
+    );
+    const legacyReplay = await service.joinIdempotently(
+      course.id,
+      guest,
+      course.joinCode!,
+      "replay-key",
+      body,
+    );
+    expect(legacyReplay).toEqual({ ...first, etag: '"v1"' });
+    await expect(
+      service.removeMember(course.id, owner, guest, legacyReplay.etag),
+    ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+  });
+  it("changes preference ETags with the membership incarnation", async () => {
+    const course = await service.create(organization, owner, "Preference ABA");
+    await service.join(course.id, guest, course.joinCode!);
+    const first = await service.getEmailPreferences(course.id, guest);
+    const changed = await service.updateEmailPreferences(
+      course.id,
+      guest,
+      first.etag,
+      { activityEmails: true },
+    );
+    expect(changed.etag).toBe(first.etag.replace(":v1", ":v2"));
+    await service.removeMember(course.id, guest, guest, undefined, true);
+    await service.join(course.id, guest, course.joinCode!);
+    const current = await service.getEmailPreferences(course.id, guest);
+    expect(current.etag).not.toBe(first.etag);
+    await expect(
+      service.updateEmailPreferences(course.id, guest, first.etag, {
+        activityEmails: false,
+      }),
+    ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+    await expect(
+      service.updateEmailPreferences(course.id, guest, '"v1"', {
+        activityEmails: false,
+      }),
+    ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+    await expect(
+      service.updateEmailPreferences(course.id, guest, undefined, {
+        activityEmails: false,
+      }),
+    ).rejects.toMatchObject({ status: 428, code: "precondition_required" });
+    expect(
+      (await service.getEmailPreferences(course.id, guest)).data.activityEmails,
+    ).toBe(false);
+  });
   it("does not duplicate a concurrent idempotent create", async () => {
     const [first, second] = await Promise.all([
       service.createIdempotently(
@@ -214,12 +314,12 @@ integration("CourseService PostgreSQL lifecycle", () => {
     const course = await service.create(organization, owner, "Authorization");
     const joined = await service.join(course.id, guest, course.joinCode!);
     await expect(
-      service.removeMember(course.id, guest, guest, courseEtag(joined)),
+      service.removeMember(course.id, guest, guest, joined.etag),
     ).rejects.toMatchObject({ status: 404, code: "not_found" });
     await expect(
       service.getMember(course.id, guest, guest),
     ).resolves.toMatchObject({
-      user: { id: guest },
+      value: { user: { id: guest } },
     });
     await expect(
       service.removeMember(course.id, guest, guest, undefined, true),
@@ -304,7 +404,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
       .set("Cookie", "__Host-chalktalk_session=opaque")
       .set("Origin", environment.frontendBaseUrl)
       .set("X-CSRF-Token", "csrf")
-      .set("If-Match", courseEtag(joined));
+      .set("If-Match", joined.etag);
     expect(forbidden.status).toBe(404);
     expect(forbidden.body.error.code).toBe("not_found");
     const emptyKey = await request(app)
@@ -352,7 +452,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
       course.id,
       owner,
       guest,
-      courseEtag(joined),
+      joined.etag,
       "instructor",
     );
     const target = `/api/v1/courses/${course.id}/members/${owner}`;
@@ -416,7 +516,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
       course.id,
       owner,
       guest,
-      courseEtag(rejoined),
+      rejoined.etag,
       "instructor",
     );
     await request(app)
@@ -429,6 +529,73 @@ integration("CourseService PostgreSQL lifecycle", () => {
       status: 404,
       code: "not_found",
     });
+  });
+  it("uses incarnation-aware HTTP validators and rejects stale deletion after rejoin", async () => {
+    const environment = loadEnvironment({
+      AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+      FRONTEND_ORIGINS: "https://app.example.edu",
+      FRONTEND_BASE_URL: "https://app.example.edu",
+    });
+    const app = createApp({
+      environment,
+      authService: {
+        session: async () => ({
+          id: uuidv7(),
+          user: {
+            id: owner,
+            email: "owner@example.edu",
+            displayName: "Owner",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            version: 1,
+          },
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          csrfToken: "csrf",
+        }),
+      } as AuthService,
+      courseService: service,
+    });
+    const course = await service.create(
+      organization,
+      owner,
+      "HTTP membership ABA",
+    );
+    const first = await service.join(course.id, guest, course.joinCode!);
+    const path = `/api/v1/courses/${course.id}/members/${guest}`;
+    const headers = {
+      Cookie: "__Host-chalktalk_session=opaque",
+      Origin: environment.frontendBaseUrl,
+      "X-CSRF-Token": "csrf",
+    };
+    const before = await request(app)
+      .get(path)
+      .set("Cookie", headers.Cookie)
+      .expect(200);
+    expect(before.headers.etag).toBe(first.etag);
+    expect(before.body.data).not.toHaveProperty("incarnation");
+    await service.removeMember(course.id, guest, guest, undefined, true);
+    const second = await service.join(course.id, guest, course.joinCode!);
+    expect(second.etag).not.toBe(first.etag);
+    await request(app)
+      .delete(path)
+      .set({ ...headers, "If-Match": first.etag })
+      .expect(412);
+    await request(app)
+      .patch(path)
+      .set({ ...headers, "If-Match": first.etag })
+      .send({ role: "ta" })
+      .expect(412);
+    await request(app).delete(path).set(headers).expect(428);
+    const fresh = await request(app)
+      .get(path)
+      .set("Cookie", headers.Cookie)
+      .expect(200);
+    expect(fresh.headers.etag).toBe(second.etag);
+    await request(app)
+      .delete(path)
+      .set({ ...headers, "If-Match": fresh.headers.etag as string })
+      .expect(204);
+    await request(app).get(path).set("Cookie", headers.Cookie).expect(404);
   });
   it("stores implemented resources using the documented database types and idempotency key", async () => {
     const columns = await pool.query<{
@@ -460,6 +627,10 @@ integration("CourseService PostgreSQL lifecycle", () => {
       expect(fields.get(`${table}.version`)).toMatchObject({
         data_type: "bigint",
       });
+    expect(fields.get("course_memberships.incarnation")).toMatchObject({
+      data_type: "uuid",
+    });
+    expect(fields.has("course_memberships.id")).toBe(false);
     expect(fields.get("idempotency_records.key")).toMatchObject({
       data_type: "character varying",
       character_maximum_length: 255,
@@ -581,6 +752,58 @@ integration("CourseService PostgreSQL lifecycle", () => {
       await admin.query(`DROP SCHEMA "${upgradeSchema}" CASCADE`);
     }
   });
+  it("backfills distinct membership incarnations and historical join replay ETags", async () => {
+    const migrationSchema = `${schema}_incarnation`;
+    await admin.query(`CREATE SCHEMA "${migrationSchema}"`);
+    const isolated = new Pool({
+      connectionString: url,
+      options: `--search_path="${migrationSchema}"`,
+    });
+    try {
+      await isolated.query(
+        "CREATE TABLE course_memberships (course_id uuid, user_id uuid, version bigint)",
+      );
+      await isolated.query(
+        "CREATE TABLE idempotency_records (scope text, response_headers jsonb, response_body jsonb)",
+      );
+      await isolated.query(
+        "INSERT INTO course_memberships (course_id,user_id,version) VALUES ($1,$2,1),($1,$3,1)",
+        [uuidv7(), uuidv7(), uuidv7()],
+      );
+      await isolated.query(
+        `INSERT INTO idempotency_records (scope,response_body) VALUES ('course-join:legacy:course','{"version":1}')`,
+      );
+      await isolated.query(
+        await readFile(
+          join(getMigrationDirectory(), "056_membership_incarnation.sql"),
+          "utf8",
+        ),
+      );
+      const rows = await isolated.query<{ incarnation: string }>(
+        "SELECT incarnation FROM course_memberships",
+      );
+      expect(new Set(rows.rows.map((row) => row.incarnation)).size).toBe(2);
+      expect(
+        rows.rows.every((row) => /^[0-9a-f-]{36}$/.test(row.incarnation)),
+      ).toBe(true);
+      const historical = await isolated.query<{
+        response_headers: { ETag: string; legacyMembershipEtag: boolean };
+      }>("SELECT response_headers FROM idempotency_records");
+      expect(historical.rows[0]!.response_headers.ETag).toBe('"v1"');
+      expect(historical.rows[0]!.response_headers.legacyMembershipEtag).toBe(
+        true,
+      );
+      await expect(
+        isolated.query(
+          "INSERT INTO course_memberships (course_id,user_id,version,incarnation) VALUES ($1,$2,1,NULL)",
+          [uuidv7(), uuidv7()],
+        ),
+      ).rejects.toMatchObject({ code: "23502" });
+    } finally {
+      await isolated.end();
+      await admin.query(`DROP SCHEMA "${migrationSchema}" CASCADE`);
+    }
+  });
   it("returns bigint-backed revisions as JSON numbers with matching ETags", async () => {
     const created = await service.create(organization, owner, "Revisions");
     const membership = await service.join(created.id, guest, created.joinCode!);
@@ -591,17 +814,46 @@ integration("CourseService PostgreSQL lifecycle", () => {
     expect(retrieved.version).toBe(1);
     expect(courseEtag(retrieved)).toBe('"v1"');
     const member = await service.getMember(created.id, guest, guest);
-    expect(member.version).toBe(1);
-    expect(courseEtag(member)).toBe('"v1"');
+    expect(member.value.version).toBe(1);
+    expect(member.etag).toMatch(/^"m:[0-9a-f-]{36}:v1"$/);
     const updated = await service.updateMember(
       created.id,
       owner,
       guest,
-      courseEtag(membership),
+      membership.etag,
       "ta",
     );
-    expect(updated.version).toBe(2);
-    expect(courseEtag(updated)).toBe('"v2"');
+    expect(updated.value.version).toBe(2);
+    expect(updated.etag).toBe(member.etag.replace(":v1", ":v2"));
+  });
+  it("rejects an old membership ETag after leave and rejoin without changing the new row", async () => {
+    const created = await service.create(organization, owner, "Membership ABA");
+    const first = await service.join(created.id, guest, created.joinCode!);
+    expect(first.etag).toMatch(/^"m:[0-9a-f-]{36}:v1"$/);
+    await service.removeMember(created.id, guest, guest, undefined, true);
+    const second = await service.join(created.id, guest, created.joinCode!);
+    expect(second.etag).not.toBe(first.etag);
+    expect(second.value.id).toBe(first.value.id);
+    expect(second.value.version).toBe(1);
+    await expect(
+      service.removeMember(created.id, owner, guest, first.etag),
+    ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+    await expect(
+      service.updateMember(created.id, owner, guest, first.etag, "ta"),
+    ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+    await expect(
+      service.removeMember(created.id, owner, guest, '"v1"'),
+    ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+    const current = await service.getMember(created.id, owner, guest);
+    expect(current.etag).toBe(second.etag);
+    expect(current.value.role).toBe("student");
+    await service.removeMember(created.id, owner, guest, second.etag);
+    await expect(
+      service.getMember(created.id, owner, guest),
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
   });
   it("paginates member courses by a stable created-at and UUID keyset", async () => {
     const pageUser = "01a0e5cc-58ae-7009-9f43-ddd412c3880b";
@@ -828,11 +1080,13 @@ integration("CourseService PostgreSQL lifecycle", () => {
         courseId: string,
         actorId: string,
         targetId: string,
-      ) => Promise<{ user: { id: string } }>;
+      ) => Promise<{ value: { user: { id: string } } }>;
     };
     await expect(direct.getMember(course.id, owner, targetId)).resolves.toEqual(
       expect.objectContaining({
-        user: expect.objectContaining({ id: targetId }),
+        value: expect.objectContaining({
+          user: expect.objectContaining({ id: targetId }),
+        }),
       }),
     );
   });
@@ -883,7 +1137,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
         course.id,
         owner,
         owner,
-        courseEtag({ version: 1 }),
+        (await service.getMember(course.id, owner, owner)).etag,
         "student",
       ),
     ).rejects.toMatchObject({ status: 403, code: "permission_denied" });
@@ -901,7 +1155,7 @@ integration("CourseService PostgreSQL lifecycle", () => {
       status: 409,
       code: "course_archived",
     });
-    expect(guestMembership.role).toBe("student");
+    expect(guestMembership.value.role).toBe("student");
   });
   it("does not reveal whether a course exists when a signed-in user joins", async () => {
     await expect(

@@ -161,7 +161,7 @@ integration("notifications HTTP contract", () => {
       announcementEmails: true,
       digestEmails: true,
     });
-    expect(initial.headers.etag).toBe('"v1"');
+    expect(initial.headers.etag).toMatch(/^"m:[0-9a-f-]{36}:v1"$/);
 
     const invalid = await unsafe(request(app(ids.asker)).patch(path))
       .set("If-Match", initial.headers.etag)
@@ -175,7 +175,9 @@ integration("notifications HTTP contract", () => {
       .set("If-Match", initial.headers.etag)
       .send({ digestEmails: false });
     expect(updated.status).toBe(200);
-    expect(updated.headers.etag).toBe('"v2"');
+    expect(updated.headers.etag).toBe(
+      initial.headers.etag.replace(":v1", ":v2"),
+    );
     expect(updated.body.data).toEqual({
       activityEmails: false,
       announcementEmails: true,

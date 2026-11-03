@@ -312,10 +312,13 @@ integration("collaboration session lifecycle effects", () => {
       fixture.courseId,
       fixture.users.ina!,
       fixture.users.tim!,
-      await etag("course_memberships", "course_id=$1 AND user_id=$2", [
-        fixture.courseId,
-        fixture.users.tim,
-      ]),
+      (
+        await new CourseService(pool).getMember(
+          fixture.courseId,
+          fixture.users.ina!,
+          fixture.users.tim!,
+        )
+      ).etag,
       "student",
     );
     await settle();

@@ -35,6 +35,8 @@ const course = {
 };
 const sessionId = "01a0e5cc-58af-7467-8ab1-6e6d7ad7f10a";
 const membershipId = "01a0e5cc-58af-7467-8ab1-709d2933809a";
+const membershipTag2 = '"m:550e8400-e29b-41d4-a716-446655440000:v2"';
+const membershipTag3 = '"m:550e8400-e29b-41d4-a716-446655440000:v3"';
 it("uses UUIDv7 identities in course contract fixtures", () => {
   for (const id of [
     user.id,
@@ -81,13 +83,16 @@ function app(courseOverrides: Partial<CourseService> = {}) {
       createIdempotently: async () => ({ value: course, status: 201 }),
       get: async () => course,
       join: async () => ({
-        id: membershipId,
-        courseId: course.id,
-        user: { id: user.id, displayName: user.displayName },
-        role: "student" as const,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-        version: 1,
+        value: {
+          id: membershipId,
+          courseId: course.id,
+          user: { id: user.id, displayName: user.displayName },
+          role: "student" as const,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+          version: 1,
+        },
+        etag: '"m:550e8400-e29b-41d4-a716-446655440000:v1"',
       }),
       joinIdempotently: async () => ({
         value: {
@@ -100,16 +105,20 @@ function app(courseOverrides: Partial<CourseService> = {}) {
           version: 1,
         },
         status: 201,
+        etag: '"m:550e8400-e29b-41d4-a716-446655440000:v1"',
       }),
       members: async () => [],
       getMember: async () => ({
-        id: membershipId,
-        courseId: course.id,
-        user: { id: user.id, displayName: user.displayName },
-        role: "instructor" as const,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-        version: 1,
+        value: {
+          id: membershipId,
+          courseId: course.id,
+          user: { id: user.id, displayName: user.displayName },
+          role: "instructor" as const,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+          version: 1,
+        },
+        etag: '"m:550e8400-e29b-41d4-a716-446655440000:v1"',
       }),
       membersPage: async () => ({
         data: [],
@@ -310,18 +319,25 @@ describe("course HTTP contract", () => {
     const calls: string[] = [];
     const testApp = app({
       get: async () => course,
-      joinIdempotently: async () => ({ value: membership, status: 201 }),
+      joinIdempotently: async () => ({
+        value: membership,
+        status: 201,
+        etag: membershipTag2,
+      }),
       membersPage: async () => ({
         data: [membership],
         page: { nextCursor: null, hasMore: false },
       }),
-      getMember: async () => membership,
+      getMember: async () => ({ value: membership, etag: membershipTag2 }),
       update: async () => ({ ...course, name: "CS 102", version: 2 }),
       updateMember: async () => ({
-        ...membership,
-        user: { id: otherUserId, displayName: "Other member" },
-        role: "ta" as const,
-        version: 3,
+        value: {
+          ...membership,
+          user: { id: otherUserId, displayName: "Other member" },
+          role: "ta" as const,
+          version: 3,
+        },
+        etag: membershipTag3,
       }),
       removeMember: async (
         _courseId,
@@ -350,7 +366,7 @@ describe("course HTTP contract", () => {
       .set(unsafe)
       .send({ joinCode: "ABCDEFGH" })
       .expect(201)
-      .expect("ETag", '"v2"');
+      .expect("ETag", membershipTag2);
     await request(testApp)
       .get(`/api/v1/courses/${course.id}/members?role=student`)
       .set(read)
@@ -359,7 +375,7 @@ describe("course HTTP contract", () => {
       .get(`/api/v1/courses/${course.id}/members/${user.id}`)
       .set(read)
       .expect(200)
-      .expect("ETag", '"v2"');
+      .expect("ETag", membershipTag2);
     await request(testApp)
       .patch(`/api/v1/courses/${course.id}`)
       .set({ ...unsafe, "If-Match": '"v1"' })
@@ -368,19 +384,19 @@ describe("course HTTP contract", () => {
       .expect("ETag", '"v2"');
     await request(testApp)
       .patch(`/api/v1/courses/${course.id}/members/${otherUserId}`)
-      .set({ ...unsafe, "If-Match": '"v2"' })
+      .set({ ...unsafe, "If-Match": membershipTag2 })
       .send({ role: "ta" })
       .expect(200)
-      .expect("ETag", '"v3"');
+      .expect("ETag", membershipTag3);
     await request(testApp)
       .delete(`/api/v1/courses/${course.id}/members/${otherUserId}`)
-      .set({ ...unsafe, "If-Match": '"v2"' })
+      .set({ ...unsafe, "If-Match": membershipTag2 })
       .expect(204);
     await request(testApp)
       .delete(`/api/v1/courses/${course.id}/members/me`)
       .set(unsafe)
       .expect(204);
-    expect(calls).toEqual(['"v2":false', "none:true"]);
+    expect(calls).toEqual([`${membershipTag2}:false`, "none:true"]);
   });
   it("enforces authentication, CSRF, strict mutation bodies, and list filters", async () => {
     await request(app()).get("/api/v1/courses").expect(401);

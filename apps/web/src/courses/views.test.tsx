@@ -1,4 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CourseDetail, CourseHome } from "./views.js";
@@ -58,6 +64,63 @@ afterEach(() => {
 });
 
 describe("course browser workflows", () => {
+  it("requires a named confirmation before removing another course member", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor, student]))
+      .mockResolvedValueOnce(response({ data: student }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: student }, 200, '"v1"'))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    const trigger = await screen.findByRole("button", { name: "Remove" });
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Remove member" });
+    expect(within(dialog).getByText(/Grace Hopper/)).toBeTruthy();
+    expect(document.activeElement).toBe(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    await user.click(trigger);
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Remove member" })).getByRole(
+        "button",
+        { name: "Remove member" },
+      ),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(9));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "Members" }),
+      ),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
+      `/api/v1/courses/${course.id}/members/${student.user.id}`,
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "If-Match": '"v1"' }),
+      }),
+    );
+  });
+
   it("shows instructor policy switches and saves a conditional change", async () => {
     const changed = { ...course, allowAnonymousPosting: false, version: 2 };
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
@@ -334,10 +397,21 @@ describe("course browser workflows", () => {
     );
     await screen.findByRole("button", { name: "Delete course" });
     await user.click(screen.getByRole("button", { name: "Delete course" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete course" });
+    expect(within(dialog).getByText(/Linear Algebra/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete course permanently" }),
+    );
     await screen.findByRole("status");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(7), {
       timeout: 2_000,
     });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "Course details" }),
+      ),
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(7);
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -348,6 +422,466 @@ describe("course browser workflows", () => {
         headers: { Accept: "application/json" },
       },
     );
+  });
+
+  it("cancels course deletion without a request and keeps focus in the dialog", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    const trigger = await screen.findByRole("button", {
+      name: "Delete course",
+    });
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Delete course" });
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    const confirm = within(dialog).getByRole("button", {
+      name: "Delete course permanently",
+    });
+    expect(document.activeElement).toBe(cancel);
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(document.activeElement).toBe(confirm);
+    await user.keyboard("{Tab}");
+    expect(document.activeElement).toBe(cancel);
+    await user.click(cancel);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("requires reconfirmation after a stale course deletion", async () => {
+    const renamed = { ...course, name: "Advanced Linear Algebra", version: 2 };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]))
+      .mockResolvedValueOnce(
+        response(
+          { error: { code: "version_conflict", message: "Course changed" } },
+          412,
+        ),
+      )
+      .mockResolvedValueOnce(response({ data: renamed }, 200, '"v2"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    const trigger = await screen.findByRole("button", {
+      name: "Delete course",
+    });
+    await user.click(trigger);
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Delete course permanently",
+      }),
+    );
+    await screen.findByRole("button", { name: "Retry" });
+    await screen.findByRole("heading", { name: "Advanced Linear Algebra" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      within(screen.getByRole("dialog")).getByText(/Advanced Linear Algebra/),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
+  it("withholds stale-course retry and old-details confirmation until refresh completes", async () => {
+    const renamed = { ...course, name: "Advanced Linear Algebra", version: 2 };
+    let finishRefresh!: (value: Response) => void;
+    const delayedRefresh = new Promise<Response>((resolve) => {
+      finishRefresh = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]))
+      .mockResolvedValueOnce(
+        response(
+          { error: { code: "version_conflict", message: "Course changed" } },
+          412,
+        ),
+      )
+      .mockReturnValueOnce(delayedRefresh)
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Delete course" }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Delete course permanently",
+      }),
+    );
+    await screen.findByText(/Refreshing current details/);
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Delete course",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    finishRefresh(response({ data: renamed }, 200, '"v2"'));
+    await screen.findByRole("button", { name: "Retry" });
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      within(screen.getByRole("dialog")).getByText(/Advanced Linear Algebra/),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
+  it("keeps the course confirmation open after a network failure for an explicit retry", async () => {
+    const deletingCourse = { ...course, status: "deleting" as const };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]))
+      .mockRejectedValueOnce(new Error("Network unavailable"))
+      .mockResolvedValueOnce(response({ data: deletingCourse }, 202, '"v2"'));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Delete course" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Delete course" });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete course permanently" }),
+    );
+    expect((await within(dialog).findByRole("alert")).textContent).toContain(
+      "Network unavailable",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Delete course permanently" }),
+    );
+    await screen.findByText(/This course is being deleted/);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("uses refreshed member details when retrying stale removal", async () => {
+    const renamedStudent = {
+      ...student,
+      user: { ...student.user, displayName: "Grace Murray Hopper" },
+      version: 2,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor, student]))
+      .mockResolvedValueOnce(response({ data: student }, 200, '"v1"'))
+      .mockResolvedValueOnce(
+        response(
+          { error: { code: "version_conflict", message: "Member changed" } },
+          412,
+        ),
+      )
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor, renamedStudent]))
+      .mockResolvedValueOnce(response({ data: renamedStudent }, 200, '"v2"'));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    const trigger = await screen.findByRole("button", { name: "Remove" });
+    await user.click(trigger);
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Remove member",
+      }),
+    );
+    await screen.findByText("Grace Murray Hopper");
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      within(screen.getByRole("dialog")).getByText(/Grace Murray Hopper/),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(9);
+  });
+
+  it("reconfirms after a member leaves and rejoins at the same version", async () => {
+    const changed = {
+      ...student,
+      user: { ...student.user, displayName: "Grace Murray Hopper" },
+      version: 1,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor, student]))
+      .mockResolvedValueOnce(
+        response(
+          { data: student },
+          200,
+          '"m:550e8400-e29b-41d4-a716-446655440000:v1"',
+        ),
+      )
+      .mockResolvedValueOnce(
+        response(
+          { error: { code: "version_conflict", message: "Member changed" } },
+          412,
+        ),
+      )
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor, changed]))
+      .mockResolvedValueOnce(
+        response(
+          { data: changed },
+          200,
+          '"m:550e8400-e29b-41d4-a716-446655440001:v1"',
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    expect(
+      within(screen.getByRole("dialog")).getByText(/Grace Hopper/),
+    ).toBeTruthy();
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Remove member",
+      }),
+    );
+    await screen.findByRole("button", { name: "Retry" });
+    expect(fetchMock).toHaveBeenCalledTimes(9);
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE"),
+    ).toHaveLength(1);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      `/api/v1/courses/${course.id}/members/${student.user.id}`,
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({
+          "If-Match": '"m:550e8400-e29b-41d4-a716-446655440000:v1"',
+        }),
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      within(screen.getByRole("dialog")).getByText(/Grace Murray Hopper/),
+    ).toBeTruthy();
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Remove member",
+      }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(13));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      10,
+      `/api/v1/courses/${course.id}/members/${student.user.id}`,
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({
+          "If-Match": '"m:550e8400-e29b-41d4-a716-446655440001:v1"',
+        }),
+      }),
+    );
+  });
+
+  it("reconfirms a changed member found beyond the refreshed first roster page", async () => {
+    const changed = {
+      ...student,
+      user: { ...student.user, displayName: "Grace Murray Hopper" },
+      version: 2,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(nextPage([instructor], "more-members"))
+      .mockResolvedValueOnce(page([student]))
+      .mockResolvedValueOnce(response({ data: student }, 200, '"v1"'))
+      .mockResolvedValueOnce(
+        response(
+          { error: { code: "version_conflict", message: "Member changed" } },
+          412,
+        ),
+      )
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]))
+      .mockResolvedValueOnce(response({ data: changed }, 200, '"v2"'));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Load more members" }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Remove member",
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(
+      within(screen.getByRole("dialog")).getByText(/Grace Murray Hopper/),
+    ).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+  });
+
+  it("does not offer member retry when the member is gone", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor, student]))
+      .mockResolvedValueOnce(response({ data: student }, 200, '"v1"'))
+      .mockResolvedValueOnce(
+        response(
+          { error: { code: "version_conflict", message: "Member changed" } },
+          412,
+        ),
+      )
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]))
+      .mockResolvedValueOnce(
+        response(
+          { error: { code: "not_found", message: "Member not found" } },
+          404,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Remove" }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Remove member",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(
+        "no longer in the course",
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(9);
+  });
+
+  it("does not offer course retry when deletion already started elsewhere", async () => {
+    const deleting = { ...course, status: "deleting" as const, version: 2 };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]))
+      .mockResolvedValueOnce(
+        response(
+          { error: { code: "version_conflict", message: "Course changed" } },
+          412,
+        ),
+      )
+      .mockResolvedValueOnce(response({ data: deleting }, 200, '"v2"'))
+      .mockResolvedValueOnce(response({ data: instructor }, 200, '"v1"'))
+      .mockResolvedValueOnce(page([instructor]));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <CourseDetail
+        courseId={course.id}
+        csrfToken={csrfToken}
+        onBack={vi.fn()}
+        userId={instructor.user.id}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Delete course" }),
+    );
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Delete course permanently",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(
+        "already being deleted",
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
   it("groups instructor settings into sections with a single role per member and a copyable join code", async () => {
@@ -403,13 +937,32 @@ describe("course browser workflows", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response({ data: course }, 200, '"v1"'))
-      .mockResolvedValueOnce(response({ data: own }, 200, '"v1"'))
+      .mockResolvedValueOnce(
+        response(
+          { data: own },
+          200,
+          '"m:550e8400-e29b-41d4-a716-446655440000:v1"',
+        ),
+      )
       .mockResolvedValueOnce(page([instructor]))
       .mockResolvedValueOnce(
         response(
           { data: { ...own.emailPreferences, digestEmails: false } },
           200,
-          '"v2"',
+          '"m:550e8400-e29b-41d4-a716-446655440000:v2"',
+        ),
+      )
+      .mockResolvedValueOnce(
+        response(
+          {
+            data: {
+              ...own.emailPreferences,
+              digestEmails: false,
+              announcementEmails: false,
+            },
+          },
+          200,
+          '"m:550e8400-e29b-41d4-a716-446655440000:v3"',
         ),
       );
     vi.stubGlobal("fetch", fetchMock);
@@ -444,6 +997,20 @@ describe("course browser workflows", () => {
       ).checked,
     ).toBe(true);
     expect((digest as HTMLInputElement).checked).toBe(false);
+    await user.click(
+      screen.getByRole("checkbox", { name: "Announcement emails" }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      `/api/v1/courses/${course.id}/members/me/email-preferences`,
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.objectContaining({
+          "If-Match": '"m:550e8400-e29b-41d4-a716-446655440000:v2"',
+        }),
+      }),
+    );
   });
 
   it("shows students read-only details without a join code and offers leaving", async () => {

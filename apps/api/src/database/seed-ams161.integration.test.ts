@@ -194,7 +194,7 @@ integration("AMS161 local prototype seed", () => {
           session.user.id,
           session.user.id,
         )
-      ).role,
+      ).value.role,
     ).toBe("student");
   });
 
@@ -617,7 +617,7 @@ integration("AMS161 local prototype seed", () => {
             session.user.id,
             session.user.id,
           )
-        ).role,
+        ).value.role,
       ).toBe("student");
       expect(
         (
