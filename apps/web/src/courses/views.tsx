@@ -443,7 +443,7 @@ export function CourseDetail({
       else
         document
           .getElementById(
-            kind === "member" ? "members-heading" : "course-details-heading",
+            kind === "member" ? "members-heading" : "course-title-heading",
           )
           ?.focus();
     }, 0);
@@ -757,7 +757,9 @@ export function CourseDetail({
             <CourseGlyph name={course.data.name} />
             <div>
               <p className="eyebrow">{course.data.status}</p>
-              <h1>{course.data.name}</h1>
+              <h1 id="course-title-heading" tabIndex={-1}>
+                {course.data.name}
+              </h1>
             </div>
           </header>
         </>

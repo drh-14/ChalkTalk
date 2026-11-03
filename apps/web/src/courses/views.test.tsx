@@ -409,7 +409,7 @@ describe("course browser workflows", () => {
     });
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        screen.getByRole("heading", { name: "Course details" }),
+        screen.getByRole("heading", { name: "Linear Algebra", level: 1 }),
       ),
     );
 
