@@ -70,4 +70,67 @@ describe("manual live Resend safety boundary", () => {
     await wrapped.send(message);
     await expect(wrapped.send(message)).rejects.toThrow();
   });
+
+  it("records acceptance only after the provider resolves", async () => {
+    let accept!: () => void;
+    const wrapped = redirectTestMail(
+      {
+        send: () =>
+          new Promise<void>((resolve) => {
+            accept = resolve;
+          }),
+      },
+      valid.RESEND_LIVE_RECIPIENT,
+      "synthetic.example.edu",
+      1,
+    );
+    const delivery = wrapped.send({
+      to: "alice@synthetic.example.edu",
+      subject: "Test",
+      text: "Body",
+    });
+    await Promise.resolve();
+    expect(wrapped.sentCount()).toBe(0);
+    accept();
+    await delivery;
+    expect(await wrapped.waitForLastSend(10)).toBe(true);
+    expect(wrapped.sentCount()).toBe(1);
+  });
+
+  it("does not report rejected or aborted reset delivery as accepted", async () => {
+    const message = {
+      to: "alice@synthetic.example.edu",
+      subject: "Reset",
+      text: "Body",
+    };
+    const rejected = redirectTestMail(
+      { send: async () => { throw new Error("provider rejected"); } },
+      valid.RESEND_LIVE_RECIPIENT,
+      "synthetic.example.edu",
+      1,
+    );
+    await expect(rejected.send(message)).rejects.toThrow("provider rejected");
+    expect(await rejected.waitForLastSend(10)).toBe(false);
+    expect(rejected.sentCount()).toBe(0);
+
+    const aborted = redirectTestMail(
+      {
+        send: async (_message, options) =>
+          new Promise<void>((_resolve, reject) => {
+            options?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          }),
+      },
+      valid.RESEND_LIVE_RECIPIENT,
+      "synthetic.example.edu",
+      1,
+    );
+    const controller = new AbortController();
+    const delivery = aborted.send(message, { signal: controller.signal });
+    const rejection = expect(delivery).rejects.toThrow("aborted");
+    await Promise.resolve();
+    controller.abort();
+    await rejection;
+    expect(await aborted.waitForLastSend(10)).toBe(false);
+    expect(aborted.sentCount()).toBe(0);
+  });
 });

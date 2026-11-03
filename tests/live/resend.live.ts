@@ -4,7 +4,6 @@ import { Pool } from "pg";
 import sharp from "sharp";
 import { v7 as uuidv7 } from "uuid";
 import { AuthService } from "../../apps/api/src/auth/service.js";
-import type { EmailSender } from "../../apps/api/src/auth/service.js";
 import { createEmailSender } from "../../apps/api/src/auth/email.js";
 import { loadEnvironment } from "../../apps/api/src/config/environment.js";
 import {
@@ -31,15 +30,7 @@ const environment = loadEnvironment({
   FRONTEND_ORIGINS: frontendBaseUrl,
   RESEND_API_BASE_URL: "https://api.resend.com",
 });
-const dryRun = process.env.RESEND_LIVE_DRY_RUN === "1";
-const realSender: EmailSender = dryRun
-  ? {
-      provider: "resend",
-      defaultFrom: config.sender,
-      prepare: async (message) => message,
-      send: async () => undefined,
-    }
-  : createEmailSender(environment);
+const realSender = createEmailSender(environment);
 const sender = redirectTestMail(realSender, config.recipient, testDomain, 12);
 const auth = new AuthService(pool, environment, sender);
 const worker = new JobWorker(
@@ -125,7 +116,7 @@ try {
     ],
   );
   await auth.requestPasswordReset(`recipient@${testDomain}`);
-  if (sender.sentCount() !== 2)
+  if (!(await sender.waitForLastSend(2_000)) || sender.sentCount() !== 2)
     throw new Error("password reset was not accepted");
   results.push({ category: "password reset", result: "accepted" });
 
@@ -366,7 +357,7 @@ try {
   console.log(
     JSON.stringify({
       runId,
-      provider: dryRun ? "dry-run" : "resend",
+      provider: "resend",
       results,
       sends: sender.sentCount(),
       inboxReceipt: "not_asserted",

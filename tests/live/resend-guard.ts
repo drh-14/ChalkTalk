@@ -60,9 +60,12 @@ export function redirectTestMail(
 ): EmailSender & {
   sentCount: () => number;
   lastMessage: () => Parameters<EmailSender["send"]>[0] | undefined;
+  waitForLastSend: (timeoutMs: number) => Promise<boolean>;
 } {
   let sent = 0;
+  let attempted = 0;
   let lastMessage: Parameters<EmailSender["send"]>[0] | undefined;
+  let lastOutcome: Promise<boolean> | undefined;
   return {
     provider: sender.provider,
     defaultFrom: sender.defaultFrom,
@@ -71,13 +74,36 @@ export function redirectTestMail(
       : {}),
     sentCount: () => sent,
     lastMessage: () => lastMessage,
+    async waitForLastSend(timeoutMs) {
+      if (!lastOutcome) return false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          lastOutcome,
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(false), timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    },
     async send(message, options) {
       if (!message.to.toLowerCase().endsWith(`@${syntheticDomain}`))
         throw new Error("Live test refused a non-synthetic original recipient");
-      if (sent >= maxSends) throw new Error("Live test send budget exceeded");
-      sent += 1;
-      await sender.send({ ...message, to: approvedRecipient }, options);
-      lastMessage = message;
+      if (attempted >= maxSends) throw new Error("Live test send budget exceeded");
+      attempted += 1;
+      const delivery = Promise.resolve()
+        .then(() => sender.send({ ...message, to: approvedRecipient }, options))
+        .then(() => {
+          sent += 1;
+          lastMessage = message;
+        });
+      lastOutcome = delivery.then(
+        () => true,
+        () => false,
+      );
+      await delivery;
     },
   };
 }
