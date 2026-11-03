@@ -91,7 +91,8 @@ export function redirectTestMail(
     async send(message, options) {
       if (!message.to.toLowerCase().endsWith(`@${syntheticDomain}`))
         throw new Error("Live test refused a non-synthetic original recipient");
-      if (attempted >= maxSends) throw new Error("Live test send budget exceeded");
+      if (attempted >= maxSends)
+        throw new Error("Live test send budget exceeded");
       attempted += 1;
       const delivery = Promise.resolve()
         .then(() => sender.send({ ...message, to: approvedRecipient }, options))

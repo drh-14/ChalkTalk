@@ -54,9 +54,9 @@ No new provider or test framework: reuse Vitest, application services, PostgreSQ
 
 ## Failure modes
 
-- Missing secret, unverified sender, or wrong inbox: fail preflight before creating test data or sending.
-- Resend rejection or timeout: preserve isolated DB state and report failure without leaking response details or credentials.
-- Partial run: unique run ID and capped sends prevent accidental replay; clean up disposable DB after evidence capture.
+- Missing secret, wrong inbox, or sender outside the allowed ChalkTalk domain: fail preflight before creating test data or sending. An unverified sender is rejected by Resend during the run.
+- Resend rejection or timeout: fail the run without leaking response details or credentials; always remove the disposable database during cleanup.
+- Partial run: the unique run ID distinguishes attempts and the send cap bounds each run; the disposable database is removed during cleanup.
 - Recipient loses eligibility: existing worker cancellation logic must win; no send.
 
 ## Reversibility

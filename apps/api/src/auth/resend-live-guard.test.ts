@@ -104,7 +104,11 @@ describe("manual live Resend safety boundary", () => {
       text: "Body",
     };
     const rejected = redirectTestMail(
-      { send: async () => { throw new Error("provider rejected"); } },
+      {
+        send: async () => {
+          throw new Error("provider rejected");
+        },
+      },
       valid.RESEND_LIVE_RECIPIENT,
       "synthetic.example.edu",
       1,
@@ -117,7 +121,11 @@ describe("manual live Resend safety boundary", () => {
       {
         send: async (_message, options) =>
           new Promise<void>((_resolve, reject) => {
-            options?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+            options?.signal?.addEventListener(
+              "abort",
+              () => reject(new Error("aborted")),
+              { once: true },
+            );
           }),
       },
       valid.RESEND_LIVE_RECIPIENT,
