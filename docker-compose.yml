@@ -50,6 +50,8 @@ services:
       - ${COMPOSE_ENV_FILE:-.env}
     environment: &api-environment
       DATABASE_URL: postgresql://chalktalk:chalktalk@postgres:5432/chalktalk
+      LOCAL_DATABASE: "true"
+      LOCAL_FILE_STORE: "true"
       PORT: "3000"
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"

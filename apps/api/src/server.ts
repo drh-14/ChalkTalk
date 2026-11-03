@@ -1,9 +1,5 @@
 import { CourseInformationService } from "./course-information/service.js";
-import {
-  S3Client,
-  HeadBucketCommand,
-  CreateBucketCommand,
-} from "@aws-sdk/client-s3";
+import { S3Client } from "@aws-sdk/client-s3";
 import { join } from "node:path";
 import { createEmailSender } from "./auth/email.js";
 import { FollowupService } from "./followups/service.js";
@@ -21,6 +17,7 @@ import { PostService } from "./posts/service.js";
 import { StatisticsService } from "./statistics/service.js";
 import { CourseResourceService } from "./course-resources/service.js";
 import { CourseFileService } from "./course-files/service.js";
+import { ensureStorageBucket } from "./course-files/bucket.js";
 import { createObservability, logApiEvent } from "./observability/index.js";
 import { EmbeddingProvider, readEmbeddingConfig } from "./semantic/provider.js";
 import { SemanticIndex } from "./semantic/index.js";
@@ -55,20 +52,7 @@ const emailSender = createEmailSender(environment);
 const authService = new AuthService(pool, environment, emailSender);
 const { bucket, endpoint, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
-if (endpoint) {
-  try {
-    await s3.send(new HeadBucketCommand({ Bucket: bucket }));
-  } catch (error) {
-    if (
-      typeof error !== "object" ||
-      error === null ||
-      !("$metadata" in error) ||
-      (error.$metadata as { httpStatusCode?: number }).httpStatusCode !== 404
-    )
-      throw error;
-    await s3.send(new CreateBucketCommand({ Bucket: bucket }));
-  }
-}
+if (endpoint) await ensureStorageBucket(s3, bucket, environment.localFileStore);
 pool.on("error", () => {
   logApiEvent(observability, "database_pool_error");
 });
