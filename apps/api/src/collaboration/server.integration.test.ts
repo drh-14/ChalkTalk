@@ -1383,38 +1383,31 @@ integration("collaboration server", () => {
       const alice = join("alice", sessionId);
       await until(() => alice.provider.isSynced);
       await collaboration.connectionsOf(sessionId)[0]!.waitForPendingMessages();
-      const originalQuery = pool.query.bind(pool);
       let releaseCheck!: () => void;
       const gate = new Promise<void>((resolve) => (releaseCheck = resolve));
-      let held = false;
-      let authorized = false;
-      pool.query = ((
-        sql: string | { text: string; values?: unknown[] },
-        values: unknown[],
-      ) => {
-        const result =
-          typeof sql === "string"
-            ? originalQuery(sql, values)
-            : originalQuery(sql);
-        const text = typeof sql === "string" ? sql : sql.text;
-        const parameters = typeof sql === "string" ? values : sql.values;
-        if (
-          !held &&
-          text.includes("JOIN collaboration_participants cp") &&
-          parameters?.[0] === sessionId
-        ) {
-          held = true;
-          return Promise.resolve(result).then(async (value) => {
-            authorized = true;
+      let updateReachedBeforeSync = false;
+      const updateBarrier = {
+        async beforeSync({
+          type,
+          context,
+        }: {
+          type: number;
+          context: { userId: string; sessionId: string };
+        }) {
+          if (
+            type === 2 &&
+            context.userId === fixture.users.alice &&
+            context.sessionId === sessionId
+          ) {
+            updateReachedBeforeSync = true;
             await gate;
-            return value;
-          });
-        }
-        return result;
-      }) as typeof pool.query;
+          }
+        },
+      };
+      collaboration.hocuspocus.configuration.extensions.push(updateBarrier);
       try {
         alice.text.insert(0, "drained before confirmation");
-        await until(() => authorized);
+        await until(() => updateReachedBeforeSync);
         const current = await service.get(sessionId, fixture.users.alice!);
         const ending = service.update(
           sessionId,
@@ -1463,7 +1456,8 @@ integration("collaboration server", () => {
         });
       } finally {
         releaseCheck();
-        pool.query = originalQuery;
+        const extensions = collaboration.hocuspocus.configuration.extensions;
+        extensions.splice(extensions.indexOf(updateBarrier), 1);
       }
     });
 
@@ -1615,19 +1609,46 @@ integration("collaboration server", () => {
       const alice = join("alice", sessionId);
       await until(() => alice.provider.isSynced);
       alice.text.insert(0, "possibly unsaved");
+      await until(
+        () =>
+          collaboration.hocuspocus.documents
+            .get(documentName(sessionId))
+            ?.getText("content")
+            .toString() === "possibly unsaved",
+      );
+      const lockKey = 9_114_275;
+      const blocker = await pool.connect();
+      await blocker.query("SELECT pg_advisory_lock($1)", [lockKey]);
       await pool.query(`CREATE FUNCTION reject_collaboration_store() RETURNS trigger
-        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated storage outage'; END $$`);
+        LANGUAGE plpgsql AS $$ BEGIN
+          PERFORM pg_advisory_xact_lock(${lockKey});
+          RAISE EXCEPTION 'simulated storage outage';
+        END $$`);
       await pool.query(`CREATE TRIGGER reject_collaboration_store
         BEFORE INSERT OR UPDATE ON collaboration_documents
         FOR EACH ROW EXECUTE FUNCTION reject_collaboration_store()`);
+      let blockerReleased = false;
       try {
         const current = await service.get(sessionId, fixture.users.alice!);
-        const ended = await service.update(
+        const ending = service.update(
           sessionId,
           fixture.users.alice!,
           `"v${current.version}"`,
           { status: "ended" },
         );
+        // Observe the final store actually entering the failing trigger, then
+        // release it. This avoids a race between the API's timeout fallback
+        // and an unconstrained database failure on a loaded CI runner.
+        await until(async () => {
+          const waiting = await pool.query(
+            "SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND objid::bigint=$1",
+            [lockKey],
+          );
+          return Boolean(waiting.rowCount);
+        });
+        await blocker.query("SELECT pg_advisory_unlock($1)", [lockKey]);
+        blockerReleased = true;
+        const ended = await ending;
         expect(ended.finalSnapshotConfirmed).toBe(false);
         const stored = await pool.query<{
           lifecycle_state: string;
@@ -1640,11 +1661,23 @@ integration("collaboration server", () => {
           lifecycle_state: "ended",
           final_snapshot_confirmed: false,
         });
-        await until(() => alice.state.closeReason === CLOSE_REASONS.ended);
+        await expect(
+          service.snapshot(sessionId, fixture.users.alice!),
+        ).resolves.toMatchObject({
+          finalSnapshotConfirmed: false,
+          lastSavedWarning: true,
+        });
+        await until(
+          () => alice.state.closeReason === CLOSE_REASONS.ended,
+          8000,
+        );
         const shutdownStarted = Date.now();
         await collaboration.stop();
         expect(Date.now() - shutdownStarted).toBeLessThan(5000);
       } finally {
+        if (!blockerReleased)
+          await blocker.query("SELECT pg_advisory_unlock($1)", [lockKey]);
+        blocker.release();
         await pool.query(
           "DROP TRIGGER reject_collaboration_store ON collaboration_documents",
         );
