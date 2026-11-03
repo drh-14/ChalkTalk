@@ -37,9 +37,14 @@ integrationTest("runMigrations", () => {
 
   afterAll(async () => {
     await pool.query(`DROP TABLE IF EXISTS ${markerTable}`);
-    await pool.query("DELETE FROM schema_migrations WHERE name LIKE $1", [
-      `%${migrationName}%`,
-    ]);
+    if (
+      (await pool.query("SELECT to_regclass('schema_migrations') AS ledger"))
+        .rows[0]?.ledger
+    ) {
+      await pool.query("DELETE FROM schema_migrations WHERE name LIKE $1", [
+        `%${migrationName}%`,
+      ]);
+    }
     await pool.end();
     await rm(migrationDirectory, { force: true, recursive: true });
   });
@@ -58,5 +63,31 @@ integrationTest("runMigrations", () => {
 
     expect(markerRows.rows).toEqual([{ position: 1 }, { position: 2 }]);
     expect(recordedMigrations.rows).toHaveLength(2);
+  });
+
+  it("serializes concurrent migration startup on a fresh schema", async () => {
+    const schema = `migration_concurrent_${process.pid}_${Date.now()}`;
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    const first = new Pool({
+      connectionString: testDatabaseUrl,
+      options: `-c search_path=${schema}`,
+    });
+    const second = new Pool({
+      connectionString: testDatabaseUrl,
+      options: `-c search_path=${schema}`,
+    });
+    try {
+      await Promise.all([
+        runMigrations(first, migrationDirectory),
+        runMigrations(second, migrationDirectory),
+      ]);
+      const result = await first.query<{ count: string }>(
+        "SELECT count(*) FROM schema_migrations",
+      );
+      expect(result.rows[0].count).toBe("2");
+    } finally {
+      await Promise.all([first.end(), second.end()]);
+      await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+    }
   });
 });

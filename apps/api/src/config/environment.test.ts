@@ -8,6 +8,61 @@ const base = {
 };
 
 describe("authentication environment", () => {
+  it("uses SMTP locally and requires explicit Resend credentials in HTTPS mode", () => {
+    expect(loadEnvironment(base).email.provider).toBe("smtp");
+    expect(() =>
+      loadEnvironment({ ...base, EMAIL_PROVIDER: "invalid" }),
+    ).toThrow("EMAIL_PROVIDER");
+    expect(() =>
+      loadEnvironment({ ...base, EMAIL_PROVIDER: "resend" }),
+    ).toThrow("RESEND_API_KEY");
+    expect(() =>
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "resend",
+        RESEND_API_KEY: "re_test",
+      }),
+    ).toThrow("EMAIL_FROM");
+    expect(
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "resend",
+        RESEND_API_KEY: "re_test",
+        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+      }).email,
+    ).toEqual({
+      provider: "resend",
+      from: "ChalkTalk <noreply@example.edu>",
+      resendApiKey: "re_test",
+      resendApiBaseUrl: "https://api.resend.com",
+    });
+    expect(
+      loadEnvironment({
+        ...base,
+        EMAIL_PROVIDER: "resend",
+        RESEND_API_KEY: "re_test",
+        EMAIL_FROM: "sender@example.edu",
+        RESEND_API_BASE_URL: "http://127.0.0.1:4000/",
+      }).email,
+    ).toMatchObject({ resendApiBaseUrl: "http://127.0.0.1:4000" });
+    for (const endpoint of [
+      "not-a-url",
+      "ftp://example.com",
+      "https://user:pass@example.com",
+      "https://example.com/path",
+      "https://example.com?x=1",
+    ]) {
+      expect(() =>
+        loadEnvironment({
+          ...base,
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "re_test",
+          EMAIL_FROM: "sender@example.edu",
+          RESEND_API_BASE_URL: endpoint,
+        }),
+      ).toThrow("RESEND_API_BASE_URL");
+    }
+  });
   it("disables proxy trust by default and only accepts one explicit hop", () => {
     expect(loadEnvironment(base).trustProxyHops).toBe(0);
     expect(

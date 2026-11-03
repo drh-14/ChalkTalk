@@ -174,6 +174,12 @@ test.describe("save-only answers and REST followups", () => {
     return { context, page, student };
   }
 
+  async function replaceEditorText(page, editor, text) {
+    await editor.click();
+    await editor.press("ControlOrMeta+A");
+    await page.keyboard.insertText(text);
+  }
+
   test("two independent drafts do not publish until Save; conflict requires explicit Overwrite", async ({
     browser,
   }) => {
@@ -181,12 +187,16 @@ test.describe("save-only answers and REST followups", () => {
     const second = await openEditor(browser);
     await first.student.getByRole("button", { name: "Edit answer" }).click();
     await second.student.getByRole("button", { name: "Edit answer" }).click();
-    await first.student
-      .getByRole("textbox", { name: "Answer" })
-      .fill("First **saved** and $a^2$");
-    await second.student
-      .getByRole("textbox", { name: "Answer" })
-      .fill("Second **draft** and $b^2$");
+    await replaceEditorText(
+      first.page,
+      first.student.getByRole("textbox", { name: "Answer" }),
+      "First **saved** and $a^2$",
+    );
+    await replaceEditorText(
+      second.page,
+      second.student.getByRole("textbox", { name: "Answer" }),
+      "Second **draft** and $b^2$",
+    );
     expect(patches).toHaveLength(0);
     await expect(
       second.student.getByRole("textbox", { name: "Answer" }),
@@ -305,9 +315,11 @@ test.describe("save-only answers and REST followups", () => {
     ).toBeVisible();
     await expect(rootFollowup.locator(".katex")).toBeVisible();
     await rootFollowup.getByRole("button", { name: "Edit followup" }).click();
-    await rootFollowup
-      .getByRole("textbox", { name: "Followup" })
-      .fill("Edited **root** and $z^2$");
+    await replaceEditorText(
+      page,
+      rootFollowup.getByRole("textbox", { name: "Followup" }),
+      "Edited **root** and $z^2$",
+    );
     await rootFollowup.getByRole("button", { name: "Save followup" }).click();
     await expect(
       rootFollowup.locator("strong", { hasText: /^root$/ }),
