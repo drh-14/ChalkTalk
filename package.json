@@ -20,6 +20,7 @@
     "format:check": "prettier --check \"apps/**/*.{css,html,json,ts,tsx}\" \".github/**/*.{yml,yaml}\" \"*.{js,json,md,yml,yaml}\"",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:email:live": "node --import tsx tests/live/resend.live.ts",
     "test:browser:answers": "playwright test tests/browser/answer-save-only.spec.mjs --workers=1",
     "typecheck": "tsc --noEmit -p apps/web/tsconfig.app.json && tsc --noEmit -p apps/api/tsconfig.json",
     "test:browser:attachments": "playwright test tests/browser/attachments.spec.mjs --workers=1",
