@@ -55,3 +55,30 @@ it("renders a mention as a highlighted name rather than a link", () => {
   expect(screen.getByText("bad").getAttribute("href") ?? "").toBe("");
   expect(container.querySelectorAll(".mention")).toHaveLength(1);
 });
+
+it("renders GitHub-flavored tables, strikethrough, and bare URLs", () => {
+  const { container } = render(
+    <PostBody
+      bodyMarkdown={
+        "|  | Excellent | Good |\n| --- | --- | --- |\n| Instructor | 7 | 6 |\n\n~~old~~ see https://example.edu/notes"
+      }
+    />,
+  );
+  const table = screen.getByRole("table");
+  expect(table.parentElement?.className).toBe("table-scroll");
+  expect(
+    screen.getAllByRole("columnheader").map((cell) => cell.textContent),
+  ).toEqual(["", "Excellent", "Good"]);
+  expect(screen.getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+    "Instructor",
+    "7",
+    "6",
+  ]);
+  expect(screen.getByText("old").tagName).toBe("DEL");
+  expect(
+    screen
+      .getByRole("link", { name: "https://example.edu/notes" })
+      .getAttribute("href"),
+  ).toBe("https://example.edu/notes");
+  expect(container.querySelector("script")).toBeNull();
+});

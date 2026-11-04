@@ -1,6 +1,7 @@
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import { mathOptions } from "./mathOptions.js";
@@ -30,13 +31,19 @@ export function PostBody({
 }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkMath]}
+      remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[
         [rehypeSanitize, sanitizeSchema],
         [rehypeKatex, mathOptions],
       ]}
       urlTransform={urlTransform}
       components={{
+        // Wide tables scroll inside the body instead of widening the page.
+        table: ({ children }) => (
+          <div className="table-scroll">
+            <table>{children}</table>
+          </div>
+        ),
         a: ({ href, title, children }) =>
           href && MENTION.test(href) ? (
             <span className="mention">{children}</span>

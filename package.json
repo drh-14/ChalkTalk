@@ -27,7 +27,7 @@
     "test:browser:live-sessions": "playwright test tests/browser/live-code-session.spec.mjs tests/browser/live-whiteboard.spec.mjs tests/browser/live-session-invitations.spec.mjs tests/browser/live-session-viewers.spec.mjs --workers=1",
     "test:browser:course-files": "playwright test tests/browser/course-files.spec.mjs --workers=1",
     "test:browser:resource-search": "playwright test tests/browser/resource-text-search.spec.mjs --workers=1",
-    "test:browser:mocked": "playwright test tests/browser/course-collaboration.spec.mjs tests/browser/course-destructive-confirmations.spec.mjs tests/browser/course-email-preferences.spec.mjs tests/browser/course-information.spec.mjs tests/browser/discussion-locks.spec.mjs tests/browser/notification-bell-cards.spec.mjs tests/browser/organized-resources.spec.mjs tests/browser/post-delete.spec.mjs tests/browser/post-drafts.spec.mjs tests/browser/response-email-links.spec.mjs tests/browser/signup-edu.spec.mjs --workers=1"
+    "test:browser:mocked": "playwright test tests/browser/course-collaboration.spec.mjs tests/browser/course-destructive-confirmations.spec.mjs tests/browser/course-email-preferences.spec.mjs tests/browser/course-information.spec.mjs tests/browser/discussion-locks.spec.mjs tests/browser/markdown-tables.spec.mjs tests/browser/notification-bell-cards.spec.mjs tests/browser/organized-resources.spec.mjs tests/browser/post-delete.spec.mjs tests/browser/post-drafts.spec.mjs tests/browser/response-email-links.spec.mjs tests/browser/signup-edu.spec.mjs --workers=1"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",

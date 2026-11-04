@@ -155,6 +155,47 @@ turndown.addRule("piazzaLinks", {
     return `[${content.trim() || href}](${href})`;
   },
 });
+// Piazza tables rarely use <th>, so the first row is always the header. Each
+// cell is converted on its own and kept to one line; a table inside a cell is
+// flattened to its text.
+let cellDepth = 0;
+const owningTable = (row: Node) => {
+  let parent = row.parentNode;
+  while (parent && parent.nodeName !== "TABLE") parent = parent.parentNode;
+  return parent;
+};
+const cellMarkdown = (cell: HTMLElement) => {
+  cellDepth += 1;
+  try {
+    return turndown
+      .turndown(cell.innerHTML)
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\|/g, "\\|");
+  } finally {
+    cellDepth -= 1;
+  }
+};
+turndown.addRule("piazzaTables", {
+  filter: "table",
+  replacement: (_content, node) => {
+    if (cellDepth > 0) return ` ${(node.textContent ?? "").trim()} `;
+    const rows = Array.from((node as HTMLElement).querySelectorAll("tr"))
+      .filter((row) => owningTable(row) === node)
+      .map((row) =>
+        Array.from(row.childNodes)
+          .filter((cell) => cell.nodeName === "TD" || cell.nodeName === "TH")
+          .map((cell) => cellMarkdown(cell as HTMLElement)),
+      )
+      .filter((cells) => cells.length > 0);
+    if (rows.length === 0) return "";
+    const width = Math.max(...rows.map((cells) => cells.length));
+    const line = (cells: string[]) =>
+      `| ${[...cells, ...Array<string>(width - cells.length).fill("")].join(" | ")} |`;
+    const [header, ...body] = rows;
+    return `\n\n${[line(header!), line(Array<string>(width).fill("---")), ...body.map(line)].join("\n")}\n\n`;
+  },
+});
 turndown.addRule("piazzaImages", {
   filter: "img",
   replacement: (_content, node) => {

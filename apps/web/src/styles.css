@@ -1642,6 +1642,40 @@ h2[tabindex="-1"]:focus {
   overflow-x: auto;
   overflow-y: hidden;
 }
+.post-markdown .table-scroll {
+  margin: 1rem 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.post-markdown table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.post-markdown :is(th, td) {
+  border: 1px solid var(--line-strong);
+  overflow-wrap: normal;
+  padding: 0.4rem 0.75rem;
+  text-align: left;
+}
+.post-markdown th {
+  background: var(--surface-sunken);
+  font-weight: 600;
+}
+.post-markdown :is(th, td)[align="center"] {
+  text-align: center;
+}
+.post-markdown :is(th, td)[align="right"] {
+  text-align: right;
+}
+/* One-line card previews read a table's cells as running text. */
+.post-card-preview :is(.table-scroll, table, thead, tbody, tr, th, td) {
+  background: none;
+  border: 0;
+  font-weight: inherit;
+  display: inline;
+  margin: 0;
+  padding: 0 0.35em 0 0;
+}
 .checkbox-label {
   display: flex;
   gap: 0.5rem;

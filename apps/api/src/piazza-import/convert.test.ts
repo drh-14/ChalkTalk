@@ -94,4 +94,33 @@ describe("Piazza conversion", () => {
     expect(post("p3").bodyMarkdown).toContain("Imported from a Piazza poll");
     expect(post("p4").private).toBe(true);
   });
+
+  it("converts tables to pipe tables with the first row as header", () => {
+    expect(
+      toMarkdown(
+        "<table><tbody><tr><td></td><td><b>Excellent</b></td><td>Good</td></tr>" +
+          "<tr><td>Instructor</td><td>7</td><td>6</td></tr>" +
+          "<tr><td>TA</td><td>4</td></tr></tbody></table><p>Hello everyone</p>",
+      ),
+    ).toBe(
+      "|  | **Excellent** | Good |\n| --- | --- | --- |\n| Instructor | 7 | 6 |\n| TA | 4 |  |\n\nHello everyone",
+    );
+  });
+
+  it("keeps each table cell on one line and escapes pipes", () => {
+    expect(
+      toMarkdown(
+        "<table><tr><th>Name</th><th>Link</th></tr>" +
+          '<tr><td><p>a|b</p><p>two<br>words</p></td><td><a href="/x">doc</a></td></tr></table>',
+      ),
+    ).toBe(
+      "| Name | Link |\n| --- | --- |\n| a\\|b two words | [doc](https://piazza.com/x) |",
+    );
+    expect(
+      toMarkdown(
+        "<table><tr><td>Outer</td></tr>" +
+          "<tr><td><table><tr><td>in</td><td>ner</td></tr></table></td></tr></table>",
+      ),
+    ).toBe("| Outer |\n| --- |\n| inner |");
+  });
 });
