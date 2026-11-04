@@ -51,11 +51,9 @@ const MAX_PDF_STRUCTURE_BYTES = 128 * 1024 * 1024;
 const pdfObjectReference = /^\d+ \d+ R$/;
 
 function resolvePdfObject(value: unknown, objects: Record<string, unknown>) {
-  return (
-    typeof value === "string" && pdfObjectReference.test(value)
-      ? (objects[`obj:${value}`] as { value?: unknown } | undefined)?.value
-      : value
-  );
+  return typeof value === "string" && pdfObjectReference.test(value)
+    ? (objects[`obj:${value}`] as { value?: unknown } | undefined)?.value
+    : value;
 }
 
 function safePdfDestination(value: unknown, objects: Record<string, unknown>) {
@@ -72,7 +70,16 @@ function safePdfDestination(value: unknown, objects: Record<string, unknown>) {
     typeof destination[0] === "string" &&
     pdfObjectReference.test(destination[0]) &&
     typeof destination[1] === "string" &&
-    ["/XYZ", "/Fit", "/FitH", "/FitV", "/FitR", "/FitB", "/FitBH", "/FitBV"].includes(destination[1])
+    [
+      "/XYZ",
+      "/Fit",
+      "/FitH",
+      "/FitV",
+      "/FitR",
+      "/FitB",
+      "/FitBH",
+      "/FitBV",
+    ].includes(destination[1])
   )
     return;
   throw invalid();

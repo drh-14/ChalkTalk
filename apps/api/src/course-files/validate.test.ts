@@ -522,7 +522,10 @@ describe("resource format validation", () => {
   it("rejects an unsafe outline action", async () => {
     const pdf = await PDFDocument.create();
     pdf.addPage([100, 100]);
-    const outlines = pdf.context.obj({ Type: PDFName.of("Outlines"), Count: 1 });
+    const outlines = pdf.context.obj({
+      Type: PDFName.of("Outlines"),
+      Count: 1,
+    });
     const outlinesRef = pdf.context.register(outlines);
     const itemRef = pdf.context.register(
       pdf.context.obj({
@@ -571,35 +574,35 @@ describe("resource format validation", () => {
       ).resolves.toBe("application/pdf");
     },
   );
-  it.each([
-    { IsMap: PDFString.of("true") },
-    { NewWindow: true },
-  ])("rejects a PDF web link with unsupported URI action fields", async (extra) => {
-    const pdf = await PDFDocument.create();
-    const page = pdf.addPage([100, 100]);
-    page.node.set(
-      PDFName.of("Annots"),
-      pdf.context.obj([
-        {
-          Type: PDFName.of("Annot"),
-          Subtype: PDFName.of("Link"),
-          Rect: [0, 0, 20, 20],
-          A: {
-            S: PDFName.of("URI"),
-            URI: PDFString.of("https://example.edu/map"),
-            ...extra,
+  it.each([{ IsMap: PDFString.of("true") }, { NewWindow: true }])(
+    "rejects a PDF web link with unsupported URI action fields",
+    async (extra) => {
+      const pdf = await PDFDocument.create();
+      const page = pdf.addPage([100, 100]);
+      page.node.set(
+        PDFName.of("Annots"),
+        pdf.context.obj([
+          {
+            Type: PDFName.of("Annot"),
+            Subtype: PDFName.of("Link"),
+            Rect: [0, 0, 20, 20],
+            A: {
+              S: PDFName.of("URI"),
+              URI: PDFString.of("https://example.edu/map"),
+              ...extra,
+            },
           },
-        },
-      ]),
-    );
-    await expect(
-      validateStaged(
-        "unsupported-link.pdf",
-        "application/pdf",
-        Buffer.from(await pdf.save({ useObjectStreams: true })),
-      ),
-    ).rejects.toMatchObject({ status: 415 });
-  });
+        ]),
+      );
+      await expect(
+        validateStaged(
+          "unsupported-link.pdf",
+          "application/pdf",
+          Buffer.from(await pdf.save({ useObjectStreams: true })),
+        ),
+      ).rejects.toMatchObject({ status: 415 });
+    },
+  );
   it("accepts a PDF with a direct page opening destination", async () => {
     const pdf = await PDFDocument.create();
     const page = pdf.addPage([100, 100]);
@@ -634,10 +637,7 @@ describe("resource format validation", () => {
             Dests: { Names: [PDFString.of("introduction"), destination] },
           }),
         );
-        pdf.catalog.set(
-          PDFName.of("OpenAction"),
-          PDFString.of("introduction"),
-        );
+        pdf.catalog.set(PDFName.of("OpenAction"), PDFString.of("introduction"));
       }
       await expect(
         validateStaged(
