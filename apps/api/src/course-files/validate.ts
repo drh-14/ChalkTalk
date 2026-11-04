@@ -141,6 +141,7 @@ function validatePdfStructure(output: string) {
       for (const item of value) walk(item);
     } else if (value && typeof value === "object") {
       const fields = value as Record<string, unknown>;
+      if (fields["/Type"] === "/Action") safePdfAction(fields, objects);
       for (const [key, item] of Object.entries(fields)) {
         if (forbiddenPdfNames.has(key)) throw invalid();
         if (key === "/OpenAction") {
@@ -153,18 +154,15 @@ function validatePdfStructure(output: string) {
               throw invalid();
           }
         }
-        if (key === "/A") safePdfAction(item, objects);
-        if (key === "/URI" && fields["/S"] !== "/URI") throw invalid();
-        if (key === "/S" && item === "/URI") safePdfAction(fields, objects);
-        if (key === "/S" && item === "/GoTo") safePdfAction(fields, objects);
         if (
-          key === "/S" &&
-          typeof item === "string" &&
-          item.startsWith("/") &&
-          fields["/Type"] === "/Action" &&
-          !["/URI", "/GoTo"].includes(item)
+          key === "/A" &&
+          (fields["/Type"] === "/Annot" ||
+            ["/Link", "/Widget", "/Screen"].includes(
+              fields["/Subtype"] as string,
+            ) ||
+            (fields["/Title"] !== undefined && fields["/Parent"] !== undefined))
         )
-          throw invalid();
+          safePdfAction(item, objects);
         walk(item);
       }
     }

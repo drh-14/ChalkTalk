@@ -443,6 +443,105 @@ describe("resource format validation", () => {
       ).resolves.toBe("application/pdf");
     },
   );
+  it("accepts tagged structure attributes outside action context", async () => {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([100, 100]);
+    const root = pdf.context.obj({ Type: PDFName.of("StructTreeRoot") });
+    const rootRef = pdf.context.register(root);
+    const element = pdf.context.obj({
+      Type: PDFName.of("StructElem"),
+      S: PDFName.of("P"),
+      P: rootRef,
+      Pg: page.ref,
+      A: { O: PDFName.of("Layout"), SpaceBefore: 10 },
+    });
+    root.set(PDFName.of("K"), pdf.context.register(element));
+    pdf.catalog.set(PDFName.of("StructTreeRoot"), rootRef);
+    await expect(
+      validateStaged(
+        "tagged.pdf",
+        "application/pdf",
+        Buffer.from(await pdf.save({ useObjectStreams: true })),
+      ),
+    ).resolves.toBe("application/pdf");
+  });
+  it("accepts a catalog URI base alongside an absolute link", async () => {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([100, 100]);
+    pdf.catalog.set(
+      PDFName.of("URI"),
+      pdf.context.obj({ Base: PDFString.of("https://example.edu/") }),
+    );
+    page.node.set(
+      PDFName.of("Annots"),
+      pdf.context.obj([
+        {
+          Type: PDFName.of("Annot"),
+          Subtype: PDFName.of("Link"),
+          Rect: [0, 0, 20, 20],
+          A: {
+            S: PDFName.of("URI"),
+            URI: PDFString.of("https://example.edu/map"),
+          },
+        },
+      ]),
+    );
+    await expect(
+      validateStaged(
+        "uri-base.pdf",
+        "application/pdf",
+        Buffer.from(await pdf.save({ useObjectStreams: true })),
+      ),
+    ).resolves.toBe("application/pdf");
+  });
+  it("rejects an unsafe link annotation action", async () => {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([100, 100]);
+    page.node.set(
+      PDFName.of("Annots"),
+      pdf.context.obj([
+        {
+          Type: PDFName.of("Annot"),
+          Subtype: PDFName.of("Link"),
+          Rect: [0, 0, 20, 20],
+          A: {
+            S: PDFName.of("URI"),
+            URI: PDFString.of("./relative.html"),
+          },
+        },
+      ]),
+    );
+    await expect(
+      validateStaged(
+        "relative-link.pdf",
+        "application/pdf",
+        Buffer.from(await pdf.save({ useObjectStreams: true })),
+      ),
+    ).rejects.toMatchObject({ status: 415 });
+  });
+  it("rejects an unsafe outline action", async () => {
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100, 100]);
+    const outlines = pdf.context.obj({ Type: PDFName.of("Outlines"), Count: 1 });
+    const outlinesRef = pdf.context.register(outlines);
+    const itemRef = pdf.context.register(
+      pdf.context.obj({
+        Title: PDFString.of("Unsafe"),
+        Parent: outlinesRef,
+        A: { S: PDFName.of("URI"), URI: PDFString.of("./relative.html") },
+      }),
+    );
+    outlines.set(PDFName.of("First"), itemRef);
+    outlines.set(PDFName.of("Last"), itemRef);
+    pdf.catalog.set(PDFName.of("Outlines"), outlinesRef);
+    await expect(
+      validateStaged(
+        "unsafe-outline.pdf",
+        "application/pdf",
+        Buffer.from(await pdf.save({ useObjectStreams: true })),
+      ),
+    ).rejects.toMatchObject({ status: 415 });
+  });
   it.each([true, false])(
     "accepts a PDF web link with boolean IsMap %s",
     async (isMap) => {
