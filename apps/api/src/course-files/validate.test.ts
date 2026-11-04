@@ -59,6 +59,8 @@ describe("resource format validation", () => {
   it.each([
     "https://example.edu/schedule",
     "http://example.edu/schedule",
+    "https://example.edu/activeX-guide",
+    "./vbaProject-notes",
     "./schedule.html",
     "../schedule.html",
     "/schedule.html",

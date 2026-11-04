@@ -541,10 +541,11 @@ async function zipFile(path: string, kind: "docx" | "pptx") {
               : "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml")
         )
           contentType = true;
+        let externalHyperlink = false;
         if (base !== undefined && depth === 2) {
           const target = attributes.Target;
           const type = attributes.Type;
-          const externalHyperlink =
+          externalHyperlink =
             kind === "pptx" &&
             file.name.startsWith("ppt/") &&
             hyperlinkRelationshipTypes.has(type) &&
@@ -589,8 +590,10 @@ async function zipFile(path: string, kind: "docx" | "pptx") {
           }
         }
         if (
-          Object.values(attributes).some((value) =>
-            /macroEnabled|vbaProject|activeX/i.test(value),
+          Object.entries(attributes).some(
+            ([name, value]) =>
+              !(externalHyperlink && name === "Target") &&
+              /macroEnabled|vbaProject|activeX/i.test(value),
           )
         )
           throw invalid();
