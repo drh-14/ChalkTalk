@@ -16,7 +16,7 @@ try {
   await runMigrations(pool, getMigrationDirectory());
   await seedAms161(pool, {
     MOCK_DATA: "true",
-    AMS161_DEMO_INSTRUCTOR_PASSWORD: "browser seed password 123",
+    TEST_AMS161_INSTRUCTOR_PASSWORD: "browser seed password 123",
   });
   const readBodies = async () =>
     (
@@ -41,7 +41,7 @@ try {
   console.info = () => {};
   await seedAms161(pool, {
     MOCK_DATA: "true",
-    AMS161_DEMO_INSTRUCTOR_PASSWORD: "browser seed password 123",
+    TEST_AMS161_INSTRUCTOR_PASSWORD: "browser seed password 123",
   });
   const repaired = await readBodies();
   process.stdout.write(JSON.stringify({ fresh, repaired }));

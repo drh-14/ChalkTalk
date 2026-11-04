@@ -8,7 +8,7 @@ Provide opt-in, local-only AMS161 discussion data for exercising course, post-se
 
 ### Requirement: AMS161 mock data is explicit and local-only
 
-The full-stack Compose profile SHALL run a one-shot mock-data step after migrations and before the API. Unless `MOCK_DATA=true`, the step SHALL succeed without a database write or demo password. An enabled step SHALL require `AMS161_DEMO_INSTRUCTOR_PASSWORD` of 12–128 characters. The tracked environment template SHALL default to `MOCK_DATA=false`, and CI SHALL assert the fixture organization is absent.
+The full-stack Compose profile SHALL run a one-shot mock-data step after migrations and before the API. Unless `MOCK_DATA=true`, the step SHALL succeed without a database write or demo password. An enabled step SHALL require `TEST_AMS161_INSTRUCTOR_PASSWORD` of 12–128 characters. The tracked environment template SHALL default to `MOCK_DATA=false`, and CI SHALL assert the fixture organization is absent.
 
 #### Scenario: Default CI or local startup
 
@@ -83,7 +83,7 @@ Mathematical expressions in fixture question and answer bodies SHALL use delimit
 
 ### Requirement: Dedicated demo student login
 
-Enabled AMS161 mock data SHALL include Riley Nguyen at riley.nguyen@ams161.mock.chalktalk.invalid with student course membership and zero seeded activity. AMS161_DEMO_STUDENT_PASSWORD SHALL be optional, validated as 12–128 characters when provided, and used only when creating the dedicated account; absent configuration SHALL retain the existing random discarded mock-password fallback. Repeat runs SHALL add the missing reserved student account/membership to an existing complete demo without changing any existing password, identity fields, roles, content or endorsements. Reserved account ID/email, organization, deleted-account or membership collisions SHALL fail atomically rather than adopt or overwrite another identity. A legacy organization marker without the reserved course SHALL remain unchanged.
+Enabled AMS161 mock data SHALL include Riley Nguyen at riley.nguyen@ams161.mock.chalktalk.invalid with student course membership and zero seeded activity. TEST_AMS161_STUDENT_PASSWORD SHALL be optional, validated as 12–128 characters when provided, and used only when creating the dedicated account; absent configuration SHALL retain the existing random discarded mock-password fallback. Repeat runs SHALL add the missing reserved student account/membership to an existing complete demo without changing any existing password, identity fields, roles, content or endorsements. Reserved account ID/email, organization, deleted-account or membership collisions SHALL fail atomically rather than adopt or overwrite another identity. A legacy organization marker without the reserved course SHALL remain unchanged.
 
 #### Scenario: Fresh or existing complete demo creates a student login
 

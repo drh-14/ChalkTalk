@@ -4,7 +4,7 @@ import { Pool, type PoolClient } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { isValidPassword } from "../auth/crypto.js";
 
-export const AMS161_DEMO = {
+export const TEST_AMS161 = {
   organizationId: "01a0e5c5-1266-727a-8d9a-fbb5da4cd0d1",
   organizationDomain: "ams161.mock.chalktalk.invalid",
   courseId: "01a0e5a4-2985-7445-b435-1927a9a02715",
@@ -28,7 +28,7 @@ const members: {
   {
     key: "maya",
     name: "Maya Chen",
-    email: AMS161_DEMO.instructorEmail,
+    email: TEST_AMS161.instructorEmail,
     role: "instructor",
   },
   {
@@ -64,7 +64,7 @@ const members: {
   {
     key: "riley",
     name: "Riley Nguyen",
-    email: AMS161_DEMO.studentEmail,
+    email: TEST_AMS161.studentEmail,
     role: "student",
   },
 ];
@@ -430,7 +430,7 @@ async function repairFixtureMath(client: PoolClient): Promise<void> {
          AND EXISTS (SELECT 1 FROM answer_contributors c WHERE c.answer_id=a.id AND c.user_id=contributor.id)`,
         [
           answer.body,
-          AMS161_DEMO.courseId,
+          TEST_AMS161.courseId,
           post.title,
           post.type,
           postEmail,
@@ -450,7 +450,7 @@ async function repairFixtureMath(client: PoolClient): Promise<void> {
          AND p.body_markdown=$6 AND p.deleted_at IS NULL`,
         [
           post.body,
-          AMS161_DEMO.courseId,
+          TEST_AMS161.courseId,
           post.title,
           post.type,
           postEmail,
@@ -471,13 +471,13 @@ async function recordFixtureStatistics(client: PoolClient): Promise<void> {
      SELECT course_id,author_user_id,(created_at AT TIME ZONE 'UTC')::date,count(*)::int
      FROM posts WHERE course_id=$1 AND type='question' AND deleted_at IS NULL
      GROUP BY course_id,author_user_id,(created_at AT TIME ZONE 'UTC')::date`,
-    [AMS161_DEMO.courseId],
+    [TEST_AMS161.courseId],
   );
   await client.query(
     `INSERT INTO answer_contribution_events(course_id,answer_id,user_id,contributed_at)
      SELECT a.course_id,a.id,c.user_id,a.created_at FROM answers a
      JOIN answer_contributors c ON c.answer_id=a.id WHERE a.course_id=$1`,
-    [AMS161_DEMO.courseId],
+    [TEST_AMS161.courseId],
   );
 }
 
@@ -491,7 +491,7 @@ async function repairFixtureStatistics(client: PoolClient): Promise<void> {
   const existing = await client.query(
     `SELECT 1 FROM question_creation_daily_counts WHERE course_id=$1
      UNION ALL SELECT 1 FROM answer_contribution_events WHERE course_id=$1 LIMIT 1`,
-    [AMS161_DEMO.courseId],
+    [TEST_AMS161.courseId],
   );
   if (existing.rowCount) {
     console.info(
@@ -514,14 +514,14 @@ async function ensureDemoStudent(
     deleted_at: Date | null;
   }>(
     "SELECT id,email,organization_id,deleted_at FROM users WHERE id=$1 OR email=$2",
-    [AMS161_DEMO.studentId, AMS161_DEMO.studentEmail],
+    [TEST_AMS161.studentId, TEST_AMS161.studentEmail],
   );
   if (existing.rowCount) {
     const account = existing.rows[0]!;
     if (
       existing.rows.length !== 1 ||
-      account.id !== AMS161_DEMO.studentId ||
-      account.email !== AMS161_DEMO.studentEmail ||
+      account.id !== TEST_AMS161.studentId ||
+      account.email !== TEST_AMS161.studentEmail ||
       account.organization_id !== organizationId ||
       account.deleted_at
     )
@@ -532,9 +532,9 @@ async function ensureDemoStudent(
     await client.query(
       "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,'Riley Nguyen',$4)",
       [
-        AMS161_DEMO.studentId,
+        TEST_AMS161.studentId,
         organizationId,
-        AMS161_DEMO.studentEmail,
+        TEST_AMS161.studentEmail,
         await argon2.hash(password ?? randomBytes(32).toString("base64url"), {
           type: argon2.argon2id,
         }),
@@ -543,7 +543,7 @@ async function ensureDemoStudent(
   }
   const membership = await client.query<{ role: string }>(
     "SELECT role FROM course_memberships WHERE course_id=$1 AND user_id=$2",
-    [AMS161_DEMO.courseId, AMS161_DEMO.studentId],
+    [TEST_AMS161.courseId, TEST_AMS161.studentId],
   );
   if (membership.rowCount && membership.rows[0]!.role !== "student")
     throw new Error(
@@ -551,7 +551,7 @@ async function ensureDemoStudent(
     );
   await client.query(
     "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student') ON CONFLICT (course_id,user_id) DO NOTHING",
-    [AMS161_DEMO.courseId, AMS161_DEMO.studentId],
+    [TEST_AMS161.courseId, TEST_AMS161.studentId],
   );
 }
 
@@ -560,8 +560,8 @@ export async function seedAms161(
   source: Partial<
     Record<
       | "MOCK_DATA"
-      | "AMS161_DEMO_INSTRUCTOR_PASSWORD"
-      | "AMS161_DEMO_STUDENT_PASSWORD",
+      | "TEST_AMS161_INSTRUCTOR_PASSWORD"
+      | "TEST_AMS161_STUDENT_PASSWORD",
       string
     >
   >,
@@ -570,16 +570,16 @@ export async function seedAms161(
     return "disabled";
   if (source.MOCK_DATA !== "true")
     throw new Error("MOCK_DATA must be true or false");
-  const password = source.AMS161_DEMO_INSTRUCTOR_PASSWORD;
+  const password = source.TEST_AMS161_INSTRUCTOR_PASSWORD;
   if (!isValidPassword(password))
     throw new Error(
-      "AMS161_DEMO_INSTRUCTOR_PASSWORD must be 12 to 128 characters when MOCK_DATA=true",
+      "TEST_AMS161_INSTRUCTOR_PASSWORD must be 12 to 128 characters when MOCK_DATA=true",
     );
 
-  const studentPassword = source.AMS161_DEMO_STUDENT_PASSWORD;
+  const studentPassword = source.TEST_AMS161_STUDENT_PASSWORD;
   if (studentPassword !== undefined && !isValidPassword(studentPassword))
     throw new Error(
-      "AMS161_DEMO_STUDENT_PASSWORD must be 12 to 128 characters when provided",
+      "TEST_AMS161_STUDENT_PASSWORD must be 12 to 128 characters when provided",
     );
 
   const client = await pool.connect();
@@ -591,18 +591,18 @@ export async function seedAms161(
       const marker = await client.query<{ id: string; domain: string }>(
         "SELECT id, domain FROM organizations WHERE id=$1 OR id=$2 OR domain=$3",
         [
-          AMS161_DEMO.organizationId,
+          TEST_AMS161.organizationId,
           LEGACY_AMS161_ORGANIZATION_ID,
-          AMS161_DEMO.organizationDomain,
+          TEST_AMS161.organizationDomain,
         ],
       );
       if (marker.rows.length > 0) {
         if (
           marker.rows.length !== 1 ||
-          ![AMS161_DEMO.organizationId, LEGACY_AMS161_ORGANIZATION_ID].includes(
+          ![TEST_AMS161.organizationId, LEGACY_AMS161_ORGANIZATION_ID].includes(
             marker.rows[0]!.id,
           ) ||
-          marker.rows[0]!.domain !== AMS161_DEMO.organizationDomain
+          marker.rows[0]!.domain !== TEST_AMS161.organizationDomain
         )
           throw new Error(
             "AMS161 mock-data organization marker collides with existing data",
@@ -611,7 +611,7 @@ export async function seedAms161(
           organization_id: string;
           status: string;
         }>("SELECT organization_id,status FROM courses WHERE id=$1 FOR SHARE", [
-          AMS161_DEMO.courseId,
+          TEST_AMS161.courseId,
         ]);
         if (!course.rowCount) {
           await client.query("COMMIT");
@@ -633,7 +633,7 @@ export async function seedAms161(
       }
       const collision = await client.query(
         "SELECT id FROM courses WHERE id=$1 OR join_code=$2 LIMIT 1",
-        [AMS161_DEMO.courseId, AMS161_DEMO.joinCode],
+        [TEST_AMS161.courseId, TEST_AMS161.joinCode],
       );
       if (collision.rowCount)
         throw new Error(
@@ -643,8 +643,8 @@ export async function seedAms161(
         "SELECT email FROM users WHERE (email = ANY($1::text[]) AND deleted_at IS NULL) OR id=$2 OR email=$3 LIMIT 1",
         [
           members.map((member) => member.email),
-          AMS161_DEMO.studentId,
-          AMS161_DEMO.studentEmail,
+          TEST_AMS161.studentId,
+          TEST_AMS161.studentEmail,
         ],
       );
       if (emailCollision.rowCount)
@@ -655,8 +655,8 @@ export async function seedAms161(
       await client.query(
         "INSERT INTO organizations (id,domain,name) VALUES ($1,$2,$3)",
         [
-          AMS161_DEMO.organizationId,
-          AMS161_DEMO.organizationDomain,
+          TEST_AMS161.organizationId,
+          TEST_AMS161.organizationDomain,
           "AMS161 Prototype",
         ],
       );
@@ -664,12 +664,12 @@ export async function seedAms161(
       const ids = {} as Record<Person, string>;
       for (const member of members) {
         ids[member.key] =
-          member.key === "riley" ? AMS161_DEMO.studentId : uuidv7();
+          member.key === "riley" ? TEST_AMS161.studentId : uuidv7();
         await client.query(
           "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,$4,$5)",
           [
             ids[member.key],
-            AMS161_DEMO.organizationId,
+            TEST_AMS161.organizationId,
             member.email,
             member.name,
             await argon2.hash(
@@ -686,16 +686,16 @@ export async function seedAms161(
       await client.query(
         "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,'AMS161',$4)",
         [
-          AMS161_DEMO.courseId,
-          AMS161_DEMO.organizationId,
+          TEST_AMS161.courseId,
+          TEST_AMS161.organizationId,
           ids.maya,
-          AMS161_DEMO.joinCode,
+          TEST_AMS161.joinCode,
         ],
       );
       for (const member of members) {
         await client.query(
           "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,$3)",
-          [AMS161_DEMO.courseId, ids[member.key], member.role],
+          [TEST_AMS161.courseId, ids[member.key], member.role],
         );
       }
       const tagIds = new Map<string, string>();
@@ -714,7 +714,7 @@ export async function seedAms161(
           "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,anonymous,pinned,created_at,updated_at,last_activity_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now()-make_interval(mins=>$9),now()-make_interval(mins=>$9),now()-make_interval(mins=>$10))",
           [
             postId,
-            AMS161_DEMO.courseId,
+            TEST_AMS161.courseId,
             ids[post.author],
             post.type,
             post.title,
@@ -730,7 +730,7 @@ export async function seedAms161(
             tagIds.set(tag, uuidv7());
             await client.query(
               "INSERT INTO tags (id,course_id,name) VALUES ($1,$2,$3)",
-              [tagIds.get(tag), AMS161_DEMO.courseId, tag],
+              [tagIds.get(tag), TEST_AMS161.courseId, tag],
             );
           }
           await client.query(
@@ -745,7 +745,7 @@ export async function seedAms161(
             "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,endorsed_at,endorsed_by_user_id,created_at,updated_at,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,$4,$5,CASE WHEN $6::uuid IS NULL THEN NULL ELSE now()-make_interval(mins=>$7) END,$6,now()-make_interval(mins=>$7),now()-make_interval(mins=>$7),$8,$9)",
             [
               answerId,
-              AMS161_DEMO.courseId,
+              TEST_AMS161.courseId,
               postId,
               kind,
               answer.body,

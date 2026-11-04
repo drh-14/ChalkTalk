@@ -3,7 +3,7 @@ import katex from "katex";
 import { version as uuidVersion } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "./migrate.js";
-import { seedAms161, AMS161_DEMO, AMS161_FIXTURE } from "./seed-ams161.js";
+import { seedAms161, TEST_AMS161, AMS161_FIXTURE } from "./seed-ams161.js";
 import { CourseService } from "../courses/service.js";
 import { AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
@@ -20,24 +20,24 @@ const studentPassword = "local student password 456";
 const studentEmail = "riley.nguyen@ams161.mock.chalktalk.invalid";
 
 it("uses a non-placeholder UUIDv7 for the AMS161 course", () => {
-  expect(uuidVersion(AMS161_DEMO.courseId)).toBe(7);
-  expect(AMS161_DEMO.courseId).not.toBe("a1610000-0000-7000-8000-000000000002");
+  expect(uuidVersion(TEST_AMS161.courseId)).toBe(7);
+  expect(TEST_AMS161.courseId).not.toBe("a1610000-0000-7000-8000-000000000002");
 });
 
 it("uses a non-placeholder UUIDv7 for the AMS161 organization", () => {
-  expect(uuidVersion(AMS161_DEMO.organizationId)).toBe(7);
-  expect(AMS161_DEMO.organizationId).not.toBe(
+  expect(uuidVersion(TEST_AMS161.organizationId)).toBe(7);
+  expect(TEST_AMS161.organizationId).not.toBe(
     "a1610000-0000-7000-8000-000000000001",
   );
 });
 
 integration("AMS161 local prototype seed", () => {
   it("reserves UUIDv7 fixture identifiers and a non-deliverable email domain", () => {
-    expect(uuidVersion(AMS161_DEMO.organizationId)).toBe(7);
-    expect(AMS161_DEMO.organizationDomain).toBe(
+    expect(uuidVersion(TEST_AMS161.organizationId)).toBe(7);
+    expect(TEST_AMS161.organizationDomain).toBe(
       "ams161.mock.chalktalk.invalid",
     );
-    expect(AMS161_DEMO.instructorEmail).toBe(
+    expect(TEST_AMS161.instructorEmail).toBe(
       "maya.chen@ams161.mock.chalktalk.invalid",
     );
   });
@@ -67,14 +67,14 @@ integration("AMS161 local prototype seed", () => {
 
   it("rejects missing and weak enabled passwords without writing", async () => {
     await expect(seedAms161(pool, { MOCK_DATA: "true" })).rejects.toThrow(
-      /AMS161_DEMO_INSTRUCTOR_PASSWORD/,
+      /TEST_AMS161_INSTRUCTOR_PASSWORD/,
     );
     await expect(
       seedAms161(pool, {
         MOCK_DATA: "true",
-        AMS161_DEMO_INSTRUCTOR_PASSWORD: "short",
+        TEST_AMS161_INSTRUCTOR_PASSWORD: "short",
       }),
-    ).rejects.toThrow(/AMS161_DEMO_INSTRUCTOR_PASSWORD/);
+    ).rejects.toThrow(/TEST_AMS161_INSTRUCTOR_PASSWORD/);
     const result = await pool.query(
       "SELECT count(*)::int AS count FROM organizations",
     );
@@ -87,10 +87,10 @@ integration("AMS161 local prototype seed", () => {
       await expect(
         seedAms161(pool, {
           MOCK_DATA: "true",
-          AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
-          AMS161_DEMO_STUDENT_PASSWORD: invalid,
+          TEST_AMS161_INSTRUCTOR_PASSWORD: password,
+          TEST_AMS161_STUDENT_PASSWORD: invalid,
         }),
-      ).rejects.toThrow(/AMS161_DEMO_STUDENT_PASSWORD/);
+      ).rejects.toThrow(/TEST_AMS161_STUDENT_PASSWORD/);
       expect(
         (await pool.query("SELECT count(*)::int AS count FROM users")).rows[0]
           .count,
@@ -102,21 +102,21 @@ integration("AMS161 local prototype seed", () => {
     expect(
       await seedAms161(pool, {
         MOCK_DATA: "true",
-        AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
-        AMS161_DEMO_STUDENT_PASSWORD: studentPassword,
+        TEST_AMS161_INSTRUCTOR_PASSWORD: password,
+        TEST_AMS161_STUDENT_PASSWORD: studentPassword,
       }),
     ).toBe("created");
     const course = await pool.query(
       "SELECT name,join_code FROM courses WHERE id=$1",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     expect(course.rows[0]).toEqual({
       name: "AMS161",
-      join_code: AMS161_DEMO.joinCode,
+      join_code: TEST_AMS161.joinCode,
     });
     const members = await pool.query(
       "SELECT role,display_name FROM course_memberships JOIN users ON users.id=user_id WHERE course_id=$1 ORDER BY role,display_name",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     expect(members.rows).toEqual([
       { role: "instructor", display_name: "Maya Chen" },
@@ -129,19 +129,19 @@ integration("AMS161 local prototype seed", () => {
     ]);
     const posts = await pool.query(
       "SELECT duplicate_status, count(*)::int AS count FROM posts WHERE course_id=$1 GROUP BY duplicate_status ORDER BY duplicate_status",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     expect(posts.rows).toEqual([
       { duplicate_status: "none", count: AMS161_FIXTURE.posts },
     ]);
     const targetCount = await pool.query(
       "SELECT count(*)::int AS count FROM posts WHERE course_id=$1 AND duplicate_of_post_id IS NOT NULL",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     expect(targetCount.rows[0].count).toBe(0);
     const shape = await pool.query(
       "SELECT count(*) FILTER (WHERE type='question')::int AS questions, count(*) FILTER (WHERE type='note')::int AS notes, count(*) FILTER (WHERE anonymous)::int AS anonymous, bool_and(created_at<=last_activity_at AND last_activity_at<=now()) AS ordered, bool_or(created_at<now()-interval '90 days') AS old, bool_or(created_at>now()-interval '1 hour') AS recent FROM posts WHERE course_id=$1",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     expect(shape.rows[0]).toEqual({
       questions: AMS161_FIXTURE.questions,
@@ -153,7 +153,7 @@ integration("AMS161 local prototype seed", () => {
     });
     const answers = await pool.query(
       "SELECT a.kind, count(*)::int AS count, count(a.endorsed_at)::int AS endorsed, bool_and(a.created_at>=p.created_at) AS after_post, bool_and(c.answer_id IS NOT NULL) AS contributed FROM answers a JOIN posts p ON p.id=a.post_id JOIN answer_contributors c ON c.answer_id=a.id WHERE a.course_id=$1 GROUP BY a.kind ORDER BY a.kind",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     expect(answers.rows).toEqual([
       {
@@ -185,12 +185,12 @@ integration("AMS161 local prototype seed", () => {
     expect(session.user.displayName).toBe("Riley Nguyen");
     const courses = new CourseService(pool);
     expect(
-      (await courses.get(AMS161_DEMO.courseId, session.user.id)).name,
+      (await courses.get(TEST_AMS161.courseId, session.user.id)).name,
     ).toBe("AMS161");
     expect(
       (
         await courses.getMember(
-          AMS161_DEMO.courseId,
+          TEST_AMS161.courseId,
           session.user.id,
           session.user.id,
         )
@@ -211,8 +211,8 @@ integration("AMS161 local prototype seed", () => {
     );
     const source = {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
-      AMS161_DEMO_STUDENT_PASSWORD: "different student password 789",
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_STUDENT_PASSWORD: "different student password 789",
     };
     await Promise.all([seedAms161(pool, source), seedAms161(pool, source)]);
     const current = (
@@ -233,13 +233,13 @@ integration("AMS161 local prototype seed", () => {
       auth.login(studentEmail, studentPassword),
     ).resolves.toBeTruthy();
     await expect(
-      auth.login(studentEmail, source.AMS161_DEMO_STUDENT_PASSWORD),
+      auth.login(studentEmail, source.TEST_AMS161_STUDENT_PASSWORD),
     ).rejects.toMatchObject({ status: 401 });
     expect(
       (
         await pool.query(
           "SELECT count(*)::int AS count FROM course_memberships WHERE user_id=$1 AND course_id=$2",
-          [original.id, AMS161_DEMO.courseId],
+          [original.id, TEST_AMS161.courseId],
         )
       ).rows[0].count,
     ).toBe(1);
@@ -252,10 +252,10 @@ integration("AMS161 local prototype seed", () => {
   it("reports original-period student activity without inventing views", async () => {
     const instructor = await pool.query<{ id: string }>(
       "SELECT id FROM users WHERE email=$1",
-      [AMS161_DEMO.instructorEmail],
+      [TEST_AMS161.instructorEmail],
     );
     const result = await new StatisticsService(pool).students(
-      AMS161_DEMO.courseId,
+      TEST_AMS161.courseId,
       instructor.rows[0]!.id,
       "30d",
       100,
@@ -321,18 +321,18 @@ integration("AMS161 local prototype seed", () => {
   it("repairs an untracked legacy demo exactly once without changing persisted content", async () => {
     await pool.query(
       "DELETE FROM question_creation_daily_counts WHERE course_id=$1",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     await pool.query(
       "DELETE FROM answer_contribution_events WHERE course_id=$1",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     const before = await pool.query(
       "SELECT id,title,body_markdown FROM posts ORDER BY id",
     );
     const values = {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
     };
     expect(await seedAms161(pool, values)).toBe("already-seeded");
     const counts = await pool.query(`SELECT
@@ -378,7 +378,7 @@ integration("AMS161 local prototype seed", () => {
       await expect(
         seedAms161(pool, {
           MOCK_DATA: "true",
-          AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+          TEST_AMS161_INSTRUCTOR_PASSWORD: password,
         }),
       ).rejects.toThrow("forced statistics insert failure");
       expect(
@@ -403,7 +403,7 @@ integration("AMS161 local prototype seed", () => {
     }
     await seedAms161(pool, {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
     });
   });
 
@@ -416,14 +416,14 @@ integration("AMS161 local prototype seed", () => {
     );
     await pool.query(
       "DELETE FROM answer_contribution_events WHERE course_id=$1",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     const historical = await pool.query(
       "SELECT * FROM question_creation_daily_counts ORDER BY user_id,created_on",
     );
     await seedAms161(pool, {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
     });
     expect(
       (
@@ -443,7 +443,7 @@ integration("AMS161 local prototype seed", () => {
     await pool.query("DELETE FROM question_creation_daily_counts");
     await seedAms161(pool, {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
     });
     expect(
       (
@@ -462,7 +462,7 @@ integration("AMS161 local prototype seed", () => {
       }),
       { send: async () => {} },
     );
-    const login = await auth.login(AMS161_DEMO.instructorEmail, password);
+    const login = await auth.login(TEST_AMS161.instructorEmail, password);
     expect(login.session.user.displayName).toBe("Maya Chen");
     await expect(
       auth.login("alex.rivera@ams161.mock.chalktalk.invalid", password),
@@ -475,11 +475,11 @@ integration("AMS161 local prototype seed", () => {
     );
     const instructor = await pool.query<{ id: string }>(
       "SELECT id FROM users WHERE email=$1",
-      [AMS161_DEMO.instructorEmail],
+      [TEST_AMS161.instructorEmail],
     );
     const posts = new PostService(pool);
     const ordinary = await posts.list(
-      AMS161_DEMO.courseId,
+      TEST_AMS161.courseId,
       student.rows[0]!.id,
       { limit: 30, sort: "recent_activity" },
     );
@@ -489,7 +489,7 @@ integration("AMS161 local prototype seed", () => {
     );
     const list = async (options: Parameters<PostService["list"]>[2]) =>
       (
-        await posts.list(AMS161_DEMO.courseId, student.rows[0]!.id, {
+        await posts.list(TEST_AMS161.courseId, student.rows[0]!.id, {
           limit: 30,
           sort: "recent_activity",
           ...options,
@@ -512,7 +512,7 @@ integration("AMS161 local prototype seed", () => {
       (await list({ tags: ["midterm"] })).map((post) => post.title).sort(),
     ).toEqual(["Midterm 1: what to expect", "Series tests cheat sheet"]);
     const washerSearch = await posts.list(
-      AMS161_DEMO.courseId,
+      TEST_AMS161.courseId,
       student.rows[0]!.id,
       { limit: 30, sort: "relevance", q: "washer" },
     );
@@ -523,7 +523,7 @@ integration("AMS161 local prototype seed", () => {
       ]),
     );
     const review = await posts.list(
-      AMS161_DEMO.courseId,
+      TEST_AMS161.courseId,
       instructor.rows[0]!.id,
       { limit: 30, sort: "recent_activity", duplicateStatus: "confirmed" },
     );
@@ -533,29 +533,29 @@ integration("AMS161 local prototype seed", () => {
   it("is safe on repeated and concurrent startup and preserves instructor password and edited posts", async () => {
     const original = await pool.query<{ password_hash: string }>(
       "SELECT password_hash FROM users WHERE email=$1",
-      [AMS161_DEMO.instructorEmail],
+      [TEST_AMS161.instructorEmail],
     );
     await pool.query(
       "UPDATE posts SET title='Edited by reviewer' WHERE course_id=$1 AND title='Does the harmonic series converge?'",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     const values = {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: "a different password 123",
+      TEST_AMS161_INSTRUCTOR_PASSWORD: "a different password 123",
     };
     expect(
       await Promise.all([seedAms161(pool, values), seedAms161(pool, values)]),
     ).toEqual(["already-seeded", "already-seeded"]);
     const updated = await pool.query<{ password_hash: string }>(
       "SELECT password_hash FROM users WHERE email=$1",
-      [AMS161_DEMO.instructorEmail],
+      [TEST_AMS161.instructorEmail],
     );
     expect(updated.rows[0]!.password_hash).toBe(
       original.rows[0]!.password_hash,
     );
     const edited = await pool.query(
       "SELECT count(*)::int AS count FROM posts WHERE course_id=$1 AND title='Edited by reviewer'",
-      [AMS161_DEMO.courseId],
+      [TEST_AMS161.courseId],
     );
     expect(edited.rows[0].count).toBe(1);
   });
@@ -571,7 +571,7 @@ integration("AMS161 local prototype seed", () => {
       await runMigrations(fresh, getMigrationDirectory());
       const source = {
         MOCK_DATA: "true",
-        AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+        TEST_AMS161_INSTRUCTOR_PASSWORD: password,
       };
       await seedAms161(fresh, source);
       const fallbackAuth = new AuthService(
@@ -602,7 +602,7 @@ integration("AMS161 local prototype seed", () => {
       ).rows;
       await seedAms161(fresh, {
         ...source,
-        AMS161_DEMO_STUDENT_PASSWORD: studentPassword,
+        TEST_AMS161_STUDENT_PASSWORD: studentPassword,
       });
       const { session } = await fallbackAuth.login(
         studentEmail,
@@ -613,7 +613,7 @@ integration("AMS161 local prototype seed", () => {
       expect(
         (
           await courses.getMember(
-            AMS161_DEMO.courseId,
+            TEST_AMS161.courseId,
             session.user.id,
             session.user.id,
           )
@@ -654,26 +654,26 @@ integration("AMS161 local prototype seed", () => {
     });
     const source = {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
-      AMS161_DEMO_STUDENT_PASSWORD: studentPassword,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_STUDENT_PASSWORD: studentPassword,
     };
     try {
       await runMigrations(fresh, getMigrationDirectory());
       await seedAms161(fresh, source);
       await fresh.query(
         "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
-        [AMS161_DEMO.courseId, AMS161_DEMO.studentId],
+        [TEST_AMS161.courseId, TEST_AMS161.studentId],
       );
       await fresh.query("DELETE FROM users WHERE id=$1", [
-        AMS161_DEMO.studentId,
+        TEST_AMS161.studentId,
       ]);
       await fresh.query(
         "DELETE FROM question_creation_daily_counts WHERE course_id=$1",
-        [AMS161_DEMO.courseId],
+        [TEST_AMS161.courseId],
       );
       await fresh.query(
         "DELETE FROM answer_contribution_events WHERE course_id=$1",
-        [AMS161_DEMO.courseId],
+        [TEST_AMS161.courseId],
       );
       const legacyBody =
         "For y = x^(3/2) from x = 0 to x = 4, where does the square root in the arc length formula come from?";
@@ -684,7 +684,7 @@ integration("AMS161 local prototype seed", () => {
         )
       ).rows[0];
       await fresh.query("UPDATE courses SET status='deleting' WHERE id=$1", [
-        AMS161_DEMO.courseId,
+        TEST_AMS161.courseId,
       ]);
 
       expect(await seedAms161(fresh, source)).toBe("already-seeded");
@@ -701,7 +701,7 @@ integration("AMS161 local prototype seed", () => {
         (
           await fresh.query(
             "SELECT count(*)::int AS count FROM users WHERE id=$1",
-            [AMS161_DEMO.studentId],
+            [TEST_AMS161.studentId],
           )
         ).rows[0].count,
       ).toBe(0);
@@ -709,7 +709,7 @@ integration("AMS161 local prototype seed", () => {
         (
           await fresh.query(
             "SELECT count(*)::int AS count FROM course_memberships WHERE user_id=$1",
-            [AMS161_DEMO.studentId],
+            [TEST_AMS161.studentId],
           )
         ).rows[0].count,
       ).toBe(0);
@@ -729,7 +729,7 @@ integration("AMS161 local prototype seed", () => {
       ).toBe(0);
 
       await fresh.query("UPDATE courses SET status='active' WHERE id=$1", [
-        AMS161_DEMO.courseId,
+        TEST_AMS161.courseId,
       ]);
       const seedPid = (await fresh.query("SELECT pg_backend_pid() AS pid"))
         .rows[0].pid;
@@ -737,7 +737,7 @@ integration("AMS161 local prototype seed", () => {
       try {
         await client.query("BEGIN");
         await client.query("UPDATE courses SET status='deleting' WHERE id=$1", [
-          AMS161_DEMO.courseId,
+          TEST_AMS161.courseId,
         ]);
         const pending = seedAms161(fresh, source);
         let waiting = false;
@@ -762,7 +762,7 @@ integration("AMS161 local prototype seed", () => {
         (
           await fresh.query(
             "SELECT count(*)::int AS count FROM users WHERE id=$1",
-            [AMS161_DEMO.studentId],
+            [TEST_AMS161.studentId],
           )
         ).rows[0].count,
       ).toBe(0);
@@ -770,7 +770,7 @@ integration("AMS161 local prototype seed", () => {
         (
           await fresh.query(
             "SELECT count(*)::int AS count FROM course_memberships WHERE user_id=$1",
-            [AMS161_DEMO.studentId],
+            [TEST_AMS161.studentId],
           )
         ).rows[0].count,
       ).toBe(0);
@@ -809,7 +809,7 @@ integration("AMS161 local prototype seed", () => {
     });
     const source = {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
     };
     try {
       await runMigrations(fresh, getMigrationDirectory());
@@ -847,7 +847,7 @@ integration("AMS161 local prototype seed", () => {
         }
         expect(waiting).toBe(true);
         await client.query("SELECT id FROM courses WHERE id=$1 FOR SHARE", [
-          AMS161_DEMO.courseId,
+          TEST_AMS161.courseId,
         ]);
         await client.query("COMMIT");
         expect(await pending).toBe("already-seeded");
@@ -884,7 +884,7 @@ integration("AMS161 local prototype seed", () => {
     });
     const source = {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
     };
     try {
       await runMigrations(fresh, getMigrationDirectory());
@@ -934,7 +934,7 @@ integration("AMS161 local prototype seed", () => {
           post.id,
         ]);
         await client.query("SELECT id FROM courses WHERE id=$1 FOR SHARE", [
-          AMS161_DEMO.courseId,
+          TEST_AMS161.courseId,
         ]);
         await client.query("COMMIT");
         expect(await pending).toBe("already-seeded");
@@ -962,8 +962,8 @@ integration("AMS161 local prototype seed", () => {
     ).rows[0].id;
     const source = {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
-      AMS161_DEMO_STUDENT_PASSWORD: studentPassword,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_STUDENT_PASSWORD: studentPassword,
     };
     for (const [change, restore] of [
       [
@@ -1013,7 +1013,7 @@ integration("AMS161 local prototype seed", () => {
       await runMigrations(fresh, getMigrationDirectory());
       const source = {
         MOCK_DATA: "true",
-        AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+        TEST_AMS161_INSTRUCTOR_PASSWORD: password,
       };
       const outcomes = await Promise.all([
         seedAms161(fresh, source),
@@ -1043,13 +1043,13 @@ integration("AMS161 local prototype seed", () => {
         "INSERT INTO organizations (id,domain,name) VALUES ($1,$2,'AMS161 Prototype')",
         [
           "a1610000-0000-7000-8000-000000000001",
-          AMS161_DEMO.organizationDomain,
+          TEST_AMS161.organizationDomain,
         ],
       );
       await expect(
         seedAms161(fresh, {
           MOCK_DATA: "true",
-          AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+          TEST_AMS161_INSTRUCTOR_PASSWORD: password,
         }),
       ).resolves.toBe("already-seeded");
       const counts = await fresh.query(
@@ -1077,12 +1077,12 @@ integration("AMS161 local prototype seed", () => {
       await runMigrations(fresh, getMigrationDirectory());
       await fresh.query(
         "INSERT INTO organizations (id,domain,name) VALUES ($1,'existing.example','Existing')",
-        [AMS161_DEMO.organizationId],
+        [TEST_AMS161.organizationId],
       );
       await expect(
         seedAms161(fresh, {
           MOCK_DATA: "true",
-          AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+          TEST_AMS161_INSTRUCTOR_PASSWORD: password,
         }),
       ).rejects.toThrow(/collides/);
       const count = await fresh.query(
@@ -1113,7 +1113,7 @@ integration("AMS161 local prototype seed", () => {
       await expect(
         seedAms161(fresh, {
           MOCK_DATA: "true",
-          AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+          TEST_AMS161_INSTRUCTOR_PASSWORD: password,
         }),
       ).rejects.toThrow(/forced post insert failure/);
       const counts = await fresh.query(
@@ -1186,7 +1186,7 @@ integration("AMS161 local prototype seed", () => {
     const before = await snapshot();
     await seedAms161(pool, {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
     });
     const repairedQuestion = (
       await pool.query(
@@ -1232,7 +1232,7 @@ integration("AMS161 local prototype seed", () => {
     expect(await snapshot()).toEqual(before);
     await seedAms161(pool, {
       MOCK_DATA: "true",
-      AMS161_DEMO_INSTRUCTOR_PASSWORD: password,
+      TEST_AMS161_INSTRUCTOR_PASSWORD: password,
     });
     expect(
       (
