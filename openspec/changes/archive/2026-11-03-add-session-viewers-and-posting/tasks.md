@@ -20,4 +20,4 @@
 
 - [x] 4.1 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
   - Local run on Windows, 2026-10-20: format, lint, typecheck, build, and the collaboration API, session component, and live-session browser suites pass (the four live specs passed three runs in a row; one earlier run failed once on a cold dev server). Full-suite environment-only failures are as recorded in `add-session-limits`.
-- [ ] 4.2 Archive after the changes this one is stacked on are archived
+- [x] 4.2 Archive after the changes this one is stacked on are archived

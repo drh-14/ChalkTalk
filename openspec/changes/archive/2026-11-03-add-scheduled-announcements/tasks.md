@@ -21,4 +21,4 @@
 
 - [x] 4.1 Browser test against the running stack: an instructor schedules an announcement a minute ahead; a student cannot find it; after it publishes, the student sees it pinned and has the notification. Capture screenshots
 - [x] 4.2 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
-- [ ] 4.3 Archive after merge
+- [x] 4.3 Archive after merge

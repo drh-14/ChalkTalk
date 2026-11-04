@@ -34,4 +34,4 @@
 
 - [x] 6.1 Browser test against the running stack: a student posts privately; a classmate cannot find it in the feed or search; a TA sees it, answers it, and makes it public; the classmate then finds it, still anonymous if it was; the student gets the bell notification. Capture screenshots
 - [x] 6.2 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
-- [ ] 6.3 Archive after merge
+- [x] 6.3 Archive after merge

@@ -23,4 +23,4 @@
 
 - [x] 4.1 Browser test against the running stack: a TA answers a student's question; the student sees the bell count, opens the notification, lands on the question, and the feed marker clears; capture screenshots
 - [x] 4.2 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
-- [ ] 4.3 Archive after merge
+- [x] 4.3 Archive after merge

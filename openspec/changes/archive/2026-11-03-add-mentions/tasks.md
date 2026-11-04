@@ -23,4 +23,4 @@
 
 - [x] 4.1 Browser test against the running stack: a student mentions a TA in a followup through autocomplete; the mention renders; the TA sees "mentioned you" in the bell and opens the question. Capture screenshots
 - [x] 4.2 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
-- [ ] 4.3 Archive after merge
+- [x] 4.3 Archive after merge
