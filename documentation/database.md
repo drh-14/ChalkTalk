@@ -2,6 +2,13 @@
 
 ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally include `created_at`, `updated_at`, and `version`; a nullable `deleted_at` retains a tombstone where needed. `pg_trgm` supports fuzzy matching. For extracted resource text and its full-text index, see [`course_file_texts`](#course_file_texts-resource-text-extraction).
 
+## Migrations
+
+### `schema_migrations`
+
+- `name`: `text`; primary key, the migration's full filename. Filenames rather than numeric prefixes identify migrations, so two files may share a number.
+- `applied_at`: `timestamptz`.
+
 ## Identity and access
 
 ### `organizations`
@@ -103,6 +110,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `locked_by`, `last_error`: `text`, nullable.
 - `frozen_email`: nullable `jsonb`; versioned queued email payload (exact MIME bytes for SMTP or stable message and attachment bytes for Resend), original provider, and current-content guard. It commits before the first provider handoff, is retried with the same provider payload, and is cleared on success, cancellation, or terminal provider failure. Current address, membership, preference, title and body content, course status, and included actor or sender identities are rechecked before each attempt; a provider change cancels instead of switching transports; the frozen payload is not authorization to send. Cancellation atomically clears the snapshot and claim and records a non-sensitive reason, without a success metric.
 - `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `publish_scheduled_announcement` jobs use a `post-id:scheduled-for` deduplication key, a payload containing the post ID and the scheduled time, and `available_at` set to that time; the worker publishes only if the post is still scheduled for exactly that time. `send_notification_email` jobs, queued for recipients who opted in to activity emails and never for announcements, use the notification ID as deduplication key and a payload containing it. New answer/followup/reply jobs also carry optional `responseKind` (`answer` or `followup`) and `responseId` fields so the worker can recheck and link the current response; older payloads without those fields remain valid. `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `extract_file_text` jobs use a `file:<file-id>` deduplication key and a `{ fileId }` payload, get `max_attempts` 3, and are claimed only by the worker's extraction lane (see `course_file_texts`). For time limits, retries and the shutdown, lease-loss and object-store outage exceptions, see [the extraction lane design](../openspec/changes/add-resource-text-extraction/design.md#3-a-dedicated-extraction-lane-with-a-heartbeat-lease). `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
+- No scheduled cleanup removes finished job rows; they currently remain in this table.
 
 ## Courses and membership
 
@@ -131,6 +139,22 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `announcement_emails`, `digest_emails`: `boolean`, default true; independent per-course email choices. Delivery rechecks them at send time.
 
 Account deletion locks each affected `courses` row before testing instructor cardinality. Any future writer that adds, removes, or changes an instructor membership must lock the same course row first; this shared protocol prevents a concurrent mutation from deleting a course's final instructor.
+
+### `course_information`
+
+- `course_id`: `uuid_v7`; primary key and foreign key to `courses.id` with cascade deletion.
+- `description_markdown`: `text`; at most 50,000 characters, defaults to empty.
+- `website`: `text`, nullable; at most 2048 characters.
+- `syllabus_file_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `course_files`.
+- `version`: `integer`; positive revision. A course without a row reads as version 1.
+- `updated_at`: `timestamptz`.
+
+### `course_staff_profiles`
+
+- `course_id`, `user_id`: `uuid_v7`; primary key and foreign key to `course_memberships` with cascade deletion.
+- `contact`, `location`, `office_hours`: `text`; each at most 2000 characters, defaulting to empty.
+- `version`: `integer`; positive revision.
+- `updated_at`: `timestamptz`.
 
 ## Posts, answers, and polls
 
@@ -176,6 +200,15 @@ The ordinary migrations and PostgreSQL startup do not require pgvector. An opera
 - `source_revision`: SHA-256 digest of the post title and body. A changed title or body makes old vectors ineligible immediately, before the worker refreshes them.
 - `embedding`: pgvector value for one bounded title/body chunk. `generation` identifies the configured endpoint/model so vectors from different generations are never compared.
 - The worker backfills active questions and notes (never polls) and stores a post's chunks only if its content revision remains unchanged after provider calls. Search joins current course and post visibility before ranking or pagination; deleted posts and confirmed duplicates do not yield semantic candidates.
+
+### `semantic_embedding_generations`
+
+Tracks each embedding generation used by optional semantic search.
+
+- `generation`: `text`; primary key.
+- `last_seen_at`: `timestamptz`.
+- `initial_backfill_complete`: `boolean`.
+- `backfill_epoch`: `bigint`.
 
 ### `post_follows`
 
@@ -366,6 +399,8 @@ The non-deleted answer body check retains historical empty strings from former l
 
 ## Course digest
 
+> **Not built.** The tables in this section do not exist, pending a team decision on knowledge surfacing. They record the planned design. The implemented daily email digest uses `digest_outbox` and `digest_schedule_state`.
+
 ### `course_digest_states`
 
 - `course_id`: `uuid_v7`; primary key and foreign key to `courses.id`.
@@ -387,6 +422,55 @@ The non-deleted answer body check retains historical empty strings from former l
 - `included_at`: `timestamptz`.
 
 ## Resources
+
+### `course_files`
+
+Immutable uploaded files, used by the resource catalog and by course syllabi.
+
+- `id`: `uuid_v7`; primary key.
+- `course_id`: `uuid_v7`; foreign key to `courses.id` with cascade deletion. `(course_id, id)` is unique for same-course foreign keys.
+- `uploaded_by_user_id`: `uuid_v7`, nullable; foreign key to `users.id`, SET NULL on user deletion.
+- `object_key`: `text`; unique object-store key. Not exposed by the API.
+- `file_name`, `media_type`: `text`.
+- `size_bytes`: `bigint`; 1 to 104,857,600.
+- `checksum_sha256`: `bytea`; 32 bytes.
+- `created_at`: `timestamptz`; defaults to `clock_timestamp()`.
+- `deleted_at`: `timestamptz`, nullable; set when the file is hidden, after which a `delete_course_file` job removes its bytes.
+
+### `course_resource_catalogs`
+
+- `course_id`: `uuid_v7`; primary key and foreign key to `courses.id` with cascade deletion.
+- `version`: `integer`; catalog revision, incremented by every catalog change and used for the list ETag and ordering `If-Match`.
+
+### `course_resource_sections`
+
+- `id`: `uuid_v7`; primary key. `(course_id, id)` is unique for same-course foreign keys.
+- `course_id`: `uuid_v7`; foreign key to `courses.id` with cascade deletion.
+- `title`: `text`; trimmed nonblank, at most 200 characters.
+- `visibility`: `text`; `class` or `staff`.
+- `position`: nonnegative `integer`; instructor-chosen order.
+- `version`: `integer`; positive revision.
+
+### `course_resources`
+
+- `id`: `uuid_v7`; stable resource identity and primary key. `(course_id, id)` is unique.
+- `course_id`: `uuid_v7`; foreign key to `courses.id` with cascade deletion.
+- `section_id`: `uuid_v7`, nullable; with `course_id`, foreign key to `course_resource_sections`. Null means ungrouped.
+- `title`: `text`; trimmed nonblank, at most 200 characters.
+- `visibility`: `text`; `class` or `staff`. A staff-only section restricts its items regardless of this value.
+- `position`: nonnegative `integer`.
+- `active_revision_id`: `uuid_v7`; with `id`, foreign key to `course_resource_revisions(resource_id, id)`.
+- `version`: `integer`; positive revision.
+- `created_at`: `timestamptz`; `deleted_at`: `timestamptz`, nullable logical deletion.
+
+### `course_resource_revisions`
+
+- `id`: `uuid_v7`; primary key. `(resource_id, id)` is unique.
+- `resource_id`, `course_id`: `uuid_v7`; foreign key to `course_resources(course_id, id)` with cascade deletion.
+- `kind`: `text`; `upload` or `link`.
+- `file_id`: `uuid_v7`, unique and nullable; with `course_id`, foreign key to `course_files`. Required for `upload`, null for `link`.
+- `url`: `text`, nullable; absolute HTTP(S), at most 2048 characters. Required for `link`, null for `upload`.
+- `created_at`: `timestamptz`.
 
 ### `course_resource_links` (legacy flat named links)
 

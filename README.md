@@ -59,7 +59,7 @@ To delete a post you can read, open its detail view and select **Delete post**. 
 
 The React/Vite client (`apps/web`) talks to the Express API (`apps/api`). PostgreSQL stores application data and background jobs; a separate worker sends mail and processes queued work. The API handles Threads WebSockets; a collaboration server handles live-session WebSockets. Uploaded files use S3-compatible storage (SeaweedFS locally). See the [architecture diagram](diagrams/architecture/architecture.svg), [design](documentation/design.md), [database reference](documentation/database.md), and [API reference](documentation/openapi.yaml). The [`documentation/api/`](documentation/api/) directory explains individual API areas.
 
-For the existing single-VM deployment skeleton, see the [Compose deployment guide](deployment/README.md). The instructions below are for local development. Railway integration will be documented separately.
+For the existing single-VM deployment skeleton, see the [Compose deployment guide](deployment/README.md). The instructions below are for local development.
 
 The Compose setup below is for **reproducible local development**. It includes a local mail sink, hot-reloading servers, and development credentials. Do not expose it publicly without replacing those settings, TLS termination, storage, backups, and email configuration.
 

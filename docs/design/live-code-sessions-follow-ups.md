@@ -1,5 +1,7 @@
 # Live code sessions: follow-ups
 
+> **Historical.** This list was written for post-anchored sessions, which [course-level collaboration sessions](2026-11-01-course-collaboration-sessions.md) replaced. Several items have since shipped, so check the code before using it as a backlog.
+
 Known gaps and improvements after the first version of live code sessions (OpenSpec change `add-live-code-sessions`). Sizes are rough; "OpenSpec" marks changes large enough to need a proposal under `AGENTS.md`.
 
 ## Gaps
