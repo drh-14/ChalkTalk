@@ -200,6 +200,9 @@ jobs:
       - name: Run resource text search browser scenarios
         run: npm run test:browser:resource-search
 
+      - name: Run other mocked-API browser scenarios
+        run: npm run test:browser:mocked
+
   semantic-search:
     runs-on: ubuntu-26.04
     services:
