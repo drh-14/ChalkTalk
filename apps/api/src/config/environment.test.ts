@@ -12,6 +12,51 @@ const base = {
 };
 
 describe("authentication environment", () => {
+  it("uses fixed rate limits even when legacy environment values are overridden", () => {
+    const environment = loadEnvironment({
+      ...base,
+      RATE_LIMIT_VERIFICATION_EMAIL: "999",
+      RATE_LIMIT_VERIFICATION_IP: "0",
+      RATE_LIMIT_LOGIN_EMAIL: "999",
+      RATE_LIMIT_LOGIN_IP: "0",
+      RATE_LIMIT_RESET_EMAIL: "999",
+      RATE_LIMIT_RESET_IP: "0",
+      RATE_LIMIT_SIGNUP_IP: "999",
+      RATE_LIMIT_COLLABORATION_CREATE_USER: "0",
+      RATE_LIMIT_COLLABORATION_TICKET_USER: "999",
+    });
+    expect(environment.rateLimits).toEqual({
+      verificationPerEmail: 5,
+      verificationPerIp: 100,
+      loginPerEmail: 10,
+      loginPerIp: 100,
+      resetPerEmail: 5,
+      resetPerIp: 100,
+      signupPerIp: 100,
+      collaborationCreatePerUser: 30,
+      collaborationTicketPerUser: 300,
+    });
+  });
+
+  it("uses localhost frontend defaults while retaining valid overrides", () => {
+    const defaults = loadEnvironment({
+      AUTH_TOKEN_SECRET: base.AUTH_TOKEN_SECRET,
+    });
+    expect(defaults.frontendOrigins).toEqual(
+      new Set(["https://localhost:5173"]),
+    );
+    expect(defaults.frontendBaseUrl).toBe("https://localhost:5173");
+    expect(loadEnvironment(base).frontendBaseUrl).toBe(
+      "https://app.example.edu",
+    );
+    expect(() =>
+      loadEnvironment({
+        ...base,
+        FRONTEND_BASE_URL: "https://other.example.edu",
+      }),
+    ).toThrow("FRONTEND_BASE_URL");
+  });
+
   it("uses SMTP locally and requires explicit Resend credentials in HTTPS mode", () => {
     expect(loadEnvironment(base).email.provider).toBe("smtp");
     expect(() =>

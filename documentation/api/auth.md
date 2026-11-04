@@ -6,7 +6,7 @@ All browser requests originate from a deployment-configured HTTPS frontend origi
 
 ### **`POST /api/v1/account-verification-requests`**
 
-Requests verification of an account email before account creation or a same-school email change. The server normalizes the email and requires a total normalized ASCII email length of at most 254 characters, a 1–64-character ASCII dot-atom local part (nonempty RFC atext segments separated by single dots) and a valid email domain ending exactly in `.edu` (including subdomains). For every request with an eligible `.edu` domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits default to five requests per normalized email per hour and 100 requests per source IP per hour; deployments may configure both limits. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+Requests verification of an account email before account creation or a same-school email change. The server normalizes the email and requires a total normalized ASCII email length of at most 254 characters, a 1–64-character ASCII dot-atom local part (nonempty RFC atext segments separated by single dots) and a valid email domain ending exactly in `.edu` (including subdomains). For every request with an eligible `.edu` domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits are fixed at five requests per normalized email per hour and 100 requests per source IP per hour. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
 
 **Authentication:** None.
 
@@ -89,7 +89,7 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 ##### `429 Too Many Requests`
 
-`rate_limited`: The configured per-email or per-source-IP request limit was exceeded. The response includes `Retry-After`.
+`rate_limited`: The fixed per-email or per-source-IP request limit was exceeded. The response includes `Retry-After`.
 
 ##### `500 Internal Server Error`
 

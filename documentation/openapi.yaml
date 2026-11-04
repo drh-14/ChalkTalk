@@ -340,9 +340,8 @@ paths:
         is appropriate, it sends a deployment-configured HTTPS link to the web client
         containing a 30-minute, single-use opaque token; clients cannot supply a redirect
         destination. Tokens are stored only as hashes, and the latest request invalidates
-        earlier unused tokens for the same normalized email. Rate limits default to
-        five requests per normalized email per hour and 100 requests per source IP
-        per hour; deployments may configure both limits.
+        earlier unused tokens for the same normalized email. Rate limits are fixed;
+        see [the authentication API reference](api/auth.md) for their thresholds.
       operationId: createAccountVerificationRequest
       security: []
       responses:

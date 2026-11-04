@@ -161,7 +161,7 @@ curl --request POST '/api/v1/courses/course_123/collaboration-sessions' \
 
 ##### `429 Too Many Requests`
 
-`rate_limited`: Too many sessions created in the last hour, per `RATE_LIMIT_COLLABORATION_CREATE_USER` (default 30). Idempotent replays are not counted. The response includes `Retry-After`.
+`rate_limited`: Too many sessions created in the last hour, per the fixed limit of 30 sessions per user. Idempotent replays are not counted. The response includes `Retry-After`.
 
 ##### `500 Internal Server Error`
 
@@ -1162,7 +1162,7 @@ curl --request POST '/api/v1/collaboration-sessions/collab_123/connection-ticket
 
 ##### `429 Too Many Requests`
 
-`rate_limited`: Too many connection tickets in the last 10 minutes, per `RATE_LIMIT_COLLABORATION_TICKET_USER` (default 300). The response includes `Retry-After`.
+`rate_limited`: Too many connection tickets in the last 10 minutes, per the fixed limit of 300 tickets per user. The response includes `Retry-After`.
 
 ##### `500 Internal Server Error`
 
