@@ -46,7 +46,7 @@
 - [x] 7.2 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build. Record any environment-only failures with evidence
 - [x] 7.3 Commit on a feature branch, run the no-mistakes gate, address its findings, squash to one commit, and publish a draft PR with the browser screenshots. Verify final-head CI
 - [x] 7.5 Rebase over merged PRs #114 and #116, preserving email and OCR failure handling. Run worker/email, extraction/search, and collaboration tests, browser resource-search coverage, repository checks, and a fresh Codex no-mistakes gate. Apply the one-commit publication and final-head CI requirements in task 7.3 to the updated PR #118
-- [ ] 7.4 Archive after merge
+- [x] 7.4 Archive after merge
 
 Verification: Codex no-mistakes run `01M6H0RTNA2P59KQZWQN7PB92W` passed review, live browser/API/worker/backfill scenarios, focused automated tests, documentation, lint, and all five CI jobs. Evidence and screenshots are attached to PR #118. The stalled-download outage fix passed 60 focused tests. Windows CRLF-only formatting warnings were normalized or checked with automatic line-ending detection; the OpenAPI archive newline artifact passed when rerun against the actual checkout. OpenSpec remains active until merge.
 
