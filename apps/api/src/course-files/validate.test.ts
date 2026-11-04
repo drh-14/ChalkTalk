@@ -612,12 +612,12 @@ describe("resource format validation", () => {
     ).resolves.toBe("application/pdf");
   });
   it.each([
-    { action: "absolute", accepted: true },
-    { action: "relative", accepted: true },
-    { action: "unsafe", accepted: false },
+    "absolute",
+    "relative",
+    "unsafe",
   ])(
-    "validates $action presentation-step actions at both entries, direct and indirect",
-    async ({ action, accepted }) => {
+    "rejects %s presentation-step actions at both entries, direct and indirect",
+    async (action) => {
       for (const entry of ["NA", "PA"]) {
         for (const indirect of [false, true]) {
           const pdf = await PDFDocument.create();
@@ -648,9 +648,7 @@ describe("resource format validation", () => {
             "application/pdf",
             Buffer.from(await pdf.save({ useObjectStreams: true })),
           );
-          if (accepted)
-            await expect(validation).resolves.toBe("application/pdf");
-          else await expect(validation).rejects.toMatchObject({ status: 415 });
+          await expect(validation).rejects.toMatchObject({ status: 415 });
         }
       }
     },

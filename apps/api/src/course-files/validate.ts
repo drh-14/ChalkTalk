@@ -44,6 +44,7 @@ const forbiddenPdfNames = new Set([
   "/SubmitForm",
   "/ImportData",
   "/GoToR",
+  "/PresSteps",
   "/Encrypt",
 ]);
 
@@ -174,15 +175,6 @@ function validatePdfStructure(output: string) {
             safePdfAction(opening, objects);
             if ((opening as Record<string, unknown>)["/S"] !== "/GoTo")
               throw invalid();
-          }
-        }
-        if (key === "/PresSteps") {
-          const steps = resolvePdfObject(item, objects);
-          if (!steps || typeof steps !== "object" || Array.isArray(steps))
-            throw invalid();
-          for (const entry of ["/NA", "/PA"]) {
-            const action = (steps as Record<string, unknown>)[entry];
-            if (action !== undefined) safePdfAction(action, objects);
           }
         }
         if (
