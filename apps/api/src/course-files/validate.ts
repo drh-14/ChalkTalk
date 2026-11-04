@@ -50,11 +50,36 @@ const forbiddenPdfNames = new Set([
 const MAX_PDF_STRUCTURE_BYTES = 128 * 1024 * 1024;
 const pdfObjectReference = /^\d+ \d+ R$/;
 
-function safePdfAction(value: unknown, objects: Record<string, unknown>) {
-  const action =
+function resolvePdfObject(value: unknown, objects: Record<string, unknown>) {
+  return (
     typeof value === "string" && pdfObjectReference.test(value)
       ? (objects[`obj:${value}`] as { value?: unknown } | undefined)?.value
-      : value;
+      : value
+  );
+}
+
+function safePdfDestination(value: unknown, objects: Record<string, unknown>) {
+  const destination = resolvePdfObject(value, objects);
+  if (typeof destination === "string") {
+    if (
+      (destination.startsWith("u:") && destination.length > 2) ||
+      (destination.startsWith("/") && destination.length > 1)
+    )
+      return;
+  } else if (
+    Array.isArray(destination) &&
+    destination.length >= 2 &&
+    typeof destination[0] === "string" &&
+    pdfObjectReference.test(destination[0]) &&
+    typeof destination[1] === "string" &&
+    ["/XYZ", "/Fit", "/FitH", "/FitV", "/FitR", "/FitB", "/FitBH", "/FitBV"].includes(destination[1])
+  )
+    return;
+  throw invalid();
+}
+
+function safePdfAction(value: unknown, objects: Record<string, unknown>) {
+  const action = resolvePdfObject(value, objects);
   if (!action || typeof action !== "object" || Array.isArray(action))
     throw invalid();
   const fields = action as Record<string, unknown>;
@@ -89,16 +114,7 @@ function safePdfAction(value: unknown, objects: Record<string, unknown>) {
   } else if (fields["/S"] === "/GoTo") {
     if (Object.keys(fields).some((key) => !["/S", "/D", "/Type"].includes(key)))
       throw invalid();
-    const destination = fields["/D"];
-    if (
-      !(typeof destination === "string" && destination.startsWith("u:")) &&
-      !(
-        Array.isArray(destination) &&
-        typeof destination[0] === "string" &&
-        pdfObjectReference.test(destination[0])
-      )
-    )
-      throw invalid();
+    safePdfDestination(fields["/D"], objects);
   } else throw invalid();
   if (fields["/Type"] !== undefined && fields["/Type"] !== "/Action")
     throw invalid();
@@ -125,15 +141,14 @@ function validatePdfStructure(output: string) {
       for (const [key, item] of Object.entries(fields)) {
         if (forbiddenPdfNames.has(key)) throw invalid();
         if (key === "/OpenAction") {
-          safePdfAction(item, objects);
-          const action =
-            typeof item === "string"
-              ? (
-                  objects[`obj:${item}`] as
-                    { value?: Record<string, unknown> } | undefined
-                )?.value
-              : (item as Record<string, unknown>);
-          if (action?.["/S"] !== "/GoTo") throw invalid();
+          const opening = resolvePdfObject(item, objects);
+          if (typeof opening === "string" || Array.isArray(opening))
+            safePdfDestination(opening, objects);
+          else {
+            safePdfAction(opening, objects);
+            if ((opening as Record<string, unknown>)["/S"] !== "/GoTo")
+              throw invalid();
+          }
         }
         if (key === "/A") safePdfAction(item, objects);
         if (key === "/URI" && fields["/S"] !== "/URI") throw invalid();

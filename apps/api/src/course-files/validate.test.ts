@@ -443,6 +443,54 @@ describe("resource format validation", () => {
       ).resolves.toBe("application/pdf");
     },
   );
+  it("accepts a PDF with a direct page opening destination", async () => {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([100, 100]);
+    pdf.catalog.set(
+      PDFName.of("OpenAction"),
+      pdf.context.obj([page.ref, PDFName.of("Fit")]),
+    );
+    await expect(
+      validateStaged(
+        "open-page.pdf",
+        "application/pdf",
+        Buffer.from(await pdf.save({ useObjectStreams: true })),
+      ),
+    ).resolves.toBe("application/pdf");
+  });
+  it.each(["name", "string"])(
+    "accepts a PDF with a direct named opening destination (%s)",
+    async (kind) => {
+      const pdf = await PDFDocument.create();
+      const page = pdf.addPage([100, 100]);
+      const destination = [page.ref, PDFName.of("Fit")];
+      if (kind === "name") {
+        pdf.catalog.set(
+          PDFName.of("Dests"),
+          pdf.context.obj({ introduction: destination }),
+        );
+        pdf.catalog.set(PDFName.of("OpenAction"), PDFName.of("introduction"));
+      } else {
+        pdf.catalog.set(
+          PDFName.of("Names"),
+          pdf.context.obj({
+            Dests: { Names: [PDFString.of("introduction"), destination] },
+          }),
+        );
+        pdf.catalog.set(
+          PDFName.of("OpenAction"),
+          PDFString.of("introduction"),
+        );
+      }
+      await expect(
+        validateStaged(
+          "open-named.pdf",
+          "application/pdf",
+          Buffer.from(await pdf.save({ useObjectStreams: true })),
+        ),
+      ).resolves.toBe("application/pdf");
+    },
+  );
   it.each(["./relative.html", "javascript:alert(1)", "file:///etc/passwd"])(
     "rejects a PDF URI action with %s",
     async (url) => {
