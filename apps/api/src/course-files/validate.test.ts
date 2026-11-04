@@ -558,7 +558,10 @@ describe("resource format validation", () => {
           const page = pdf.addPage([100, 100]);
           const stepAction =
             action === "unsafe"
-              ? pdf.context.obj({ S: PDFName.of("Named"), N: PDFName.of("Print") })
+              ? pdf.context.obj({
+                  S: PDFName.of("Named"),
+                  N: PDFName.of("Print"),
+                })
               : pdf.context.obj({
                   S: PDFName.of("URI"),
                   URI: PDFString.of(
@@ -579,7 +582,8 @@ describe("resource format validation", () => {
             "application/pdf",
             Buffer.from(await pdf.save({ useObjectStreams: true })),
           );
-          if (accepted) await expect(validation).resolves.toBe("application/pdf");
+          if (accepted)
+            await expect(validation).resolves.toBe("application/pdf");
           else await expect(validation).rejects.toMatchObject({ status: 415 });
         }
       }
