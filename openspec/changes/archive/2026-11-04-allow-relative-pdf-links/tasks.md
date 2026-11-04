@@ -1,0 +1,4 @@
+- [x] Add relative-link acceptance tests and keep unsafe-scheme rejection tests; confirm the new acceptance test fails before implementation.
+- [x] Allow relative URI references without weakening active-action checks.
+- [x] Update API/OpenSpec documentation and verify the original syllabus with focused checks.
+- [x] Archive the change, update the one-commit draft PR, and verify final CI.
