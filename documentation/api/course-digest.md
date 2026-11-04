@@ -1,5 +1,7 @@
 ## Course Digest
 
+> **Not built.** These routes and their tables do not exist, pending a team decision on knowledge surfacing. This page records the planned contract. The [daily course email digest](daily-course-email-digest.md) is a separate, implemented feature.
+
 Post authors in digest entries follow the shared [identity visibility policy](identity-visibility.md); derived data never exposes a hidden identity.
 
 <a id="getCourseDigest"></a>

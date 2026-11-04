@@ -6,7 +6,7 @@ This is a **runnable starting point**, not a production-readiness guarantee. It 
 
 - Public: Caddy on TCP 80/443 and UDP 443. It obtains/renews the domain's TLS certificate, serves compiled React assets, proxies `/api/*` to Express and `/collaboration` to the WebSocket service.
 - Private: compiled API, worker, collaboration server, one-shot migration job, PostgreSQL 17 and SeaweedFS. Only Caddy publishes host ports; PostgreSQL and SeaweedFS use named volumes. `edge` provides internet egress to the API/worker for SES; `data` is an internal network.
-- This stack uses the application's default SMTP provider with AWS SES on port 465. It does not start Mailpit or send a test message by itself.
+- This stack uses the application's default SMTP provider with AWS SES on port 465. It does not start Mailpit or send a test message by itself. To use Resend over HTTPS instead, set `EMAIL_PROVIDER=resend`, `EMAIL_FROM` and `RESEND_API_KEY` in `deployment/.env`; see the [root README](../README.md).
 
 ## Prepare a pinned release
 
@@ -40,6 +40,7 @@ This is a **runnable starting point**, not a production-readiness guarantee. It 
 | `AUTH_TOKEN_SECRET`                                                                | Independent random session-signing secret (at least 32 characters).                 |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | SES SMTP endpoint, port 465, TLS and verified sender.                               |
 | `SEAWEEDFS_ACCESS_KEY_ID`, `SEAWEEDFS_SECRET_ACCESS_KEY`                           | Private S3-compatible storage credentials, reused by SeaweedFS and the application. |
+| `RESOURCE_OCR_MAX_PAGES`, `RESOURCE_OCR_LANGUAGES` | Worker text extraction: scanned PDF pages OCR'd per file (0 keeps PDF text layers only; images are still OCR'd) and Tesseract languages, each needing its `tesseract-ocr-<code>` package in the image. |
 | `S3_BUCKET`, `S3_REGION`                                                           | Storage bucket and SDK region; `S3_ENDPOINT` is set internally to SeaweedFS.        |
 
 `TRUST_PROXY_HOPS=1` is set by Compose for the API. **Do not publish the API directly**: it trusts exactly one Caddy proxy hop for authentication per-IP rate limits, and Caddy must remain the only public entry point. Local development continues with proxy trust disabled.

@@ -62,7 +62,7 @@ ChalkTalk is designed as a single application that can be deployed in two ways, 
 
 Two deployment models, one system
 
-- **Managed (Cloud) deployment:** Hosted and operated by the ChalkTalk team (us) on AWS. Instructors sign up and use the platform directly, with no infrastructure of their own. The team provides the AI provider key and is responsible for uptime, backups, and cost.
+- **Managed (Cloud) deployment:** Hosted and operated by the ChalkTalk team (us) on AWS. Instructors sign up and use the platform directly, with no infrastructure of their own. The team provides the AI provider key and is responsible for uptime, backups, and cost. **Status:** planned, not built.
 - **Self-managed deployment:** The full application, published as open source, runnable by any instructor, department, or open-courseware maintainer on their own infrastructure via Docker. A setup script provisions the application together with its database, collaboration relay, and file storage in containers. The self-hoster supplies their own AI provider key (or runs without AI features), so operating cost and data ownership stay with them.
 
 Both deployments run the identical application image; only the infrastructure underneath differs (managed cloud services vs. equivalent containers). This means a feature or fix built once benefits both deployment paths automatically, rather than requiring two maintained versions of the app.
@@ -121,7 +121,7 @@ When a user drafts a new question, related existing posts are surfaced live thro
 **Course Resources**  
 Instructors can upload or link resources relating to the course, such as syllabus documents, lecture notes, assignments, course policies, and external links.
 
-Uploaded documents can be divided into instructor-defined regions, such as a diagram or paragraph on a given page. Each region is independently searchable and can be directly linked to from posts, responses, and followups. Text within a defined region is extracted via OCR to support search.
+Uploaded documents can be divided into instructor-defined regions, such as a diagram or paragraph on a given page. Each region is independently searchable and can be directly linked to from posts, responses, and followups. Text within a defined region is extracted via OCR to support search. **Status:** whole-file text extraction and [resource search](api/resources.md#searchCourseResources) are built; regions are not.
 
 **Live Collaborative Sessions**  
 Course collaboration sessions are independent of posts; see the [current collaboration design](design.md#threads-resources-and-live-collaboration).
@@ -137,7 +137,7 @@ Course statistics are compiled per course in a statistics tab. These statistics 
 Response time is defined as the time between when a question is posted and when an endorsed answer is posted in response.
 
 **Knowledge Surfacing**  
-Knowledge surfacing operates within each course; see the [knowledge-surfacing design](design.md#knowledge-surfacing) for the engagement signals and per-course digest.
+Knowledge surfacing operates within each course; see the [knowledge-surfacing design](design.md#knowledge-surfacing) for the engagement signals and per-course digest. **Status:** not built, pending a team decision.
 
 #
 

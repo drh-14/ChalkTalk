@@ -106,6 +106,78 @@ Success is `200 application/json` with `Cache-Control: private, no-store`:
 
 `resource` is exactly the catalog entry. `match.inTitle` is true when the title matched (including a misspelling). `match.snippet` is null unless extracted text matched; otherwise `text` is a plain-text excerpt of at most 300 characters and `highlights` are ordered, non-overlapping `{ start, length }` ranges in UTF-16 code units into `text`. Snippets never contain markup; markup-like source text such as `<b>` is returned verbatim as text and must be rendered as text.
 
+### Catalog sections, single resources and ordering
+
+All routes below use the same authentication and errors as the catalog above. Reads are for current members of active or archived courses, with staff-only sections and items hidden from students and returned as `404`. Writes are for current instructors of active courses and require an allowed `Origin` and `X-CSRF-Token`; others receive `403 permission_denied`, and archived courses return `409 course_archived`. Conditional writes need `If-Match`: a missing header returns `428 precondition_required`, and a stale one returns `412 version_conflict`. Invalid input returns `422 validation_failed`. See the [OpenAPI document](../openapi.yaml) for schemas.
+
+A section is `{ id, courseId, title, visibility, position, version }`. Titles are trimmed, nonblank and at most 200 characters; `visibility` is `class` (default) or `staff`.
+
+<a id="listResourceSections"></a>
+
+#### `GET /api/v1/courses/{courseId}/resource-sections`
+
+Returns `200` with `{ data: [section], version }` in position order and an `ETag` of the catalog version. `version` is the value that ordering writes send as `If-Match`.
+
+<a id="createResourceSection"></a>
+
+#### `POST /api/v1/courses/{courseId}/resource-sections`
+
+Accepts `{ title, visibility? }`. Returns `201` with `{ data: section }`, its `ETag` and a `Location`.
+
+<a id="updateResourceSection"></a>
+
+#### `PATCH /api/v1/courses/{courseId}/resource-sections/{sectionId}`
+
+Accepts any of `{ title, visibility }` with the section's `If-Match`. Returns `200` with `{ data: section }`.
+
+<a id="deleteResourceSection"></a>
+
+#### `DELETE /api/v1/courses/{courseId}/resource-sections/{sectionId}`
+
+Requires the section's `If-Match` and returns `204`. Its resources stay in the catalog, ungrouped. Items from a staff-only section become staff-only themselves, so removing a section never widens access.
+
+<a id="reorderResourceSections"></a>
+
+#### `PUT /api/v1/courses/{courseId}/resource-sections/order`
+
+Accepts `{ ids }`, the complete current list of section IDs in the new order, with the catalog version as `If-Match`. Returns `200` with `{ data: { version } }`. A partial list returns `422`.
+
+<a id="reorderResources"></a>
+
+#### `PUT /api/v1/courses/{courseId}/resources/order`
+
+Accepts `{ ids, sectionId }`, the complete list of live resources in one section (`null` for ungrouped), with the catalog version as `If-Match`. Returns `200` with `{ data: { version } }`.
+
+<a id="getCourseResource"></a>
+
+#### `GET /api/v1/courses/{courseId}/resources/{resourceId}`
+
+Returns `200` with `{ data: resource }` and an `ETag` of the resource version. Hidden, removed and missing resources return `404`.
+
+<a id="updateCourseResource"></a>
+
+#### `PATCH /api/v1/courses/{courseId}/resources/{resourceId}`
+
+Accepts any of `{ title, visibility, sectionId, url }` with the resource's `If-Match`. Omitted fields keep their values. Supplying `url` selects a new link revision while keeping the resource's identity, and retires an uploaded file that nothing else references.
+
+<a id="deleteCourseResource"></a>
+
+#### `DELETE /api/v1/courses/{courseId}/resources/{resourceId}`
+
+Requires the resource's `If-Match` and returns `204`. The resource is hidden immediately, and unreferenced bytes are queued for worker cleanup.
+
+<a id="uploadCourseResourceFile"></a>
+
+#### `POST /api/v1/courses/{courseId}/resources/files`
+
+Creates a catalog file from multipart `file` plus optional `title` (defaults to the filename), `sectionId` (empty means ungrouped) and `visibility` fields. File limits match [standalone uploads](#post-apiv1coursescourseidfiles). Returns `201` with `{ data: resource }`, an `ETag` and a `Location`, and queues text extraction. An optional `Idempotency-Key` replays the original response; reusing it for different input returns `409 idempotency_key_reused`.
+
+<a id="replaceCourseResourceFile"></a>
+
+#### `PUT /api/v1/courses/{courseId}/resources/{resourceId}/file`
+
+Replaces the resource's file with the resource's `If-Match`, using the same multipart fields. Omitted metadata keeps its current value. Returns `200` with `{ data: resource }`. The resource ID is unchanged, the old file is retired, and text extraction is queued for the new one. See [course information and staff](course-information.md) for the syllabus.
+
 ### Deferred resource catalog operations
 
 The following global `/resources/{resourceId}` and region contracts remain deferred; the implemented catalog uses course-scoped resource routes. Region-level OCR and descriptions remain deferred; whole-file text extraction is covered by [Search course resources](#searchCourseResources).

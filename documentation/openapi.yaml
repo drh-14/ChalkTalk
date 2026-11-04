@@ -48,7 +48,9 @@ tags:
   - name: Statistics
     description: Statistics operations.
   - name: Course Digest
-    description: Course Digest operations.
+    description: "Not built: these operations record a planned contract, pending a team decision on knowledge surfacing."
+  - name: Course Information
+    description: Course information and staff profiles.
   - name: Resources
     description: Resources operations.
   - name: Threads
@@ -6992,6 +6994,7 @@ paths:
         - "$ref": "#/components/parameters/Limit"
   "/courses/{courseId}/digest":
     get:
+      x-implementation-status: not-built
       tags:
         - Course Digest
       summary: Retrieve course digest
@@ -7078,6 +7081,7 @@ paths:
         - "$ref": "#/components/parameters/CourseId"
   "/courses/{courseId}/digest/entries/{postId}":
     put:
+      x-implementation-status: not-built
       tags:
         - Course Digest
       summary: Manually include post in course digest
@@ -7242,6 +7246,7 @@ paths:
         - "$ref": "#/components/parameters/PostId"
         - "$ref": "#/components/parameters/CsrfToken"
     delete:
+      x-implementation-status: not-built
       tags:
         - Course Digest
       summary: Remove manual inclusion of post from course digest
@@ -7561,8 +7566,1176 @@ paths:
           content:
             application/json:
               schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resource-sections":
+    get:
+      tags: [Resources]
+      operationId: listResourceSections
+      summary: "List visible resource sections"
+      description: "Current members of active or archived courses. Staff-only sections are hidden from students. The ETag and version are the catalog version used by ordering writes."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: "Sections in position order."
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, version]
+                properties:
+                  data:
+                    type: array
+                    items: { "$ref": "#/components/schemas/ResourceSection" }
+                  version: { type: integer, minimum: 1 }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found, hidden, or not accessible to the caller."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+    post:
+      tags: [Resources]
+      operationId: createResourceSection
+      summary: "Create a resource section"
+      description: "Current instructors of active courses."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: ["title"]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                visibility: { type: string, enum: [class, staff] }
+      responses:
+        "201":
+          description: "Created section."
+          headers:
+            ETag:
+              schema: { type: string }
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/ResourceSection" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resource-sections/order":
+    put:
+      tags: [Resources]
+      operationId: reorderResourceSections
+      summary: "Reorder resource sections"
+      description: "Supply every current section ID in the new order, with the catalog version as If-Match."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: ["ids"]
+              properties:
+                ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: "New catalog version."
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [version]
+                    properties:
+                      version: { type: integer, minimum: 1 }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resource-sections/{sectionId}":
+    patch:
+      tags: [Resources]
+      operationId: updateResourceSection
+      summary: "Update a resource section"
+      description: "Current instructors of active courses, with the section's If-Match."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+        - name: sectionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: []
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                visibility: { type: string, enum: [class, staff] }
+      responses:
+        "200":
+          description: "Updated section."
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/ResourceSection" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+    delete:
+      tags: [Resources]
+      operationId: deleteResourceSection
+      summary: "Delete a resource section"
+      description: "Resources stay in the catalog, ungrouped. Items from a staff-only section become staff-only, so removal never widens access."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+        - name: sectionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resources/order":
+    put:
+      tags: [Resources]
+      operationId: reorderResources
+      summary: "Reorder resources in a section"
+      description: "Supply every live resource in one section (sectionId null means ungrouped) in the new order, with the catalog version as If-Match."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: ["ids", "sectionId"]
+              properties:
+                ids: { type: array, items: { type: string, format: uuid } }
+                sectionId: { type: [string, "null"], format: uuid }
+      responses:
+        "200":
+          description: "New catalog version."
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [version]
+                    properties:
+                      version: { type: integer, minimum: 1 }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resources/files":
+    post:
+      tags: [Resources]
+      operationId: uploadCourseResourceFile
+      summary: "Upload a catalog file"
+      description: "Current instructors of active courses. Title defaults to the filename. Queues text extraction. An optional Idempotency-Key replays the original response."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                title: { type: string, minLength: 1, maxLength: 200 }
+                sectionId: { type: string, description: "A section ID, or empty for ungrouped." }
+                visibility: { type: string, enum: [class, staff] }
+      responses:
+        "201":
+          description: "Created resource."
+          headers:
+            ETag:
+              schema: { type: string }
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseResource" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "413":
+          description: "The file is too large (payload_too_large)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "415":
+          description: "The file type or structure is not supported (unsupported_media_type)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resources/{resourceId}":
+    get:
+      tags: [Resources]
+      operationId: getCourseResource
+      summary: "Read a catalog resource"
+      description: "Current members of active or archived courses. Hidden and removed resources return 404."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: resourceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: "The resource."
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseResource" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found, hidden, or not accessible to the caller."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+    patch:
+      tags: [Resources]
+      operationId: updateCourseResource
+      summary: "Update a catalog resource"
+      description: "Omitted fields keep their values. Supplying url selects a new link revision with the same resource ID and retires an uploaded file that nothing else references."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+        - name: resourceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: []
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                visibility: { type: string, enum: [class, staff] }
+                sectionId: { type: [string, "null"], format: uuid }
+                url: { type: string, format: uri, maxLength: 2048 }
+      responses:
+        "200":
+          description: "Updated resource."
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseResource" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+    delete:
+      tags: [Resources]
+      operationId: deleteCourseResource
+      summary: "Remove a catalog resource"
+      description: "Hides the resource immediately and queues unreferenced bytes for worker cleanup."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+        - name: resourceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resources/{resourceId}/file":
+    put:
+      tags: [Resources]
+      operationId: replaceCourseResourceFile
+      summary: "Replace a resource's file"
+      description: "Keeps the resource ID, retires the old file and queues text extraction for the new one. Omitted metadata keeps its value."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+        - name: resourceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                title: { type: string, minLength: 1, maxLength: 200 }
+                sectionId: { type: string, description: "A section ID, or empty for ungrouped." }
+                visibility: { type: string, enum: [class, staff] }
+      responses:
+        "200":
+          description: "Updated resource."
+          headers:
+            ETag:
+              schema: { type: string }
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseResource" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "413":
+          description: "The file is too large (payload_too_large)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "415":
+          description: "The file type or structure is not supported (unsupported_media_type)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/information":
+    get:
+      tags: [Course Information]
+      operationId: getCourseInformation
+      summary: "Read course information"
+      description: "Current members of active or archived courses."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: "Course information."
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseInformation" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found, hidden, or not accessible to the caller."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+    patch:
+      tags: [Course Information]
+      operationId: updateCourseInformation
+      summary: "Update course information"
+      description: "Current instructors of active courses, with If-Match. Both fields are required."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: ["descriptionMarkdown", "website"]
+              properties:
+                descriptionMarkdown: { type: string, maxLength: 50000 }
+                website: { type: [string, "null"], format: uri, maxLength: 2048 }
+      responses:
+        "200":
+          description: "Updated information."
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseInformation" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/information/syllabus":
+    put:
+      tags: [Course Information]
+      operationId: replaceCourseSyllabus
+      summary: "Replace the course syllabus"
+      description: "Retires any previous syllabus file. Syllabus files are not text-searched."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200":
+          description: "Updated information."
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseInformation" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "413":
+          description: "The file is too large (payload_too_large)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "415":
+          description: "The file type or structure is not supported (unsupported_media_type)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+    delete:
+      tags: [Course Information]
+      operationId: removeCourseSyllabus
+      summary: "Remove the course syllabus"
+      description: "Returns the updated information."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          description: "Updated information."
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseInformation" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/staff":
+    get:
+      tags: [Course Information]
+      operationId: listCourseStaff
+      summary: "List course staff"
+      description: "Current members of active or archived courses. Instructors first, then by display name."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+      responses:
+        "200":
+          description: "Staff profiles."
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { "$ref": "#/components/schemas/CourseStaffProfile" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found, hidden, or not accessible to the caller."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/staff/{userId}":
+    patch:
+      tags: [Course Information]
+      operationId: updateCourseStaffProfile
+      summary: "Update a staff profile"
+      description: "Current instructors of active courses, with the profile's If-Match. The target must be current course staff."
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+        - "$ref": "#/components/parameters/IfMatch"
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: ["contact", "location", "officeHours"]
+              properties:
+                contact: { type: string, maxLength: 2000 }
+                location: { type: string, maxLength: 2000 }
+                officeHours: { type: string, maxLength: 2000 }
+      responses:
+        "200":
+          description: "Updated profile."
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { "$ref": "#/components/schemas/CourseStaffProfile" }
+        "401":
+          description: "Authentication required."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: "Invalid Origin or CSRF token, or the caller is not an instructor (permission_denied)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: "Not found."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "409":
+          description: "The course is archived (course_archived)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: "Invalid input (validation_failed)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: "Service unavailable."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "412":
+          description: "If-Match is stale (version_conflict)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "428":
+          description: "If-Match is missing (precondition_required)."
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
   "/resources/{resourceId}":
     get:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: Retrieve resource
@@ -7659,6 +8832,7 @@ paths:
       parameters:
         - "$ref": "#/components/parameters/ResourceId"
     patch:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: Update resource
@@ -7885,6 +9059,7 @@ paths:
               metadata:
                 contentType: application/json
     delete:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: Delete resource
@@ -8015,6 +9190,7 @@ paths:
         - "$ref": "#/components/parameters/CsrfToken"
   "/resources/{resourceId}/regions":
     post:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: Create region in resource
@@ -8185,6 +9361,7 @@ paths:
                 height: 400
               title: Recursion diagram
     get:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: List regions in resource
@@ -8308,6 +9485,7 @@ paths:
         - "$ref": "#/components/parameters/Limit"
   "/courses/{courseId}/resource-regions":
     get:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: Search resource regions in course
@@ -8429,6 +9607,7 @@ paths:
         - "$ref": "#/components/parameters/Limit"
   "/resource-regions/{resourceRegionId}":
     get:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: Retrieve resource region
@@ -8525,6 +9704,7 @@ paths:
       parameters:
         - "$ref": "#/components/parameters/ResourceRegionId"
     patch:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: Update resource region
@@ -8701,6 +9881,7 @@ paths:
             example:
               title: Recursive-call diagram
     delete:
+      x-implementation-status: deferred
       tags:
         - Resources
       summary: Delete resource region
@@ -11777,6 +12958,42 @@ components:
                         properties:
                           start: { type: integer, minimum: 0 }
                           length: { type: integer, minimum: 1 }
+    ResourceSection:
+      type: object
+      additionalProperties: false
+      required: [id, courseId, title, visibility, position, version]
+      properties:
+        id: { type: string, format: uuid }
+        courseId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        visibility: { type: string, enum: [class, staff] }
+        position: { type: integer, minimum: 0 }
+        version: { type: integer, minimum: 1 }
+    CourseInformation:
+      type: object
+      additionalProperties: false
+      required: [courseId, descriptionMarkdown, website, syllabus, version]
+      properties:
+        courseId: { type: string, format: uuid }
+        descriptionMarkdown: { type: string, maxLength: 50000 }
+        website: { type: [string, "null"], format: uri, maxLength: 2048 }
+        syllabus:
+          oneOf:
+            - type: "null"
+            - "$ref": "#/components/schemas/CourseFile"
+        version: { type: integer, minimum: 1 }
+    CourseStaffProfile:
+      type: object
+      additionalProperties: false
+      required: [userId, displayName, role, contact, location, officeHours, version]
+      properties:
+        userId: { type: string, format: uuid }
+        displayName: { type: string }
+        role: { type: string, enum: [ta, instructor] }
+        contact: { type: string, maxLength: 2000 }
+        location: { type: string, maxLength: 2000 }
+        officeHours: { type: string, maxLength: 2000 }
+        version: { type: integer, minimum: 1 }
     ResourceTextStatus:
       type: string
       enum: [pending, ready, failed, unsupported]

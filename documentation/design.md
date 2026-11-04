@@ -86,6 +86,8 @@ Response time is defined as the time between when a question is posted and when 
 
 ### **Knowledge Surfacing**
 
+**Status: not built, pending a team decision.** No digest view, route or table exists. The [daily course email digest](api/daily-course-email-digest.md) is a separate, implemented feature. This section records the original plan.
+
 The system tracks engagement signals per post, including view count, followup activity, and edits made to endorsed answers after initial endorsement, in order to identify content likely to be broadly relevant within the current course. Surfaced content is displayed in a per-course digest view, and instructors can also manually pin content to this digest.
 
 ### **Role Permissions**
@@ -98,14 +100,14 @@ The system tracks engagement signals per post, including view count, followup ac
 | Endorse answers      | No       | Yes   | Yes        |
 | Delete readable post | Own only | Yes   | Yes        |
 | Create Thread board  | No       | Yes   | Yes        |
-| Manage members       | No       | Maybe | Yes        |
+| Manage members       | No       | No    | Yes        |
 | Archive/delete class | No       | No    | Yes        |
 
 # Nonfunctional Requirements
 
 ### **Security**
 
-Deployed endpoints use TLS. Passwords are hashed with Argon2id. Authentication uses secure, HttpOnly session cookies and CSRF tokens for unsafe requests. The API checks course membership and role for protected course-scoped operations and scopes course-content queries accordingly. Account-profile operations use account ownership. PostgreSQL row-level security provides an additional database-level enforcement layer for course-scoped data.
+Deployed endpoints use TLS. Passwords are hashed with Argon2id. Authentication uses secure, HttpOnly session cookies and CSRF tokens for unsafe requests. The API checks course membership and role for protected course-scoped operations and scopes course-content queries accordingly. Account-profile operations use account ownership. Course isolation is enforced by these API checks and by relational constraints; ChalkTalk does not use PostgreSQL row-level security.
 
 ### **Failure Handling**
 
@@ -113,11 +115,11 @@ In the presence of errors, generic error messages will be displayed to the user 
 
 ### **Performance and Scalability**
 
-All API requests must have a latency below or at 200 ms. When CPU load goes above 60%, new web server instances will be automatically provisioned.
+All API requests must have a latency below or at 200 ms. When CPU load goes above 60%, new web server instances will be automatically provisioned. These are targets: no load test measures the latency, and the implemented single-VM deployment does not autoscale.
 
 ### **Metrics and Logging**
 
-System and infrastructure metrics will be collected every 60 seconds. Results from all API requests and responses will be logged and retained for 1 year.
+System and infrastructure metrics will be collected every 60 seconds. Results from all API requests and responses will be logged and retained for 1 year. These are targets for a production deployment; the implemented local monitoring stack has its own retention policy, described in [local observability](api/observability.md).
 
 # Architecture
 
@@ -144,15 +146,17 @@ flowchart TB
 
 **PostgreSQL.** PostgreSQL stores users, courses, memberships, posts, answers, followups, sessions, and the job queue. Course-scoped tables use course identifiers and relational constraints; API authorization checks determine which rows a user can access.
 
-**Object store.** The object store holds uploaded images and documents. It is AWS S3 in the managed deployment and SeaweedFS in the self-hosted deployment. Both use the same S3 API, so the application code is identical in both.
+**Object store.** The object store holds uploaded images and documents. The implemented deployments use SeaweedFS. The application speaks the S3 API, so an S3-compatible managed service can replace it through configuration.
 
 **Email provider.** The email provider delivers verification, password reset, and notification emails. The application supports Resend HTTPS or SMTP, with local development defaulting to Mailpit SMTP. The worker sends queued email; direct authentication request flows send email from the API. The deployment guide remains a separate concern.
 
 # Deployment
 
-Because ChalkTalk offers both a managed cloud deployment and a self-managed deployment, the implementation and hosting of some services differ between the two versions. In the managed deployment, the React frontend is deployed to Vercel. The API server and background worker run on AWS ECS. PostgreSQL is provided by AWS RDS, and AWS S3 provides object storage. In the self-managed deployment, the frontend and backend components run as containers managed through Docker Compose. The deployment includes PostgreSQL for application data and durable jobs and SeaweedFS for S3-compatible object storage. The email provider is selected by configuration; see the [local setup](../README.md#start-locally) for its settings.
+ChalkTalk runs as containers managed through Docker Compose: the root `docker-compose.yml` for local development and a [single-VM deployment skeleton](../deployment/README.md) with PostgreSQL for application data and durable jobs and SeaweedFS for S3-compatible object storage. The skeleton is not production-ready; its guide lists the backups and end-to-end checks that remain. The managed cloud deployment in the original plan (Vercel, AWS ECS, RDS and S3) has not been built. The email provider is selected by configuration; see the [local setup](../README.md#start-locally) for its settings.
 
 ### **AI module**
+
+**Status:** only optional embedding-based post search is built, configured through the `EMBEDDING_*` settings described in the [README](../README.md#optional-semantic-search). AI responses to student questions, and the mode selection below, are planned and not built. Without those settings, post search uses PostgreSQL full-text and fuzzy matching.
 
 AI features, such as AI responses to student questions, are accessed through a single AI provider interface in the backend, so the rest of the system never calls a specific AI service directly. The web server uses it for requests that need an immediate response, and the worker uses it for slower tasks such as generating embeddings for new posts. Each deployment selects one of three modes through configuration:
 
@@ -160,7 +164,7 @@ AI features, such as AI responses to student questions, are accessed through a s
 - Bring your own key (BYOK): The instance calls a hosted AI provider using an API key supplied by the operator and stored as a server-side secret. In the managed deployment, the ChalkTalk team provides this key; in a self-hosted deployment, the administrator supplies their own.
 - Local model: The instance calls a model running on the operator's own hardware through an OpenAI-compatible endpoint. The model can run as an additional container in the Docker Compose deployment, so no data leaves the self-hoster's infrastructure.
 
-In the managed deployment, system metrics and request logs are planned for AWS CloudWatch, which must cover the 60-second metrics interval and one-year log retention in the nonfunctional requirements. The implemented local monitoring stack has a separate retention policy; see [local observability](api/observability.md).
+A managed deployment would send system metrics and request logs to AWS CloudWatch, which must cover the 60-second metrics interval and one-year log retention in the nonfunctional requirements. The implemented local monitoring stack has a separate retention policy; see [local observability](api/observability.md).
 
 ### **Background jobs**
 
@@ -171,7 +175,7 @@ Slow or non-request-critical work is delegated to a background worker process. T
 
 For daily course emails, see the [daily course email digest](api/daily-course-email-digest.md). For ordinary jobs, the web server inserts a queued record into PostgreSQL. Database storage ensures that queued work survives application and worker restarts.
 
-When the worker claims a job, it marks the record as running. After completing the work, it marks the job as successful. If processing fails temporarily, the job is returned to the queue for another attempt. Jobs that exceed their retry limit are marked as dead. Completed job records are removed later by scheduled retention cleanup.
+When the worker claims a job, it marks the record as running. After completing the work, it marks the job as successful. If processing fails temporarily, the job is returned to the queue for another attempt. Jobs that exceed their retry limit are marked as dead. Scheduled retention cleanup is not implemented, so completed and dead job records currently remain in the table.
 
 ### **Concurrent editing**
 
@@ -279,7 +283,7 @@ Staff-created public Threads contain separate member-started conversations with 
 
 ### **Tenant isolation**
 
-Course-content tables carry a course\_id when needed to constrain relationships within a course. For example, followups store course\_id directly rather than deriving it only from the question post. API services verify membership and role, scope queries to the authorized course, and reject cross-course access. Foreign keys and unique constraints enforce related-row consistency. PostgreSQL row-level security policies restrict course-scoped reads and writes to authorized memberships and roles. Isolation tests exercise both the API and database boundaries.
+Course-content tables carry a course\_id when needed to constrain relationships within a course. For example, followups store course\_id directly rather than deriving it only from the question post. API services verify membership and role, scope queries to the authorized course, and reject cross-course access. Foreign keys and unique constraints enforce related-row consistency. PostgreSQL row-level security is not used. Integration tests exercise cross-course isolation through the API.
 
 ### **Single-tenant self-hosted mode**
 
