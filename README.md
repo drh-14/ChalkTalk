@@ -148,6 +148,8 @@ For a **manual live Resend acceptance check**, start a disposable PostgreSQL ser
 
 With `MOCK_DATA=true` and `AMS161_DEMO_INSTRUCTOR_PASSWORD` set before a full-Compose start, the one-shot `seed-mock` service creates a local-only AMS161 course with instructor Maya Chen, a TA, students, questions, notes, answers, tags, and anonymous/pinned examples. Sign in as `maya.chen@ams161.mock.chalktalk.invalid` with the chosen instructor password. The course join code is `AMS16101`. `AMS161_DEMO_STUDENT_PASSWORD` optionally enables `riley.nguyen@ams161.mock.chalktalk.invalid`; other mock users receive discarded random passwords. Repeated runs do not reset credentials or overwrite user-edited content. Direct mode requires the explicit `npm run db:seed:mock` step above.
 
+The same step also loads **CSE 416-03 Software Engineering**, a real Piazza class imported from `database/fixtures/cse416-piazza-export.json`, with Maya Chen as its instructor. It is imported only when the course is absent, so restarts keep your edits. To log in as its imported students and staff, also set `PIAZZA_DEMO_PASSWORD` (12–128 characters) before the first seed. To refresh the course from the fixture, run `npm run db:import:piazza -- --owner maya.chen@ams161.mock.chalktalk.invalid --from ../../database/fixtures/cse416-piazza-export.json`.
+
 ### Importing a Piazza class
 
 To demo ChalkTalk with a real course, copy a Piazza class you belong to into your local database:

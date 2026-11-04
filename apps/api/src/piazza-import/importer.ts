@@ -29,6 +29,10 @@ export type ImportSummary = {
   people: { name: string; email: string; role: ImportRole; created: boolean }[];
 };
 
+/** The ChalkTalk course id an import of this Piazza class writes to. */
+export const piazzaCourseId = (piazzaClassId: string) =>
+  uuidv5(`course:${piazzaClassId}`, PIAZZA_NAMESPACE);
+
 const counts = (): ImportCounts => ({ created: 0, updated: 0, skipped: 0 });
 const slug = (name: string) =>
   name
@@ -80,7 +84,7 @@ async function write(
   options: { ownerEmail: string; demoPassword?: string },
 ): Promise<ImportSummary> {
   const id = (...parts: string[]) => uuidv5(parts.join(":"), PIAZZA_NAMESPACE);
-  const courseId = id("course", course.piazzaId);
+  const courseId = piazzaCourseId(course.piazzaId);
   await client.query(
     "SELECT pg_advisory_xact_lock(hashtext('piazza-import'), hashtext($1))",
     [courseId],
