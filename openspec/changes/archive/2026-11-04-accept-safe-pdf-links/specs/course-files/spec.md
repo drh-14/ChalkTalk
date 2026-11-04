@@ -1,0 +1,35 @@
+## MODIFIED Requirements
+
+### Requirement: Validated instructor upload
+
+The API SHALL accept exactly one multipart file on `POST /api/v1/courses/{courseId}/files` from a current instructor in an active course. A file MUST be no more than 100 MiB and be a matching, structurally valid PDF, plain text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Processing SHALL have bounded memory. PDFs MAY contain absolute HTTP/HTTPS URI actions and internal GoTo navigation, including safe open-page actions. PDFs with relative or non-HTTP(S) URI actions, scripts, launches, embedded files, remote navigation or other active actions SHALL be rejected. A successful persistent upload SHALL return `201`, a course-scoped `Location`, and minimal metadata including file ID, name, verified media type, length, and creation time. It SHALL not expose resource titles, descriptions, versions, processing status, or a single-file metadata-read route.
+
+#### Scenario: Ordinary linked PDF
+
+- **WHEN** an instructor uploads a valid PDF with HTTP/HTTPS links and internal page navigation
+- **THEN** the upload succeeds without altering the original bytes
+
+#### Scenario: Unsafe PDF action
+
+- **WHEN** a PDF contains a relative or unsafe URI, script, launch, embedded file or unsupported action
+- **THEN** the API rejects it without retaining a visible file
+
+#### Scenario: Valid original file
+
+- **WHEN** an instructor uploads a valid DOCX, PPTX or PNG to an active course
+- **THEN** the API returns `201` and course members can download byte-identical originals
+
+#### Scenario: Invalid upload
+
+- **WHEN** the file is oversized, disguised, malformed, active, macro-capable or unsupported
+- **THEN** the API rejects it without a visible file or retained stored bytes under ordinary failure
+
+#### Scenario: Unauthorized or archived upload
+
+- **WHEN** a non-instructor or unauthenticated caller uploads, or an instructor uploads to an archived course
+- **THEN** the API rejects the operation without creating a file
+
+#### Scenario: Status transition during upload
+
+- **WHEN** a course is archived or deleted before an in-flight upload commits
+- **THEN** the upload does not commit a visible file

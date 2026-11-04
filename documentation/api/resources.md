@@ -21,6 +21,8 @@ Current members (student, TA or instructor) of active or archived courses can li
 
 Existing immutable upload: current instructors only, active course only; TA/student uploads return `403 permission_denied`, archived uploads `409 course_archived`. Supply exactly one multipart `file`, up to 100 MiB, a structurally validated PDF, plain text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. The original filename must be safe and at most 255 characters. Unsupported/malformed file content returns `415 unsupported_media_type`; invalid parts, filenames and keys return `422 validation_failed`, oversized content `413 payload_too_large`, and storage failure `503 service_unavailable`.
 
+PDFs may contain absolute HTTP/HTTPS links and internal GoTo page navigation, including a safe opening destination. Relative links and active actions such as scripts, launches, embedded files, and remote navigation are rejected. PDF structural inspection is bounded to 128 MiB of qpdf JSON output; an exceptionally complex file may therefore be rejected even below the upload-size limit.
+
 Success returns `201` with `{ "data": <public file metadata> }` and `Location: /api/v1/courses/{courseId}/files/{fileId}/download`. Optional `Idempotency-Key` (1–255 characters) binds uploader, course, filename, declared type and original SHA-256 for 24 hours. An exact retry replays `201` while the file remains visible, including after archival. Changed input or a deleted file returns `409 idempotency_key_reused`; replay cannot resurrect files.
 
 #### `GET /api/v1/courses/{courseId}/files/{fileId}/download`

@@ -78,6 +78,8 @@ async function open(
       });
     if (url.pathname === "/api/v1/users/me/notifications/unread-count")
       return respond({ data: { count: 0 } });
+    if (url.pathname === "/api/v1/courses/course-1/threads/unread-count")
+      return respond({ data: { count: 0 } });
     if (url.pathname === "/api/v1/courses/course-1/resource-sections")
       return respond({ data: [], version: 1 });
     if (url.pathname === "/api/v1/courses/course-1/members/user-1")

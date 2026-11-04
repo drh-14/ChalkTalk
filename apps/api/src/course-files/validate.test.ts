@@ -407,4 +407,58 @@ describe("resource format validation", () => {
       ),
     ).rejects.toMatchObject({ status: 415 });
   });
+  it.each(["http://example.edu/syllabus", "https://example.edu/syllabus"])(
+    "accepts a PDF with a %s web link and internal opening destination",
+    async (url) => {
+      const pdf = await PDFDocument.create();
+      const page = pdf.addPage([100, 100]);
+      const action = pdf.context.obj({
+        S: PDFName.of("URI"),
+        URI: PDFString.of(url),
+      });
+      page.node.set(
+        PDFName.of("Annots"),
+        pdf.context.obj([
+          {
+            Type: PDFName.of("Annot"),
+            Subtype: PDFName.of("Link"),
+            Rect: [0, 0, 20, 20],
+            A: action,
+          },
+        ]),
+      );
+      pdf.catalog.set(
+        PDFName.of("OpenAction"),
+        pdf.context.obj({
+          S: PDFName.of("GoTo"),
+          D: [page.ref, PDFName.of("Fit")],
+        }),
+      );
+      await expect(
+        validateStaged(
+          "linked.pdf",
+          "application/pdf",
+          Buffer.from(await pdf.save({ useObjectStreams: true })),
+        ),
+      ).resolves.toBe("application/pdf");
+    },
+  );
+  it.each(["./relative.html", "javascript:alert(1)", "file:///etc/passwd"])(
+    "rejects a PDF URI action with %s",
+    async (url) => {
+      const pdf = await PDFDocument.create();
+      pdf.addPage([100, 100]);
+      pdf.catalog.set(
+        PDFName.of("OpenAction"),
+        pdf.context.obj({ S: PDFName.of("URI"), URI: PDFString.of(url) }),
+      );
+      await expect(
+        validateStaged(
+          "unsafe.pdf",
+          "application/pdf",
+          Buffer.from(await pdf.save({ useObjectStreams: true })),
+        ),
+      ).rejects.toMatchObject({ status: 415 });
+    },
+  );
 });

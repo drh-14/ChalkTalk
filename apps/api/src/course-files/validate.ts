@@ -38,51 +38,123 @@ const forbiddenPdfNames = new Set([
   "/Launch",
   "/EmbeddedFile",
   "/EmbeddedFiles",
-  "/OpenAction",
   "/AA",
   "/RichMedia",
   "/XFA",
   "/SubmitForm",
   "/ImportData",
   "/GoToR",
-  "/URI",
   "/Encrypt",
 ]);
 
-function pdfNameScanner() {
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  let quoted = false;
-  let escaped = false;
-  let token = "";
-  return (chunk: Buffer, final = false) => {
-    const text = decoder.decode(chunk, { stream: !final });
-    for (const character of text) {
-      if (!quoted) {
-        if (character === '"') {
-          quoted = true;
-          token = '"';
-        }
-        continue;
-      }
-      token += character;
-      if (token.length > 64 * 1024) throw invalid();
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') {
-        quoted = false;
-        if (forbiddenPdfNames.has(JSON.parse(token) as string)) throw invalid();
-        token = "";
-      }
+const MAX_PDF_STRUCTURE_BYTES = 128 * 1024 * 1024;
+const pdfObjectReference = /^\d+ \d+ R$/;
+
+function safePdfAction(value: unknown, objects: Record<string, unknown>) {
+  const action =
+    typeof value === "string" && pdfObjectReference.test(value)
+      ? (objects[`obj:${value}`] as { value?: unknown } | undefined)?.value
+      : value;
+  if (!action || typeof action !== "object" || Array.isArray(action))
+    throw invalid();
+  const fields = action as Record<string, unknown>;
+  if (fields["/S"] === "/URI") {
+    if (
+      Object.keys(fields).some((key) => !["/S", "/URI", "/Type"].includes(key))
+    )
+      throw invalid();
+    const raw = fields["/URI"];
+    if (typeof raw !== "string" || !raw.startsWith("u:")) throw invalid();
+    const target = raw.slice(2);
+    if (
+      !/^https?:\/\//i.test(target) ||
+      Array.from(target).some((character) => {
+        const code = character.charCodeAt(0);
+        return code < 32 || code === 127;
+      })
+    )
+      throw invalid();
+    try {
+      const url = new URL(target);
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        !url.hostname ||
+        url.username ||
+        url.password
+      )
+        throw invalid();
+    } catch {
+      throw invalid();
     }
-    if (final && quoted) throw invalid();
-  };
+  } else if (fields["/S"] === "/GoTo") {
+    if (Object.keys(fields).some((key) => !["/S", "/D", "/Type"].includes(key)))
+      throw invalid();
+    const destination = fields["/D"];
+    if (
+      !(typeof destination === "string" && destination.startsWith("u:")) &&
+      !(
+        Array.isArray(destination) &&
+        typeof destination[0] === "string" &&
+        pdfObjectReference.test(destination[0])
+      )
+    )
+      throw invalid();
+  } else throw invalid();
+  if (fields["/Type"] !== undefined && fields["/Type"] !== "/Action")
+    throw invalid();
 }
 
-async function qpdf(
-  path: string,
-  options: string[],
-  scan?: ReturnType<typeof pdfNameScanner>,
-) {
+function validatePdfStructure(output: string) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw invalid();
+  }
+  const qpdf = (parsed as { qpdf?: unknown })?.qpdf;
+  if (!Array.isArray(qpdf) || !qpdf[1] || typeof qpdf[1] !== "object")
+    throw invalid();
+  const objects = qpdf[1] as Record<string, unknown>;
+  const walk = (value: unknown): void => {
+    if (typeof value === "string") {
+      if (forbiddenPdfNames.has(value)) throw invalid();
+    } else if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+    } else if (value && typeof value === "object") {
+      const fields = value as Record<string, unknown>;
+      for (const [key, item] of Object.entries(fields)) {
+        if (forbiddenPdfNames.has(key)) throw invalid();
+        if (key === "/OpenAction") {
+          safePdfAction(item, objects);
+          const action =
+            typeof item === "string"
+              ? (
+                  objects[`obj:${item}`] as
+                    { value?: Record<string, unknown> } | undefined
+                )?.value
+              : (item as Record<string, unknown>);
+          if (action?.["/S"] !== "/GoTo") throw invalid();
+        }
+        if (key === "/A") safePdfAction(item, objects);
+        if (key === "/URI" && fields["/S"] !== "/URI") throw invalid();
+        if (key === "/S" && item === "/URI") safePdfAction(fields, objects);
+        if (key === "/S" && item === "/GoTo") safePdfAction(fields, objects);
+        if (
+          key === "/S" &&
+          typeof item === "string" &&
+          item.startsWith("/") &&
+          fields["/Type"] === "/Action" &&
+          !["/URI", "/GoTo"].includes(item)
+        )
+          throw invalid();
+        walk(item);
+      }
+    }
+  };
+  walk(objects);
+}
+
+async function qpdf(path: string, options: string[], maxOutputBytes = 1024) {
   const child = spawn("qpdf", [...options, path], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -91,18 +163,16 @@ async function qpdf(
     child.once("error", () => resolve(null));
     child.once("close", resolve);
   });
-  let output = "";
+  const chunks: Buffer[] = [];
+  let outputBytes = 0;
   let failure: Error | undefined;
   const timeout = setTimeout(() => child.kill("SIGKILL"), 60_000);
   try {
     for await (const chunk of child.stdout) {
-      if (scan) scan(chunk as Buffer);
-      else {
-        output += chunk.toString("utf8");
-        if (output.length > 1024) throw invalid();
-      }
+      outputBytes += (chunk as Buffer).length;
+      if (outputBytes > maxOutputBytes) throw invalid();
+      chunks.push(chunk as Buffer);
     }
-    scan?.(Buffer.alloc(0), true);
   } catch (error) {
     failure = error as Error;
     child.kill("SIGKILL");
@@ -110,7 +180,7 @@ async function qpdf(
   const code = await closed;
   clearTimeout(timeout);
   if (failure || code !== 0) throw invalid();
-  return output.trim();
+  return Buffer.concat(chunks).toString("utf8").trim();
 }
 
 async function pdfFile(path: string) {
@@ -132,10 +202,12 @@ async function pdfFile(path: string) {
   await qpdf(path, ["--check"]);
   const count = await qpdf(path, ["--show-npages"]);
   if (!/^\d+$/.test(count) || Number(count) < 1) throw invalid();
-  await qpdf(
-    path,
-    ["--json", "--json-key=qpdf", "--json-stream-data=none"],
-    pdfNameScanner(),
+  validatePdfStructure(
+    await qpdf(
+      path,
+      ["--json", "--json-key=qpdf", "--json-stream-data=none"],
+      MAX_PDF_STRUCTURE_BYTES,
+    ),
   );
 }
 const crcTable = Uint32Array.from({ length: 256 }, (_, index) => {
