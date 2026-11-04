@@ -1,0 +1,4 @@
+- [x] Add tests for safe HTTP/HTTPS and internal GoTo actions, plus unsafe actions and relative links; verify initial failures.
+- [x] Implement bounded qpdf JSON semantic action validation.
+- [x] Run focused tests, typecheck/lint, and validate the supplied syllabus copy.
+- [x] Archive the OpenSpec change. Publication gate and PR are deferred at the user's request.

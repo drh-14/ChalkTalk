@@ -8,7 +8,17 @@ Keep validated original files available to authorized course members without exp
 
 ### Requirement: Validated instructor upload
 
-The API SHALL accept exactly one multipart file on `POST /api/v1/courses/{courseId}/files` from a current instructor in an active course. A file MUST be no more than 100 MiB and be a matching, structurally valid PDF, plain text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Processing SHALL have bounded memory. A successful persistent upload SHALL return `201`, a course-scoped `Location`, and minimal metadata including file ID, name, verified media type, length, and creation time. It SHALL not expose resource titles, descriptions, versions, processing status, or a single-file metadata-read route.
+The API SHALL accept exactly one multipart file on `POST /api/v1/courses/{courseId}/files` from a current instructor in an active course. A file MUST be no more than 100 MiB and be a matching, structurally valid PDF, plain text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Processing SHALL have bounded memory. PDFs MAY contain absolute HTTP/HTTPS URI actions and internal GoTo navigation, including safe open-page actions. PDFs with relative or non-HTTP(S) URI actions, scripts, launches, embedded files, remote navigation or other active actions SHALL be rejected. A successful persistent upload SHALL return `201`, a course-scoped `Location`, and minimal metadata including file ID, name, verified media type, length, and creation time. It SHALL not expose resource titles, descriptions, versions, processing status, or a single-file metadata-read route.
+
+#### Scenario: Ordinary linked PDF
+
+- **WHEN** an instructor uploads a valid PDF with HTTP/HTTPS links and internal page navigation
+- **THEN** the upload succeeds without altering the original bytes
+
+#### Scenario: Unsafe PDF action
+
+- **WHEN** a PDF contains a relative or unsafe URI, script, launch, embedded file or unsupported action
+- **THEN** the API rejects it without retaining a visible file
 
 #### Scenario: Valid original file
 
