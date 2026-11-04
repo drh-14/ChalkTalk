@@ -106,7 +106,8 @@ export function CourseResources({
   const keys = useRef(new Map<string, string>()),
     fileKeys = useRef(new WeakMap<File, Map<string, string>>()),
     fileInput = useRef<HTMLInputElement>(null),
-    searchRequest = useRef<AbortController | null>(null);
+    searchRequest = useRef<AbortController | null>(null),
+    searchInput = useRef<HTMLInputElement>(null);
   const key = (value: unknown) => {
     const hash = JSON.stringify(value);
     if (!keys.current.has(hash)) keys.current.set(hash, crypto.randomUUID());
@@ -349,6 +350,7 @@ export function CourseResources({
         {section && canUpload && (
           <div className="resource-order-controls">
             <button
+              className="button secondary resource-action"
               disabled={pending || sections[0].id === section.id}
               onClick={() =>
                 void action(() =>
@@ -372,6 +374,7 @@ export function CourseResources({
               Move section up
             </button>
             <button
+              className="button secondary resource-action"
               disabled={pending || sections.at(-1)?.id === section.id}
               onClick={() =>
                 void action(() =>
@@ -418,6 +421,7 @@ export function CourseResources({
                 {canUpload && sort === "manual" && (
                   <div className="resource-order-controls">
                     <button
+                      className="button secondary resource-action"
                       disabled={!!cursor || pending || index === 0}
                       onClick={() =>
                         void action(() =>
@@ -442,6 +446,7 @@ export function CourseResources({
                       Move resource up
                     </button>
                     <button
+                      className="button secondary resource-action"
                       disabled={
                         !!cursor || pending || index === rows.length - 1
                       }
@@ -485,8 +490,35 @@ export function CourseResources({
         <h2>Course resources</h2>
         <p>Files and links shared with your course.</p>
       </div>
+      <div className="resource-search">
+        <label htmlFor="resource-search-query">Search resources</label>
+        <div className="search-field">
+          <input
+            id="resource-search-query"
+            ref={searchInput}
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            maxLength={200}
+            placeholder="Search titles and file contents"
+          />
+          {query && (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Clear resource search"
+              onClick={() => {
+                setQuery("");
+                searchInput.current?.focus();
+              }}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          )}
+        </div>
+      </div>
       {error && (
-        <div role="alert">
+        <div role="alert" className="resource-notice resource-notice-error">
           <p>{error}</p>
           <button
             className="button secondary"
@@ -500,7 +532,7 @@ export function CourseResources({
       {working === "file" && <p role="status">Uploading your file…</p>}
       {loading && <p role="status">Loading course resources…</p>}
       {canUpload && (
-        <div className="resource-management">
+        <div className="resource-management" hidden={!!activeQuery}>
           <form onSubmit={addSection} className="course-links-form">
             <h3>Create a section</h3>
             <label>
@@ -623,23 +655,13 @@ export function CourseResources({
           </form>
         </div>
       )}
-      <label className="resource-search">
-        Search resources
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          maxLength={200}
-          placeholder="Search titles and file contents"
-        />
-      </label>
       {activeQuery && (
         <section
           className="resource-search-results"
           aria-label="Search results"
         >
           {searchError && (
-            <div role="alert">
+            <div role="alert" className="resource-notice resource-notice-error">
               <p>{searchError}</p>
               <button
                 className="button secondary"
@@ -654,7 +676,9 @@ export function CourseResources({
             </div>
           )}
           {searching && results.length === 0 && (
-            <p role="status">Searching resources…</p>
+            <p role="status" className="resource-notice">
+              Searching resources…
+            </p>
           )}
           {!searching && !searchError && results.length === 0 && (
             <p className="course-files-empty">
@@ -843,8 +867,14 @@ function SectionControls({
             />
             Staff only section
           </label>
-          <button disabled={pending}>Save section</button>
           <button
+            className="button secondary resource-action"
+            disabled={pending}
+          >
+            Save section
+          </button>
+          <button
+            className="button secondary resource-action"
             type="button"
             disabled={pending}
             onClick={() => setEditing(false)}
@@ -853,7 +883,10 @@ function SectionControls({
           </button>
         </form>
       ) : (
-        <button onClick={() => setEditing(true)}>
+        <button
+          className="button secondary resource-action"
+          onClick={() => setEditing(true)}
+        >
           Edit section {section.title}
         </button>
       )}
@@ -863,13 +896,25 @@ function SectionControls({
             Remove this section? Its resources will stay ungrouped with their
             access restrictions.
           </p>
-          <button disabled={pending} onClick={() => void remove()}>
+          <button
+            className="button secondary resource-action"
+            disabled={pending}
+            onClick={() => void remove()}
+          >
             Confirm remove section
           </button>
-          <button onClick={() => setConfirm(false)}>Cancel</button>
+          <button
+            className="button secondary resource-action"
+            onClick={() => setConfirm(false)}
+          >
+            Cancel
+          </button>
         </div>
       ) : (
-        <button onClick={() => setConfirm(true)}>
+        <button
+          className="button secondary resource-action"
+          onClick={() => setConfirm(true)}
+        >
           Remove section {section.title}
         </button>
       )}
@@ -983,7 +1028,9 @@ function ResourceRow({
           item.kind === "upload" &&
           item.textStatus &&
           item.textStatus !== "ready" && (
-            <span className="resource-text-status">
+            <span
+              className={`resource-text-status resource-text-status-${item.textStatus}`}
+            >
               {textStatusNotice[item.textStatus]}
             </span>
           )}
@@ -1040,8 +1087,14 @@ function ResourceRow({
               />
             </label>
             <div className="resource-edit-actions">
-              <button disabled={pending}>Save resource</button>
               <button
+                className="button secondary resource-action"
+                disabled={pending}
+              >
+                Save resource
+              </button>
+              <button
+                className="button secondary resource-action"
                 type="button"
                 disabled={pending}
                 onClick={() => setEditing(false)}
@@ -1050,6 +1103,7 @@ function ResourceRow({
               </button>
               {error && (
                 <button
+                  className="button secondary resource-action"
                   type="button"
                   onClick={() => {
                     setEditing(false);
@@ -1062,19 +1116,38 @@ function ResourceRow({
             </div>
           </form>
         ) : (
-          <button onClick={() => setEditing(true)}>Edit {name}</button>
+          <button
+            className="button secondary resource-action"
+            onClick={() => setEditing(true)}
+          >
+            Edit {name}
+          </button>
         ))}
       {canUpload &&
         (confirm ? (
           <div>
             <p>Remove {name}?</p>
-            <button disabled={pending} onClick={() => void remove()}>
+            <button
+              className="button secondary resource-action"
+              disabled={pending}
+              onClick={() => void remove()}
+            >
               Confirm remove resource
             </button>
-            <button onClick={() => setConfirm(false)}>Cancel</button>
+            <button
+              className="button secondary resource-action"
+              onClick={() => setConfirm(false)}
+            >
+              Cancel
+            </button>
           </div>
         ) : (
-          <button onClick={() => setConfirm(true)}>Remove {name}</button>
+          <button
+            className="button secondary resource-action"
+            onClick={() => setConfirm(true)}
+          >
+            Remove {name}
+          </button>
         ))}
     </>
   );
