@@ -65,7 +65,7 @@ The Compose setup below is for **reproducible local development**. It includes a
 
 ## Start locally
 
-Run these commands from the repository root in a Bash-compatible shell (Windows users can use WSL). You need Node.js **22 or later**, npm, Docker with the Compose plugin (`docker compose`), and [`mkcert`](https://github.com/FiloSottile/mkcert#installation). The full-Compose path does not require Node.js on the host, but Node.js is needed for direct development and repository checks.
+Run these commands from the repository root in a Bash-compatible shell (Windows users can use WSL). You need an up-to-date Node.js **22** release, npm, Docker with the Compose plugin (`docker compose`), and [`mkcert`](https://github.com/FiloSottile/mkcert#installation). The full-Compose path does not require Node.js on the host, but Node.js is needed for direct development and repository checks.
 
 ### 1. Create local configuration and HTTPS certificate
 
