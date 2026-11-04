@@ -1,0 +1,16 @@
+# Store text as LF and check it out as LF on every platform, so Windows
+# checkouts match Prettier, shell scripts run in Linux containers, and tests
+# that read files as text behave the same everywhere.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.pptx binary
+*.woff binary
+*.woff2 binary
