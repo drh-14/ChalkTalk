@@ -22,7 +22,7 @@
     "@excalidraw/excalidraw": "~0.18.1",
     "@hocuspocus/provider": "^4.7.1",
     "@vitejs/plugin-react": "^5.1.1",
-    "katex": "^0.18.9",
+    "katex": "^0.18.10",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
@@ -31,7 +31,7 @@
     "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5",
-    "vite": "^7.3.1",
+    "vite": "^7.3.7",
     "y-codemirror.next": "^0.3.6",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.33"

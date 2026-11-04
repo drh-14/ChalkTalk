@@ -41,7 +41,7 @@
     "@types/supertest": "^6.0.3",
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^5.0.4",
-    "concurrently": "^9.2.1",
+    "concurrently": "^9.2.5",
     "eslint": "^9.36.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
@@ -52,8 +52,8 @@
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.44.1",
-    "vite": "^7.1.7",
-    "vitest": "^3.2.4"
+    "vite": "^7.3.7",
+    "vitest": "^5.1.0"
   },
   "overrides": {
     "react": "^19.2.4",
