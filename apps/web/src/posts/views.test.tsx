@@ -4050,22 +4050,54 @@ function pinFixture(options: {
   return calls;
 }
 
-it("places staff actions after the post body and before answers", async () => {
+it("groups post actions in one toolbar between the tags and the body", async () => {
   pinFixture({});
   const title = await screen.findByRole("heading", { name: "Pin me" });
   const article = title.closest("article")!;
-  const body = article.querySelector(":scope > .post-markdown");
-  const edit = body?.nextElementSibling as HTMLElement | null;
-  expect(edit?.textContent).toBe("Edit post");
-  const actions = edit?.nextElementSibling as HTMLElement | null;
-  expect(actions?.getAttribute("aria-label")).toBe("Staff actions");
+  const toolbar = within(article).getByRole("group", { name: "Post actions" });
+  expect(toolbar.nextElementSibling?.classList.contains("post-markdown")).toBe(
+    true,
+  );
   expect(
-    actions?.nextElementSibling?.classList.contains("question-responses"),
-  ).toBe(true);
-  expect(within(actions!).getByRole("button", { name: "Pin" })).toBeTruthy();
+    within(toolbar)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual([
+    "Follow",
+    "Edit post",
+    "Pin",
+    "Lock discussion",
+    "Merge as duplicate",
+    "Delete post",
+  ]);
+  const staff = within(toolbar).getByRole("group", { name: "Staff actions" });
+  expect(within(staff).getByRole("button", { name: "Pin" })).toBeTruthy();
   expect(
-    within(actions!).getByRole("button", { name: "Merge as duplicate" }),
+    within(staff).getByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
+  const icons = toolbar.querySelectorAll("svg");
+  expect(icons.length).toBe(6);
+  icons.forEach((icon) =>
+    expect(icon.getAttribute("aria-hidden")).toBe("true"),
+  );
+  expect(
+    article
+      .querySelector(":scope > .post-markdown")
+      ?.nextElementSibling?.classList.contains("question-responses"),
+  ).toBe(true);
+});
+
+it("shows a student only Follow in the post actions toolbar", async () => {
+  pinFixture({ role: "student" });
+  const title = await screen.findByRole("heading", { name: "Pin me" });
+  const toolbar = within(title.closest("article")!).getByRole("group", {
+    name: "Post actions",
+  });
+  expect(
+    within(toolbar)
+      .getAllByRole("button")
+      .map((button) => button.textContent),
+  ).toEqual(["Follow"]);
 });
 
 it("lets staff pin and unpin a post with conditional requests and updates its row", async () => {
@@ -5335,7 +5367,7 @@ it("returns an active editor to read-only viewing when the course is archived", 
 });
 
 it.each(["question", "note"])(
-  "places %s Edit after the rendered post body and attachments",
+  "places %s Edit in the post actions toolbar before the body",
   async (type) => {
     const current = { ...post("p1", "Readable post"), type, version: 1 };
     stubFetch(
@@ -5362,8 +5394,9 @@ it.each(["question", "note"])(
     const edit = await screen.findByRole("button", { name: "Edit post" });
     const article = edit.closest("article")!;
     const body = article.querySelector(".post-markdown")!;
+    expect(edit.closest('[aria-label="Post actions"]')).toBeTruthy();
     expect(
-      body.compareDocumentPosition(edit) & Node.DOCUMENT_POSITION_FOLLOWING,
+      edit.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       edit.compareDocumentPosition(
@@ -5771,6 +5804,13 @@ it("marks unread posts in the feed, clears one on opening, and marks all read", 
   expect(link("Fresh answer").textContent).toContain("Unread:");
   expect(link("Seen already").textContent).not.toContain("Unread:");
   expect(screen.getByText("2 unread")).toBeTruthy();
+  // The unread summary sits in the status row above, not within, the list.
+  expect(
+    within(screen.getByRole("region", { name: "Post listings" })).queryByRole(
+      "button",
+      { name: "Mark all read" },
+    ),
+  ).toBeNull();
 
   await user.click(link("Fresh answer"));
   expect(link("Fresh answer").textContent).not.toContain("Unread:");
