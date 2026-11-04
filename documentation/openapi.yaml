@@ -2467,7 +2467,7 @@ paths:
       tags:
         - Course Memberships
       summary: Join course
-      description: Join course. Join links and QR codes contain both courseId and joinCode. New members always enter as students.
+      description: Join course. Join links and QR codes contain both courseId and joinCode. New members always enter as students. The membership ETag distinguishes leave/rejoin incarnations; a matching idempotent replay returns its original ETag.
       operationId: joinCourse
       security:
         - session_cookie: []
@@ -2739,7 +2739,7 @@ paths:
       tags:
         - Course Memberships
       summary: Retrieve course member
-      description: Retrieve course member. The ETag protects later role changes or removal.
+      description: Retrieve course member. The opaque membership ETag protects later role changes or removal, including after leave and rejoin.
       operationId: getCourseMember
       security:
         - session_cookie: []
@@ -2831,7 +2831,7 @@ paths:
       tags:
         - Course Memberships
       summary: Update course member role
-      description: Update another course member's role. Instructors cannot change their own role through this endpoint, even for a no-op update.
+      description: Update another course member's role with the current incarnation-aware membership ETag. Instructors cannot change their own role through this endpoint, even for a no-op update.
       operationId: updateCourseMember
       security:
         - session_cookie: []
@@ -3020,7 +3020,7 @@ paths:
       tags:
         - Course Memberships
       summary: Remove course member
-      description: Remove another course member. Instructors must use /courses/{courseId}/members/me to leave voluntarily.
+      description: Remove another course member with the current incarnation-aware membership ETag. An ETag from a prior leave/rejoin cycle is stale. Instructors must use /courses/{courseId}/members/me to leave voluntarily.
       operationId: deleteCourseMember
       security:
         - session_cookie: []
@@ -3165,6 +3165,7 @@ paths:
     get:
       tags: [Course Memberships]
       summary: Read own course email preferences
+      description: Returns preferences with the current incarnation-aware membership ETag.
       operationId: getCourseEmailPreferences
       security: [{ session_cookie: [] }]
       parameters:
@@ -3185,6 +3186,7 @@ paths:
     patch:
       tags: [Course Memberships]
       summary: Update own course email preferences
+      description: Requires the current incarnation-aware membership ETag; an ETag from a prior leave/rejoin cycle is stale.
       operationId: updateCourseEmailPreferences
       security: [{ session_cookie: [] }]
       parameters:
@@ -12279,7 +12281,7 @@ components:
             - "2026-09-20T14:30:00Z"
         version:
           type: integer
-          description: Revision number used to construct the resource ETag.
+          description: Numeric membership revision. The opaque membership ETag also includes a private leave/rejoin incarnation.
           minimum: 1
           examples:
             - 3

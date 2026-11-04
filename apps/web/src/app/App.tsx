@@ -1194,7 +1194,7 @@ function CourseFrame({
           All courses
         </a>
         <div className="app-bar-course">
-          <h1 ref={headingRef} tabIndex={-1}>
+          <h1 id="course-title-heading" ref={headingRef} tabIndex={-1}>
             {visibleCourse?.data.name ??
               (error?.courseId === courseId
                 ? "Course unavailable"

@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { ApiError } from "../auth/client.js";
 import {
   createCourse,
@@ -305,6 +311,7 @@ export function CourseDetail({
   const course = sharedCourse ?? localCourse;
   const setCourse = onCourseChange ?? setLocalCourse;
   const [ownMembership, setOwnMembership] = useState<Membership>();
+  const [ownMembershipEtag, setOwnMembershipEtag] = useState<string>();
   const [emailPending, setEmailPending] = useState(false);
   const [emailNotice, setEmailNotice] = useState<string>();
   const [members, setMembers] = useState<Membership[]>();
@@ -314,6 +321,14 @@ export function CourseDetail({
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const [retry, setRetry] = useState<() => void>();
+  const [confirmation, setConfirmation] = useState<
+    | { kind: "member"; member: Membership; etag: string }
+    | { kind: "course"; name: string; etag: string }
+  >();
+  const [confirmationError, setConfirmationError] = useState<string>();
+  const confirmationDialog = useRef<HTMLDivElement>(null);
+  const cancelConfirmationButton = useRef<HTMLButtonElement>(null);
+  const confirmationTrigger = useRef<HTMLButtonElement | null>(null);
   const [pollCycle, setPollCycle] = useState(0);
   const [name, setName] = useState("");
   const alive = useRef(true);
@@ -333,7 +348,7 @@ export function CourseDetail({
       setError(undefined);
       setRetry(undefined);
     }
-    void Promise.all([
+    return Promise.all([
       sharedCourse && !refreshCourse
         ? Promise.resolve(sharedCourse)
         : getCourse(courseId),
@@ -345,9 +360,11 @@ export function CourseDetail({
         setCourse(nextCourse);
         setName(nextCourse.data.name);
         setOwnMembership(nextOwnMembership.data);
+        setOwnMembershipEtag(nextOwnMembership.etag);
         setMembers(nextMembers.data);
         setMembersCursor(nextMembers.page.nextCursor);
         setMembersPageError(undefined);
+        return nextCourse;
       })
       .catch((caught) => {
         if (!alive.current || currentCourseId.current !== courseId) return;
@@ -356,8 +373,10 @@ export function CourseDetail({
       });
   };
   // Refresh is intentionally keyed by route identity, not render-time callbacks.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(refresh, [courseId]);
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseId]);
   useEffect(() => {
     if (course?.data.status !== "deleting") return;
     const timer = window.setTimeout(() => {
@@ -377,11 +396,97 @@ export function CourseDetail({
       refresh(true, true);
     } else setError(message(caught));
   };
+  useEffect(() => {
+    if (confirmation)
+      (pending
+        ? confirmationDialog
+        : cancelConfirmationButton
+      ).current?.focus();
+  }, [confirmation, pending]);
+  function openConfirmation(
+    next: NonNullable<typeof confirmation>,
+    trigger?: HTMLButtonElement,
+  ) {
+    if (pending) return;
+    if (trigger) confirmationTrigger.current = trigger;
+    setError(undefined);
+    setRetry(undefined);
+    setConfirmationError(undefined);
+    setConfirmation(next);
+  }
+  async function openMemberConfirmation(
+    selected: Membership,
+    trigger: HTMLButtonElement,
+  ) {
+    if (pending) return;
+    try {
+      const current = await getMembership(courseId, selected.user.id);
+      openConfirmation(
+        { kind: "member", member: current.data, etag: current.etag },
+        trigger,
+      );
+    } catch (caught) {
+      setError(message(caught));
+    }
+  }
+  function dismissConfirmation() {
+    setConfirmation(undefined);
+    setConfirmationError(undefined);
+  }
+  function restoreConfirmationFocus(kind: "member" | "course") {
+    window.setTimeout(() => {
+      if (
+        confirmationTrigger.current?.isConnected &&
+        !confirmationTrigger.current.disabled
+      )
+        confirmationTrigger.current.focus();
+      else
+        document
+          .getElementById(
+            kind === "member" ? "members-heading" : "course-title-heading",
+          )
+          ?.focus();
+    }, 0);
+  }
+  function closeConfirmation() {
+    if (pending || !confirmation) return;
+    const kind = confirmation.kind;
+    dismissConfirmation();
+    restoreConfirmationFocus(kind);
+  }
+  function handleConfirmationKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeConfirmation();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    if (pending) {
+      event.preventDefault();
+      confirmationDialog.current?.focus();
+      return;
+    }
+    const focusable = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>(
+        "button:not(:disabled)",
+      ),
+    );
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  }
   async function changeEmailPreference(
     key: keyof EmailPreferences,
     enabled: boolean,
   ) {
-    if (!ownMembership?.emailPreferences || emailPending) return;
+    if (!ownMembership?.emailPreferences || !ownMembershipEtag || emailPending)
+      return;
     setEmailPending(true);
     setEmailNotice(undefined);
     setError(undefined);
@@ -390,11 +495,12 @@ export function CourseDetail({
         courseId,
         { [key]: enabled },
         csrfToken,
-        `"v${ownMembership.version}"`,
+        ownMembershipEtag,
       );
+      setOwnMembershipEtag(result.etag);
       setOwnMembership({
         ...ownMembership,
-        version: Number(result.etag.slice(2, -1)),
+        version: ownMembership.version + 1,
         emailPreferences: result.data,
       });
       setEmailNotice("Email preference saved");
@@ -403,6 +509,7 @@ export function CourseDetail({
         try {
           const latest = await getMembership(courseId, userId);
           setOwnMembership(latest.data);
+          setOwnMembershipEtag(latest.etag);
           setError(
             "Your email preferences changed elsewhere. Review the current choices and try again.",
           );
@@ -454,7 +561,7 @@ export function CourseDetail({
       if (alive.current && currentCourseId.current === courseId)
         setCourse(next);
     } catch (caught) {
-      resolveMutationError(caught, () => void changeStatus(status));
+      await resolveMutationError(caught, () => void changeStatus(status));
     } finally {
       setPending(false);
     }
@@ -479,7 +586,7 @@ export function CourseDetail({
       if (alive.current && currentCourseId.current === courseId)
         setCourse(next);
     } catch (caught) {
-      resolveMutationError(caught, () => void changePolicy(key, enabled));
+      await resolveMutationError(caught, () => void changePolicy(key, enabled));
     } finally {
       setPending(false);
     }
@@ -498,23 +605,48 @@ export function CourseDetail({
       if (alive.current && currentCourseId.current === courseId)
         setCourse(next);
     } catch (caught) {
-      resolveMutationError(caught, () => void rename());
+      await resolveMutationError(caught, () => void rename());
     } finally {
       setPending(false);
     }
   }
   async function startDeletion() {
-    if (!course || pending) return;
+    if (!course || pending || confirmation?.kind !== "course") return;
+    let dismissed = false;
     setPending(true);
     setError(undefined);
     try {
-      const next = await deleteCourse(courseId, csrfToken, course.etag);
+      const next = await deleteCourse(courseId, csrfToken, confirmation.etag);
       if (alive.current && currentCourseId.current === courseId)
         setCourse(next);
+      dismissConfirmation();
+      dismissed = true;
     } catch (caught) {
-      resolveMutationError(caught, () => void startDeletion());
+      if (caught instanceof ApiError && caught.code === "version_conflict") {
+        dismissConfirmation();
+        dismissed = true;
+        setError("This course changed elsewhere. Refreshing current details…");
+        setRetry(undefined);
+        const current = await refresh(true, true);
+        if (current?.data.status === "deleting")
+          setError("This course is already being deleted.");
+        else if (current) {
+          setError(
+            "This course changed elsewhere. Details were refreshed; you can retry.",
+          );
+          setRetry(
+            () => () =>
+              openConfirmation({
+                kind: "course",
+                name: current.data.name,
+                etag: current.etag,
+              }),
+          );
+        }
+      } else setConfirmationError(message(caught));
     } finally {
       setPending(false);
+      if (dismissed) restoreConfirmationFocus("course");
     }
   }
   async function changeRole(member: Membership, role: Membership["role"]) {
@@ -532,23 +664,54 @@ export function CourseDetail({
       );
       refresh();
     } catch (caught) {
-      resolveMutationError(caught, () => void changeRole(member, role));
+      await resolveMutationError(caught, () => void changeRole(member, role));
     } finally {
       setPending(false);
     }
   }
-  async function remove(member: Membership) {
+  async function remove(member: Membership, etag: string) {
     if (pending) return;
+    let dismissed = false;
     setPending(true);
     setError(undefined);
     try {
-      const current = await getMembership(courseId, member.user.id);
-      await removeMembership(courseId, member.user.id, csrfToken, current.etag);
-      refresh();
+      await removeMembership(courseId, member.user.id, csrfToken, etag);
+      dismissConfirmation();
+      dismissed = true;
+      await refresh();
     } catch (caught) {
-      resolveMutationError(caught, () => void remove(member));
+      if (caught instanceof ApiError && caught.code === "version_conflict") {
+        dismissConfirmation();
+        dismissed = true;
+        setError("This course changed elsewhere. Refreshing current details…");
+        setRetry(undefined);
+        if (await refresh(true, true)) {
+          try {
+            const current = await getMembership(courseId, member.user.id);
+            setError(
+              "This course changed elsewhere. Details were refreshed; you can retry.",
+            );
+            setRetry(
+              () => () =>
+                openConfirmation({
+                  kind: "member",
+                  member: current.data,
+                  etag: current.etag,
+                }),
+            );
+          } catch (refreshError) {
+            setError(
+              refreshError instanceof ApiError &&
+                refreshError.code === "not_found"
+                ? "This member is no longer in the course."
+                : message(refreshError),
+            );
+          }
+        }
+      } else setConfirmationError(message(caught));
     } finally {
       setPending(false);
+      if (dismissed) restoreConfirmationFocus("member");
     }
   }
   async function leave() {
@@ -594,7 +757,9 @@ export function CourseDetail({
             <CourseGlyph name={course.data.name} />
             <div>
               <p className="eyebrow">{course.data.status}</p>
-              <h1>{course.data.name}</h1>
+              <h1 id="course-title-heading" tabIndex={-1}>
+                {course.data.name}
+              </h1>
             </div>
           </header>
         </>
@@ -619,7 +784,9 @@ export function CourseDetail({
         aria-labelledby="course-details-heading"
       >
         <div className="section-title">
-          <h2 id="course-details-heading">Course details</h2>
+          <h2 id="course-details-heading" tabIndex={-1}>
+            Course details
+          </h2>
         </div>
         {instructor && course.data.status !== "deleting" ? (
           <form
@@ -756,7 +923,9 @@ export function CourseDetail({
       </section>
       <section className="members-card" aria-labelledby="members-heading">
         <div className="section-title">
-          <h2 id="members-heading">Members</h2>
+          <h2 id="members-heading" tabIndex={-1}>
+            Members
+          </h2>
           <span>
             {members.length} {membersCursor ? "shown" : "total"}
           </span>
@@ -787,7 +956,9 @@ export function CourseDetail({
                 <button
                   className="text-button danger"
                   disabled={pending}
-                  onClick={() => void remove(member)}
+                  onClick={(event) =>
+                    void openMemberConfirmation(member, event.currentTarget)
+                  }
                 >
                   Remove
                 </button>
@@ -861,7 +1032,16 @@ export function CourseDetail({
                 <button
                   className="button danger compact"
                   disabled={pending}
-                  onClick={() => void startDeletion()}
+                  onClick={(event) =>
+                    openConfirmation(
+                      {
+                        kind: "course",
+                        name: course.data.name,
+                        etag: course.etag,
+                      },
+                      event.currentTarget,
+                    )
+                  }
                 >
                   Delete course
                 </button>
@@ -883,6 +1063,73 @@ export function CourseDetail({
             </div>
           )}
         </section>
+      )}
+      {confirmation && (
+        <div className="course-confirmation-backdrop">
+          <div
+            ref={confirmationDialog}
+            className="course-confirmation-dialog"
+            role="dialog"
+            tabIndex={-1}
+            aria-modal="true"
+            aria-labelledby="course-confirmation-title"
+            aria-describedby="course-confirmation-description"
+            onKeyDown={handleConfirmationKeyDown}
+          >
+            <h2 id="course-confirmation-title">
+              {confirmation.kind === "member"
+                ? "Remove member"
+                : "Delete course"}
+            </h2>
+            <p id="course-confirmation-description">
+              {confirmation.kind === "member" ? (
+                <>
+                  Remove <strong>{confirmation.member.user.displayName}</strong>{" "}
+                  from
+                  <strong> {course.data.name}</strong>? They will lose course
+                  access.
+                </>
+              ) : (
+                <>
+                  Delete <strong>{confirmation.name}</strong>? This permanently
+                  removes the course and all of its content.
+                </>
+              )}
+            </p>
+            {confirmationError && (
+              <p className="form-message error" role="alert">
+                {confirmationError}
+              </p>
+            )}
+            <div className="course-confirmation-actions">
+              <button
+                ref={cancelConfirmationButton}
+                type="button"
+                className="button secondary"
+                disabled={pending}
+                onClick={closeConfirmation}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button danger"
+                disabled={pending}
+                onClick={() =>
+                  void (confirmation.kind === "member"
+                    ? remove(confirmation.member, confirmation.etag)
+                    : startDeletion())
+                }
+              >
+                {pending
+                  ? "Working…"
+                  : confirmation.kind === "member"
+                    ? "Remove member"
+                    : "Delete course permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

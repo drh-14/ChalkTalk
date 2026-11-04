@@ -1692,7 +1692,7 @@ export function createApp(
           .status(result.status)
           .set({
             Location: `/api/v1/courses/${value.courseId}/members/${value.user.id}`,
-            ETag: courseEtag(value),
+            ETag: result.etag,
           })
           .json({ data: value });
       } catch (error) {
@@ -1733,7 +1733,7 @@ export function createApp(
           param(request.params.courseId),
           current.session.user.id,
         );
-        response.set("ETag", courseEtag(value)).json({ data: value.data });
+        response.set("ETag", value.etag).json({ data: value.data });
       } catch (error) {
         next(error);
       }
@@ -1752,7 +1752,7 @@ export function createApp(
           request.header("if-match"),
           body,
         );
-        response.set("ETag", courseEtag(value)).json({ data: value.data });
+        response.set("ETag", value.etag).json({ data: value.data });
       } catch (error) {
         next(error);
       }
@@ -1764,12 +1764,12 @@ export function createApp(
     async (request, response, next) => {
       try {
         const current = await requireSession(request);
-        const data = await courses().getMember(
+        const result = await courses().getMember(
           param(request.params.courseId),
           current.session.user.id,
           param(request.params.userId),
         );
-        response.set("ETag", courseEtag(data)).json({ data });
+        response.set("ETag", result.etag).json({ data: result.value });
       } catch (error) {
         next(error);
       }
@@ -1782,14 +1782,14 @@ export function createApp(
       try {
         requireJsonRequest(request);
         const body = memberUpdateBody(request.body);
-        const data = await courses().updateMember(
+        const result = await courses().updateMember(
           param(request.params.courseId),
           auth(response).session.user.id,
           param(request.params.userId),
           request.header("if-match"),
           body.role,
         );
-        response.set("ETag", courseEtag(data)).json({ data });
+        response.set("ETag", result.etag).json({ data: result.value });
       } catch (error) {
         next(error);
       }

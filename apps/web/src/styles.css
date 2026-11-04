@@ -2243,7 +2243,8 @@ a:focus-visible {
 .account-danger h2 {
   color: var(--danger);
 }
-.account-dialog-backdrop {
+.account-dialog-backdrop,
+.course-confirmation-backdrop {
   align-items: center;
   background: rgba(20, 32, 27, 0.68);
   display: flex;
@@ -2253,7 +2254,8 @@ a:focus-visible {
   position: fixed;
   z-index: 100;
 }
-.account-dialog {
+.account-dialog,
+.course-confirmation-dialog {
   background: var(--surface-raised);
   border-radius: var(--radius-lg);
   box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.28);
@@ -2263,15 +2265,18 @@ a:focus-visible {
   padding: clamp(1.5rem, 4vw, 2rem);
   width: 100%;
 }
-.account-dialog h2 {
+.account-dialog h2,
+.course-confirmation-dialog h2 {
   color: var(--danger);
   font-family: var(--font-serif);
   margin: 0;
 }
-.account-dialog p {
+.account-dialog p,
+.course-confirmation-dialog p {
   line-height: 1.5;
 }
-.account-dialog-actions {
+.account-dialog-actions,
+.course-confirmation-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);

@@ -58,6 +58,7 @@ type MemberRow = {
   updated_at: Date;
   version: number;
 };
+type VersionedMemberRow = MemberRow & { incarnation: string };
 function jsonVersion(value: number | string): number {
   const version = Number(value);
   if (!Number.isSafeInteger(version) || version < 1)
@@ -92,6 +93,7 @@ export type EmailPreferences = {
   digestEmails: boolean;
 };
 type EmailPreferenceRow = {
+  incarnation: string;
   activity_emails: boolean;
   announcement_emails: boolean;
   digest_emails: boolean;
@@ -103,6 +105,14 @@ const emailPreferences = (row: EmailPreferenceRow): EmailPreferences => ({
   digestEmails: row.digest_emails,
 });
 export const courseEtag = (value: { version: number }) => `"v${value.version}"`;
+export const membershipEtag = (
+  row: Pick<VersionedMemberRow, "incarnation" | "version">,
+) => `"m:${row.incarnation}:v${jsonVersion(row.version)}"`;
+type MemberResult = { value: Membership; etag: string };
+const memberResult = (row: VersionedMemberRow): MemberResult => ({
+  value: member(row),
+  etag: membershipEtag(row),
+});
 const JOIN_CODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const JOIN_CODE_REJECTION_BOUND = 256 - (256 % JOIN_CODE_ALPHABET.length);
 const joinCode = () => {
@@ -427,7 +437,7 @@ export class CourseService {
     courseId: string,
     userId: string,
     code: unknown,
-  ): Promise<Membership> {
+  ): Promise<MemberResult> {
     if (typeof code !== "string" || !/^[A-Z0-9]{8}$/.test(code))
       throw new AuthError(422, "invalid_join_code", "Join code is invalid");
     if (!UUID_PATTERN.test(courseId))
@@ -449,11 +459,11 @@ export class CourseService {
           "Course does not accept joins",
         );
       try {
-        const inserted = await client.query<MemberRow>(
-          "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student') RETURNING course_id,user_id,(SELECT display_name FROM users WHERE id=$2) AS display_name,role,created_at,updated_at,version",
+        const inserted = await client.query<VersionedMemberRow>(
+          "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student') RETURNING course_id,user_id,incarnation,(SELECT display_name FROM users WHERE id=$2) AS display_name,role,created_at,updated_at,version",
           [courseId, userId],
         );
-        return member(inserted.rows[0]!);
+        return memberResult(inserted.rows[0]!);
       } catch (error: unknown) {
         if (
           typeof error === "object" &&
@@ -476,9 +486,9 @@ export class CourseService {
     code: unknown,
     key: string | undefined,
     requestBody: unknown,
-  ): Promise<{ value: Membership; status: number }> {
+  ): Promise<MemberResult & { status: number }> {
     if (key === undefined)
-      return { value: await this.join(courseId, userId, code), status: 201 };
+      return { ...(await this.join(courseId, userId, code)), status: 201 };
     if (key.length < 1 || key.length > 255)
       throw new AuthError(
         422,
@@ -498,8 +508,12 @@ export class CourseService {
         request_hash: Buffer;
         response_body: Membership;
         response_status: number;
+        response_headers: {
+          ETag?: string;
+          legacyMembershipEtag?: boolean;
+        } | null;
       }>(
-        "SELECT request_hash,response_body,response_status FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at>now()",
+        "SELECT request_hash,response_body,response_status,response_headers FROM idempotency_records WHERE scope=$1 AND key=$2 AND expires_at>now()",
         [scope, key],
       );
       if (prior.rows[0]) {
@@ -509,9 +523,21 @@ export class CourseService {
             "idempotency_key_reused",
             "Idempotency key was used with a different request",
           );
+        const replayEtag = prior.rows[0].response_headers?.ETag;
+        const legacyTag =
+          prior.rows[0].response_headers?.legacyMembershipEtag === true;
+        if (
+          typeof replayEtag !== "string" ||
+          !(
+            /^"m:[0-9a-f-]{36}:v[1-9][0-9]*"$/.test(replayEtag) ||
+            (legacyTag && /^"v[1-9][0-9]*"$/.test(replayEtag))
+          )
+        )
+          throw new Error("Stored course join response ETag is invalid");
         return {
           value: prior.rows[0].response_body,
           status: prior.rows[0].response_status,
+          etag: replayEtag,
         };
       }
       await client.query(
@@ -538,16 +564,16 @@ export class CourseService {
           "Course does not accept joins",
         );
       try {
-        const inserted = await client.query<MemberRow>(
-          "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student') RETURNING course_id,user_id,(SELECT display_name FROM users WHERE id=$2) AS display_name,role,created_at,updated_at,version",
+        const inserted = await client.query<VersionedMemberRow>(
+          "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student') RETURNING course_id,user_id,incarnation,(SELECT display_name FROM users WHERE id=$2) AS display_name,role,created_at,updated_at,version",
           [courseId, userId],
         );
-        const value = member(inserted.rows[0]!);
+        const { value, etag } = memberResult(inserted.rows[0]!);
         await client.query(
-          "INSERT INTO idempotency_records (scope,key,request_hash,response_status,response_body,expires_at) VALUES ($1,$2,$3,201,$4,now()+interval '24 hours')",
-          [scope, key, hash, value],
+          "INSERT INTO idempotency_records (scope,key,request_hash,response_status,response_headers,response_body,expires_at) VALUES ($1,$2,$3,201,$4,$5,now()+interval '24 hours')",
+          [scope, key, hash, { ETag: etag }, value],
         );
-        return { value, status: 201 };
+        return { value, etag, status: 201 };
       } catch (error: unknown) {
         if (
           typeof error === "object" &&
@@ -580,27 +606,24 @@ export class CourseService {
   async getEmailPreferences(
     courseId: string,
     userId: string,
-  ): Promise<{
-    data: EmailPreferences;
-    version: number;
-  }> {
+  ): Promise<{ data: EmailPreferences; etag: string }> {
     const found = await this.pool.query<EmailPreferenceRow>(
-      "SELECT activity_emails,announcement_emails,digest_emails,version FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+      "SELECT incarnation,activity_emails,announcement_emails,digest_emails,version FROM course_memberships WHERE course_id=$1 AND user_id=$2",
       [courseId, userId],
     );
     const row = found.rows[0];
     if (!row) throw new AuthError(404, "not_found", "Membership is not found");
-    return { data: emailPreferences(row), version: jsonVersion(row.version) };
+    return { data: emailPreferences(row), etag: membershipEtag(row) };
   }
   async updateEmailPreferences(
     courseId: string,
     userId: string,
     ifMatch: string | undefined,
     input: Partial<EmailPreferences>,
-  ): Promise<{ data: EmailPreferences; version: number }> {
+  ): Promise<{ data: EmailPreferences; etag: string }> {
     return this.tx(async (client) => {
       const found = await client.query<EmailPreferenceRow>(
-        "SELECT activity_emails,announcement_emails,digest_emails,version FROM course_memberships WHERE course_id=$1 AND user_id=$2 FOR UPDATE",
+        "SELECT incarnation,activity_emails,announcement_emails,digest_emails,version FROM course_memberships WHERE course_id=$1 AND user_id=$2 FOR UPDATE",
         [courseId, userId],
       );
       const row = found.rows[0];
@@ -612,12 +635,12 @@ export class CourseService {
           "precondition_required",
           "If-Match is required",
         );
-      if (ifMatch !== courseEtag(row))
+      if (ifMatch !== membershipEtag(row))
         throw new AuthError(412, "version_conflict", "Membership has changed");
       const updated = await client.query<EmailPreferenceRow>(
         `UPDATE course_memberships SET activity_emails=$3,announcement_emails=$4,digest_emails=$5,
           version=version+1,updated_at=now() WHERE course_id=$1 AND user_id=$2
-          RETURNING activity_emails,announcement_emails,digest_emails,version`,
+          RETURNING incarnation,activity_emails,announcement_emails,digest_emails,version`,
         [
           courseId,
           userId,
@@ -628,7 +651,7 @@ export class CourseService {
       );
       return {
         data: emailPreferences(updated.rows[0]!),
-        version: jsonVersion(updated.rows[0]!.version),
+        etag: membershipEtag(updated.rows[0]!),
       };
     });
   }
@@ -636,20 +659,20 @@ export class CourseService {
     courseId: string,
     userId: string,
     targetUserId: string,
-  ): Promise<Membership> {
+  ): Promise<MemberResult> {
     await this.get(courseId, userId);
-    const result = await this.pool.query<MemberRow>(
-      "SELECT m.course_id,m.user_id,u.display_name,m.role,m.activity_emails,m.announcement_emails,m.digest_emails,m.created_at,m.updated_at,m.version FROM course_memberships m JOIN users u ON u.id=m.user_id WHERE m.course_id=$1 AND m.user_id=$2",
+    const result = await this.pool.query<VersionedMemberRow>(
+      "SELECT m.course_id,m.user_id,m.incarnation,u.display_name,m.role,m.activity_emails,m.announcement_emails,m.digest_emails,m.created_at,m.updated_at,m.version FROM course_memberships m JOIN users u ON u.id=m.user_id WHERE m.course_id=$1 AND m.user_id=$2",
       [courseId, targetUserId],
     );
     if (!result.rows[0])
       throw new AuthError(404, "not_found", "Membership is not found");
-    const value = member(result.rows[0]);
+    const found = memberResult(result.rows[0]);
     if (userId === targetUserId)
-      value.emailPreferences = emailPreferences(
+      found.value.emailPreferences = emailPreferences(
         result.rows[0] as EmailPreferenceRow,
       );
-    return value;
+    return found;
   }
   async membersPage(
     courseId: string,
@@ -779,7 +802,7 @@ export class CourseService {
     targetId: string,
     ifMatch: string | undefined,
     role: unknown,
-  ): Promise<Membership> {
+  ): Promise<MemberResult> {
     if (role !== "student" && role !== "ta" && role !== "instructor")
       throw new AuthError(422, "validation_failed", "Role is invalid");
     return this.tx(async (client) => {
@@ -792,8 +815,8 @@ export class CourseService {
         !(await this.instructor(client, courseId, actorId))
       )
         throw new AuthError(404, "not_found", "Membership is not found");
-      const current = await client.query<MemberRow>(
-        "SELECT m.course_id,m.user_id,u.display_name,m.role,m.created_at,m.updated_at,m.version FROM course_memberships m JOIN users u ON u.id=m.user_id WHERE m.course_id=$1 AND m.user_id=$2",
+      const current = await client.query<VersionedMemberRow>(
+        "SELECT m.course_id,m.user_id,m.incarnation,u.display_name,m.role,m.created_at,m.updated_at,m.version FROM course_memberships m JOIN users u ON u.id=m.user_id WHERE m.course_id=$1 AND m.user_id=$2",
         [courseId, targetId],
       );
       const row = current.rows[0];
@@ -805,7 +828,7 @@ export class CourseService {
           "precondition_required",
           "If-Match is required",
         );
-      if (ifMatch !== courseEtag(row))
+      if (ifMatch !== membershipEtag(row))
         throw new AuthError(412, "version_conflict", "Membership has changed");
       if (actorId === targetId)
         throw new AuthError(
@@ -825,12 +848,12 @@ export class CourseService {
             "Course must retain an instructor",
           );
       }
-      const updated = await client.query<MemberRow>(
-        "UPDATE course_memberships m SET role=$1,version=m.version+1,updated_at=now() FROM users u WHERE m.course_id=$2 AND m.user_id=$3 AND u.id=m.user_id RETURNING m.course_id,m.user_id,u.display_name,m.role,m.created_at,m.updated_at,m.version",
+      const updated = await client.query<VersionedMemberRow>(
+        "UPDATE course_memberships m SET role=$1,version=m.version+1,updated_at=now() FROM users u WHERE m.course_id=$2 AND m.user_id=$3 AND u.id=m.user_id RETURNING m.course_id,m.user_id,m.incarnation,u.display_name,m.role,m.created_at,m.updated_at,m.version",
         [role, courseId, targetId],
       );
       await collaborationAccessChanged(client, [targetId], courseId);
-      return member(updated.rows[0]!);
+      return memberResult(updated.rows[0]!);
     });
   }
   async removeMember(
@@ -858,8 +881,8 @@ export class CourseService {
           "course_deleting",
           "Course deletion is in progress",
         );
-      const existing = await client.query<MemberRow>(
-        "SELECT m.course_id,m.user_id,u.display_name,m.role,m.created_at,m.updated_at,m.version FROM course_memberships m JOIN users u ON u.id=m.user_id WHERE m.course_id=$1 AND m.user_id=$2",
+      const existing = await client.query<VersionedMemberRow>(
+        "SELECT m.course_id,m.user_id,m.incarnation,u.display_name,m.role,m.created_at,m.updated_at,m.version FROM course_memberships m JOIN users u ON u.id=m.user_id WHERE m.course_id=$1 AND m.user_id=$2",
         [courseId, targetId],
       );
       const row = existing.rows[0];
@@ -872,7 +895,7 @@ export class CourseService {
             "precondition_required",
             "If-Match is required",
           );
-        if (ifMatch !== courseEtag(row))
+        if (ifMatch !== membershipEtag(row))
           throw new AuthError(
             412,
             "version_conflict",

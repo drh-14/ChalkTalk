@@ -122,7 +122,8 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 
 - `course_id`: `uuid_v7`; foreign key to `courses.id`.
 - `user_id`: `uuid_v7`; foreign key to `users.id`.
-- `(course_id, user_id)`: composite primary key.
+- `(course_id, user_id)`: composite primary key; no separate membership `id` column is stored. The API derives a stable public ID from this pair.
+- `incarnation`: immutable random `uuid`, non-null; assigned on insert and backfilled for existing memberships. This distinguishes leave/rejoin cycles in membership ETags.
 - `role`: `text`; `student`, `ta`, or `instructor`.
 - `created_at`, `updated_at`: `timestamptz`.
 - `version`: `bigint`.
