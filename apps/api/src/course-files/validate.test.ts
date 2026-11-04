@@ -494,7 +494,73 @@ describe("resource format validation", () => {
       ),
     ).resolves.toBe("application/pdf");
   });
-  it("rejects an unsafe link annotation action", async () => {
+  it.each(["javascript:alert(1)", "file:///private/tmp/"])(
+    "rejects a relative PDF link with an unsafe catalog URI base %s",
+    async (base) => {
+      const pdf = await PDFDocument.create();
+      const page = pdf.addPage([100, 100]);
+      pdf.catalog.set(
+        PDFName.of("URI"),
+        pdf.context.obj({ Base: PDFString.of(base) }),
+      );
+      page.node.set(
+        PDFName.of("Annots"),
+        pdf.context.obj([
+          {
+            Type: PDFName.of("Annot"),
+            Subtype: PDFName.of("Link"),
+            Rect: [0, 0, 20, 20],
+            A: { S: PDFName.of("URI"), URI: PDFString.of("./schedule.html") },
+          },
+        ]),
+      );
+      await expect(
+        validateStaged(
+          "unsafe-base.pdf",
+          "application/pdf",
+          Buffer.from(await pdf.save({ useObjectStreams: true })),
+        ),
+      ).rejects.toMatchObject({ status: 415 });
+    },
+  );
+  it.each([
+    "./schedule.html",
+    "../help.html",
+    "/materials",
+    "?week=2",
+    "#calendar",
+    "//example.edu/map",
+  ])(
+    "accepts a PDF link annotation with relative reference %s",
+    async (url) => {
+      const pdf = await PDFDocument.create();
+      const page = pdf.addPage([100, 100]);
+      page.node.set(
+        PDFName.of("Annots"),
+        pdf.context.obj([
+          {
+            Type: PDFName.of("Annot"),
+            Subtype: PDFName.of("Link"),
+            Rect: [0, 0, 20, 20],
+            A: { S: PDFName.of("URI"), URI: PDFString.of(url) },
+          },
+        ]),
+      );
+      await expect(
+        validateStaged(
+          "relative-link.pdf",
+          "application/pdf",
+          Buffer.from(await pdf.save({ useObjectStreams: true })),
+        ),
+      ).resolves.toBe("application/pdf");
+    },
+  );
+  it.each([
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "data:text/html,test",
+    "mailto:student@example.edu",
+  ])("rejects a PDF link annotation with unsafe scheme %s", async (url) => {
     const pdf = await PDFDocument.create();
     const page = pdf.addPage([100, 100]);
     page.node.set(
@@ -506,20 +572,20 @@ describe("resource format validation", () => {
           Rect: [0, 0, 20, 20],
           A: {
             S: PDFName.of("URI"),
-            URI: PDFString.of("./relative.html"),
+            URI: PDFString.of(url),
           },
         },
       ]),
     );
     await expect(
       validateStaged(
-        "relative-link.pdf",
+        "unsafe-link.pdf",
         "application/pdf",
         Buffer.from(await pdf.save({ useObjectStreams: true })),
       ),
     ).rejects.toMatchObject({ status: 415 });
   });
-  it("rejects an unsafe outline action", async () => {
+  it("accepts a relative outline link", async () => {
     const pdf = await PDFDocument.create();
     pdf.addPage([100, 100]);
     const outlines = pdf.context.obj({
@@ -529,7 +595,7 @@ describe("resource format validation", () => {
     const outlinesRef = pdf.context.register(outlines);
     const itemRef = pdf.context.register(
       pdf.context.obj({
-        Title: PDFString.of("Unsafe"),
+        Title: PDFString.of("Schedule"),
         Parent: outlinesRef,
         A: { S: PDFName.of("URI"), URI: PDFString.of("./relative.html") },
       }),
@@ -539,15 +605,15 @@ describe("resource format validation", () => {
     pdf.catalog.set(PDFName.of("Outlines"), outlinesRef);
     await expect(
       validateStaged(
-        "unsafe-outline.pdf",
+        "relative-outline.pdf",
         "application/pdf",
         Buffer.from(await pdf.save({ useObjectStreams: true })),
       ),
-    ).rejects.toMatchObject({ status: 415 });
+    ).resolves.toBe("application/pdf");
   });
   it.each([
     { action: "absolute", accepted: true },
-    { action: "relative", accepted: false },
+    { action: "relative", accepted: true },
     { action: "unsafe", accepted: false },
   ])(
     "validates $action presentation-step actions at both entries, direct and indirect",

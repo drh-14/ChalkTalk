@@ -85,6 +85,32 @@ function safePdfDestination(value: unknown, objects: Record<string, unknown>) {
   throw invalid();
 }
 
+function safePdfUri(raw: unknown, allowRelative: boolean) {
+  if (typeof raw !== "string" || !raw.startsWith("u:")) throw invalid();
+  const target = raw.slice(2);
+  if (
+    (!allowRelative && !/^https?:\/\//i.test(target)) ||
+    Array.from(target).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127 || character === "\\";
+    }) ||
+    (/^[a-z][a-z0-9+.-]*:/i.test(target) && !/^https?:\/\//i.test(target))
+  )
+    throw invalid();
+  try {
+    const url = new URL(target, "https://chalktalk.invalid/");
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      !url.hostname ||
+      url.username ||
+      url.password
+    )
+      throw invalid();
+  } catch {
+    throw invalid();
+  }
+}
+
 function safePdfAction(value: unknown, objects: Record<string, unknown>) {
   const action = resolvePdfObject(value, objects);
   if (!action || typeof action !== "object" || Array.isArray(action))
@@ -98,29 +124,7 @@ function safePdfAction(value: unknown, objects: Record<string, unknown>) {
       (fields["/IsMap"] !== undefined && typeof fields["/IsMap"] !== "boolean")
     )
       throw invalid();
-    const raw = fields["/URI"];
-    if (typeof raw !== "string" || !raw.startsWith("u:")) throw invalid();
-    const target = raw.slice(2);
-    if (
-      !/^https?:\/\//i.test(target) ||
-      Array.from(target).some((character) => {
-        const code = character.charCodeAt(0);
-        return code < 32 || code === 127;
-      })
-    )
-      throw invalid();
-    try {
-      const url = new URL(target);
-      if (
-        !["http:", "https:"].includes(url.protocol) ||
-        !url.hostname ||
-        url.username ||
-        url.password
-      )
-        throw invalid();
-    } catch {
-      throw invalid();
-    }
+    safePdfUri(fields["/URI"], true);
   } else if (fields["/S"] === "/GoTo") {
     if (Object.keys(fields).some((key) => !["/S", "/D", "/Type"].includes(key)))
       throw invalid();
@@ -151,6 +155,17 @@ function validatePdfStructure(output: string) {
       if (fields["/Type"] === "/Action") safePdfAction(fields, objects);
       for (const [key, item] of Object.entries(fields)) {
         if (forbiddenPdfNames.has(key)) throw invalid();
+        if (key === "/URI" && fields["/Type"] === "/Catalog") {
+          const dictionary = resolvePdfObject(item, objects);
+          if (
+            !dictionary ||
+            typeof dictionary !== "object" ||
+            Array.isArray(dictionary) ||
+            Object.keys(dictionary).some((name) => name !== "/Base")
+          )
+            throw invalid();
+          safePdfUri((dictionary as Record<string, unknown>)["/Base"], false);
+        }
         if (key === "/OpenAction") {
           const opening = resolvePdfObject(item, objects);
           if (typeof opening === "string" || Array.isArray(opening))
