@@ -161,6 +161,15 @@ function validatePdfStructure(output: string) {
               throw invalid();
           }
         }
+        if (key === "/PresSteps") {
+          const steps = resolvePdfObject(item, objects);
+          if (!steps || typeof steps !== "object" || Array.isArray(steps))
+            throw invalid();
+          for (const entry of ["/NA", "/PA"]) {
+            const action = (steps as Record<string, unknown>)[entry];
+            if (action !== undefined) safePdfAction(action, objects);
+          }
+        }
         if (
           key === "/A" &&
           (fields["/Type"] === "/Annot" ||

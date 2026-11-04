@@ -545,6 +545,46 @@ describe("resource format validation", () => {
       ),
     ).rejects.toMatchObject({ status: 415 });
   });
+  it.each([
+    { action: "absolute", accepted: true },
+    { action: "relative", accepted: false },
+    { action: "unsafe", accepted: false },
+  ])(
+    "validates $action presentation-step actions at both entries, direct and indirect",
+    async ({ action, accepted }) => {
+      for (const entry of ["NA", "PA"]) {
+        for (const indirect of [false, true]) {
+          const pdf = await PDFDocument.create();
+          const page = pdf.addPage([100, 100]);
+          const stepAction =
+            action === "unsafe"
+              ? pdf.context.obj({ S: PDFName.of("Named"), N: PDFName.of("Print") })
+              : pdf.context.obj({
+                  S: PDFName.of("URI"),
+                  URI: PDFString.of(
+                    action === "absolute"
+                      ? "https://example.edu/syllabus"
+                      : "./relative.html",
+                  ),
+                });
+          const steps = pdf.context.obj({
+            [entry]: indirect ? pdf.context.register(stepAction) : stepAction,
+          });
+          page.node.set(
+            PDFName.of("PresSteps"),
+            indirect ? pdf.context.register(steps) : steps,
+          );
+          const validation = validateStaged(
+            "presentation.pdf",
+            "application/pdf",
+            Buffer.from(await pdf.save({ useObjectStreams: true })),
+          );
+          if (accepted) await expect(validation).resolves.toBe("application/pdf");
+          else await expect(validation).rejects.toMatchObject({ status: 415 });
+        }
+      }
+    },
+  );
   it.each([true, false])(
     "accepts a PDF web link with boolean IsMap %s",
     async (isMap) => {
