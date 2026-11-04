@@ -256,7 +256,8 @@ integration("course file upload and byte download", () => {
     s3.destroy();
   });
   it("accepts safe PPTX hyperlinks and downloads the original bytes", async () => {
-    const mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const mime =
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     for (const target of [
       "https://example.edu/activeX-guide",
       "http://example.edu/syllabus",
@@ -273,28 +274,57 @@ integration("course file upload and byte download", () => {
         .parse(asBytes);
       expect(downloaded.status).toBe(200);
       expect(downloaded.body).toEqual(bytes);
-      console.log(`PPTX ${target}: upload 201, download 200, original ${bytes.length} bytes preserved`);
+      console.log(
+        `PPTX ${target}: upload 201, download 200, original ${bytes.length} bytes preserved`,
+      );
     }
   });
   it("rejects unsafe PPTX links, active content, and DOCX external links", async () => {
-    const mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const mime =
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     for (const [label, bytes] of [
       ["unsafe scheme", linkedPresentation("javascript:alert(1)")],
       ["credentials", linkedPresentation("https://user:pass@example.edu/")],
-      ["external image", linkedPresentation("https://example.edu/image.png", "image")],
-      ["active package", linkedPresentation("https://example.edu/ok", "hyperlink", { "ppt/activeX/activeX1.xml": strToU8("<x/>") })],
+      [
+        "external image",
+        linkedPresentation("https://example.edu/image.png", "image"),
+      ],
+      [
+        "active package",
+        linkedPresentation("https://example.edu/ok", "hyperlink", {
+          "ppt/activeX/activeX1.xml": strToU8("<x/>"),
+        }),
+      ],
     ] as const) {
       const response = await upload(ids.instructor, "linked.pptx", mime, bytes);
-      expect(response.status, `${label}: ${JSON.stringify(response.body)}`).toBe(415);
+      expect(
+        response.status,
+        `${label}: ${JSON.stringify(response.body)}`,
+      ).toBe(415);
       console.log(`PPTX ${label}: upload 415`);
     }
-    const linkedDocx = Buffer.from(zipSync({
-      "[Content_Types].xml": strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'),
-      "_rels/.rels": strToU8('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'),
-      "word/document.xml": strToU8('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'),
-      "word/_rels/document.xml.rels": strToU8('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" TargetMode="External" Target="https://example.edu/ok"/></Relationships>'),
-    }));
-    const response = await upload(ids.instructor, "linked.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", linkedDocx);
+    const linkedDocx = Buffer.from(
+      zipSync({
+        "[Content_Types].xml": strToU8(
+          '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>',
+        ),
+        "_rels/.rels": strToU8(
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
+        ),
+        "word/document.xml": strToU8(
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>',
+        ),
+        "word/_rels/document.xml.rels": strToU8(
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" TargetMode="External" Target="https://example.edu/ok"/></Relationships>',
+        ),
+      }),
+    );
+    const response = await upload(
+      ids.instructor,
+      "linked.docx",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      linkedDocx,
+    );
     expect(response.status, JSON.stringify(response.body)).toBe(415);
     console.log("DOCX external hyperlink: upload 415");
   });
@@ -306,14 +336,26 @@ integration("course file upload and byte download", () => {
     ] as const) {
       const document = await PDFDocument.create();
       const page = document.addPage([100, 100]);
-      page.node.set(PDFName.of("Annots"), document.context.obj([{
-        Type: PDFName.of("Annot"),
-        Subtype: PDFName.of("Link"),
-        Rect: [0, 0, 20, 20],
-        A: { S: PDFName.of("URI"), URI: PDFString.of(target) },
-      }]));
-      const bytes = Buffer.from(await document.save({ useObjectStreams: true }));
-      const created = await upload(ids.instructor, "linked.pdf", "application/pdf", bytes);
+      page.node.set(
+        PDFName.of("Annots"),
+        document.context.obj([
+          {
+            Type: PDFName.of("Annot"),
+            Subtype: PDFName.of("Link"),
+            Rect: [0, 0, 20, 20],
+            A: { S: PDFName.of("URI"), URI: PDFString.of(target) },
+          },
+        ]),
+      );
+      const bytes = Buffer.from(
+        await document.save({ useObjectStreams: true }),
+      );
+      const created = await upload(
+        ids.instructor,
+        "linked.pdf",
+        "application/pdf",
+        bytes,
+      );
       expect(created.status, JSON.stringify(created.body)).toBe(expected);
       if (expected === 201) {
         const downloaded = await request(app(ids.student))
@@ -323,7 +365,9 @@ integration("course file upload and byte download", () => {
           .parse(asBytes);
         expect(downloaded.status).toBe(200);
         expect(downloaded.body).toEqual(bytes);
-        console.log(`PDF ${target}: upload 201, download 200, original ${bytes.length} bytes preserved`);
+        console.log(
+          `PDF ${target}: upload 201, download 200, original ${bytes.length} bytes preserved`,
+        );
       } else {
         console.log(`PDF ${target}: upload 415`);
       }
