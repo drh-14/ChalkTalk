@@ -611,11 +611,7 @@ describe("resource format validation", () => {
       ),
     ).resolves.toBe("application/pdf");
   });
-  it.each([
-    "absolute",
-    "relative",
-    "unsafe",
-  ])(
+  it.each(["absolute", "relative", "unsafe"])(
     "rejects %s presentation-step actions at both entries, direct and indirect",
     async (action) => {
       for (const entry of ["NA", "PA"]) {
