@@ -148,6 +148,9 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     role: "ta" | "instructor" = "ta",
     canonicalStatus: "none" | "suggested" = "none",
   ) {
+    // Prior failure scenarios can leave retryable mail behind. Isolate this
+    // scenario so runOnce cannot claim an older job after its backoff expires.
+    await pool.query("DELETE FROM jobs WHERE status='queued'");
     sequence += 1;
     const authorId = uuidv7();
     const staffId = uuidv7();

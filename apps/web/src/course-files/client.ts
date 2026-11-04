@@ -22,6 +22,19 @@ export type Resource = {
   fileName?: string;
   mediaType?: string;
   sizeBytes?: number;
+  textStatus?: "pending" | "ready" | "failed" | "unsupported";
+};
+export type Snippet = {
+  text: string;
+  highlights: { start: number; length: number }[];
+};
+export type SearchResult = {
+  resource: Resource;
+  match: { inTitle: boolean; snippet: Snippet | null };
+};
+export type SearchPage = {
+  data: SearchResult[];
+  page: { hasMore: boolean; nextCursor: string | null };
 };
 export type CatalogPage = {
   data: Resource[];
@@ -56,6 +69,16 @@ export const list = (
   if (sort !== "manual") q.set("sort", sort);
   if (cursor) q.set("cursor", cursor);
   return send<CatalogPage>(`${base(id)}/resources?${q}`, { signal });
+};
+export const search = (
+  id: string,
+  query: string,
+  cursor?: string,
+  signal?: AbortSignal,
+) => {
+  const q = new URLSearchParams({ q: query, limit: "20" });
+  if (cursor) q.set("cursor", cursor);
+  return send<SearchPage>(`${base(id)}/resources/search?${q}`, { signal });
 };
 export async function mutate<T>(
   id: string,

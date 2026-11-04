@@ -7357,30 +7357,40 @@ paths:
     get:
       tags: [Resources]
       operationId: listCourseResources
-      summary: List flat original files and named external links
-      description: Current members of active or archived courses only. UNION ALL of actual live course_files and course_resource_links, ordered by exact creation timestamp DESC, ID DESC and kind DESC (upload before link on equal timestamp and ID). No wrapper rows or hidden creator metadata. Strict single limit/cursor fields only; cursors preserve PostgreSQL microseconds and bind endpoint and course. Pagination is not a snapshot across concurrent changes. Missing, deleting and inaccessible courses are hidden.
+      summary: List visible course catalog resources
+      description: Current members of active or archived courses only. Reads live catalog resources through their active revisions, filtering staff-only sections and items before pagination. Manual order (default) uses section position/ID then resource position/ID, with ungrouped items first; title order uses lowercased title, exact title, then resource ID; date order uses creation time descending then resource ID. Strict single limit/cursor/sort/sectionId fields only. Cursors bind course, sort, section, catalog version and viewer access; catalog changes invalidate them. Extraction progress does not change the catalog version. Pagination is not a snapshot across concurrent changes. Missing, deleting and inaccessible courses are hidden.
       security:
         - session_cookie: []
       parameters:
         - "$ref": "#/components/parameters/CourseId"
         - "$ref": "#/components/parameters/Cursor"
         - "$ref": "#/components/parameters/Limit"
+        - name: sort
+          in: query
+          schema: { type: string, enum: [manual, title, date], default: manual }
+        - name: sectionId
+          in: query
+          description: Restrict to one visible section; an absent or inaccessible section returns 404.
+          schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Flat mixed resource page.
+          description: Visible catalog resource page.
           headers:
             Cache-Control:
               schema: { type: string, const: "private, no-store" }
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
                 type: object
-                required: [data, page]
+                required: [data, page, version]
                 properties:
                   data:
                     type: array
                     items: { "$ref": "#/components/schemas/CourseResource" }
                   page: { "$ref": "#/components/schemas/Page" }
+                  version: { type: integer, minimum: 1 }
         "400":
           description: Invalid query or cursor (invalid_request).
           content:
@@ -7410,7 +7420,7 @@ paths:
       tags: [Resources]
       operationId: createResource
       summary: Create a named external link
-      description: Current instructors in active courses only. JSON link creation, never a file upload or catalog wrapper. Title is trimmed and nonblank up to 200 Unicode code points; URL must be absolute HTTP(S) with hostname up to 2048 Unicode code points, without credentials, raw Unicode whitespace (including surrounding whitespace), C0/C1 controls or backslashes before parsing. Percent-encoded bytes and ordinary non-ASCII path characters are allowed. No target fetch. Optional Idempotency-Key binds creator/course/trimmed title and accepted URL for 24 hours transactionally; exact current-instructor retries replay 201 while visible including after archive, changed input returns idempotency_key_reused. No new archived or deleting writes.
+      description: Current instructors in active courses only. Creates a catalog link with optional section and visibility metadata. Title is trimmed and nonblank up to 200 Unicode code points; URL must be absolute HTTP(S) with hostname up to 2048 Unicode code points, without credentials, raw Unicode whitespace (including surrounding whitespace), C0/C1 controls or backslashes before parsing. Percent-encoded bytes and ordinary non-ASCII path characters are allowed. No target fetch. Optional Idempotency-Key binds creator/course, trimmed title, accepted URL, section and visibility for 24 hours transactionally; exact current-instructor retries replay 201 while visible including after archive, changed input returns idempotency_key_reused. No new archived or deleting writes.
       security:
         - session_cookie: []
       parameters:
@@ -7429,6 +7439,10 @@ paths:
               properties:
                 kind: { type: string, const: link }
                 title: { type: string, minLength: 1, maxLength: 200 }
+                sectionId:
+                  { type: [string, "null"], format: uuid, default: null }
+                visibility:
+                  { type: string, enum: [class, staff], default: class }
                 url:
                   {
                     type: string,
@@ -7443,6 +7457,8 @@ paths:
             Location:
               description: Unified collection path.
               schema: { type: string }
+            ETag:
+              "$ref": "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -7465,8 +7481,76 @@ paths:
           content:
             application/json:
               schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: Selected section not found in this course.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
         "422":
           description: JSON required, invalid link body or idempotency key.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: Resource service unavailable.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resources/search":
+    get:
+      tags: [Resources]
+      operationId: searchCourseResources
+      summary: Search course resources by title and extracted text
+      description: Current members of active or archived courses only. Matches word stems in resource titles and in the ready extracted text of each upload's current file; title words also match close misspellings when the query uses no operators and all of its non-stop-word terms of three or more characters closely match the title. Links match on title only and are never fetched. Catalog visibility (staff-only sections and items, removed resources, replaced files) is applied before ranking and pagination. Title matches rank first, then relevance, then resource ID. Strict q/limit/cursor fields only; cursors bind course, normalized query and viewer access. Pagination is not a snapshot across concurrent changes.
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: q
+          in: query
+          required: true
+          description: Search text; trimmed and whitespace-collapsed, then 1-200 Unicode code points. Uses websearch_to_tsquery syntax.
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: limit
+          in: query
+          required: false
+          description: Page size; defaults to 20.
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - "$ref": "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Ranked visible resources with match details.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      { "$ref": "#/components/schemas/ResourceSearchResult" }
+                  page: { "$ref": "#/components/schemas/Page" }
+        "400":
+          description: Missing, blank, oversized, repeated or unknown query fields, invalid limit, or malformed or foreign cursor (invalid_request).
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: Invalid Origin.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: Course not found, deleting, or not accessible to the caller.
           content:
             application/json:
               schema: { "$ref": "#/components/schemas/Error" }
@@ -11595,7 +11679,19 @@ components:
     CourseResourceLink:
       type: object
       additionalProperties: false
-      required: [kind, id, courseId, title, url, createdAt]
+      required:
+        [
+          kind,
+          id,
+          courseId,
+          title,
+          url,
+          createdAt,
+          sectionId,
+          visibility,
+          position,
+          version,
+        ]
       properties:
         kind: { type: string, const: link }
         id: { type: string, format: uuid }
@@ -11603,21 +11699,86 @@ components:
         title: { type: string, minLength: 1, maxLength: 200 }
         url: { type: string, format: uri, maxLength: 2048 }
         createdAt: { type: string, format: date-time }
+        sectionId: { type: [string, "null"], format: uuid }
+        visibility: { type: string, enum: [class, staff] }
+        position: { type: integer, minimum: 0 }
+        version: { type: integer, minimum: 1 }
     CourseResource:
       oneOf:
         - "$ref": "#/components/schemas/CourseResourceLink"
         - type: object
           additionalProperties: false
           required:
-            [kind, id, courseId, fileName, mediaType, sizeBytes, createdAt]
+            [
+              kind,
+              id,
+              courseId,
+              title,
+              fileId,
+              fileName,
+              mediaType,
+              sizeBytes,
+              textStatus,
+              createdAt,
+              sectionId,
+              visibility,
+              position,
+              version,
+            ]
           properties:
             kind: { type: string, const: upload }
             id: { type: string, format: uuid }
             courseId: { type: string, format: uuid }
+            title: { type: string, minLength: 1, maxLength: 200 }
+            fileId: { type: string, format: uuid }
             fileName: { type: string }
             mediaType: { type: string }
             sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
+            textStatus: { "$ref": "#/components/schemas/ResourceTextStatus" }
             createdAt: { type: string, format: date-time }
+            sectionId: { type: [string, "null"], format: uuid }
+            visibility: { type: string, enum: [class, staff] }
+            position: { type: integer, minimum: 0 }
+            version: { type: integer, minimum: 1 }
+    ResourceSearchResult:
+      type: object
+      additionalProperties: false
+      required: [resource, match]
+      properties:
+        resource: { "$ref": "#/components/schemas/CourseResource" }
+        match:
+          type: object
+          additionalProperties: false
+          required: [inTitle, snippet]
+          properties:
+            inTitle:
+              type: boolean
+              description: True when the title matched, including a close misspelling.
+            snippet:
+              oneOf:
+                - type: "null"
+                - type: object
+                  additionalProperties: false
+                  required: [text, highlights]
+                  properties:
+                    text:
+                      type: string
+                      maxLength: 300
+                      description: Plain-text excerpt of the extracted text; never markup. Markup-like source text is returned verbatim and must be rendered as text.
+                    highlights:
+                      type: array
+                      description: Ordered, non-overlapping matched ranges in UTF-16 code units into text.
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [start, length]
+                        properties:
+                          start: { type: integer, minimum: 0 }
+                          length: { type: integer, minimum: 1 }
+    ResourceTextStatus:
+      type: string
+      enum: [pending, ready, failed, unsupported]
+      description: Background text extraction state of an upload's current file. pending covers queued and in-progress work; ready includes empty text; failed means retries were exhausted or the file could not be processed; unsupported means no extractor applies. Never exposes extracted text or error details, and changing it does not change catalog ETags, ordering or cursors.
     CourseFile:
       type: object
       additionalProperties: false

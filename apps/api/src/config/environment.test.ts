@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { loadEnvironment, loadObjectStorageConfig } from "./environment.js";
+import {
+  loadEnvironment,
+  loadObjectStorageConfig,
+  loadResourceTextConfig,
+} from "./environment.js";
 
 const base = {
   AUTH_TOKEN_SECRET: "this-is-a-development-secret-that-is-long-enough",
@@ -224,5 +228,38 @@ describe("observability environment", () => {
       metricsToken: "a-separate-operator-token-at-least-32-chars",
       spoolDirectory: "/var/log/chalktalk",
     });
+  });
+});
+
+describe("resource text extraction environment", () => {
+  it("defaults to 200 OCR pages in English", () => {
+    expect(loadResourceTextConfig({})).toEqual({
+      maxOcrPages: 200,
+      ocrLanguages: "eng",
+    });
+  });
+
+  it("bounds the OCR page cap and allows zero", () => {
+    expect(
+      loadResourceTextConfig({ RESOURCE_OCR_MAX_PAGES: "0" }).maxOcrPages,
+    ).toBe(0);
+    expect(
+      loadResourceTextConfig({ RESOURCE_OCR_MAX_PAGES: "2000" }).maxOcrPages,
+    ).toBe(2000);
+    for (const value of ["2001", "-1", "1.5", "", "ten"])
+      expect(() =>
+        loadResourceTextConfig({ RESOURCE_OCR_MAX_PAGES: value }),
+      ).toThrow("RESOURCE_OCR_MAX_PAGES");
+  });
+
+  it("accepts plus-joined Tesseract language codes only", () => {
+    expect(
+      loadResourceTextConfig({ RESOURCE_OCR_LANGUAGES: "eng+spa+chi_sim" })
+        .ocrLanguages,
+    ).toBe("eng+spa+chi_sim");
+    for (const value of ["", "en", "eng spa", "eng;rm", "eng+", "ENG"])
+      expect(() =>
+        loadResourceTextConfig({ RESOURCE_OCR_LANGUAGES: value }),
+      ).toThrow("RESOURCE_OCR_LANGUAGES");
   });
 });

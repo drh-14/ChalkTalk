@@ -64,7 +64,7 @@ When a user drafts a new question, related existing posts are surfaced live thro
 
 Instructors can upload or link resources relating to the course, such as syllabus documents, lecture notes, assignments, course policies, and external links.
 
-Uploaded documents can be divided into instructor-defined regions, such as a diagram or paragraph on a given page. Each region is independently searchable and can be directly linked to from posts, responses, and followups. Text within a defined region is extracted via OCR to support search.
+For implemented whole-file text extraction and resource search, see the [resource API reference](api/resources.md#searchCourseResources). Instructor-defined regions, region search and region links remain deferred, as described in the [deferred resource contracts](api/resources.md#deferred-resource-catalog-operations).
 
 ### **Live Collaborative Sessions**
 

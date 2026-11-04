@@ -86,6 +86,23 @@ export interface Environment {
   };
 }
 
+/** Worker settings for resource text extraction (OCR page cap and Tesseract languages). */
+export function loadResourceTextConfig(
+  source: NodeJS.ProcessEnv = process.env,
+): { maxOcrPages: number; ocrLanguages: string } {
+  const pages = source.RESOURCE_OCR_MAX_PAGES ?? "200";
+  if (!/^\d{1,4}$/.test(pages) || Number(pages) > 2000)
+    throw new Error(
+      "RESOURCE_OCR_MAX_PAGES must be an integer between 0 and 2000",
+    );
+  const ocrLanguages = source.RESOURCE_OCR_LANGUAGES ?? "eng";
+  if (!/^[a-z_]{3,}(\+[a-z_]{3,})*$/.test(ocrLanguages))
+    throw new Error(
+      "RESOURCE_OCR_LANGUAGES must be Tesseract language codes joined by +",
+    );
+  return { maxOcrPages: Number(pages), ocrLanguages };
+}
+
 export function loadEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): Environment {
