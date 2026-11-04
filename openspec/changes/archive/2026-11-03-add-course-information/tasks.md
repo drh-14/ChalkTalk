@@ -9,6 +9,6 @@
 - [x] 2.3 Drive desktop/mobile real-browser mocked-API flows and capture screenshots.
 ## 3. Delivery
 - [x] 3.1 Run focused tests, full checks and OpenSpec validation.
-- [ ] 3.4 Archive verified change after the no-mistakes validation phases.
-- [ ] 3.2 Commit scoped feature and run no-mistakes; resolve findings with user decisions as required.
-- [ ] 3.3 Publish one-commit draft PR with screenshots and verify final-head CI.
+- [x] 3.4 Archive verified change after the no-mistakes validation phases.
+- [x] 3.2 Commit scoped feature and run no-mistakes; resolve findings with user decisions as required.
+- [x] 3.3 Publish one-commit draft PR with screenshots and verify final-head CI.

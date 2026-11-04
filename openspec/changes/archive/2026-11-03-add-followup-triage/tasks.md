@@ -21,4 +21,4 @@
 
 - [x] 4.1 Browser test against the running stack: a student posts a followup; a TA finds the question under **Unresolved**, resolves the discussion, and the question leaves the filter; the student replies, and the discussion shows **Unresolved** again. Capture screenshots
 - [x] 4.2 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
-- [ ] 4.3 Archive after merge
+- [x] 4.3 Archive after merge

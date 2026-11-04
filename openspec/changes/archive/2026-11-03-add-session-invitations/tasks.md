@@ -20,4 +20,4 @@
 - [x] 4.1 Add a browser test against the running stack: a student invites a TA, the TA's email arrives in Mailpit with the session link, and the TA joins from the home page; capture screenshots
 - [x] 4.2 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
   - Local run on Windows, 2026-10-20: API and collaboration suites pass. Web files pass when run alone except the two `App.test.tsx` password-reset tests and two `views.test.tsx` composer timing tests, which fail the same way on `add-session-whiteboard`. Parallel web runs on this laptop time out in the heaviest page-test files; CI is the reference.
-- [ ] 4.3 Archive after `add-live-code-sessions` and `add-session-whiteboard` are archived
+- [x] 4.3 Archive after `add-live-code-sessions` and `add-session-whiteboard` are archived

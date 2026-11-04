@@ -19,4 +19,4 @@
 
 - [x] 4.1 Run format, lint, typecheck, the test suite with `TEST_DATABASE_URL`, and build; record environment-only failures with evidence
   - Local run on Windows, 2026-10-20: format, lint, typecheck, and the dashboard PromQL test pass; collaboration, config, and worker suites pass when run alone. Failures in the loaded full API run are the same environment-only tests as on `main` (`validate.test.ts`, `openapi.contract.test.ts`, the two process-separation tests) plus 5-second timeouts. The compose observability smoke run is left to CI.
-- [ ] 4.2 Archive after `add-live-code-sessions`, `add-session-whiteboard`, and `add-session-invitations` are archived
+- [x] 4.2 Archive after `add-live-code-sessions`, `add-session-whiteboard`, and `add-session-invitations` are archived

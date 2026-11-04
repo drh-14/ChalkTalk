@@ -7,13 +7,13 @@
 
 - [x] 2.1 Create the root npm workspace, shared TypeScript and quality-tool configuration; verify install, lint, typecheck, test, and build commands are available from the root.
 - [x] 2.2 Add the React and Vite web shell with development API forwarding; verify the production web build succeeds.
-- [ ] 2.3 Add Docker Compose PostgreSQL, example environment configuration, and root setup instructions; verify Compose configuration is valid.
+- [x] 2.3 Add Docker Compose PostgreSQL, example environment configuration, and root setup instructions; verify Compose configuration is valid.
 
 ## 3. API and migrations
 
 - [x] 3.1 Write a failing HTTP-level health-endpoint test, then implement the composable Express API and `GET /health`; verify the test passes with HTTP 200 and `{ "status": "ok" }`.
-- [ ] 3.2 Write a failing integration test for ordered, idempotent SQL migrations, then implement the PostgreSQL connection and migration runner; verify it passes against local PostgreSQL when available.
-- [ ] 3.3 Add the initial migration ledger migration; verify running migrations twice records it once.
+- [x] 3.2 Write a failing integration test for ordered, idempotent SQL migrations, then implement the PostgreSQL connection and migration runner; verify it passes against local PostgreSQL when available.
+- [x] 3.3 Add the initial migration ledger migration; verify running migrations twice records it once.
 
 ## 4. Validation
 
