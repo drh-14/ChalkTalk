@@ -123,7 +123,7 @@ paths:
       tags: [Resources]
       summary: Upload an immutable original course file
       operationId: createCourseFile
-      description: Existing file upload. Current instructors in active courses only; not TA or student. Exactly one structurally validated file up to 100 MiB; PDF, text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Ordinary absolute HTTP/HTTPS and relative PDF links are allowed; unsafe schemes and active actions are rejected. See documentation/api/resources.md for PDF action validation rules and limits. Safe original filename up to 255 characters. Idempotency binds uploader, course, filename, declared type and SHA-256 for 24 hours; exact retries replay 201 while visible, including after archival. Changed input or deleted-file replay returns 409 idempotency_key_reused. No resource catalog metadata.
+      description: Existing file upload. Current instructors in active courses only; not TA or student. Exactly one structurally validated file up to 100 MiB; PDF, text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Ordinary absolute HTTP/HTTPS and relative PDF/PPTX links are allowed; unsafe schemes and active actions are rejected. See documentation/api/resources.md for PDF and PPTX link validation rules and limits. Safe original filename up to 255 characters. Idempotency binds uploader, course, filename, declared type and SHA-256 for 24 hours; exact retries replay 201 while visible, including after archival. Changed input or deleted-file replay returns 409 idempotency_key_reused. No resource catalog metadata.
       security:
         - session_cookie: []
       parameters:
@@ -8000,7 +8000,11 @@ paths:
               properties:
                 file: { type: string, format: binary }
                 title: { type: string, minLength: 1, maxLength: 200 }
-                sectionId: { type: string, description: "A section ID, or empty for ungrouped." }
+                sectionId:
+                  {
+                    type: string,
+                    description: "A section ID, or empty for ungrouped.",
+                  }
                 visibility: { type: string, enum: [class, staff] }
       responses:
         "201":
@@ -8270,7 +8274,11 @@ paths:
               properties:
                 file: { type: string, format: binary }
                 title: { type: string, minLength: 1, maxLength: 200 }
-                sectionId: { type: string, description: "A section ID, or empty for ungrouped." }
+                sectionId:
+                  {
+                    type: string,
+                    description: "A section ID, or empty for ungrouped.",
+                  }
                 visibility: { type: string, enum: [class, staff] }
       responses:
         "200":
@@ -8399,7 +8407,8 @@ paths:
               required: ["descriptionMarkdown", "website"]
               properties:
                 descriptionMarkdown: { type: string, maxLength: 50000 }
-                website: { type: [string, "null"], format: uri, maxLength: 2048 }
+                website:
+                  { type: [string, "null"], format: uri, maxLength: 2048 }
       responses:
         "200":
           description: "Updated information."
@@ -12985,7 +12994,8 @@ components:
     CourseStaffProfile:
       type: object
       additionalProperties: false
-      required: [userId, displayName, role, contact, location, officeHours, version]
+      required:
+        [userId, displayName, role, contact, location, officeHours, version]
       properties:
         userId: { type: string, format: uuid }
         displayName: { type: string }

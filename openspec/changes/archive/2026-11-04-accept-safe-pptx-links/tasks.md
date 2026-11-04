@@ -1,0 +1,4 @@
+- [x] Add tests for allowed and unsafe PPTX hyperlinks; confirm allowed cases fail before implementation.
+- [x] Implement PPTX-only hyperlink validation.
+- [x] Update course-file specs and API documentation.
+- [x] Verify tests, archive change, and update draft PR #148.

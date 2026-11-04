@@ -300,6 +300,33 @@ const relationshipTypes = new Set([
   "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties",
   "http://purl.oclc.org/ooxml/package/relationships/metadata/core-properties",
 ]);
+const hyperlinkRelationshipTypes = new Set([
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+  "http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink",
+]);
+
+function safeOfficeHyperlink(target: string) {
+  if (
+    [...target].some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127 || character === "\\";
+    }) ||
+    (/^[a-z][a-z0-9+.-]*:/i.test(target) && !/^https?:\/\//i.test(target))
+  )
+    throw invalid();
+  try {
+    const url = new URL(target, "https://chalktalk.invalid/");
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      !url.hostname ||
+      url.username ||
+      url.password
+    )
+      throw invalid();
+  } catch {
+    throw invalid();
+  }
+}
 function relationshipSource(name: string, entries: Map<string, unknown>) {
   if (name === "_rels/.rels") return "";
   const match = /^(.*\/)_rels\/([^/]+)\.rels$/.exec(name);
@@ -517,6 +544,11 @@ async function zipFile(path: string, kind: "docx" | "pptx") {
         if (base !== undefined && depth === 2) {
           const target = attributes.Target;
           const type = attributes.Type;
+          const externalHyperlink =
+            kind === "pptx" &&
+            file.name.startsWith("ppt/") &&
+            hyperlinkRelationshipTypes.has(type) &&
+            attributes.TargetMode?.toLowerCase() === "external";
           const resolved = target
             ? posix.normalize(posix.join(base, target))
             : "";
@@ -525,21 +557,26 @@ async function zipFile(path: string, kind: "docx" | "pptx") {
             !type ||
             !attributes.Id ||
             relationshipIds.has(attributes.Id) ||
-            !relationshipTypes.has(type) ||
-            (attributes.TargetMode !== undefined &&
+            (!externalHyperlink && !relationshipTypes.has(type)) ||
+            (!externalHyperlink &&
+              attributes.TargetMode !== undefined &&
               attributes.TargetMode.toLowerCase() !== "internal") ||
-            target.startsWith("/") ||
-            /[\\:%?#]/.test(target) ||
-            [...target].some((character) => character.charCodeAt(0) <= 31) ||
-            resolved === ".." ||
-            resolved.startsWith("../") ||
-            resolved === "[Content_Types].xml" ||
-            resolved.endsWith(".rels") ||
-            (type.endsWith("/image") &&
-              !/\.(?:png|jpe?g|webp)$/i.test(resolved)) ||
-            !entries.has(resolved)
+            (!externalHyperlink &&
+              (target.startsWith("/") ||
+                /[\\:%?#]/.test(target) ||
+                [...target].some(
+                  (character) => character.charCodeAt(0) <= 31,
+                ) ||
+                resolved === ".." ||
+                resolved.startsWith("../") ||
+                resolved === "[Content_Types].xml" ||
+                resolved.endsWith(".rels") ||
+                (type.endsWith("/image") &&
+                  !/\.(?:png|jpe?g|webp)$/i.test(resolved)) ||
+                !entries.has(resolved)))
           )
             throw invalid();
+          if (externalHyperlink) safeOfficeHyperlink(target);
           relationshipIds.add(attributes.Id);
           if (
             file.name === "_rels/.rels" &&

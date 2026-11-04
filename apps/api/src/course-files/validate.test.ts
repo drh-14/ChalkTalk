@@ -32,7 +32,64 @@ async function validateStaged(
   }
 }
 
+const pptxMediaType =
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+
+function pptxWithLink(target: string, type = "hyperlink", mode = "External") {
+  return zipSync({
+    "[Content_Types].xml": strToU8(
+      `<Types xmlns="${contentTypesNamespace}"><Override PartName="/ppt/presentation.xml" ContentType="${pptxMediaType}.main+xml"/></Types>`,
+    ),
+    "_rels/.rels": strToU8(
+      `<Relationships xmlns="${packageRelationships}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>`,
+    ),
+    "ppt/presentation.xml": strToU8(
+      '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>',
+    ),
+    "ppt/slides/slide1.xml": strToU8(
+      '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>',
+    ),
+    "ppt/slides/_rels/slide1.xml.rels": strToU8(
+      `<Relationships xmlns="${packageRelationships}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" TargetMode="${mode}" Target="${target.replaceAll("&", "&amp;")}"/></Relationships>`,
+    ),
+  });
+}
+
 describe("resource format validation", () => {
+  it.each([
+    "https://example.edu/schedule",
+    "http://example.edu/schedule",
+    "./schedule.html",
+    "../schedule.html",
+    "/schedule.html",
+    "?week=2",
+    "#week-2",
+  ])("accepts a PPTX hyperlink to %s", async (target) => {
+    await expect(
+      validateStaged("lecture.pptx", pptxMediaType, pptxWithLink(target)),
+    ).resolves.toBe(pptxMediaType);
+  });
+  it.each([
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "data:text/html,unsafe",
+    "https://user:pass@example.edu/",
+    "https://example.edu\\unsafe",
+    "https://example.edu/\u0001unsafe",
+  ])("rejects an unsafe PPTX hyperlink to %s", async (target) => {
+    await expect(
+      validateStaged("lecture.pptx", pptxMediaType, pptxWithLink(target)),
+    ).rejects.toMatchObject({ status: 415 });
+  });
+  it("rejects non-hyperlink PPTX external relationships", async () => {
+    await expect(
+      validateStaged(
+        "lecture.pptx",
+        pptxMediaType,
+        pptxWithLink("https://example.edu/tracker", "image"),
+      ),
+    ).rejects.toMatchObject({ status: 415 });
+  });
   it("validates a staged text file from its path", async () => {
     const directory = await fs.mkdtemp(join(tmpdir(), "chalktalk-validate-"));
     const path = join(directory, "notes.txt");
