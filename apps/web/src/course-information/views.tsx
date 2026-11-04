@@ -15,10 +15,14 @@ import {
   type Staff,
 } from "./client.js";
 import "./styles.css";
-type Props = { courseId: string; canEdit: boolean; csrfToken: string };
+type Props = {
+  courseId: string;
+  canEdit: boolean;
+  csrfToken: string;
+};
 const message = (e: unknown) =>
   e instanceof Error ? e.message : "Unable to save. Please try again.";
-export function CourseResourcesArea(props: Props) {
+export function CourseResourcesArea(props: Props & { staff: boolean }) {
   const [tab, setTab] = useState<"information" | "staff" | "resources">(
     "resources",
   );
@@ -107,6 +111,7 @@ export function CourseResourcesArea(props: Props) {
             courseId={props.courseId}
             canUpload={props.canEdit}
             csrfToken={props.csrfToken}
+            staff={props.staff}
           />
         </section>
       )}

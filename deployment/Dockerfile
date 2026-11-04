@@ -14,6 +14,7 @@ RUN npm prune --omit=dev --no-audit --no-fund
 
 FROM node:22-bookworm-slim AS app
 ENV NODE_ENV=production
+RUN apt-get update && apt-get install -y --no-install-recommends qpdf poppler-utils tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=build /app/package.json /app/package-lock.json ./

@@ -1,6 +1,6 @@
 # Database schema
 
-ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally include `created_at`, `updated_at`, and `version`; a nullable `deleted_at` retains a tombstone where needed. `pg_trgm` supports fuzzy matching, and full-text indexes support post and resource-region search.
+ChalkTalk uses PostgreSQL. IDs use `uuid_v7`. Mutable resources generally include `created_at`, `updated_at`, and `version`; a nullable `deleted_at` retains a tombstone where needed. `pg_trgm` supports fuzzy matching. For extracted resource text and its full-text index, see [`course_file_texts`](#course_file_texts-resource-text-extraction).
 
 ## Identity and access
 
@@ -102,7 +102,7 @@ Digest scheduling scans from the day after the cursor through yesterday (inclusi
 - `available_at`, `locked_until`, `finished_at`, `created_at`, `updated_at`: `timestamptz`; lock and completion times are nullable.
 - `locked_by`, `last_error`: `text`, nullable.
 - `frozen_email`: nullable `jsonb`; versioned queued email payload (exact MIME bytes for SMTP or stable message and attachment bytes for Resend), original provider, and current-content guard. It commits before the first provider handoff, is retried with the same provider payload, and is cleared on success, cancellation, or terminal provider failure. Current address, membership, preference, title and body content, course status, and included actor or sender identities are rechecked before each attempt; a provider change cancels instead of switching transports; the frozen payload is not authorization to send. Cancellation atomically clears the snapshot and claim and records a non-sensitive reason, without a success metric.
-- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `publish_scheduled_announcement` jobs use a `post-id:scheduled-for` deduplication key, a payload containing the post ID and the scheduled time, and `available_at` set to that time; the worker publishes only if the post is still scheduled for exactly that time. `send_notification_email` jobs, queued for recipients who opted in to activity emails and never for announcements, use the notification ID as deduplication key and a payload containing it. New answer/followup/reply jobs also carry optional `responseKind` (`answer` or `followup`) and `responseId` fields so the worker can recheck and link the current response; older payloads without those fields remain valid. `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
+- `delete_course` jobs remove a course and its dependent content. `send_question_duplicate_email` jobs use a `source-post-id:source-version` deduplication key and a payload containing source post ID, canonical post ID, acting staff user ID, and role. For notification behavior, see [Update post](api/posts.md#updatePost). `publish_scheduled_announcement` jobs use a `post-id:scheduled-for` deduplication key, a payload containing the post ID and the scheduled time, and `available_at` set to that time; the worker publishes only if the post is still scheduled for exactly that time. `send_notification_email` jobs, queued for recipients who opted in to activity emails and never for announcements, use the notification ID as deduplication key and a payload containing it. New answer/followup/reply jobs also carry optional `responseKind` (`answer` or `followup`) and `responseId` fields so the worker can recheck and link the current response; older payloads without those fields remain valid. `send_announcement_email` jobs use a `post-id:recipient-user-id` deduplication key and a payload containing the post ID and recipient user ID. `extract_file_text` jobs use a `file:<file-id>` deduplication key and a `{ fileId }` payload, get `max_attempts` 3, and are claimed only by the worker's extraction lane (see `course_file_texts`). For time limits, retries and the shutdown, lease-loss and object-store outage exceptions, see [the extraction lane design](../openspec/changes/add-resource-text-extraction/design.md#3-a-dedicated-extraction-lane-with-a-heartbeat-lease). `send_collaboration_invitation_email` jobs use a `session-id:invitee-user-id:participant-created-at-ms` deduplication key and a payload containing the session ID, invitee user ID, and inviter user ID; see [Invite participant](api/collaboration-sessions.md#inviteCollaborationParticipant).
 
 ## Courses and membership
 
@@ -387,7 +387,7 @@ The non-deleted answer body check retains historical empty strings from former l
 
 ## Resources
 
-### `course_resource_links` (implemented flat named links)
+### `course_resource_links` (legacy flat named links)
 
 - `id`: `uuid_v7`; primary key.
 - `course_id`: `uuid_v7`; foreign key to `courses.id` with cascade deletion.
@@ -395,9 +395,24 @@ The non-deleted answer body check retains historical empty strings from former l
 - `url`: `text`; absolute HTTP(S), at most 2048 Unicode code points; API rejects credentials, missing host, raw Unicode whitespace (including surrounding whitespace), C0/C1 controls and backslashes before parsing. Database checks length and HTTP(S) prefix. Never fetched by the server.
 - `created_by_user_id`: nullable `uuid_v7`; foreign key to `users.id`, SET NULL on user deletion. Not exposed in public resource metadata.
 - `created_at`: `timestamptz`; defaults to `clock_timestamp()`.
-- `(course_id, created_at DESC, id DESC)` index supports course listing. Existing original files remain in `course_files`; unified reads use UNION ALL without wrapper/backfill rows. Link creation and its existing `idempotency_records` response commit atomically; keys are scoped to creator/course for 24 hours.
+- `(course_id, created_at DESC, id DESC)` indexes the legacy list. Migration [`029_organized_course_resources.sql`](../database/migrations/029_organized_course_resources.sql) backfills these links into the current catalog's resources and revisions; current catalog reads do not query this legacy table. For link creation and idempotency, see the [resource API reference](api/resources.md#createResource).
 
-The `resources` and `resource_regions` catalog structures below are deferred and are not the implemented flat resource list.
+### `course_file_texts` (resource text extraction)
+
+- `file_id`: `uuid_v7`; primary key. With `course_id`, foreign key to `course_files(course_id, id)` with cascade deletion, so course deletion removes extracted text.
+- `course_id`: `uuid_v7`.
+- `status`: `text`; `pending`, `ready`, `failed`, or `unsupported`. Text is non-null exactly when `ready`; `failed` and `unsupported` require `failure_code`.
+- `text`: `text`, nullable; normalized extracted text of at most 500,000 Unicode code points. CRLF and CR become newline; C0 and C1 controls other than newline, and U+E000/U+E001, become spaces. Tabs and Unicode space runs collapse to one space; spaces beside newlines are removed, runs of three or more newlines collapse to two, and surrounding whitespace is trimmed.
+- `truncated`: `boolean`; true when an extraction or storage limit cuts the text short, including the OCR page cap, the character cap, the final attempt's OCR deadline, skipped PPTX slides or speaker notes above the 64 MiB uncompressed XML-part limit, or additional shortening to fit PostgreSQL's tsvector size limit. Skipped unrelated archive entries do not affect this flag; skipping every wanted PPTX part produces empty, truncated text. A missing or oversized DOCX body instead fails extraction as a damaged file.
+- `failure_code`: `text`, nullable, 1–100 characters; internal only and never exposed by the API.
+- `extracted_at`, `created_at`, `updated_at`: `timestamptz`; `extracted_at` is nullable.
+- `search_vector`: generated `tsvector` (`english` configuration) when `ready`, with a GIN index. `<` and `>` are translated to private-use stand-ins (U+E000, U+E001, which normalization removes from source text) before parsing, because PostgreSQL's default parser would otherwise skip markup-like text such as `<script>…</script>`; snippets use the same translation and map it back.
+
+A `pending` row is inserted for each file that becomes the active revision of a catalog resource, in the same transaction as its `extract_file_text` job. Rows are keyed by immutable file, so search reads them only through the live resource's active revision and never returns text from removed resources or replaced files.
+
+Publishing `ready`, `failed` or `unsupported` requires the current job owner, attempt and unexpired lease in the same transaction as the text update. Publication locks the job against takeover and rolls back if the lease expires while writing; text-size reduction retries remain within that transaction.
+
+The `resources` and `resource_regions` structures below are deferred; they are distinct from the implemented course-scoped catalog defined in [`029_organized_course_resources.sql`](../database/migrations/029_organized_course_resources.sql).
 
 ### `resources`
 

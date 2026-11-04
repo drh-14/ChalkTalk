@@ -1,20 +1,56 @@
 import { ApiError } from "../auth/client.js";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   sections as readSections,
   list,
   mutate,
+  search as searchResources,
   upload,
   filePath,
   type Resource,
+  type SearchResult,
   type Section,
+  type Snippet,
 } from "./client.js";
 import "./styles.css";
 const message = (e: unknown) =>
   e instanceof Error
     ? e.message
     : "Resources are unavailable. Please try again.";
-type Props = { courseId: string; canUpload: boolean; csrfToken: string };
+type Props = {
+  courseId: string;
+  canUpload: boolean;
+  csrfToken: string;
+  /** TAs and instructors see which files' contents are not searchable. */
+  staff: boolean;
+};
+const SEARCH_DELAY_MS = 300;
+const textStatusNotice = {
+  pending: "Contents not searchable yet",
+  failed: "Contents could not be read for search",
+  unsupported: "Contents are not searchable",
+} as const;
+/** Renders highlight ranges as <mark> around plain text nodes; never as HTML. */
+function highlighted(snippet: Snippet) {
+  const parts: ReactNode[] = [];
+  let at = 0;
+  for (const { start, length } of snippet.highlights) {
+    if (start < at) continue;
+    if (start > at) parts.push(snippet.text.slice(at, start));
+    parts.push(
+      <mark key={start}>{snippet.text.slice(start, start + length)}</mark>,
+    );
+    at = start + length;
+  }
+  if (at < snippet.text.length) parts.push(snippet.text.slice(at));
+  return parts;
+}
 function fileRetryKey(
   keys: WeakMap<File, Map<string, string>>,
   file: File,
@@ -32,7 +68,12 @@ function fileRetryKey(
   }
   return key;
 }
-export function CourseResources({ courseId, canUpload, csrfToken }: Props) {
+export function CourseResources({
+  courseId,
+  canUpload,
+  csrfToken,
+  staff,
+}: Props) {
   const [items, setItems] = useState<Resource[]>([]),
     [sections, setSections] = useState<Section[]>([]),
     [version, setVersion] = useState(1),
@@ -54,10 +95,18 @@ export function CourseResources({ courseId, canUpload, csrfToken }: Props) {
     [linkAccess, setLinkAccess] = useState("class"),
     [notice, setNotice] = useState<string>();
   const [moreError, setMoreError] = useState(false);
+  const [query, setQuery] = useState(""),
+    [results, setResults] = useState<SearchResult[]>([]),
+    [resultsCursor, setResultsCursor] = useState<string | null>(null),
+    [searching, setSearching] = useState(false),
+    [searchError, setSearchError] = useState<string>(),
+    [searchCycle, setSearchCycle] = useState(0);
+  const activeQuery = query.trim();
   const [working, setWorking] = useState<"file" | "link">();
   const keys = useRef(new Map<string, string>()),
     fileKeys = useRef(new WeakMap<File, Map<string, string>>()),
-    fileInput = useRef<HTMLInputElement>(null);
+    fileInput = useRef<HTMLInputElement>(null),
+    searchRequest = useRef<AbortController | null>(null);
   const key = (value: unknown) => {
     const hash = JSON.stringify(value);
     if (!keys.current.has(hash)) keys.current.set(hash, crypto.randomUUID());
@@ -86,6 +135,62 @@ export function CourseResources({ courseId, canUpload, csrfToken }: Props) {
       });
     return () => c.abort();
   }, [courseId, sort, cycle]);
+  useEffect(() => {
+    setResults([]);
+    setResultsCursor(null);
+    setSearchError(undefined);
+    if (!activeQuery) {
+      setSearching(false);
+      return;
+    }
+    const c = new AbortController();
+    searchRequest.current = c;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      searchResources(courseId, activeQuery, undefined, c.signal)
+        .then((page) => {
+          if (c.signal.aborted) return;
+          setResults(page.data);
+          setResultsCursor(page.page.nextCursor);
+        })
+        .catch((e) => {
+          if (!c.signal.aborted) setSearchError(message(e));
+        })
+        .finally(() => {
+          if (!c.signal.aborted) setSearching(false);
+        });
+    }, SEARCH_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      c.abort();
+    };
+  }, [courseId, activeQuery, searchCycle]);
+  async function moreResults() {
+    const c = searchRequest.current;
+    if (!c || !resultsCursor || searching) return;
+    setSearching(true);
+    setSearchError(undefined);
+    try {
+      const page = await searchResources(
+        courseId,
+        activeQuery,
+        resultsCursor,
+        c.signal,
+      );
+      if (c.signal.aborted) return;
+      setResults((rows) => [
+        ...rows,
+        ...page.data.filter(
+          (i) => !rows.some((r) => r.resource.id === i.resource.id),
+        ),
+      ]);
+      setResultsCursor(page.page.nextCursor);
+    } catch (e) {
+      if (!c.signal.aborted) setSearchError(message(e));
+    } finally {
+      if (!c.signal.aborted) setSearching(false);
+    }
+  }
   const refresh = () => setCycle((c) => c + 1);
   async function action(work: () => Promise<unknown>, success?: () => void) {
     if (pending) return;
@@ -306,6 +411,7 @@ export function CourseResources({ courseId, canUpload, csrfToken }: Props) {
                   courseId={courseId}
                   canUpload={canUpload}
                   csrfToken={csrfToken}
+                  staff={staff}
                   sections={sections}
                   refresh={refresh}
                 />
@@ -517,37 +623,120 @@ export function CourseResources({ courseId, canUpload, csrfToken }: Props) {
           </form>
         </div>
       )}
-      {!loading && (
-        <>
-          <label className="resource-sort">
-            Sort resources
-            <select value={sort} onChange={(e) => setSort(e.target.value)}>
-              <option value="manual">Instructor order</option>
-              <option value="title">Title</option>
-              <option value="date">Newest first</option>
-            </select>
-          </label>
-          {items.length === 0 && sections.length === 0 && !cursor && (
-            <p className="course-files-empty">No course resources yet.</p>
+      <label className="resource-search">
+        Search resources
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          maxLength={200}
+          placeholder="Search titles and file contents"
+        />
+      </label>
+      {activeQuery && (
+        <section
+          className="resource-search-results"
+          aria-label="Search results"
+        >
+          {searchError && (
+            <div role="alert">
+              <p>{searchError}</p>
+              <button
+                className="button secondary"
+                onClick={() =>
+                  results.length
+                    ? void moreResults()
+                    : setSearchCycle((c) => c + 1)
+                }
+              >
+                Try again
+              </button>
+            </div>
           )}
-          {scope(null).length > 0 && group(null)}
-          {sections.map(group)}
-          {cursor && (
-            <button
-              className="button secondary"
-              disabled={pending}
-              onClick={() => void more()}
-            >
-              Load more
-            </button>
+          {searching && results.length === 0 && (
+            <p role="status">Searching resources…</p>
           )}
-          {cursor && canUpload && (
-            <p className="course-file-meta">
-              Load all resources to change their order.
+          {!searching && !searchError && results.length === 0 && (
+            <p className="course-files-empty">
+              No resources match &ldquo;{activeQuery}&rdquo;.
             </p>
           )}
-        </>
+          {results.length > 0 && (
+            <ul className="course-files-list">
+              {results.map(({ resource, match }) => (
+                <li key={resource.id}>
+                  <a
+                    href={
+                      resource.kind === "upload"
+                        ? filePath(courseId, resource)
+                        : resource.url
+                    }
+                    {...(resource.kind === "link"
+                      ? { target: "_blank", rel: "noopener noreferrer" }
+                      : {})}
+                  >
+                    {resource.title ?? resource.fileName}
+                  </a>
+                  <div className="course-file-meta">
+                    <span>
+                      {sections.find((s) => s.id === resource.sectionId)
+                        ?.title ?? "Ungrouped"}
+                    </span>
+                    {resource.kind === "link" && <span>External link</span>}
+                  </div>
+                  {match.snippet && (
+                    <p className="resource-snippet">
+                      {highlighted(match.snippet)}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {resultsCursor && (
+            <button
+              className="button secondary"
+              disabled={searching}
+              onClick={() => void moreResults()}
+            >
+              Load more results
+            </button>
+          )}
+        </section>
       )}
+      <div hidden={!!activeQuery}>
+        {!loading && (
+          <>
+            <label className="resource-sort">
+              Sort resources
+              <select value={sort} onChange={(e) => setSort(e.target.value)}>
+                <option value="manual">Instructor order</option>
+                <option value="title">Title</option>
+                <option value="date">Newest first</option>
+              </select>
+            </label>
+            {items.length === 0 && sections.length === 0 && !cursor && (
+              <p className="course-files-empty">No course resources yet.</p>
+            )}
+            {scope(null).length > 0 && group(null)}
+            {sections.map(group)}
+            {cursor && (
+              <button
+                className="button secondary"
+                disabled={pending}
+                onClick={() => void more()}
+              >
+                Load more
+              </button>
+            )}
+            {cursor && canUpload && (
+              <p className="course-file-meta">
+                Load all resources to change their order.
+              </p>
+            )}
+          </>
+        )}
+      </div>
     </section>
   );
 }
@@ -694,6 +883,7 @@ function ResourceRow({
   csrfToken,
   sections,
   refresh,
+  staff,
 }: Props & { item: Resource; sections: Section[]; refresh: () => void }) {
   const [editing, setEditing] = useState(false),
     [title, setTitle] = useState(item.title ?? item.fileName ?? ""),
@@ -789,6 +979,14 @@ function ResourceRow({
           </span>
         )}
         {item.visibility === "staff" && <span>Staff only</span>}
+        {staff &&
+          item.kind === "upload" &&
+          item.textStatus &&
+          item.textStatus !== "ready" && (
+            <span className="resource-text-status">
+              {textStatusNotice[item.textStatus]}
+            </span>
+          )}
       </div>
       {error && !editing && <p role="alert">{error}</p>}
       {canUpload &&

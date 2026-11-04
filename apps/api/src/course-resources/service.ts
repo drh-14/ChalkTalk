@@ -3,6 +3,13 @@ import type { Pool, PoolClient } from "pg";
 import { v7 as uuid } from "uuid";
 import { AuthError } from "../auth/errors.js";
 import type { CourseFileService, NewUpload } from "../course-files/service.js";
+import { queueFileTextExtraction } from "../resource-text/queue.js";
+import {
+  HIGHLIGHT_START,
+  HIGHLIGHT_STOP,
+  toSnippet,
+  type Snippet,
+} from "../resource-text/snippet.js";
 type Db = Pool | PoolClient;
 export type Section = {
   id: string;
@@ -35,12 +42,15 @@ export type CourseResource =
       fileName: string;
       mediaType: string;
       sizeBytes: number;
+      textStatus: TextStatus;
       createdAt: string;
       sectionId: string | null;
       visibility: "class" | "staff";
       position: number;
       version: number;
     };
+export type TextStatus = "pending" | "ready" | "failed" | "unsupported";
+export type ResourceSearchMatch = { inTitle: boolean; snippet: Snippet | null };
 type Row = {
   id: string;
   course_id: string;
@@ -55,10 +65,11 @@ type Row = {
   file_name: string;
   media_type: string;
   size_bytes: string;
+  text_status: TextStatus | null;
   created_at: Date;
   active_revision_id: string;
 };
-const select = `SELECT r.*,v.kind,v.url,v.file_id,f.file_name,f.media_type,f.size_bytes FROM course_resources r JOIN course_resource_revisions v ON v.id=r.active_revision_id LEFT JOIN course_files f ON f.id=v.file_id LEFT JOIN course_resource_sections s ON s.id=r.section_id`;
+const select = `SELECT r.*,v.kind,v.url,v.file_id,f.file_name,f.media_type,f.size_bytes,t.status text_status FROM course_resources r JOIN course_resource_revisions v ON v.id=r.active_revision_id LEFT JOIN course_files f ON f.id=v.file_id LEFT JOIN course_file_texts t ON t.file_id=v.file_id LEFT JOIN course_resource_sections s ON s.id=r.section_id`;
 const visible = `r.deleted_at IS NULL AND (m.role IN ('ta','instructor') OR (r.visibility='class' AND COALESCE(s.visibility,'class')='class')) AND (v.kind='link' OR f.deleted_at IS NULL)`;
 const invalid = (message = "Resource metadata is invalid") =>
   new AuthError(422, "validation_failed", message);
@@ -122,6 +133,7 @@ const project = (r: Row): CourseResource => {
         fileName: r.file_name,
         mediaType: r.media_type,
         sizeBytes: Number(r.size_bytes),
+        textStatus: r.text_status ?? "pending",
       };
 };
 export class CourseResourceService {
@@ -341,6 +353,148 @@ export class CourseResourceService {
             : null,
         },
         version,
+      };
+    });
+  }
+  /**
+   * Ranks visible resources by title (including close misspellings) and the
+   * ready extracted text of each resource's current file. Visibility is
+   * applied before ranking and pagination so hidden resources never affect
+   * results or `hasMore`.
+   */
+  async search(
+    courseId: string,
+    userId: string,
+    input: { q: string; limit?: number; cursor?: string },
+  ): Promise<{
+    data: { resource: CourseResource; match: ResourceSearchMatch }[];
+    page: { hasMore: boolean; nextCursor: string | null };
+  }> {
+    const badRequest = (message: string) =>
+      new AuthError(400, "invalid_request", message);
+    const q = input.q.trim().replace(/\s+/g, " ");
+    if (!q || [...q].length > 200 || q.includes("\0"))
+      throw badRequest("Search query must be 1-200 characters");
+    const limit = input.limit ?? 20;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50)
+      throw badRequest("Limit must be between 1 and 50");
+    return this.tx(async (db) => {
+      await db.query(
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      );
+      const membership = await this.authorize(db, courseId, userId);
+      const access =
+        membership.role === "ta" || membership.role === "instructor"
+          ? "staff"
+          : "class";
+      let offset = 0;
+      if (input.cursor !== undefined) {
+        try {
+          const raw = Buffer.from(input.cursor, "base64url");
+          const c = JSON.parse(raw.toString());
+          if (
+            input.cursor.length > 2048 ||
+            raw.toString("base64url") !== input.cursor ||
+            !Array.isArray(c) ||
+            c.length !== 5 ||
+            c[0] !== "resource-search:v1" ||
+            c[1] !== courseId ||
+            c[2] !== q ||
+            c[3] !== access ||
+            !Number.isSafeInteger(c[4]) ||
+            c[4] < 1
+          )
+            throw Error();
+          offset = c[4];
+        } catch {
+          throw badRequest("Cursor is invalid or stale");
+        }
+      }
+      const fuzzyTerms = /["“”]|\bOR\b|(^|\s)-\S/i.test(q)
+        ? []
+        : (q.match(/[\p{L}\p{N}]+/gu) ?? []).filter(
+            (term) => [...term].length >= 3,
+          );
+      const found = await db.query<
+        Row & { in_title: boolean; text_match: boolean }
+      >(
+        `WITH query AS (SELECT websearch_to_tsquery('english',$3) q),
+         terms AS (
+           SELECT DISTINCT lower(input.term) term FROM unnest($6::text[]) AS input(term)
+           WHERE to_tsvector('english',input.term) <> ''::tsvector
+         ),
+         text_hits AS MATERIALIZED (
+           SELECT file_id FROM course_file_texts
+           WHERE course_id=$1 AND search_vector @@ websearch_to_tsquery('english',$3)
+         ),
+         candidates AS (
+           SELECT r.*,v.kind,v.url,v.file_id,f.file_name,f.media_type,f.size_bytes,t.status text_status,
+             to_tsvector('english',r.title) @@ query.q title_lexical,
+             hit.file_id IS NOT NULL text_match,
+             COALESCE((SELECT min(public.strict_word_similarity(terms.term,lower(r.title))) FROM terms),0) fuzzy,
+             ts_rank_cd(to_tsvector('english',r.title),query.q) title_rank,
+             CASE WHEN hit.file_id IS NULL THEN 0 ELSE ts_rank_cd(t.search_vector,query.q) END text_rank
+           FROM course_resources r
+           JOIN course_resource_revisions v ON v.id=r.active_revision_id
+           LEFT JOIN course_files f ON f.id=v.file_id
+           LEFT JOIN course_file_texts t ON t.file_id=v.file_id
+           LEFT JOIN text_hits hit ON hit.file_id=t.file_id
+           LEFT JOIN course_resource_sections s ON s.id=r.section_id
+           JOIN course_memberships m ON m.course_id=r.course_id AND m.user_id=$2
+           JOIN users u ON u.id=m.user_id AND u.deleted_at IS NULL
+           JOIN courses c ON c.id=r.course_id AND c.status IN ('active','archived')
+           CROSS JOIN query
+           WHERE r.course_id=$1 AND ${visible}
+         )
+         SELECT *,(title_lexical OR fuzzy>=0.5) in_title FROM candidates
+         WHERE title_lexical OR text_match OR fuzzy>=0.5
+         ORDER BY (title_lexical OR fuzzy>=0.5) DESC,title_rank*2+text_rank+fuzzy DESC,id
+         LIMIT $4 OFFSET $5`,
+        [courseId, userId, q, limit + 1, offset, fuzzyTerms],
+      );
+      const rows = found.rows.slice(0, limit),
+        hasMore = found.rows.length > limit;
+      const matchedFiles = rows
+        .filter((row) => row.text_match)
+        .map((row) => row.file_id);
+      const headlines = new Map<string, string>();
+      if (matchedFiles.length)
+        for (const row of (
+          await db.query<{ file_id: string; headline: string }>(
+            `SELECT file_id,ts_headline('english',translate(text,'<>',U&'\\E000\\E001'),websearch_to_tsquery('english',$2),
+               format('StartSel=%s, StopSel=%s, MaxFragments=1, MaxWords=35, MinWords=15, ShortWord=2, FragmentDelimiter=" ... "',$3::text,$4::text)) headline
+             FROM course_file_texts WHERE file_id=ANY($1::uuid[]) AND status='ready'`,
+            [matchedFiles, q, HIGHLIGHT_START, HIGHLIGHT_STOP],
+          )
+        ).rows)
+          headlines.set(row.file_id, row.headline);
+      return {
+        data: rows.map((row) => {
+          const headline = row.text_match
+            ? headlines.get(row.file_id)
+            : undefined;
+          return {
+            resource: project(row),
+            match: {
+              inTitle: row.in_title,
+              snippet: headline === undefined ? null : toSnippet(headline),
+            },
+          };
+        }),
+        page: {
+          hasMore,
+          nextCursor: hasMore
+            ? Buffer.from(
+                JSON.stringify([
+                  "resource-search:v1",
+                  courseId,
+                  q,
+                  access,
+                  offset + rows.length,
+                ]),
+              ).toString("base64url")
+            : null,
+        },
       };
     });
   }
@@ -732,6 +886,7 @@ export class CourseResourceService {
           "INSERT INTO course_resource_revisions(id,resource_id,course_id,kind,file_id) VALUES($1,$2,$3,'upload',$4)",
           [revision, id ?? file.id, courseId, file.id],
         );
+        await queueFileTextExtraction(db, courseId, file.id);
         if (current?.kind === "upload")
           await this.retire(db, courseId, current.fileId);
         await this.changed(db, courseId);

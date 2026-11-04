@@ -1254,6 +1254,7 @@ function CourseFrame({
               visibleCourse.data.status === "active"
             }
             csrfToken={session.csrfToken}
+            staff={staff === true}
           />
         ) : section === "threads" ? (
           staff === undefined ? (

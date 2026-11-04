@@ -4,6 +4,7 @@ import { createEmailSender } from "../auth/email.js";
 import {
   loadEnvironment,
   loadObjectStorageConfig,
+  loadResourceTextConfig,
   requireDatabaseUrl,
 } from "../config/environment.js";
 import { createPool } from "../database/pool.js";
@@ -24,6 +25,7 @@ import {
   readEmbeddingConfig,
 } from "../semantic/provider.js";
 import { SemanticIndex } from "../semantic/index.js";
+import { missingExtractionTools } from "../resource-text/probe.js";
 
 const environment = loadEnvironment();
 const observability = environment.observability.enabled
@@ -44,6 +46,7 @@ const semantic = embeddingConfig
     )
   : undefined;
 pool.on("error", () => logApiEvent(observability, "database_pool_error"));
+const resourceText = loadResourceTextConfig();
 const { bucket, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
 const worker = new JobWorker(
@@ -54,6 +57,7 @@ const worker = new JobWorker(
   { client: s3, bucket },
   observability,
   semantic,
+  resourceText,
 );
 const digest = new DigestService(
   pool,
@@ -71,6 +75,11 @@ const metricsServer = observability
   : undefined;
 
 logApiEvent(observability, "worker_started");
+// Without the OCR toolchain, extraction jobs stay pending until a fixed deployment runs them.
+const extractionReady =
+  (await missingExtractionTools(resourceText.ocrLanguages)).length === 0;
+if (!extractionReady)
+  logApiEvent(observability, "resource_text_tools_unavailable");
 try {
   await Promise.all([
     runJobLoop(
@@ -79,6 +88,17 @@ try {
       1_000,
       () => logUnexpectedError(observability, "job_worker_failure"),
     ),
+    ...(extractionReady
+      ? [
+          runJobLoop(
+            () => worker.runOnce("extraction", controller.signal),
+            controller.signal,
+            1_000,
+            () =>
+              logUnexpectedError(observability, "resource_text_job_failure"),
+          ),
+        ]
+      : []),
     ...(semantic
       ? [
           runJobLoop(

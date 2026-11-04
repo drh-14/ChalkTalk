@@ -16,7 +16,8 @@ type SystemEvent =
   | "worker_stopped"
   | "database_pool_error"
   | "post_view_write_failed"
-  | "semantic_index_write_failed";
+  | "semantic_index_write_failed"
+  | "resource_text_tools_unavailable";
 type JobKind =
   | "delete_course"
   | "delete_course_file"
@@ -27,6 +28,7 @@ type JobKind =
   | "send_announcement_email"
   | "send_notification_email"
   | "publish_scheduled_announcement"
+  | "extract_file_text"
   | "digest_schedule"
   | "digest_delivery";
 const fallbackLogger = pino({ base: null });
