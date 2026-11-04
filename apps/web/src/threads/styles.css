@@ -1,7 +1,7 @@
 .threads-area {
-  max-width: 980px;
+  max-width: var(--page-width);
   margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
+  padding: 1.5rem 0 3rem;
 }
 .threads-crumbs {
   display: flex;
