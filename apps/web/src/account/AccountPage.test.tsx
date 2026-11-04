@@ -32,7 +32,10 @@ function json(data: unknown, status = 200, etag = '"v1"') {
   });
 }
 
-function setup(fetchMock: ReturnType<typeof vi.fn>, courses?: unknown) {
+function setup(
+  fetchMock: (url: string, init?: RequestInit) => Promise<Response>,
+  courses?: unknown,
+) {
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
     if (url === "/api/v1/courses" && courses === undefined)
       return Promise.resolve(
