@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 // Local development may load a localhost certificate while tests bind to 127.0.0.1.
 test.use({ ignoreHTTPSErrors: true });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../.."),
-  evidence = resolve(root, "docs/pr-screenshots/resource-text-search");
+  evidence = resolve(root, "docs/pr-screenshots/resource-search-ui");
 let vite, origin;
 test.beforeAll(async () => {
   await mkdir(evidence, { recursive: true });
@@ -50,6 +50,7 @@ const catalog = [
   file("week7", "Week 7: Spectral theorem", "ready"),
   file("scan", "Scanned problem set", "failed"),
   file("handout", "Office hours handout", "pending", null),
+  file("archive", "Legacy handout", "unsupported", null),
 ];
 const snippet = (text, word) => ({
   text,
@@ -166,7 +167,10 @@ test("student finds a lecture by words inside its slides", async ({ page }) => {
   await expect(page.locator(".resource-text-status")).toHaveCount(0);
   await shot(page, "student-content-search");
 
-  await page.getByRole("searchbox", { name: "Search resources" }).fill("");
+  await page.getByRole("button", { name: "Clear resource search" }).click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search resources" }),
+  ).toBeFocused();
   await expect(
     page.getByRole("heading", { name: "Lecture slides" }),
   ).toBeVisible();
@@ -191,17 +195,38 @@ test("instructor sees which files are not searchable yet", async ({ page }) => {
     page.getByText("Contents could not be read for search"),
   ).toBeVisible();
   await expect(page.getByText("Contents not searchable yet")).toBeVisible();
-  await expect(page.locator(".resource-text-status")).toHaveCount(2);
+  await expect(page.locator(".resource-text-status")).toHaveCount(3);
+  const pending = page.getByText("Contents not searchable yet");
+  const failed = page.getByText("Contents could not be read for search");
+  expect(
+    await pending.evaluate(
+      (el) => globalThis.getComputedStyle(el).backgroundColor,
+    ),
+  ).not.toBe(
+    await failed.evaluate(
+      (el) => globalThis.getComputedStyle(el).backgroundColor,
+    ),
+  );
   await shot(page, "instructor-text-status");
 });
 
 test("instructor keeps open edits across a search", async ({ page }) => {
   await open(page, { role: "instructor" });
   await page
+    .getByLabel("Section title", { exact: true })
+    .fill("New section draft");
+  await page
     .getByRole("button", { name: "Edit section Lecture slides" })
     .click();
   const sectionName = page.getByRole("textbox", { name: "Section name" });
   await sectionName.fill("Slides and notes");
+  expect(
+    (
+      await page
+        .getByRole("button", { name: "Remove section Lecture slides" })
+        .boundingBox()
+    ).height,
+  ).toBeLessThan(60);
   await page
     .getByRole("button", { name: "Edit Week 7: Spectral theorem" })
     .click();
@@ -230,6 +255,10 @@ test("instructor keeps open edits across a search", async ({ page }) => {
   );
   await box.focus();
   await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Clear resource search" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
   await expect(lecture).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(results.getByRole("link", { name: "Homework 4" })).toBeFocused();
@@ -240,7 +269,11 @@ test("instructor keeps open edits across a search", async ({ page }) => {
     ),
   ).toBeNull();
 
-  await box.fill("");
+  await page.getByRole("button", { name: "Clear resource search" }).click();
+  await expect(box).toBeFocused();
+  await expect(page.getByLabel("Section title", { exact: true })).toHaveValue(
+    "New section draft",
+  );
   await expect(sectionName).toHaveValue("Slides and notes");
   await expect(resourceTitle).toHaveValue("Week 7 revised");
   expect(await replacement.evaluate((input) => input.files[0].name)).toBe(
@@ -277,4 +310,105 @@ test("search results fit a mobile screen", async ({ page }) => {
     ),
   ).toBe(true);
   await shot(page, "mobile-results");
+});
+
+for (const width of [1280, 390]) {
+  test(`instructor search and controls follow the shared design at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await open(page, { role: "instructor" });
+    const box = page.getByRole("searchbox", { name: "Search resources" });
+    const search = await box.boundingBox();
+    const create = await page
+      .getByRole("heading", { name: "Create a section" })
+      .boundingBox();
+    expect(search.y + search.height).toBeLessThan(create.y);
+    expect(search.y + search.height).toBeLessThan(844);
+    expect(search.height).toBeGreaterThanOrEqual(40);
+    expect(
+      await box.evaluate((el) => globalThis.getComputedStyle(el).fontWeight),
+    ).toBe("400");
+    await box.focus();
+    const focusColor = await page
+      .locator(".resource-search .search-field")
+      .evaluate((el) => globalThis.getComputedStyle(el).borderColor);
+    expect(focusColor).toBe("rgb(31, 77, 62)");
+    const sort = page.getByLabel("Sort resources");
+    expect((await sort.boundingBox()).height).toBeGreaterThanOrEqual(40);
+    const edit = page.getByRole("button", {
+      name: "Edit Week 7: Spectral theorem",
+      exact: true,
+    });
+    expect((await edit.boundingBox()).height).toBeGreaterThanOrEqual(40);
+    expect(
+      await page.evaluate(
+        () =>
+          globalThis.document.documentElement.scrollWidth <=
+          globalThis.innerWidth,
+      ),
+    ).toBe(true);
+    await shot(page, `instructor-controls-${width}`);
+  });
+}
+
+test("loading and recoverable errors keep the query and recover to results", async ({
+  page,
+}) => {
+  await open(page);
+  let release;
+  const waiting = new Promise((resolve) => {
+    release = resolve;
+  });
+  let attempts = 0;
+  await page.route(
+    "**/api/v1/courses/course-1/resources/search?**",
+    async (route) => {
+      attempts += 1;
+      if (attempts === 1) {
+        await waiting;
+        return route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "service_unavailable",
+              message: "Resources are unavailable. Please try again.",
+            },
+          }),
+        });
+      }
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: searchResults.eigenvalue,
+          page: { hasMore: false, nextCursor: null },
+        }),
+      });
+    },
+  );
+  const box = page.getByRole("searchbox", { name: "Search resources" });
+  await box.fill("eigenvalue");
+  await expect(
+    page.getByText("Searching resources…", { exact: true }),
+  ).toBeVisible();
+  await shot(page, "loading-results");
+  release();
+  const error = page
+    .getByRole("region", { name: "Search results" })
+    .getByRole("alert");
+  await expect(error).toBeVisible();
+  await expect(box).toHaveValue("eigenvalue");
+  expect(
+    await error.evaluate(
+      (el) => globalThis.getComputedStyle(el).backgroundColor,
+    ),
+  ).toBe("rgb(255, 240, 237)");
+  await shot(page, "search-error");
+  await error.getByRole("button", { name: "Try again" }).click();
+  await expect(
+    page.getByRole("region", { name: "Search results" }).locator("mark"),
+  ).toHaveCount(2);
+  await expect(error).toHaveCount(0);
+  await shot(page, "retry-recovered");
 });

@@ -6,7 +6,7 @@ It is designed to make large course forums easier to search, organize, and maint
 
 Students can ask questions, participate in threaded discussions, contribute to shared answers, search previous posts, view course resources, vote in polls, and optionally post anonymously.
 
-In a course's Resources tab, search by title or by words inside uploaded documents and images. Content matches become available after background text extraction; links match by title. Clear the search to return to the catalog with its sort and open edits preserved. TAs and instructors see indicators when a file's contents are pending or unavailable for search; the file can still be downloaded. See the [resource search reference](documentation/api/resources.md#searchCourseResources) for supported formats and search rules.
+In a course's Resources tab, use **Search resources** just below the introduction to search by title or by words inside uploaded documents and images. Content matches become available after background text extraction; links match by title. While searching, creation tools are hidden. Select **Clear resource search** to return focus to the search field and restore the catalog and creation tools, with the sort, open edits, and unsaved form values preserved. TAs and instructors see indicators when a file's contents are pending or unavailable for search; the file can still be downloaded. See the [resource search reference](documentation/api/resources.md#searchCourseResources) for supported formats and search rules.
 
 A passive new-post count shows how many matching posts arrived since the feed loaded without interrupting the current post or an unsent draft. A browser refresh loads the latest posts.
 
