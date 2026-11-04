@@ -443,6 +443,64 @@ describe("resource format validation", () => {
       ).resolves.toBe("application/pdf");
     },
   );
+  it.each([true, false])(
+    "accepts a PDF web link with boolean IsMap %s",
+    async (isMap) => {
+      const pdf = await PDFDocument.create();
+      const page = pdf.addPage([100, 100]);
+      page.node.set(
+        PDFName.of("Annots"),
+        pdf.context.obj([
+          {
+            Type: PDFName.of("Annot"),
+            Subtype: PDFName.of("Link"),
+            Rect: [0, 0, 20, 20],
+            A: {
+              S: PDFName.of("URI"),
+              URI: PDFString.of("https://example.edu/map"),
+              IsMap: isMap,
+            },
+          },
+        ]),
+      );
+      await expect(
+        validateStaged(
+          "mapped-link.pdf",
+          "application/pdf",
+          Buffer.from(await pdf.save({ useObjectStreams: true })),
+        ),
+      ).resolves.toBe("application/pdf");
+    },
+  );
+  it.each([
+    { IsMap: PDFString.of("true") },
+    { NewWindow: true },
+  ])("rejects a PDF web link with unsupported URI action fields", async (extra) => {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([100, 100]);
+    page.node.set(
+      PDFName.of("Annots"),
+      pdf.context.obj([
+        {
+          Type: PDFName.of("Annot"),
+          Subtype: PDFName.of("Link"),
+          Rect: [0, 0, 20, 20],
+          A: {
+            S: PDFName.of("URI"),
+            URI: PDFString.of("https://example.edu/map"),
+            ...extra,
+          },
+        },
+      ]),
+    );
+    await expect(
+      validateStaged(
+        "unsupported-link.pdf",
+        "application/pdf",
+        Buffer.from(await pdf.save({ useObjectStreams: true })),
+      ),
+    ).rejects.toMatchObject({ status: 415 });
+  });
   it("accepts a PDF with a direct page opening destination", async () => {
     const pdf = await PDFDocument.create();
     const page = pdf.addPage([100, 100]);

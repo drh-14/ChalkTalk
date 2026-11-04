@@ -85,7 +85,10 @@ function safePdfAction(value: unknown, objects: Record<string, unknown>) {
   const fields = action as Record<string, unknown>;
   if (fields["/S"] === "/URI") {
     if (
-      Object.keys(fields).some((key) => !["/S", "/URI", "/Type"].includes(key))
+      Object.keys(fields).some(
+        (key) => !["/S", "/URI", "/Type", "/IsMap"].includes(key),
+      ) ||
+      (fields["/IsMap"] !== undefined && typeof fields["/IsMap"] !== "boolean")
     )
       throw invalid();
     const raw = fields["/URI"];
