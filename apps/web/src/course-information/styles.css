@@ -1,5 +1,5 @@
 .course-resources-area {
-  max-width: 68rem;
+  max-width: var(--page-width);
   margin: 0 auto;
 }
 .course-resource-tabs {

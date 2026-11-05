@@ -64,6 +64,7 @@ import {
 } from "../app/routes.js";
 import { formatPostTime } from "./time.js";
 import { PollCard } from "./PollCard.js";
+import { ActionIcon } from "./ActionIcon.js";
 import {
   feedFilters,
   postStatuses,
@@ -358,6 +359,7 @@ function FollowButton({
             : "Get notified of new answers, followups, and replies"
         }
       >
+        <ActionIcon name="follow" />
         {following ? "Following" : "Follow"}
       </button>
       {error && (
@@ -1871,6 +1873,7 @@ function MergeControl({
         className="button secondary compact"
         onClick={() => setOpen((value) => !value)}
       >
+        <ActionIcon name="merge" />
         Merge as duplicate
       </button>
       {open && (
@@ -3135,6 +3138,125 @@ function DiscussionContent({
       setLockPending(false);
     }
   }
+  // One toolbar for every post action; while editing it follows the editor
+  // and omits Edit, so merging and deleting stay available.
+  function renderPostActions(post: Post, editing: boolean) {
+    return (
+      <div className="post-actions" role="group" aria-label="Post actions">
+        {!editing && (
+          <FollowButton
+            post={post}
+            csrfToken={csrfToken}
+            onChange={(following) => {
+              setDetail((current) =>
+                current?.id === post.id && !current.deleted
+                  ? { ...current, following }
+                  : current,
+              );
+              setItems((current) =>
+                current.map((item) =>
+                  item.id === post.id ? { ...item, following } : item,
+                ),
+              );
+            }}
+          />
+        )}
+        {canEditDetail && !editing && (
+          <button
+            type="button"
+            className="button secondary compact"
+            disabled={mergePending || deletePending}
+            onClick={() => setEditingPostId(post.id)}
+          >
+            <ActionIcon name="edit" />
+            Edit post
+          </button>
+        )}
+        {staff && postView === "posts" && (
+          <div
+            className="staff-actions"
+            role="group"
+            aria-label="Staff actions"
+          >
+            {course?.status === "active" && (
+              <button
+                type="button"
+                className="button secondary compact"
+                disabled={pinPending || deletePending}
+                onClick={() => void togglePin(post)}
+              >
+                <ActionIcon name="pin" />
+                {pinPending
+                  ? post.pinned
+                    ? "Unpinning…"
+                    : "Pinning…"
+                  : post.pinned
+                    ? "Unpin"
+                    : "Pin"}
+              </button>
+            )}
+            {course?.status === "active" && post.type !== "note" && (
+              <button
+                type="button"
+                className="button secondary compact"
+                disabled={lockPending}
+                aria-pressed={!!post.discussionLocked}
+                onClick={() => void toggleDiscussionLock(post)}
+              >
+                <ActionIcon name={post.discussionLocked ? "unlock" : "lock"} />
+                {lockPending
+                  ? post.discussionLocked
+                    ? "Unlocking…"
+                    : "Locking…"
+                  : post.discussionLocked
+                    ? "Unlock discussion"
+                    : "Lock discussion"}
+              </button>
+            )}
+            {lockError && (
+              <p className="form-message error" role="alert">
+                {lockError}
+              </p>
+            )}
+            {pinError && (
+              <p className="form-message error" role="alert">
+                {pinError}
+              </p>
+            )}
+            <MergeControl
+              source={post}
+              courseId={courseId}
+              csrfToken={csrfToken}
+              onBeforeMerge={beforeMerge}
+              onPendingChange={setMergePending}
+              onMerged={(targetId) => {
+                editorState.current = { dirty: false, pending: false };
+                setEditingPostId(undefined);
+                setFeedCycle((value) => value + 1);
+                onNavigate(postPath(courseId, targetId, search));
+              }}
+            />
+          </div>
+        )}
+        {canEditDetail && (
+          <button
+            type="button"
+            className="button danger compact post-delete-button"
+            disabled={mergePending || deletePending}
+            onClick={() => void deleteCurrentPost(post)}
+          >
+            <ActionIcon name="delete" />
+            {deletePending ? "Deleting…" : "Delete post"}
+          </button>
+        )}
+        {deleteError && (
+          <p className="form-message error" role="alert">
+            {deleteError}
+          </p>
+        )}
+      </div>
+    );
+  }
   async function unmerge(post: MergedPost) {
     setReviewError("");
     try {
@@ -3547,6 +3669,28 @@ function DiscussionContent({
             </p>
             {reviewError && <p role="alert">{reviewError}</p>}
             <div className="new-posts-status-slot">
+              {postView === "posts" &&
+                !loading &&
+                !feedError &&
+                items.some((item) => item.unread && item.id !== postId) && (
+                  <div className="feed-read-bar">
+                    <span>
+                      {
+                        items.filter(
+                          (item) => item.unread && item.id !== postId,
+                        ).length
+                      }{" "}
+                      unread
+                    </span>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => void markAllRead()}
+                    >
+                      Mark all read
+                    </button>
+                  </div>
+                )}
               {newPostCount > 0 &&
                 postView === "posts" &&
                 !loading &&
@@ -3620,25 +3764,6 @@ function DiscussionContent({
                 )
               ) : items.length ? (
                 <>
-                  {items.some((item) => item.unread && item.id !== postId) && (
-                    <div className="feed-read-bar">
-                      <span>
-                        {
-                          items.filter(
-                            (item) => item.unread && item.id !== postId,
-                          ).length
-                        }{" "}
-                        unread
-                      </span>
-                      <button
-                        type="button"
-                        className="text-button"
-                        onClick={() => void markAllRead()}
-                      >
-                        Mark all read
-                      </button>
-                    </div>
-                  )}
                   {readError && (
                     <p className="form-message error" role="alert">
                       {readError}
@@ -3913,23 +4038,6 @@ function DiscussionContent({
                     <p>This post was deleted.</p>
                   ) : (
                     <article>
-                      {canEditDetail && (
-                        <div className="post-delete-action">
-                          <button
-                            type="button"
-                            className="button danger compact"
-                            disabled={mergePending || deletePending}
-                            onClick={() => void deleteCurrentPost(detail)}
-                          >
-                            {deletePending ? "Deleting…" : "Delete post"}
-                          </button>
-                          {deleteError && (
-                            <p className="form-message error" role="alert">
-                              {deleteError}
-                            </p>
-                          )}
-                        </div>
-                      )}
                       {canEditDetail && editingPostId === detail.id && (
                         <div inert={mergePending || deletePending}>
                           <PostEditor
@@ -3952,6 +4060,9 @@ function DiscussionContent({
                           />
                         </div>
                       )}
+                      {canEditDetail &&
+                        editingPostId === detail.id &&
+                        renderPostActions(detail, true)}
                       {(editingPostId !== detail.id || !canEditDetail) && (
                         <>
                           <p className="post-kind">
@@ -4003,35 +4114,16 @@ function DiscussionContent({
                               }}
                             />
                           )}
-                          <div className="post-author-row">
-                            <p className="post-author">
-                              <PostByline post={detail} />
-                              <ActivityTime post={detail} />
-                            </p>
-                            <FollowButton
-                              post={detail}
-                              csrfToken={csrfToken}
-                              onChange={(following) => {
-                                setDetail((current) =>
-                                  current?.id === detail.id && !current.deleted
-                                    ? { ...current, following }
-                                    : current,
-                                );
-                                setItems((current) =>
-                                  current.map((item) =>
-                                    item.id === detail.id
-                                      ? { ...item, following }
-                                      : item,
-                                  ),
-                                );
-                              }}
-                            />
-                          </div>
+                          <p className="post-author">
+                            <PostByline post={detail} />
+                            <ActivityTime post={detail} />
+                          </p>
                           <TagList
                             tags={detail.tags}
                             active={tags}
                             onSelect={selectTag}
                           />
+                          {renderPostActions(detail, false)}
                           <div className="post-markdown">
                             <PostBody bodyMarkdown={detail.bodyMarkdown} />
                             {detail.type === "poll" && detail.options && (
@@ -4111,87 +4203,7 @@ function DiscussionContent({
                               }}
                             />
                           </div>
-                          {canEditDetail && (
-                            <button
-                              type="button"
-                              className="button secondary edit-button"
-                              disabled={mergePending || deletePending}
-                              onClick={() => setEditingPostId(detail.id)}
-                            >
-                              Edit post
-                            </button>
-                          )}
                         </>
-                      )}
-                      {staff && postView === "posts" && (
-                        <div
-                          className="staff-actions"
-                          role="group"
-                          aria-label="Staff actions"
-                        >
-                          {course?.status === "active" && (
-                            <button
-                              type="button"
-                              className="button secondary compact"
-                              disabled={pinPending || deletePending}
-                              onClick={() => void togglePin(detail)}
-                            >
-                              {pinPending
-                                ? detail.pinned
-                                  ? "Unpinning…"
-                                  : "Pinning…"
-                                : detail.pinned
-                                  ? "Unpin"
-                                  : "Pin"}
-                            </button>
-                          )}
-                          {course?.status === "active" &&
-                            detail.type !== "note" && (
-                              <button
-                                type="button"
-                                className="button secondary compact"
-                                disabled={lockPending}
-                                aria-pressed={!!detail.discussionLocked}
-                                onClick={() =>
-                                  void toggleDiscussionLock(detail)
-                                }
-                              >
-                                {lockPending
-                                  ? detail.discussionLocked
-                                    ? "Unlocking…"
-                                    : "Locking…"
-                                  : detail.discussionLocked
-                                    ? "Unlock discussion"
-                                    : "Lock discussion"}
-                              </button>
-                            )}
-                          {lockError && (
-                            <p className="form-message error" role="alert">
-                              {lockError}
-                            </p>
-                          )}
-                          {pinError && (
-                            <p className="form-message error" role="alert">
-                              {pinError}
-                            </p>
-                          )}
-                          <MergeControl
-                            source={detail}
-                            courseId={courseId}
-                            csrfToken={csrfToken}
-                            onBeforeMerge={beforeMerge}
-                            onPendingChange={setMergePending}
-                            onMerged={(targetId) => {
-                              editorState.current = {
-                                dirty: false,
-                                pending: false,
-                              };
-                              setEditingPostId(undefined);
-                              setFeedCycle((value) => value + 1);
-                              onNavigate(postPath(courseId, targetId, search));
-                            }}
-                          />
-                        </div>
                       )}
                       {detail.type === "question" && (
                         <QuestionResponses

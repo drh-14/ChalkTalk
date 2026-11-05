@@ -872,12 +872,15 @@ test.describe("rendered discussion attachments", () => {
               .evaluate((node) => {
                 const value = globalThis.getComputedStyle(node);
                 return {
+                  radius: parseFloat(value.borderTopLeftRadius),
+                  padding: parseFloat(value.paddingLeft),
                   color: value.color,
                   background: value.backgroundColor,
                 };
               });
-            expect(editStyle.radius).toBeGreaterThanOrEqual(13);
-            expect(editStyle.padding).toBeGreaterThanOrEqual(20);
+            // The post toolbar gives every action the same shape and size.
+            expect(editStyle.radius).toBe(pinStyle.radius);
+            expect(editStyle.padding).toBe(pinStyle.padding);
             expect(editStyle.color).toBe(pinStyle.color);
             expect(editStyle.background).toBe(pinStyle.background);
           }
