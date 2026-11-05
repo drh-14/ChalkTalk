@@ -1,4 +1,49 @@
 import { ApiError } from "../auth/client.js";
+export type ExtractedText = {
+  fileId: string;
+  status: "pending" | "ready" | "failed" | "unsupported";
+  text: string | null;
+  truncated: boolean;
+};
+export const extractedText = (
+  courseId: string,
+  resourceId: string,
+  signal: AbortSignal,
+) =>
+  send<{ data: ExtractedText }>(
+    `${base(courseId)}/resources/${encodeURIComponent(resourceId)}/text`,
+    { signal },
+  );
+export type SearchablePdf = {
+  fileId: string;
+  status: "not_requested" | "pending" | "ready" | "failed";
+  pageCount: number | null;
+  sizeBytes: number | null;
+  viewUrl: string | null;
+  downloadUrl: string | null;
+};
+export const searchablePdf = (
+  courseId: string,
+  resourceId: string,
+  signal: AbortSignal,
+  csrfToken?: string,
+) =>
+  send<{ data: SearchablePdf }>(
+    `${base(courseId)}/resources/${encodeURIComponent(resourceId)}/searchable-pdf`,
+    {
+      signal,
+      ...(csrfToken
+        ? {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": csrfToken,
+            },
+            body: "{}",
+          }
+        : {}),
+    },
+  );
 export type Section = {
   id: string;
   courseId: string;

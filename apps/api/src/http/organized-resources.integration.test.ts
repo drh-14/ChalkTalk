@@ -12,6 +12,7 @@ import {
 import { CourseFileService } from "../course-files/service.js";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { PDFDocument } from "pdf-lib";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
@@ -992,6 +993,45 @@ suite("organized resource catalog", () => {
       await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
         course,
       ]);
+    },
+  );
+  it.skipIf(!endpoint)(
+    "accepts a recoverable PDF through Add a file",
+    async () => {
+      const pdf = await PDFDocument.create();
+      pdf.addPage([100, 100]);
+      const bytes = Buffer.from(
+        Buffer.from(await pdf.save({ useObjectStreams: false }))
+          .toString("latin1")
+          .replace(/startxref\s+\d+/, "startxref\n1"),
+        "latin1",
+      );
+      const created = await request(app(instructor))
+        .post(base + "/resources/files")
+        .set("Cookie", "__Host-chalktalk_session=opaque")
+        .set("Origin", environment.frontendBaseUrl)
+        .set("X-CSRF-Token", "csrf")
+        .set("Idempotency-Key", "recoverable-catalog-pdf")
+        .field("title", "Recoverable reading")
+        .field("sectionId", "")
+        .field("visibility", "class")
+        .attach("file", bytes, {
+          filename: "recoverable.pdf",
+          contentType: "application/pdf",
+        });
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      expect(created.body.data).toMatchObject({
+        kind: "upload",
+        title: "Recoverable reading",
+        fileName: "recoverable.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: bytes.length,
+      });
+      const downloaded = await get(
+        `/files/${created.body.data.fileId}/download`,
+      );
+      expect(downloaded.status).toBe(200);
+      expect(downloaded.body).toEqual(bytes);
     },
   );
   it.skipIf(!endpoint)(

@@ -260,8 +260,15 @@ test("instructor keeps open edits across a search", async ({ page }) => {
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(lecture).toBeFocused();
+  // Each upload result carries its own "View extracted text" control, so the
+  // tab order is link, control, link, control, then out of the results.
+  const viewText = results.getByRole("button", { name: "View extracted text" });
+  await page.keyboard.press("Tab");
+  await expect(viewText.first()).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(results.getByRole("link", { name: "Homework 4" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(viewText.nth(1)).toBeFocused();
   await page.keyboard.press("Tab");
   expect(
     await page.evaluate(() =>

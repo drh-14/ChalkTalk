@@ -1,3 +1,4 @@
+import { retireSearchablePdf } from "../resource-text/searchable-pdf-store.js";
 import { readableCatalogFile } from "../course-resources/read-policy.js";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -406,6 +407,21 @@ export class CourseFileService {
     }
   }
 
+  async storedPdf(objectKey: string) {
+    try {
+      const object = await this.s3.send(
+        new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }),
+      );
+      if (!object.Body) throw Error("Missing object");
+      return object.Body;
+    } catch {
+      throw new AuthError(
+        503,
+        "service_unavailable",
+        "PDF storage is temporarily unavailable",
+      );
+    }
+  }
   async delete(
     courseId: string,
     fileId: string,
@@ -449,6 +465,7 @@ export class CourseFileService {
           "file_in_use",
           "Remove the resource before deleting its file",
         );
+      await retireSearchablePdf(client, fileId);
       await client.query(
         "UPDATE course_files SET deleted_at=clock_timestamp() WHERE id=$1",
         [fileId],

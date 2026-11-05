@@ -29,6 +29,8 @@ type JobKind =
   | "send_notification_email"
   | "publish_scheduled_announcement"
   | "extract_file_text"
+  | "generate_searchable_pdf"
+  | "delete_searchable_pdf"
   | "digest_schedule"
   | "digest_delivery";
 const fallbackLogger = pino({ base: null });

@@ -19,6 +19,7 @@ import {
   type Snippet,
 } from "./client.js";
 import "./styles.css";
+import { ResourceExtractedText } from "./extracted-text.js";
 const message = (e: unknown) =>
   e instanceof Error
     ? e.message
@@ -408,20 +409,31 @@ export function CourseResources({
         ) : (
           <ul className="course-files-list">
             {rows.map((item, index) => (
-              <li key={`${item.id}:${item.version ?? 1}`}>
-                <ResourceRow
-                  item={item}
-                  courseId={courseId}
-                  canUpload={canUpload}
-                  csrfToken={csrfToken}
-                  staff={staff}
-                  sections={sections}
-                  refresh={refresh}
-                />
+              <li
+                className="resource-card"
+                key={`${item.id}:${item.version ?? 1}`}
+              >
+                <div className="resource-card-main">
+                  <ResourceRow
+                    item={item}
+                    courseId={courseId}
+                    canUpload={canUpload}
+                    csrfToken={csrfToken}
+                    staff={staff}
+                    sections={sections}
+                    refresh={refresh}
+                  />
+                </div>
                 {canUpload && sort === "manual" && (
-                  <div className="resource-order-controls">
+                  <div
+                    className="resource-order-controls resource-card-order"
+                    role="group"
+                    aria-label={`Reorder ${item.title ?? item.fileName}`}
+                  >
                     <button
                       className="button secondary resource-action"
+                      aria-label="Move resource up"
+                      title="Move resource up"
                       disabled={!!cursor || pending || index === 0}
                       onClick={() =>
                         void action(() =>
@@ -443,10 +455,12 @@ export function CourseResources({
                         )
                       }
                     >
-                      Move resource up
+                      <span aria-hidden="true">↑</span>
                     </button>
                     <button
                       className="button secondary resource-action"
+                      aria-label="Move resource down"
+                      title="Move resource down"
                       disabled={
                         !!cursor || pending || index === rows.length - 1
                       }
@@ -470,7 +484,7 @@ export function CourseResources({
                         )
                       }
                     >
-                      Move resource down
+                      <span aria-hidden="true">↓</span>
                     </button>
                   </div>
                 )}
@@ -712,6 +726,16 @@ export function CourseResources({
                     <p className="resource-snippet">
                       {highlighted(match.snippet)}
                     </p>
+                  )}
+                  {resource.kind === "upload" && (
+                    <ResourceExtractedText
+                      key={`${resource.fileId}:${resource.version}`}
+                      courseId={courseId}
+                      resourceId={resource.id}
+                      mediaType={resource.mediaType}
+                      csrfToken={csrfToken}
+                      name={resource.title ?? resource.fileName ?? ""}
+                    />
                   )}
                 </li>
               ))}
@@ -1035,6 +1059,16 @@ function ResourceRow({
             </span>
           )}
       </div>
+      {item.kind === "upload" && (
+        <ResourceExtractedText
+          key={`${item.fileId}:${item.version}`}
+          courseId={courseId}
+          resourceId={item.id}
+          mediaType={item.mediaType}
+          csrfToken={csrfToken}
+          name={name}
+        />
+      )}
       {error && !editing && <p role="alert">{error}</p>}
       {canUpload &&
         (editing ? (
@@ -1118,9 +1152,10 @@ function ResourceRow({
         ) : (
           <button
             className="button secondary resource-action"
+            aria-label={`Edit ${name}`}
             onClick={() => setEditing(true)}
           >
-            Edit {name}
+            Edit
           </button>
         ))}
       {canUpload &&
@@ -1144,9 +1179,10 @@ function ResourceRow({
         ) : (
           <button
             className="button secondary resource-action"
+            aria-label={`Remove ${name}`}
             onClick={() => setConfirm(true)}
           >
-            Remove {name}
+            Remove
           </button>
         ))}
     </>

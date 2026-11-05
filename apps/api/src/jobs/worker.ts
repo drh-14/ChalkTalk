@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { buildSearchablePdf } from "../resource-text/searchable-pdf.js";
+import {
+  queueSearchablePdfCleanup,
+  retireSearchablePdf,
+} from "../resource-text/searchable-pdf-store.js";
 import { publishScheduled } from "../posts/announce.js";
 import type { Pool, PoolClient } from "pg";
-import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  PutObjectCommand,
+  type S3Client,
+} from "@aws-sdk/client-s3";
 import { join } from "node:path";
 import { downloadObject } from "../resource-text/download.js";
 import {
@@ -50,7 +60,9 @@ type Job = {
     | "send_announcement_email"
     | "send_notification_email"
     | "publish_scheduled_announcement"
-    | "extract_file_text";
+    | "extract_file_text"
+    | "generate_searchable_pdf"
+    | "delete_searchable_pdf";
   payload: {
     fileId?: string;
     courseId?: string;
@@ -87,6 +99,7 @@ export type ResourceTextWorkerOptions = {
     directory: string,
     options: ExtractionOptions,
   ) => Promise<ExtractedText>;
+  buildSearchablePdf?: typeof buildSearchablePdf;
   heartbeatMs?: number;
   /** Wall-clock limit shared by object download and extraction. */
   hardLimitMs?: number;
@@ -155,8 +168,8 @@ export class JobWorker {
         `SELECT id,kind,payload,deduplication_key,attempts,max_attempts FROM jobs
          WHERE ${
            lane === "extraction"
-             ? "kind='extract_file_text' AND $1::text IS NULL"
-             : `(kind IN ('delete_course','delete_course_file','delete_content_attachment','send_question_duplicate_email','send_collaboration_invitation_email','send_announcement_email','publish_scheduled_announcement','send_notification_email')
+             ? "kind IN ('extract_file_text','generate_searchable_pdf') AND $1::text IS NULL"
+             : `(kind IN ('delete_course','delete_course_file','delete_content_attachment','delete_searchable_pdf','send_question_duplicate_email','send_collaboration_invitation_email','send_announcement_email','publish_scheduled_announcement','send_notification_email')
            OR (kind='index_post' AND payload->>'generation'=$1))`
          }
            AND ((status='queued' AND available_at <= now())
@@ -174,7 +187,7 @@ export class JobWorker {
         attempts: number;
         max_attempts: number;
       }>(
-        "UPDATE jobs SET status='running',attempts=attempts+1,locked_by=$1,locked_until=now()+CASE WHEN kind='index_post' THEN interval '5 minutes' WHEN kind='extract_file_text' THEN interval '2 minutes' ELSE interval '1 minute' END,updated_at=now() WHERE id=$2 RETURNING attempts,max_attempts",
+        "UPDATE jobs SET status='running',attempts=attempts+1,locked_by=$1,locked_until=now()+CASE WHEN kind='index_post' THEN interval '5 minutes' WHEN kind IN ('extract_file_text','generate_searchable_pdf') THEN interval '2 minutes' ELSE interval '1 minute' END,updated_at=now() WHERE id=$2 RETURNING attempts,max_attempts",
         [this.workerId, job.id],
       );
       return {
@@ -644,6 +657,12 @@ export class JobWorker {
       await client.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
         courseId,
       ]);
+      const derivedFiles = await client.query<{ id: string }>(
+        "SELECT id FROM course_files WHERE course_id=$1 ORDER BY id FOR UPDATE",
+        [courseId],
+      );
+      for (const file of derivedFiles.rows)
+        await retireSearchablePdf(client, file.id);
       // Queue object removal before the course cascade removes attachment metadata.
       // The existing deletion job retries independently if the object store is down.
       await queueThreadAttachmentsForCourseDeletion(client, courseId);
@@ -728,7 +747,9 @@ export class JobWorker {
   }
 
   private async fail(job: Job, error: unknown): Promise<void> {
-    const permanent = error instanceof PermanentEmailDeliveryError;
+    const permanent =
+      error instanceof PermanentEmailDeliveryError ||
+      (error instanceof ExtractionFailure && error.permanent);
     const configuration =
       error instanceof EmailConfigurationError ||
       error instanceof EmailQuotaError;
@@ -777,8 +798,21 @@ export class JobWorker {
               "failed",
               "retries_exhausted",
             );
+          if (
+            updated.rowCount === 1 &&
+            job.kind === "generate_searchable_pdf" &&
+            job.payload.fileId &&
+            (permanent || job.attempts >= job.maxAttempts)
+          ) {
+            await client.query(
+              "UPDATE course_file_searchable_pdfs SET status='failed',failure_code=$3,updated_at=now() WHERE file_id=$1 AND generation=$2 AND status='pending'",
+              [job.payload.fileId, job.payload.generation, "generation_failed"],
+            );
+          }
         },
-        job.kind === "extract_file_text" ? job : undefined,
+        ["extract_file_text", "generate_searchable_pdf"].includes(job.kind)
+          ? job
+          : undefined,
       );
     } catch (failure) {
       if (!(
@@ -821,7 +855,12 @@ export class JobWorker {
     }, options.heartbeatMs ?? 30_000);
     const limit = setTimeout(
       () =>
-        controller.abort(new ExtractionFailure("extraction_timeout", false)),
+        controller.abort(
+          new ExtractionFailure(
+            "extraction_timeout",
+            job.kind === "generate_searchable_pdf",
+          ),
+        ),
       options.hardLimitMs ?? 15 * 60_000,
     );
     try {
@@ -911,6 +950,110 @@ export class JobWorker {
     );
   }
 
+  private async generateSearchablePdf(
+    job: Job,
+    shutdown?: AbortSignal,
+  ): Promise<void> {
+    const { fileId, generation } = job.payload;
+    if (!this.objectStore || !this.resourceText || !fileId || !generation)
+      throw new Error("PDF generation configuration missing");
+    const found = await this.pool.query<{
+      object_key: string;
+      course_id: string;
+    }>(
+      "SELECT f.object_key,f.course_id FROM course_files f JOIN course_file_searchable_pdfs d ON d.file_id=f.id JOIN course_resource_revisions v ON v.file_id=f.id JOIN course_resources r ON r.active_revision_id=v.id AND r.deleted_at IS NULL JOIN courses c ON c.id=f.course_id AND c.status IN ('active','archived') WHERE f.id=$1 AND f.deleted_at IS NULL AND d.generation=$2 AND d.status='pending'",
+      [fileId, generation],
+    );
+    const source = found.rows[0];
+    if (!source) return;
+    const store = this.objectStore,
+      options = this.resourceText;
+    let uploadedKey: string | undefined,
+      published = false;
+    try {
+      await this.withExtractionLease(job, shutdown, (signal) =>
+        withTempDirectory(async (directory) => {
+          const input = join(directory, "source.pdf");
+          await downloadObject(store, source.object_key, input, signal);
+          const result = await (
+            options.buildSearchablePdf ?? buildSearchablePdf
+          )(input, directory, {
+            maxOcrPages: options.maxOcrPages,
+            ocrLanguages: options.ocrLanguages,
+            signal,
+          });
+          uploadedKey = `courses/${source.course_id}/searchable-pdfs/${fileId}/${generation}/${randomUUID()}.pdf`;
+          await store.client.send(
+            new PutObjectCommand({
+              Bucket: store.bucket,
+              Key: uploadedKey,
+              Body: createReadStream(result.path),
+              ContentLength: result.sizeBytes,
+              ContentType: "application/pdf",
+            }),
+            { abortSignal: signal },
+          );
+          if (signal.aborted) throw signal.reason;
+          published = await this.transaction(async (db) => {
+            await db.query("SELECT id FROM courses WHERE id=$1 FOR SHARE", [
+              source.course_id,
+            ]);
+            await db.query(
+              "SELECT id FROM course_files WHERE id=$1 FOR UPDATE",
+              [fileId],
+            );
+            const active = await db.query(
+              "SELECT 1 FROM course_files f JOIN course_resource_revisions v ON v.file_id=f.id JOIN course_resources r ON r.active_revision_id=v.id AND r.deleted_at IS NULL JOIN courses c ON c.id=f.course_id AND c.status IN ('active','archived') WHERE f.id=$1 AND f.deleted_at IS NULL",
+              [fileId],
+            );
+            if (!active.rowCount) return false;
+            const updated = await db.query(
+              "UPDATE course_file_searchable_pdfs SET status='ready',object_key=$3,size_bytes=$4,page_count=$5,failure_code=NULL,updated_at=now() WHERE file_id=$1 AND generation=$2 AND status='pending'",
+              [
+                fileId,
+                generation,
+                uploadedKey,
+                result.sizeBytes,
+                result.pageCount,
+              ],
+            );
+            return updated.rowCount === 1;
+          }, job);
+        }),
+      );
+    } finally {
+      if (uploadedKey && !published) {
+        try {
+          await this.transaction(async (db) => {
+            await db.query("SELECT id FROM courses WHERE id=$1 FOR SHARE", [
+              source.course_id,
+            ]);
+            await db.query(
+              "SELECT id FROM course_files WHERE id=$1 FOR UPDATE",
+              [fileId],
+            );
+            const refs = await db.query(
+              "SELECT 1 FROM course_file_searchable_pdfs WHERE object_key=$1",
+              [uploadedKey],
+            );
+            // A lost COMMIT acknowledgment may mean publication actually succeeded.
+            if (!refs.rowCount)
+              await store.client.send(
+                new DeleteObjectCommand({
+                  Bucket: store.bucket,
+                  Key: uploadedKey,
+                }),
+              );
+          });
+        } catch {
+          await this.transaction((db) =>
+            queueSearchablePdfCleanup(db, uploadedKey!, fileId),
+          );
+        }
+      }
+    }
+  }
+
   async runOnce(
     lane: JobLane = "general",
     shutdown?: AbortSignal,
@@ -926,6 +1069,32 @@ export class JobWorker {
         if (!job.payload.courseId)
           throw new Error("Course deletion job payload is invalid");
         await this.deleteCourse(job.payload.courseId);
+      } else if (job.kind === "delete_searchable_pdf") {
+        if (!this.objectStore || !job.payload.objectKey)
+          throw Error("Derived cleanup configuration missing");
+        await this.transaction(async (db) => {
+          if (job.payload.fileId) {
+            await db.query(
+              "SELECT c.id FROM courses c JOIN course_files f ON f.course_id=c.id WHERE f.id=$1 FOR SHARE OF c",
+              [job.payload.fileId],
+            );
+            await db.query(
+              "SELECT id FROM course_files WHERE id=$1 FOR UPDATE",
+              [job.payload.fileId],
+            );
+          }
+          const active = await db.query(
+            "SELECT 1 FROM course_file_searchable_pdfs WHERE object_key=$1",
+            [job.payload.objectKey],
+          );
+          if (active.rowCount) return;
+          await this.objectStore!.client.send(
+            new DeleteObjectCommand({
+              Bucket: this.objectStore!.bucket,
+              Key: job.payload.objectKey,
+            }),
+          );
+        });
       } else if (
         job.kind === "delete_course_file" ||
         job.kind === "delete_content_attachment"
@@ -967,6 +1136,8 @@ export class JobWorker {
         )
           throw new Error("Semantic indexing job payload is invalid");
         await this.semantic.indexPost(job.payload.postId);
+      } else if (job.kind === "generate_searchable_pdf") {
+        await this.generateSearchablePdf(job, shutdown);
       } else if (job.kind === "extract_file_text") {
         await this.extractFileText(job, shutdown);
       } else if (job.kind === "publish_scheduled_announcement") {

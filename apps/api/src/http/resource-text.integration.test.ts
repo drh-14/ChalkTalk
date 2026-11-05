@@ -4,8 +4,14 @@ import {
   DeleteObjectCommand,
   ListObjectsV2Command,
   S3Client,
+  PutObjectCommand,
+  HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
+import { PDFDocument } from "pdf-lib";
+import { writeFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { JobWorker } from "../jobs/worker.js";
 import { Pool } from "pg";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -180,6 +186,411 @@ suite("resource text extraction", () => {
       await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await admin.end();
     }
+  });
+
+  describe("extracted text viewer", () => {
+    const pathFor = (id: string) => `/resources/${id}/text`;
+    it("returns full literal ready text and truncation with private no-store headers", async () => {
+      const created = await upload({ title: "Text viewer" }, "original");
+      const { id, fileId } = created.body.data;
+      const text = '<script>alert("literal")</script>\nFull extracted text.';
+      await finish(fileId, "ready", text);
+      await pool.query(
+        "UPDATE course_file_texts SET truncated=true WHERE file_id=$1",
+        [fileId],
+      );
+      for (const user of [student, ta, instructor]) {
+        const response = await get(pathFor(id), user);
+        expect(response.status).toBe(200);
+        expect(response.headers["content-type"]).toContain("application/json");
+        expect(response.headers["cache-control"]).toBe("private, no-store");
+        expect(response.body).toEqual({
+          data: { fileId, status: "ready", text, truncated: true },
+        });
+      }
+    });
+    it("handles pending, absent, failed, unsupported and empty extracted text", async () => {
+      const created = await upload({ title: "Viewer states" }, "original");
+      const { id, fileId } = created.body.data;
+      for (const status of [
+        "pending",
+        "failed",
+        "unsupported",
+        "ready",
+      ] as const) {
+        if (status !== "pending") await finish(fileId, status, "");
+        const response = await get(pathFor(id));
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({
+          data: {
+            fileId,
+            status,
+            text: status === "ready" ? "" : null,
+            truncated: false,
+          },
+        });
+      }
+      await pool.query("DELETE FROM course_file_texts WHERE file_id=$1", [
+        fileId,
+      ]);
+      expect((await get(pathFor(id))).body.data).toEqual({
+        fileId,
+        status: "pending",
+        text: null,
+        truncated: false,
+      });
+    });
+    it("hides staff-only items and sections from students", async () => {
+      const section = await unsafe("post", "/resource-sections").send({
+        title: "Viewer staff",
+        visibility: "staff",
+      });
+      for (const metadata of [
+        { visibility: "staff" },
+        { sectionId: section.body.data.id },
+      ]) {
+        const created = await upload(
+          { title: "Private viewer", ...metadata },
+          "original",
+        );
+        await finish(
+          created.body.data.fileId,
+          "ready",
+          "Private extracted text",
+        );
+        expect((await get(pathFor(created.body.data.id))).status).toBe(404);
+        expect((await get(pathFor(created.body.data.id), ta)).status).toBe(200);
+      }
+    });
+    it("requires a session and hides wrong-course, missing, link and non-member text", async () => {
+      const created = await upload({ title: "Viewer access" }, "original");
+      const target = pathFor(created.body.data.id);
+      expect((await request(app(student)).get(base + target)).status).toBe(401);
+      expect((await get(target, outsider)).status).toBe(404);
+      expect((await get(pathFor(randomUUID()))).status).toBe(404);
+      expect(
+        (
+          await request(app(student))
+            .get(`/api/v1/courses/${randomUUID()}${target}`)
+            .set("Cookie", "__Host-chalktalk_session=opaque")
+        ).status,
+      ).toBe(404);
+      const link = await unsafe("post", "/resources").send({
+        kind: "link",
+        title: "Viewer link",
+        url: "https://example.edu",
+      });
+      expect((await get(pathFor(link.body.data.id))).status).toBe(404);
+    });
+    it("exposes only the replacement file and hides removed files", async () => {
+      const created = await upload({ title: "Viewer replacement" }, "original");
+      await finish(created.body.data.fileId, "ready", "Old revision text");
+      const replaced = await upload({}, "new original", {
+        id: created.body.data.id,
+        etag: created.headers.etag,
+      });
+      const response = await get(pathFor(created.body.data.id));
+      expect(response.body.data).toEqual({
+        fileId: replaced.body.data.fileId,
+        status: "pending",
+        text: null,
+        truncated: false,
+      });
+      await finish(replaced.body.data.fileId, "ready", "New revision text");
+      expect((await get(pathFor(created.body.data.id))).body.data.text).toBe(
+        "New revision text",
+      );
+      await unsafe("delete", `/resources/${created.body.data.id}`).set(
+        "If-Match",
+        replaced.headers.etag,
+      );
+      expect((await get(pathFor(created.body.data.id))).status).toBe(404);
+    });
+    it("allows archived-course reads and hides revoked memberships and deleting courses", async () => {
+      const created = await upload({ title: "Viewer archive" }, "original");
+      const target = pathFor(created.body.data.id);
+      await pool.query("UPDATE courses SET status='archived' WHERE id=$1", [
+        course,
+      ]);
+      try {
+        expect((await get(target)).status).toBe(200);
+      } finally {
+        await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+          course,
+        ]);
+      }
+      await pool.query(
+        "DELETE FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+        [course, student],
+      );
+      try {
+        expect((await get(target)).status).toBe(404);
+      } finally {
+        await pool.query(
+          "INSERT INTO course_memberships(course_id,user_id,role) VALUES($1,$2,'student')",
+          [course, student],
+        );
+      }
+      await pool.query("UPDATE courses SET status='deleting' WHERE id=$1", [
+        course,
+      ]);
+      try {
+        expect((await get(target)).status).toBe(404);
+      } finally {
+        await pool.query("UPDATE courses SET status='active' WHERE id=$1", [
+          course,
+        ]);
+      }
+    });
+  });
+
+  describe("searchable PDF copies", () => {
+    const pdfBytes = async () => {
+      const pdf = await PDFDocument.create();
+      pdf.addPage([200, 300]);
+      return Buffer.from(await pdf.save());
+    };
+    const createPdf = async (visibility = "class") =>
+      unsafe("post", "/resources/files")
+        .field("title", "Searchable reading")
+        .field("visibility", visibility)
+        .attach("file", await pdfBytes(), {
+          filename: "reading.pdf",
+          contentType: "application/pdf",
+        });
+    const routeFor = (id: string) => `/resources/${id}/searchable-pdf`;
+    it("rejects derivative size or page metadata on non-ready rows", async () => {
+      const { id, fileId } = (await createPdf()).body.data;
+      expect(
+        (await unsafe("post", routeFor(id), student).send({})).status,
+      ).toBe(202);
+      for (const assignment of ["size_bytes=1", "page_count=1"]) {
+        await expect(
+          pool.query(
+            `UPDATE course_file_searchable_pdfs SET ${assignment} WHERE file_id=$1`,
+            [fileId],
+          ),
+        ).rejects.toMatchObject({ code: "23514" });
+      }
+      await expect(
+        pool.query(
+          "UPDATE course_file_searchable_pdfs SET status='failed',failure_code='example',size_bytes=1 WHERE file_id=$1",
+          [fileId],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        pool.query(
+          "UPDATE course_file_searchable_pdfs SET status='failed',failure_code='example' WHERE file_id=$1",
+          [fileId],
+        ),
+      ).resolves.toMatchObject({ rowCount: 1 });
+    });
+    it("prepares once, protects current copies, and streams safe ready bytes", async () => {
+      const created = await createPdf();
+      const { id, fileId } = created.body.data;
+      const route = routeFor(id);
+      const empty = await get(route);
+      expect(empty.status).toBe(200);
+      expect(empty.body.data.status).toBe("not_requested");
+      expect((await request(app(student)).get(base + route)).status).toBe(401);
+      expect((await get(route, outsider)).status).toBe(404);
+      const pending = await Promise.all([
+        unsafe("post", route, student).send({}),
+        unsafe("post", route, student).send({}),
+      ]);
+      expect(pending.map((r) => r.status)).toEqual([202, 202]);
+      expect(
+        (
+          await pool.query(
+            "SELECT count(*)::int n FROM jobs WHERE kind='generate_searchable_pdf' AND payload->>'fileId'=$1",
+            [fileId],
+          )
+        ).rows[0].n,
+      ).toBe(1);
+      expect((await get(`${route}/${fileId}/view`)).status).toBe(409);
+      const bytes = await pdfBytes(),
+        key = `derived/${fileId}.pdf`;
+      await s3.send(
+        new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes }),
+      );
+      await pool.query(
+        "UPDATE course_file_searchable_pdfs SET status='ready',object_key=$2,size_bytes=$3,page_count=1 WHERE file_id=$1",
+        [fileId, key, bytes.length],
+      );
+      const ready = await get(route);
+      expect(ready.body.data).toMatchObject({
+        fileId,
+        status: "ready",
+        pageCount: 1,
+        sizeBytes: bytes.length,
+      });
+      expect(ready.body.data).not.toHaveProperty("objectKey");
+      for (const mode of ["view", "download"]) {
+        const response = await get(`${route}/${fileId}/${mode}`);
+        expect(response.status).toBe(200);
+        expect(response.headers["content-type"]).toContain("application/pdf");
+        expect(response.headers["content-length"]).toBe(String(bytes.length));
+        expect(response.headers["cache-control"]).toBe("private, no-store");
+        expect(response.headers["x-content-type-options"]).toBe("nosniff");
+        expect(response.headers["content-disposition"]).toContain(
+          mode === "view" ? "inline" : "attachment",
+        );
+        expect(response.body).toEqual(bytes);
+      }
+      expect((await unsafe("post", route, student).send({})).status).toBe(200);
+      expect((await get(`${route}/${randomUUID()}/view`)).status).toBe(404);
+      const replaced = await upload({}, "Replacement text", {
+        id,
+        etag: created.headers.etag,
+      });
+      expect(replaced.status).toBe(200);
+      expect((await get(`${route}/${fileId}/view`)).status).toBe(404);
+      const worker = new JobWorker(pool, "pdf-cleanup", undefined, undefined, {
+        client: s3,
+        bucket,
+      });
+      for (let n = 0; n < 10 && (await worker.runOnce()); n++);
+      await expect(
+        s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key })),
+      ).rejects.toBeTruthy();
+    });
+    it("hides staff copies, rejects non-PDFs and unsafe requests, and supports failed retry", async () => {
+      const staff = await createPdf("staff"),
+        route = routeFor(staff.body.data.id);
+      expect((await get(route)).status).toBe(404);
+      expect((await unsafe("post", route, student).send({})).status).toBe(404);
+      expect(
+        (await unsafe("post", route, ta).unset("X-CSRF-Token").send({})).status,
+      ).toBe(403);
+      expect(
+        (await unsafe("post", route, ta).send({ unexpected: true })).status,
+      ).toBe(422);
+      expect((await unsafe("post", route, ta).send({})).status).toBe(202);
+      await pool.query(
+        "UPDATE course_file_searchable_pdfs SET status='failed',failure_code='example' WHERE file_id=$1",
+        [staff.body.data.fileId],
+      );
+      const first = (
+        await pool.query(
+          "SELECT generation FROM course_file_searchable_pdfs WHERE file_id=$1",
+          [staff.body.data.fileId],
+        )
+      ).rows[0].generation;
+      expect((await unsafe("post", route, ta).send({})).status).toBe(202);
+      expect(
+        (
+          await pool.query(
+            "SELECT generation FROM course_file_searchable_pdfs WHERE file_id=$1",
+            [staff.body.data.fileId],
+          )
+        ).rows[0].generation,
+      ).not.toBe(first);
+      const text = await upload({ title: "Text" }, "words");
+      expect((await get(routeFor(text.body.data.id))).status).toBe(404);
+    });
+    it("does not publish a derived upload after its source revision changes", async () => {
+      const created = await createPdf();
+      const { id, fileId } = created.body.data;
+      await unsafe("post", routeFor(id), student).send({});
+      await pool.query(
+        "UPDATE jobs SET status='succeeded' WHERE kind='extract_file_text'",
+      );
+      await pool.query(
+        "UPDATE jobs SET status='succeeded' WHERE kind='generate_searchable_pdf' AND payload->>'fileId'<>$1",
+        [fileId],
+      );
+      const worker = new JobWorker(
+        pool,
+        "pdf-stale",
+        undefined,
+        undefined,
+        { client: s3, bucket },
+        undefined,
+        undefined,
+        {
+          maxOcrPages: 200,
+          ocrLanguages: "eng",
+          buildSearchablePdf: async (_source: string, directory: string) => {
+            const path = join(directory, "derived.pdf");
+            await writeFile(path, await pdfBytes());
+            const replaced = await upload({}, "new version", {
+              id,
+              etag: created.headers.etag,
+            });
+            expect(replaced.status).toBe(200);
+            return { path, pageCount: 1, sizeBytes: (await stat(path)).size };
+          },
+        } as never,
+      );
+      expect(await worker.runOnce("extraction")).toBe(true);
+      expect(
+        (
+          await pool.query(
+            "SELECT status FROM course_file_searchable_pdfs WHERE file_id=$1",
+            [fileId],
+          )
+        ).rows[0]?.status,
+      ).not.toBe("ready");
+      expect(
+        (
+          await s3.send(
+            new ListObjectsV2Command({
+              Bucket: bucket,
+              Prefix: `courses/${course}/searchable-pdfs/${fileId}/`,
+            }),
+          )
+        ).Contents ?? [],
+      ).toHaveLength(0);
+    });
+    it("fails a generation that reaches the deadline once and lets a reader retry", async () => {
+      const created = await createPdf();
+      const { id, fileId } = created.body.data;
+      await pool.query(
+        "UPDATE jobs SET status='succeeded' WHERE kind IN ('extract_file_text','generate_searchable_pdf') AND status='queued'",
+      );
+      expect(
+        (await unsafe("post", routeFor(id), student).send({})).status,
+      ).toBe(202);
+      const worker = new JobWorker(
+        pool,
+        "pdf-timeout",
+        undefined,
+        undefined,
+        { client: s3, bucket },
+        undefined,
+        undefined,
+        {
+          maxOcrPages: 200,
+          ocrLanguages: "eng",
+          hardLimitMs: 100,
+          buildSearchablePdf: (
+            _source: string,
+            _directory: string,
+            options: { signal: AbortSignal },
+          ) =>
+            new Promise((_resolve, reject) => {
+              options.signal.addEventListener("abort", () =>
+                reject(new Error("aborted")),
+              );
+            }),
+        } as never,
+      );
+      expect(await worker.runOnce("extraction")).toBe(true);
+      expect(
+        (
+          await pool.query(
+            "SELECT status,attempts,last_error FROM jobs WHERE kind='generate_searchable_pdf' AND payload->>'fileId'=$1",
+            [fileId],
+          )
+        ).rows,
+      ).toEqual([
+        { status: "dead", attempts: 1, last_error: "extraction_timeout" },
+      ]);
+      expect((await get(routeFor(id))).body.data.status).toBe("failed");
+      const retried = await unsafe("post", routeFor(id), student).send({});
+      expect(retried.status).toBe(202);
+      expect(retried.body.data.status).toBe("pending");
+    });
   });
 
   describe("queueing", () => {

@@ -123,7 +123,7 @@ paths:
       tags: [Resources]
       summary: Upload an immutable original course file
       operationId: createCourseFile
-      description: Existing file upload. Current instructors in active courses only; not TA or student. Exactly one structurally validated file up to 100 MiB; PDF, text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Ordinary absolute HTTP/HTTPS and relative PDF/PPTX links are allowed; unsafe schemes and active actions are rejected. See documentation/api/resources.md for PDF and PPTX link validation rules and limits. Safe original filename up to 255 characters. Idempotency binds uploader, course, filename, declared type and SHA-256 for 24 hours; exact retries replay 201 while visible, including after archival. Changed input or deleted-file replay returns 409 idempotency_key_reused. No resource catalog metadata.
+      description: Existing file upload. Current instructors in active courses only; not TA or student. Exactly one structurally validated file up to 100 MiB; PDF, text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. Ordinary absolute HTTP/HTTPS and relative PDF/PPTX links are allowed; unsafe schemes and active actions are rejected. Recoverable PDF parser warnings are accepted when page-count and restricted-content checks, including link validation, pass on the recovered structure; fatal parser errors are rejected and original bytes are preserved. See documentation/api/resources.md for PDF and PPTX link validation rules and limits. Safe original filename up to 255 characters. Idempotency binds uploader, course, filename, declared type and SHA-256 for 24 hours; exact retries replay 201 while visible, including after archival. Changed input or deleted-file replay returns 409 idempotency_key_reused. No resource catalog metadata.
       security:
         - session_cookie: []
       parameters:
@@ -7977,6 +7977,134 @@ paths:
           content:
             application/json:
               schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resources/{resourceId}/searchable-pdf":
+    parameters:
+      - "$ref": "#/components/parameters/CourseId"
+      - { name: resourceId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Resources]
+      operationId: getSearchablePdfStatus
+      summary: Read searchable PDF preparation status
+      security: [{ session_cookie: [] }]
+      responses:
+        "200":
+          description: Current status, with metadata and relative authenticated URLs only when ready. Private no-store.
+          headers:
+            Cache-Control: { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/SearchablePdfEnvelope" }
+        "401": { description: Authentication required }
+        "404": { description: Resource missing, inaccessible, removed, not PDF or not current }
+        "503": { description: Service unavailable }
+    post:
+      tags: [Resources]
+      operationId: prepareSearchablePdf
+      summary: Prepare or retry a searchable PDF copy
+      description: Current authorized readers including students in active or archived courses. Reuses ready output and deduplicates pending work. Original and existing search text stay unchanged.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        "200":
+          description: Ready copy reused; private no-store and status Location.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/SearchablePdfEnvelope" }
+        "202":
+          description: Generation queued or already pending; private no-store and status Location.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/SearchablePdfEnvelope" }
+        "401": { description: Authentication required }
+        "403": { description: Invalid unsafe Origin or CSRF token }
+        "404": { description: Resource missing, inaccessible, removed or not PDF }
+        "415": { description: JSON content type required }
+        "422": { description: Invalid empty request body }
+        "503": { description: Service unavailable }
+  "/courses/{courseId}/resources/{resourceId}/searchable-pdf/{fileId}/{mode}":
+    get:
+      tags: [Resources]
+      operationId: readSearchablePdf
+      summary: View or download the current searchable PDF copy
+      description: Every request rechecks membership and current resource revision. Inline mode is view; attachment mode is download with a safe -searchable.pdf filename. Not-ready output returns 409 searchable_pdf_not_ready. Private no-store, exact length and nosniff.
+      security: [{ session_cookie: [] }]
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - { name: resourceId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: fileId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: mode, in: path, required: true, schema: { type: string, enum: [view, download] } }
+      responses:
+        "200":
+          description: Ready derived PDF bytes.
+          headers:
+            Content-Length: { schema: { type: integer, minimum: 1 } }
+            Content-Disposition: { schema: { type: string } }
+            X-Content-Type-Options: { schema: { type: string, const: nosniff } }
+            Cache-Control: { schema: { type: string, const: "private, no-store" } }
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "401": { description: Authentication required }
+        "404": { description: Resource/file is missing, hidden, removed or replaced }
+        "409": { description: searchable_pdf_not_ready }
+        "503": { description: Storage unavailable }
+  "/courses/{courseId}/resources/{resourceId}/text":
+    get:
+      tags: [Resources]
+      summary: Read the current upload's extracted text
+      operationId: getCourseResourceExtractedText
+      description: Current members with resource visibility in active or archived courses. Returns only the current upload's plain text; links and inaccessible resources return 404. Non-ready text is null and truncation is false. Missing extraction rows report pending. No failure codes are exposed.
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: resourceId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Current extracted text and processing state.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: false
+                    required: [fileId, status, text, truncated]
+                    properties:
+                      fileId: { type: string, format: uuid }
+                      status: { type: string, enum: [pending, ready, failed, unsupported] }
+                      text: { type: [string, "null"], maxLength: 500000 }
+                      truncated: { type: boolean }
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: Resource is missing, hidden, removed, inaccessible or not an upload.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: Service unavailable.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
   "/courses/{courseId}/resources/files":
     post:
       tags: [Resources]
@@ -12868,6 +12996,21 @@ components:
         minLength: 1
       example: "3600"
   schemas:
+    SearchablePdfEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [fileId, status, pageCount, sizeBytes, viewUrl, downloadUrl]
+          properties:
+            fileId: { type: string, format: uuid }
+            status: { type: string, enum: [not_requested, pending, ready, failed] }
+            pageCount: { type: [integer, "null"], minimum: 1 }
+            sizeBytes: { type: [integer, "null"], minimum: 1, maximum: 104857600 }
+            viewUrl: { type: [string, "null"] }
+            downloadUrl: { type: [string, "null"] }
     CourseResourceLink:
       type: object
       additionalProperties: false

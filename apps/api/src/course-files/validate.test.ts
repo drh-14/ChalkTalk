@@ -1,6 +1,7 @@
 import { PDFDocument, PDFName, PDFString } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import { promises as fs } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -436,6 +437,112 @@ describe("resource format validation", () => {
       ),
     ).rejects.toMatchObject({ status: 415 });
   });
+  it("accepts a PDF whose cross-reference table qpdf recovers with warnings", async () => {
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100, 100]);
+    const bytes = Buffer.from(await pdf.save({ useObjectStreams: false }));
+    const damaged = Buffer.from(
+      bytes.toString("latin1").replace(/startxref\s+\d+/, "startxref\n1"),
+      "latin1",
+    );
+    const directory = await fs.mkdtemp(join(tmpdir(), "chalktalk-recovery-"));
+    const path = join(directory, "recoverable.pdf");
+    try {
+      await fs.writeFile(path, damaged);
+      expect(spawnSync("qpdf", ["--check", path]).status).toBe(3);
+      expect(
+        await validateUpload("recoverable.pdf", "application/pdf", path),
+      ).toBe("application/pdf");
+      expect(await fs.readFile(path)).toEqual(damaged);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+  it("rejects forbidden PDF actions even when qpdf recovers the structure", async () => {
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100, 100]);
+    pdf.catalog.set(
+      PDFName.of("OpenAction"),
+      pdf.context.obj({
+        S: PDFName.of("JavaScript"),
+        JS: PDFString.of('app.alert("unsafe")'),
+      }),
+    );
+    const bytes = Buffer.from(await pdf.save({ useObjectStreams: false }));
+    const damaged = Buffer.from(
+      bytes.toString("latin1").replace(/startxref\s+\d+/, "startxref\n1"),
+      "latin1",
+    );
+    await expect(
+      validateStaged("active-recoverable.pdf", "application/pdf", damaged),
+    ).rejects.toMatchObject({ status: 415, code: "unsupported_media_type" });
+  });
+  async function recoverablePdfWithLink(
+    action: Record<string, PDFName | PDFString>,
+  ) {
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([100, 100]);
+    page.node.set(
+      PDFName.of("Annots"),
+      pdf.context.obj([
+        {
+          Type: PDFName.of("Annot"),
+          Subtype: PDFName.of("Link"),
+          Rect: [0, 0, 20, 20],
+          A: action,
+        },
+      ]),
+    );
+    const bytes = Buffer.from(await pdf.save({ useObjectStreams: false }));
+    return Buffer.from(
+      bytes.toString("latin1").replace(/startxref\s+\d+/, "startxref\n1"),
+      "latin1",
+    );
+  }
+  it.each(["https://example.edu/syllabus", "notes/week-1.pdf"])(
+    "accepts a safe %s link in a PDF that qpdf recovers with warnings",
+    async (target) => {
+      await expect(
+        validateStaged(
+          "linked-recoverable.pdf",
+          "application/pdf",
+          await recoverablePdfWithLink({
+            S: PDFName.of("URI"),
+            URI: PDFString.of(target),
+          }),
+        ),
+      ).resolves.toBe("application/pdf");
+    },
+  );
+  it.each([
+    [
+      "file scheme URI",
+      { S: PDFName.of("URI"), URI: PDFString.of("file:///etc/passwd") },
+    ],
+    [
+      "javascript scheme URI",
+      { S: PDFName.of("URI"), URI: PDFString.of("javascript:alert(1)") },
+    ],
+    [
+      "credential-bearing URI",
+      {
+        S: PDFName.of("URI"),
+        URI: PDFString.of("https://user:secret@example.edu/"),
+      },
+    ],
+    ["launch action", { S: PDFName.of("Launch"), F: PDFString.of("calc.exe") }],
+  ])(
+    "rejects a %s link in a PDF that qpdf recovers with warnings",
+    async (_label, action) => {
+      await expect(
+        validateStaged(
+          "linked-recoverable.pdf",
+          "application/pdf",
+          await recoverablePdfWithLink(action),
+        ),
+      ).rejects.toMatchObject({ status: 415, code: "unsupported_media_type" });
+    },
+  );
   it("rejects invalid text encoding and active PDF content", async () => {
     await expect(
       validateStaged("notes.txt", "text/plain", Buffer.from([0xff, 0xfe])),

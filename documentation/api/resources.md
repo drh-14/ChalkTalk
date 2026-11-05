@@ -19,7 +19,7 @@ Current members (student, TA or instructor) of active or archived courses can li
 
 #### `POST /api/v1/courses/{courseId}/files`
 
-Existing immutable upload: current instructors only, active course only; TA/student uploads return `403 permission_denied`, archived uploads `409 course_archived`. Supply exactly one multipart `file`, up to 100 MiB, a structurally validated PDF, plain text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. The original filename must be safe and at most 255 characters. Unsupported/malformed file content returns `415 unsupported_media_type`; invalid parts, filenames and keys return `422 validation_failed`, oversized content `413 payload_too_large`, and storage failure `503 service_unavailable`.
+Existing immutable upload: current instructors only, active course only; TA/student uploads return `403 permission_denied`, archived uploads `409 course_archived`. Supply exactly one multipart `file`, up to 100 MiB, a structurally validated PDF, plain text, Markdown, PNG, JPEG, WebP, DOCX or PPTX. The original filename must be safe and at most 255 characters. PDF parser recovery warnings are accepted when page-count and restricted-content validation succeed; stored and downloaded bytes remain identical to the original upload. Unsupported/malformed file content returns `415 unsupported_media_type`; invalid parts, filenames and keys return `422 validation_failed`, oversized content `413 payload_too_large`, and storage failure `503 service_unavailable`.
 
 PDFs may contain clickable HTTP/HTTPS and relative URI links (including `./`, `../`, root-relative, query, fragment, and network-path references), internal GoTo page navigation, direct or named opening destinations, and ordinary tagged metadata. The original PDF bytes are preserved; relative links are not rewritten and may resolve differently depending on where the PDF is opened. A catalog URI base, if present, must be an absolute HTTP/HTTPS URL without credentials so relative links cannot inherit an unsafe scheme. Unsafe URL schemes such as `javascript:`, `file:`, `data:`, and `mailto:`, credential-bearing URLs, and active actions such as scripts, launches, embedded files, remote navigation, and automatic presentation-step actions are rejected. PDF structural inspection is bounded to 128 MiB of qpdf JSON output; an exceptionally complex file may therefore be rejected even below the upload-size limit.
 
@@ -169,6 +169,29 @@ Accepts any of `{ title, visibility, sectionId, url }` with the resource's `If-M
 #### `DELETE /api/v1/courses/{courseId}/resources/{resourceId}`
 
 Requires the resource's `If-Match` and returns `204`. The resource is hidden immediately, and unreferenced bytes are queued for worker cleanup.
+
+<a id="getSearchablePdfStatus"></a>
+<a id="prepareSearchablePdf"></a>
+
+#### Searchable PDF copies
+
+For a current PDF upload, `GET /api/v1/courses/{courseId}/resources/{resourceId}/searchable-pdf` returns `{data:{fileId,status,pageCount,sizeBytes,viewUrl,downloadUrl}}`, with `status` one of `not_requested`, `pending`, `ready`, `failed`. Metadata and URLs are null until ready. A current member with visibility may `POST {}` to this route with Origin and CSRF to request/retry preparation: returns `202` pending or `200` for a reused ready copy, private no-store caching and a status `Location`. Preparation is deduplicated and leaves existing search text unchanged, including archived-course reads.
+
+<a id="readSearchablePdf"></a>
+
+Ready relative URLs bind the current immutable `fileId`: `.../searchable-pdf/{fileId}/view` streams inline PDF and `.../download` streams an attachment named `*-searchable.pdf`. Both enforce current course/item/section membership and visibility, `application/pdf`, exact length, nosniff and private no-store. Missing authentication is 401; invalid unsafe Origin/CSRF is 403; missing, hidden, wrong-course, replaced, removed, non-PDF or link resources are 404; a not-ready content request is `409 searchable_pdf_not_ready`; unavailable service/storage is 503. Internal storage keys/errors are never exposed.
+
+The panel offers Searchable PDF with background progress, retry, embedded viewing and open/download fallback links. Pending status is checked every two seconds for 30 seconds, then every ten seconds. After 16 minutes, automatic checks stop and Check again starts a fresh cycle. The copy preserves rendered page appearance and an aligned invisible OCR text layer; rendered zoom quality and OCR text can differ from the original. Every page is included or generation fails. Existing OCR page limits, render bounds, a 15-minute processing deadline and 100-MiB copy cap apply. A copy that reaches the deadline fails without automatic retry; POST again to retry it. The original PDF remains unchanged. Replacement/removal/deletion cleans derived objects with durable jobs, and stale generation cannot publish after retirement.
+
+<a id="getCourseResourceExtractedText"></a>
+
+#### `GET /api/v1/courses/{courseId}/resources/{resourceId}/text`
+
+Read the full stored extracted text for the resource's current upload. Scanned PDF pages with a small selectable header or footer also receive OCR when a large scan image covers at least half the page, so incidental text does not prevent recognition of the article body. Each page stores one text source: OCR replaces a usable selectable layer only when it exceeds 1.5 times its non-whitespace length plus 20 characters; otherwise the exact selectable text is retained. This protects exact slide text but can omit a shorter scanned body beneath a long selectable notice. Current members who can read the resource may use this in active or archived courses, including students. Success returns `200 application/json`, `Cache-Control: private, no-store`, and `{ "data": { "fileId": "…", "status": "ready", "text": "Extracted text…", "truncated": false } }`. Status is `pending`, `ready`, `failed` or `unsupported`. Non-ready states return null text and false truncation; a missing extraction row reports pending. Ready text can be empty and contains at most 500,000 characters. The response contains no failure codes or text from old revisions. Text is plain text and must never be interpreted as HTML.
+
+The Resources card and search result offer **View extracted text** for uploaded files. The inline panel loads on demand, shows processing/unavailable/empty/truncated states, and supports refresh, retry and close. The panel defaults to readable paragraphs with an Original line breaks option. Download .txt saves the selected view as UTF-8; presentation formatting leaves stored search text unchanged and does not reconstruct tables. File download still returns the unchanged original.
+
+Missing authentication returns `401 authentication_required`. Missing, removed, hidden, wrong-course, link-only or inaccessible resources return `404 not_found`; unavailable service returns `503 service_unavailable`. Authorization, current revision and text are read in one consistent snapshot.
 
 <a id="uploadCourseResourceFile"></a>
 

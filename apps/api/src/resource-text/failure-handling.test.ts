@@ -47,6 +47,7 @@ function pdfWith(pages: number, layer: Record<number, string> = {}) {
         ) + "\f",
       ),
     });
+  tools.responses.pdfimages = () => result();
   tools.responses.pdftoppm = async (args) => {
     await writeFile(`${args.at(-1)}.png`, "rendered");
     return result();
@@ -63,12 +64,218 @@ const extractPdf = (
     }),
   );
 const longLine = "text layer words that are long enough to be usable";
+const footer =
+  "Reproduced with permission of the copyright owner. Further reproduction prohibited without permission.";
+const dense = "dense ".repeat(120).trim();
+const articleSentence =
+  "Recognized article body about civic culture and democracy.";
+const articleBody = `${articleSentence}${" The scanned page continues with many further paragraphs of argument.".repeat(4)}`;
+const imageRow = (page: number, type = "image", ppi = "300") =>
+  `${page} 0 ${type} 2550 3300 gray 1 1 ccitt no 8 0 ${ppi} ${ppi} 101K 10%`;
+const listImages = (...rows: string[]) => {
+  tools.responses.pdfimages = () =>
+    result({
+      stdout: Buffer.from(
+        `page num type width height color comp bpc enc interp object ID x-ppi y-ppi size ratio\n${rows.join("\n")}\n`,
+      ),
+    });
+};
+const occurrences = (text: string, part: string) => text.split(part).length - 1;
 
 beforeEach(() => {
   tools.responses = {};
 });
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("scanned article pages with selectable footers", () => {
+  it.each(["image", "stencil"])(
+    "OCRs a page-sized %s despite a selectable copyright footer",
+    async (type) => {
+      pdfWith(1, { 0: footer });
+      listImages(imageRow(1, type));
+      tools.responses.tesseract = () =>
+        result({
+          stdout: Buffer.from(`${articleBody}\n${footer}`),
+        });
+      const extracted = await extractPdf();
+      expect(extracted.ocrPageCount).toBe(1);
+      expect(occurrences(extracted.text, articleSentence)).toBe(1);
+      expect(occurrences(extracted.text, footer)).toBe(1);
+      expect(extracted.truncated).toBe(false);
+    },
+  );
+
+  it("keeps the selectable text when OCR of the page recognizes nothing", async () => {
+    pdfWith(1, { 0: footer });
+    listImages(imageRow(1));
+    tools.responses.tesseract = () => result();
+    expect(await extractPdf()).toMatchObject({
+      text: footer,
+      ocrPageCount: 1,
+    });
+  });
+});
+
+describe("image-backed slides with selectable text", () => {
+  const slide = "Exact slide code and formula text ".repeat(10).trim();
+
+  it.each([
+    ["noise", "g@rbled n0ise"],
+    ["less text", "Exact slide code"],
+    ["the same amount of misread text", slide.toUpperCase()],
+    ["slightly more misread text", `${slide.replaceAll("e", "c")} 0x1l O0`],
+  ])("keeps the exact selectable text when OCR returns %s", async (_, ocr) => {
+    pdfWith(1, { 0: slide });
+    listImages(imageRow(1));
+    tools.responses.tesseract = () => result({ stdout: Buffer.from(ocr) });
+    expect(await extractPdf()).toMatchObject({ text: slide, ocrPageCount: 1 });
+  });
+
+  // The slide layer has 280 non-whitespace characters, so the spec's rule of
+  // 1.5 times the layer plus 20 needs OCR to recognize more than 440 of them.
+  it.each([
+    ["keeps the layer at exactly the margin", 440, slide],
+    ["takes OCR one character past the margin", 441, "x".repeat(441)],
+  ])("%s", async (_, length, stored) => {
+    pdfWith(1, { 0: slide });
+    listImages(imageRow(1));
+    tools.responses.tesseract = () =>
+      result({ stdout: Buffer.from("x".repeat(length)) });
+    expect(await extractPdf()).toMatchObject({ text: stored, ocrPageCount: 1 });
+  });
+
+  it("takes the OCR text alone when it recognizes far more than the slide layer", async () => {
+    pdfWith(1, { 0: slide });
+    listImages(imageRow(1));
+    const recognized = `${slide} ${"plus words only the image contains ".repeat(8).trim()}`;
+    tools.responses.tesseract = () =>
+      result({ stdout: Buffer.from(recognized) });
+    expect(await extractPdf()).toMatchObject({
+      text: recognized,
+      ocrPageCount: 1,
+    });
+  });
+});
+
+describe("pages without usable selectable text", () => {
+  it("takes short OCR text on a page with no text layer", async () => {
+    pdfWith(1);
+    tools.responses.tesseract = () =>
+      result({ stdout: Buffer.from("Figure 1") });
+    expect(await extractPdf()).toMatchObject({
+      text: "Figure 1",
+      ocrPageCount: 1,
+    });
+  });
+
+  it("takes OCR text only slightly longer than an unusable page number", async () => {
+    pdfWith(1, { 0: "12" });
+    tools.responses.tesseract = () =>
+      result({ stdout: Buffer.from("12 Figure") });
+    expect(await extractPdf()).toMatchObject({
+      text: "12 Figure",
+      ocrPageCount: 1,
+    });
+  });
+});
+
+describe("unreadable pdfimages listings fall back to the text layer", () => {
+  it.each(["inf", "nan", "-"])(
+    "skips an image row whose ppi is %s and still extracts the PDF",
+    async (ppi) => {
+      pdfWith(1, { 0: footer });
+      listImages(imageRow(1, "image", ppi));
+      expect(await extractPdf()).toMatchObject({
+        text: footer,
+        ocrPageCount: 0,
+        truncated: false,
+      });
+    },
+  );
+
+  it("still OCRs a page with a measurable scan beside an unmeasurable watermark", async () => {
+    pdfWith(1, { 0: footer });
+    listImages(imageRow(1, "image", "inf"), imageRow(1));
+    const recognized = `${articleBody} ${footer}`;
+    tools.responses.tesseract = () =>
+      result({ stdout: Buffer.from(recognized) });
+    expect(await extractPdf()).toMatchObject({
+      text: recognized,
+      ocrPageCount: 1,
+    });
+  });
+
+  it("uses the text layer when the listing overflows the output cap", async () => {
+    pdfWith(1, { 0: footer });
+    tools.responses.pdfimages = () =>
+      result({
+        code: null,
+        truncated: true,
+        stdout: Buffer.from(imageRow(1)),
+      });
+    expect(await extractPdf()).toMatchObject({
+      text: footer,
+      ocrPageCount: 0,
+      truncated: false,
+    });
+  });
+});
+
+describe("OCR cap on a page with selectable text", () => {
+  it("does not mark the document truncated when only that page goes unread", async () => {
+    pdfWith(3, { 0: dense, 1: footer, 2: dense });
+    listImages(imageRow(2));
+    const extracted = await extractPdf({ maxOcrPages: 0 });
+    expect(extracted).toMatchObject({ truncated: false, ocrPageCount: 0 });
+    expect(extracted.text).toContain(footer);
+  });
+
+  it("marks truncation when the cap leaves a scan unread after an earlier OCR", async () => {
+    pdfWith(2, { 0: footer, 1: footer });
+    listImages(imageRow(1, "stencil"), imageRow(2, "stencil"));
+    tools.responses.tesseract = () =>
+      result({ stdout: Buffer.from(`Recognized article body. ${footer}`) });
+    expect(await extractPdf({ maxOcrPages: 1 })).toMatchObject({
+      truncated: true,
+      pageCount: 2,
+      ocrPageCount: 1,
+    });
+  });
+
+  it("marks truncation when the deadline leaves a scan unread after an earlier OCR", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
+    pdfWith(2, { 0: footer, 1: footer });
+    listImages(imageRow(1), imageRow(2));
+    tools.responses.tesseract = () => {
+      vi.setSystemTime(2_000_000);
+      return result({
+        stdout: Buffer.from(`Recognized article body. ${footer}`),
+      });
+    };
+    expect(await extractPdf({ deadline: 1_500_000 })).toMatchObject({
+      truncated: true,
+      ocrPageCount: 1,
+    });
+  });
+
+  it("marks truncation when a later page also needed OCR", async () => {
+    pdfWith(3, { 0: footer, 1: dense, 2: footer });
+    listImages(imageRow(1), imageRow(3));
+    expect(await extractPdf({ maxOcrPages: 0 })).toMatchObject({
+      truncated: true,
+      ocrPageCount: 0,
+    });
+  });
+
+  it("marks truncation when the unread page has no usable text", async () => {
+    pdfWith(2, { 0: dense });
+    expect(await extractPdf({ maxOcrPages: 0 })).toMatchObject({
+      truncated: true,
+      ocrPageCount: 0,
+    });
+  });
 });
 
 describe("transient tool failures stay retryable", () => {
@@ -248,6 +455,7 @@ describe("scratch disk", () => {
     pdfWith(3);
     const seen: string[][] = [];
     let directory = "";
+    tools.responses.pdfimages = () => result();
     tools.responses.pdftoppm = async (args) => {
       directory = join(args.at(-1)!, "..");
       await writeFile(`${args.at(-1)}.png`, "rendered");
