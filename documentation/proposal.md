@@ -32,7 +32,7 @@ ChalkTalk serves two audiences: courses running on a hosted or self-hosted insta
 
 **Running an instance:**
 
-- **Institutional or self-hosting administrators** — university IT staff, department admins, or independent instructors and open-courseware maintainers — who deploy ChalkTalk (hosted or self-managed), configure AI provider settings, and manage organization- and course-level access.
+- **Institutional or self-hosting administrators** — university IT staff, department admins, or independent instructors and open-courseware maintainers — who deploy ChalkTalk (hosted or self-managed), configure optional embedding search, and manage organization- and course-level access.
 
 ChalkTalk is designed to serve both traditional university courses and independent or open-courseware contexts, such as a self-hosted course with no institutional affiliation.
 
@@ -40,7 +40,7 @@ ChalkTalk is designed to serve both traditional university courses and independe
 
 # **Nature of the Product**
 
-ChalkTalk's complexity comes from four areas of genuine engineering difficulty, with an AI layer built on top of them rather than as a substitute for them.
+ChalkTalk's complexity comes from four areas of engineering difficulty.
 
 - **Real-time collaboration**: Office-hours sessions require a shared code editor / whiteboard where a student and TA edit simultaneously, with changes merging live and without conflict.
 
@@ -50,9 +50,9 @@ ChalkTalk's complexity comes from four areas of genuine engineering difficulty, 
 
 - **Knowledge surfacing over time**: The system must track engagement and content changes to identify information that matters as a course progresses.
 
-Underlying all four, visibility and anonymity rules apply across nearly every read path in the system, including search results and AI-assisted answers, and must be enforced consistently as those rules change.
+Underlying all four, visibility and anonymity rules apply across nearly every read path in the system, including search results, and must be enforced consistently as those rules change.
 
-An AI assistant layer is built on top of this infrastructure, but the platform is designed to remain fully functional without it, consistent with the project's open-source, self-hostable goals.
+Optional embedding-based search helps surface related posts with different wording. The platform remains fully functional with full-text and fuzzy search alone, consistent with the project's open-source, self-hostable goals.
 
 #
 
@@ -62,8 +62,8 @@ ChalkTalk is designed as a single application that can be deployed in two ways, 
 
 Two deployment models, one system
 
-- **Managed (Cloud) deployment:** Hosted and operated by the ChalkTalk team (us) on AWS. Instructors sign up and use the platform directly, with no infrastructure of their own. The team provides the AI provider key and is responsible for uptime, backups, and cost. **Status:** planned, not built.
-- **Self-managed deployment:** The full application, published as open source, runnable by any instructor, department, or open-courseware maintainer on their own infrastructure via Docker. A setup script provisions the application together with its database, collaboration relay, and file storage in containers. The self-hoster supplies their own AI provider key (or runs without AI features), so operating cost and data ownership stay with them.
+- **Managed (Cloud) deployment:** Hosted and operated by the ChalkTalk team (us) on AWS. Instructors sign up and use the platform directly, with no infrastructure of their own. The team configures any optional embedding provider and is responsible for uptime, backups, and cost. **Status:** planned, not built.
+- **Self-managed deployment:** The full application, published as open source, runnable by any instructor, department, or open-courseware maintainer on their own infrastructure via Docker. A setup script provisions the application together with its database, collaboration relay, and file storage in containers. The self-hoster can configure an embedding provider or use full-text and fuzzy search alone, so operating cost and data ownership stay with them.
 
 Both deployments run the identical application image; only the infrastructure underneath differs (managed cloud services vs. equivalent containers). This means a feature or fix built once benefits both deployment paths automatically, rather than requiring two maintained versions of the app.
 

@@ -154,15 +154,9 @@ flowchart TB
 
 ChalkTalk runs as containers managed through Docker Compose: the root `docker-compose.yml` for local development and a [single-VM deployment skeleton](../deployment/README.md) with PostgreSQL for application data and durable jobs and SeaweedFS for S3-compatible object storage. The skeleton is not production-ready; its guide lists the backups and end-to-end checks that remain. The managed cloud deployment in the original plan (Vercel, AWS ECS, RDS and S3) has not been built. The email provider is selected by configuration; see the [local setup](../README.md#start-locally) for its settings.
 
-### **AI module**
+### **Optional semantic search**
 
-**Status:** only optional embedding-based post search is built, configured through the `EMBEDDING_*` settings described in the [README](../README.md#optional-semantic-search). AI responses to student questions, and the mode selection below, are planned and not built. Without those settings, post search uses PostgreSQL full-text and fuzzy matching.
-
-AI features, such as AI responses to student questions, are accessed through a single AI provider interface in the backend, so the rest of the system never calls a specific AI service directly. The web server uses it for requests that need an immediate response, and the worker uses it for slower tasks such as generating embeddings for new posts. Each deployment selects one of three modes through configuration:
-
-- No AI: AI features are hidden, and post search uses PostgreSQL full-text and fuzzy matching. ChalkTalk remains fully functional in this mode, which is the default for self-hosted instances.
-- Bring your own key (BYOK): The instance calls a hosted AI provider using an API key supplied by the operator and stored as a server-side secret. In the managed deployment, the ChalkTalk team provides this key; in a self-hosted deployment, the administrator supplies their own.
-- Local model: The instance calls a model running on the operator's own hardware through an OpenAI-compatible endpoint. The model can run as an additional container in the Docker Compose deployment, so no data leaves the self-hoster's infrastructure.
+Deployments can enable embedding-based post search through the `EMBEDDING_*` settings described in the [README](../README.md#optional-semantic-search). The API uses the configured embeddings endpoint for search queries, and the worker generates embeddings for indexed posts. The provider key is a server-side secret supplied by the deployment operator. Without the optional provider and vector schema, post search uses PostgreSQL full-text and fuzzy matching.
 
 A managed deployment would send system metrics and request logs to AWS CloudWatch, which must cover the 60-second metrics interval and one-year log retention in the nonfunctional requirements. The implemented local monitoring stack has a separate retention policy; see [local observability](api/observability.md).
 
