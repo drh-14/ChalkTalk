@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Render the editable Mermaid source to the architecture SVG and PNG. */
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 const source = fileURLToPath(new URL("./architecture.mmd", import.meta.url));
 
