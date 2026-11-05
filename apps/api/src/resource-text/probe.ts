@@ -4,6 +4,8 @@ const versionChecks = [
   ["pdfinfo", "-v"],
   ["pdftotext", "-v"],
   ["pdftoppm", "-v"],
+  ["pdfimages", "-v"],
+  ["qpdf", "--version"],
 ] as const;
 
 /**

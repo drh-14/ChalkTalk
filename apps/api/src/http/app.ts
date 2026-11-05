@@ -2753,6 +2753,105 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/courses/:courseId/resources/:resourceId/searchable-pdf",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await catalog().searchablePdf(
+          param(request.params.courseId),
+          param(request.params.resourceId),
+          current.session.user.id,
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.post(
+    "/api/v1/courses/:courseId/resources/:resourceId/searchable-pdf",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      try {
+        requireJsonRequest(request);
+        strictBody(request.body, [], []);
+        const courseId = param(request.params.courseId),
+          resourceId = param(request.params.resourceId);
+        const value = await catalog().searchablePdf(
+          courseId,
+          resourceId,
+          auth(response).session.user.id,
+          true,
+        );
+        response
+          .status(value.status === "ready" ? 200 : 202)
+          .set({
+            "Cache-Control": "private, no-store",
+            Location: `/api/v1/courses/${courseId}/resources/${resourceId}/searchable-pdf`,
+          })
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  for (const mode of ["view", "download"] as const)
+    app.get(
+      `/api/v1/courses/:courseId/resources/:resourceId/searchable-pdf/:fileId/${mode}`,
+      optionalReadOrigin,
+      async (request, response, next) => {
+        try {
+          const current = await requireSession(request);
+          const value = await catalog().searchablePdfContent(
+            param(request.params.courseId),
+            param(request.params.resourceId),
+            param(request.params.fileId),
+            current.session.user.id,
+          );
+          const body = (await courseFiles().storedPdf(
+            value.objectKey,
+          )) as NodeJS.ReadableStream;
+          const name = value.name.replace(/[^A-Za-z0-9._-]/g, "_");
+          response.set({
+            "Content-Type": "application/pdf",
+            "Content-Length": String(value.length),
+            "Content-Disposition": `${mode === "view" ? "inline" : "attachment"}; filename="${name}"`,
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+          });
+          body.on("error", (error) => {
+            if (!response.headersSent) next(error);
+            else response.destroy(error);
+          });
+          body.pipe(response);
+        } catch (error) {
+          next(error);
+        }
+      },
+    );
+  app.get(
+    "/api/v1/courses/:courseId/resources/:resourceId/text",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const value = await catalog().extractedText(
+          param(request.params.courseId),
+          param(request.params.resourceId),
+          current.session.user.id,
+        );
+        response
+          .set("Cache-Control", "private, no-store")
+          .json({ data: value });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/courses/:courseId/resources/:resourceId",
     optionalReadOrigin,
     async (request, response, next) => {

@@ -1,3 +1,4 @@
+import { retireSearchablePdf } from "../resource-text/searchable-pdf-store.js";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { v7 as uuid } from "uuid";
@@ -512,6 +513,146 @@ export class CourseResourceService {
     if (!rows.rows[0]) throw missing();
     return project(rows.rows[0]);
   }
+  async extractedText(courseId: string, resourceId: string, userId: string) {
+    return this.tx(async (db) => {
+      await db.query(
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      );
+      const resource = await this.read(courseId, resourceId, userId, db);
+      if (resource.kind !== "upload") throw missing();
+      const result = await db.query<{
+        status: TextStatus;
+        text: string | null;
+        truncated: boolean;
+      }>(
+        "SELECT status,text,truncated FROM course_file_texts WHERE course_id=$1 AND file_id=$2",
+        [courseId, resource.fileId],
+      );
+      const row = result.rows[0];
+      const status = row?.status ?? "pending";
+      return {
+        fileId: resource.fileId,
+        status,
+        text: status === "ready" ? row!.text : null,
+        truncated: status === "ready" ? row!.truncated : false,
+      };
+    });
+  }
+  private async currentPdf(
+    db: PoolClient,
+    courseId: string,
+    resourceId: string,
+    userId: string,
+    lock = false,
+  ) {
+    if (lock) {
+      await db.query("SELECT id FROM courses WHERE id=$1 FOR SHARE", [
+        courseId,
+      ]);
+      await db.query(
+        "SELECT id FROM course_resources WHERE course_id=$1 AND id=$2 FOR UPDATE",
+        [courseId, resourceId],
+      );
+    }
+    const resource = await this.read(courseId, resourceId, userId, db);
+    if (resource.kind !== "upload" || resource.mediaType !== "application/pdf")
+      throw missing();
+    if (lock)
+      await db.query("SELECT id FROM course_files WHERE id=$1 FOR UPDATE", [
+        resource.fileId,
+      ]);
+    return resource;
+  }
+  async searchablePdf(
+    courseId: string,
+    resourceId: string,
+    userId: string,
+    prepare = false,
+  ) {
+    return this.tx(async (db) => {
+      if (!prepare)
+        await db.query(
+          "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+        );
+      const file = await this.currentPdf(
+        db,
+        courseId,
+        resourceId,
+        userId,
+        prepare,
+      );
+      let row = (
+        await db.query<{
+          status: string;
+          page_count: number | null;
+          size_bytes: string | null;
+        }>(
+          "SELECT status,page_count,size_bytes FROM course_file_searchable_pdfs WHERE file_id=$1",
+          [file.fileId],
+        )
+      ).rows[0];
+      if (prepare && (!row || row.status === "failed")) {
+        const generation = uuid();
+        await db.query(
+          "INSERT INTO course_file_searchable_pdfs(file_id,course_id,generation) VALUES($1,$2,$3) ON CONFLICT(file_id) DO UPDATE SET generation=$3,status='pending',object_key=NULL,size_bytes=NULL,page_count=NULL,failure_code=NULL,updated_at=now()",
+          [file.fileId, courseId, generation],
+        );
+        await db.query(
+          "INSERT INTO jobs(id,kind,payload,deduplication_key,max_attempts) VALUES($1,'generate_searchable_pdf',$2,$3,3)",
+          [
+            uuid(),
+            { fileId: file.fileId, generation },
+            `searchable-pdf:${file.fileId}:${generation}`,
+          ],
+        );
+        row = { status: "pending", page_count: null, size_bytes: null };
+      }
+      const base = `/api/v1/courses/${courseId}/resources/${resourceId}/searchable-pdf/${file.fileId}`;
+      return {
+        fileId: file.fileId,
+        status: row?.status ?? "not_requested",
+        pageCount: row?.status === "ready" ? row.page_count : null,
+        sizeBytes: row?.status === "ready" ? Number(row.size_bytes) : null,
+        viewUrl: row?.status === "ready" ? `${base}/view` : null,
+        downloadUrl: row?.status === "ready" ? `${base}/download` : null,
+      };
+    });
+  }
+  async searchablePdfContent(
+    courseId: string,
+    resourceId: string,
+    fileId: string,
+    userId: string,
+  ) {
+    return this.tx(async (db) => {
+      await db.query(
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      );
+      const file = await this.currentPdf(db, courseId, resourceId, userId);
+      if (file.fileId !== fileId) throw missing();
+      const row = (
+        await db.query<{
+          object_key: string;
+          size_bytes: string;
+          status: string;
+        }>(
+          "SELECT object_key,size_bytes,status FROM course_file_searchable_pdfs WHERE file_id=$1",
+          [fileId],
+        )
+      ).rows[0];
+      if (row?.status !== "ready")
+        throw new AuthError(
+          409,
+          "searchable_pdf_not_ready",
+          "The searchable PDF is not ready yet",
+        );
+      return {
+        objectKey: row.object_key,
+        length: Number(row.size_bytes),
+        name: file.fileName.replace(/\.pdf$/i, "") + "-searchable.pdf",
+      };
+    });
+  }
   private async section(db: Db, courseId: string, value: unknown) {
     if (value === undefined || value === null) return null;
     const id = validSectionId(value);
@@ -692,6 +833,7 @@ export class CourseResourceService {
       [fileId],
     );
     if (refs.rowCount) return;
+    await retireSearchablePdf(db, fileId);
     await db.query(
       "UPDATE course_files SET deleted_at=clock_timestamp() WHERE id=$1",
       [fileId],

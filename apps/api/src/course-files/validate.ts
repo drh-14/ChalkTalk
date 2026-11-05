@@ -218,7 +218,8 @@ async function qpdf(path: string, options: string[], maxOutputBytes = 1024) {
   }
   const code = await closed;
   clearTimeout(timeout);
-  if (failure || code !== 0) throw invalid();
+  // qpdf exits 3 when parsing completed with recoverable warnings.
+  if (failure || (code !== 0 && code !== 3)) throw invalid();
   return Buffer.concat(chunks).toString("utf8").trim();
 }
 

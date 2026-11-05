@@ -3,9 +3,12 @@ import { strToU8, zipSync } from "fflate";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { degrees, PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { extractText, type ExtractionOptions } from "./extract.js";
 import { extractPdfText } from "./pdf.js";
+import { buildSearchablePdf } from "./searchable-pdf.js";
 import { withTempDirectory } from "./tools.js";
 
 const fixture = (name: string) =>
@@ -32,13 +35,50 @@ const tools =
   available("pdftotext", "-v") &&
   available("pdftoppm", "-v") &&
   available("pdfinfo", "-v") &&
+  available("qpdf", "--version") &&
   available("tesseract", "--version");
 if (!tools)
   console.warn(
-    "Skipping PDF and OCR extraction tests: pdftotext, pdftoppm, pdfinfo and tesseract are required (installed in the dev image and CI).",
+    "Skipping PDF and OCR extraction tests: pdftotext, pdftoppm, pdfinfo, qpdf and tesseract are required (installed in the dev image and CI).",
   );
 const withTools = tools ? describe : describe.skip;
 const words = (text: string) => text.toLowerCase();
+const toolOutput = (command: string, ...args: string[]) =>
+  spawnSync(command, args, { encoding: "utf8" }).stdout;
+
+/** A colour page, a page rotated for display, and a page cropped to part of its media box. */
+async function searchableSource() {
+  const document = await PDFDocument.create();
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  const coloured = document.addPage([612, 792]);
+  coloured.drawRectangle({
+    x: 72,
+    y: 600,
+    width: 468,
+    height: 120,
+    color: rgb(1, 0, 0),
+  });
+  coloured.drawText("Gradient descent converges", {
+    x: 72,
+    y: 500,
+    size: 28,
+    font,
+  });
+  const rotated = document.addPage([612, 792]);
+  rotated.setRotation(degrees(90));
+  rotated.drawText("Lagrange multipliers", {
+    x: 300,
+    y: 100,
+    size: 28,
+    font,
+    rotate: degrees(90),
+  });
+  const cropped = document.addPage([612, 792]);
+  cropped.setCropBox(72, 72, 300, 300);
+  cropped.drawText("Bayesian inference", { x: 90, y: 200, size: 28, font });
+  cropped.drawText("Excluded margin", { x: 90, y: 600, size: 28, font });
+  return document.save();
+}
 
 function officeArchive(parts: Record<string, string>, oversizedPart: string) {
   const archive = zipSync(
@@ -275,6 +315,75 @@ withTools("PDF and OCR extraction", () => {
       ocrPageCount: 0,
     });
   });
+
+  it("builds a searchable copy with every page, its colour and its text", async () => {
+    await withTempDirectory(async (directory) => {
+      const source = join(directory, "source.pdf");
+      await writeFile(source, await searchableSource());
+      const copy = await buildSearchablePdf(source, directory, options);
+      expect(copy.pageCount).toBe(3);
+
+      const info = toolOutput("pdfinfo", "-f", "1", "-l", "3", copy.path);
+      expect(/^Pages:\s+(\d+)/m.exec(info)?.[1]).toBe("3");
+      const sizes = [
+        ...info.matchAll(/^Page\s+\d+ size:\s+(\S+) x (\S+) pts/gm),
+      ].map((match) => [Number(match[1]), Number(match[2])]);
+      const expected = [
+        [612, 792],
+        [792, 612],
+        [300, 300],
+      ];
+      expect(sizes).toHaveLength(expected.length);
+      for (const [page, size] of sizes.entries()) {
+        expect(Math.abs(size[0]! - expected[page]![0]!)).toBeLessThan(2);
+        expect(Math.abs(size[1]! - expected[page]![1]!)).toBeLessThan(2);
+      }
+
+      const pageText = (page: number) =>
+        words(
+          toolOutput(
+            "pdftotext",
+            "-f",
+            String(page),
+            "-l",
+            String(page),
+            copy.path,
+            "-",
+          ),
+        ).replace(/\s+/g, " ");
+      expect(pageText(1)).toContain("gradient descent");
+      expect(pageText(2)).toContain("lagrange multipliers");
+      expect(pageText(3)).toContain("bayesian inference");
+      expect(pageText(3)).not.toContain("excluded");
+
+      const prefix = join(directory, "appearance");
+      spawnSync("pdftoppm", [
+        "-f",
+        "1",
+        "-l",
+        "1",
+        "-r",
+        "72",
+        "-png",
+        "-singlefile",
+        copy.path,
+        prefix,
+      ]);
+      const { data, info: image } = await sharp(`${prefix}.png`)
+        .removeAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+      expect(image.channels).toBe(3);
+      const insideRectangle = (130 * image.width + 300) * image.channels;
+      const [red, green, blue] = data.subarray(
+        insideRectangle,
+        insideRectangle + 3,
+      );
+      expect(red).toBeGreaterThan(200);
+      expect(green).toBeLessThan(80);
+      expect(blue).toBeLessThan(80);
+    });
+  }, 120_000);
 
   it("fails encrypted PDFs permanently", async () => {
     await expect(

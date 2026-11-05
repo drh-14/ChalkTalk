@@ -130,6 +130,12 @@ const webp = await sharp(Buffer.from([255, 0, 0]), {
 const pdfDocument = await PDFDocument.create();
 pdfDocument.addPage([100, 100]);
 const pdf = Buffer.from(await pdfDocument.save());
+const recoverablePdf = Buffer.from(
+  Buffer.from(await pdfDocument.save({ useObjectStreams: false }))
+    .toString("latin1")
+    .replace(/startxref\s+\d+/, "startxref\n1"),
+  "latin1",
+);
 const docx = Buffer.from(
   zipSync({
     "[Content_Types].xml": strToU8(
@@ -647,6 +653,7 @@ integration("course file upload and byte download", () => {
 
   for (const [name, mime, bytes] of [
     ["lecture.pdf", "application/pdf", pdf],
+    ["recoverable.pdf", "application/pdf", recoverablePdf],
     ["image.png", "image/png", png],
     ["photo.jpg", "image/jpeg", jpeg],
     ["photo.webp", "image/webp", webp],
