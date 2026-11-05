@@ -9,8 +9,8 @@ flowchart TB
         Collaboration["Collaboration container<br/>Hocuspocus + Yjs WebSocket"]
         Worker["Worker container<br/>background jobs + email delivery"]
         Migrate["Migration job<br/>runs before app services"]
-        Web -->|"/api · HTTPS and WSS"| API
-        Web -->|"/collaboration · WSS"| Collaboration
+        Web -->|"/api · internal HTTP/WS"| API
+        Web -->|"/collaboration · internal WS"| Collaboration
     end
 
     subgraph Supabase["Supabase managed services"]
@@ -27,7 +27,8 @@ flowchart TB
     Collaboration -->|"authorize · load/save Yjs"| DB
     Worker -->|"claim jobs · record outcomes"| DB
     Worker -->|"read files · OCR/cleanup"| Storage
-    Worker -->|"send queued mail"| Resend
+    API -->|"send auth mail · HTTPS"| Resend
+    Worker -->|"send queued mail · HTTPS"| Resend
     Migrate -->|"apply schema migrations"| DB
 
     classDef client fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A,stroke-width:1.5px
