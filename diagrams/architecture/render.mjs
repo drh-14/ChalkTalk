@@ -15,8 +15,6 @@ for (const [format, scale] of [
   execFileSync(
     "mmdc",
     ["-i", source, "-o", output, "-b", "white", "-s", scale],
-    {
-      stdio: "inherit",
-    },
+    { stdio: "inherit" },
   );
 }
