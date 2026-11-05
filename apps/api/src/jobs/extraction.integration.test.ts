@@ -239,6 +239,131 @@ suite("resource text extraction jobs", () => {
     await admin?.end();
   });
 
+  describe("durable extraction progress", () => {
+    const progressRow = async (fileId: string) =>
+      (
+        await pool.query(
+          "SELECT status,progress_phase,progress_completed_pages,progress_total_pages,progress_attempt FROM course_file_texts WHERE file_id=$1",
+          [fileId],
+        )
+      ).rows[0];
+    it("starts each retry from preparing and clears terminal progress", async () => {
+      await clearQueue();
+      const { fileId } = await seedFile();
+      let calls = 0;
+      const runner = worker({
+        extract: async (_p, _t, _d, options) => {
+          calls++;
+          expect(await progressRow(fileId)).toMatchObject({
+            progress_phase: "preparing",
+            progress_completed_pages: null,
+            progress_total_pages: null,
+            progress_attempt: calls,
+          });
+          await options.onProgress!({
+            phase: "ocr",
+            completedPages: 7,
+            totalPages: 18,
+          });
+          expect(await progressRow(fileId)).toMatchObject({
+            status: "pending",
+            progress_phase: "ocr",
+            progress_completed_pages: 7,
+            progress_total_pages: 18,
+          });
+          if (calls === 1) throw new ExtractionFailure("render_failed", false);
+          return { text: "finished", truncated: true };
+        },
+      });
+      await runner.runOnce("extraction");
+      expect(await progressRow(fileId)).toMatchObject({
+        status: "pending",
+        progress_phase: null,
+        progress_attempt: null,
+        progress_completed_pages: null,
+        progress_total_pages: null,
+      });
+      await pool.query(
+        "UPDATE jobs SET available_at=now() WHERE payload->>'fileId'=$1",
+        [fileId],
+      );
+      await runner.runOnce("extraction");
+      expect(await progressRow(fileId)).toEqual({
+        status: "ready",
+        progress_phase: null,
+        progress_attempt: null,
+        progress_completed_pages: null,
+        progress_total_pages: null,
+      });
+    });
+    it.each(["shutdown", "object_store_unavailable"])(
+      "clears progress when %s requeues without consuming an attempt",
+      async (reason) => {
+        await clearQueue();
+        const { fileId } = await seedFile();
+        await worker({
+          extract: async (_p, _t, _d, options) => {
+            await options.onProgress!({
+              phase: "ocr",
+              completedPages: 1,
+              totalPages: 18,
+            });
+            throw new ExtractionFailure(reason, false);
+          },
+        }).runOnce("extraction");
+        expect((await job(fileId)).status).toBe("queued");
+        expect(await progressRow(fileId)).toMatchObject({
+          status: "pending",
+          progress_phase: null,
+          progress_attempt: null,
+          progress_completed_pages: null,
+          progress_total_pages: null,
+        });
+      },
+    );
+    it.each(["owner", "attempt", "expired", "revision"])(
+      "rejects a late progress callback after %s changes",
+      async (changed) => {
+        await clearQueue();
+        const { fileId } = await seedFile();
+        await worker({
+          extract: async (_p, _t, _d, options) => {
+            await options.onProgress!({
+              phase: "ocr",
+              completedPages: 1,
+              totalPages: 18,
+            });
+            if (changed === "revision")
+              await pool.query(
+                "UPDATE course_resources SET deleted_at=now() WHERE id=$1",
+                [fileId],
+              );
+            else
+              await pool.query(
+                changed === "owner"
+                  ? "UPDATE jobs SET locked_by='takeover' WHERE payload->>'fileId'=$1"
+                  : changed === "attempt"
+                    ? "UPDATE jobs SET attempts=attempts+1 WHERE payload->>'fileId'=$1"
+                    : "UPDATE jobs SET locked_until=now()-interval '1 second' WHERE payload->>'fileId'=$1",
+                [fileId],
+              );
+            await expect(
+              options.onProgress!({
+                phase: "ocr",
+                completedPages: 2,
+                totalPages: 18,
+              }),
+            ).rejects.toMatchObject({ code: "lease_lost" });
+            throw new ExtractionFailure("lease_lost", false);
+          },
+        }).runOnce("extraction");
+        expect(await progressRow(fileId)).toMatchObject({
+          status: "pending",
+          progress_completed_pages: 1,
+        });
+      },
+    );
+  });
   describe("lanes and leases", () => {
     it("keeps extraction and general jobs in separate lanes", async () => {
       await clearQueue();

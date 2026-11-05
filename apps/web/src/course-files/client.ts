@@ -1,4 +1,20 @@
 import { ApiError } from "../auth/client.js";
+export type TextProgress =
+  | {
+      phase: "queued" | "preparing" | "saving";
+      completedPages: null;
+      totalPages: null;
+    }
+  | { phase: "ocr"; completedPages: number; totalPages: number };
+export const resourceMetadata = (
+  courseId: string,
+  resourceId: string,
+  signal: AbortSignal,
+) =>
+  send<{ data: Resource }>(
+    `${base(courseId)}/resources/${encodeURIComponent(resourceId)}`,
+    { signal },
+  );
 export type ExtractedText = {
   fileId: string;
   status: "pending" | "ready" | "failed" | "unsupported";
@@ -67,6 +83,7 @@ export type Resource = {
   fileName?: string;
   mediaType?: string;
   sizeBytes?: number;
+  textProgress?: TextProgress | null;
   textStatus?: "pending" | "ready" | "failed" | "unsupported";
 };
 export type Snippet = {

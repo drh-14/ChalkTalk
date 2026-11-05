@@ -8151,7 +8151,12 @@ paths:
   "/courses/{courseId}/resources/{resourceId}/searchable-pdf":
     parameters:
       - "$ref": "#/components/parameters/CourseId"
-      - { name: resourceId, in: path, required: true, schema: { type: string, format: uuid } }
+      - {
+          name: resourceId,
+          in: path,
+          required: true,
+          schema: { type: string, format: uuid },
+        }
     get:
       tags: [Resources]
       operationId: getSearchablePdfStatus
@@ -8161,12 +8166,19 @@ paths:
         "200":
           description: Current status, with metadata and relative authenticated URLs only when ready. Private no-store.
           headers:
-            Cache-Control: { schema: { type: string, const: "private, no-store" } }
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
           content:
             application/json:
               schema: { "$ref": "#/components/schemas/SearchablePdfEnvelope" }
         "401": { description: Authentication required }
-        "404": { description: Resource missing, inaccessible, removed, not PDF or not current }
+        "404":
+          {
+            description: Resource missing,
+            inaccessible,
+            removed,
+            not PDF or not current,
+          }
         "503": { description: Service unavailable }
     post:
       tags: [Resources]
@@ -8181,7 +8193,8 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+            schema:
+              { type: object, additionalProperties: false, maxProperties: 0 }
       responses:
         "200":
           description: Ready copy reused; private no-store and status Location.
@@ -8195,7 +8208,8 @@ paths:
               schema: { "$ref": "#/components/schemas/SearchablePdfEnvelope" }
         "401": { description: Authentication required }
         "403": { description: Invalid unsafe Origin or CSRF token }
-        "404": { description: Resource missing, inaccessible, removed or not PDF }
+        "404":
+          { description: Resource missing, inaccessible, removed or not PDF }
         "415": { description: JSON content type required }
         "422": { description: Invalid empty request body }
         "503": { description: Service unavailable }
@@ -8208,9 +8222,24 @@ paths:
       security: [{ session_cookie: [] }]
       parameters:
         - "$ref": "#/components/parameters/CourseId"
-        - { name: resourceId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: fileId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: mode, in: path, required: true, schema: { type: string, enum: [view, download] } }
+        - {
+            name: resourceId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            name: fileId,
+            in: path,
+            required: true,
+            schema: { type: string, format: uuid },
+          }
+        - {
+            name: mode,
+            in: path,
+            required: true,
+            schema: { type: string, enum: [view, download] },
+          }
       responses:
         "200":
           description: Ready derived PDF bytes.
@@ -8218,12 +8247,14 @@ paths:
             Content-Length: { schema: { type: integer, minimum: 1 } }
             Content-Disposition: { schema: { type: string } }
             X-Content-Type-Options: { schema: { type: string, const: nosniff } }
-            Cache-Control: { schema: { type: string, const: "private, no-store" } }
+            Cache-Control:
+              { schema: { type: string, const: "private, no-store" } }
           content:
             application/pdf:
               schema: { type: string, format: binary }
         "401": { description: Authentication required }
-        "404": { description: Resource/file is missing, hidden, removed or replaced }
+        "404":
+          { description: Resource/file is missing, hidden, removed or replaced }
         "409": { description: searchable_pdf_not_ready }
         "503": { description: Storage unavailable }
   "/courses/{courseId}/resources/{resourceId}/text":
@@ -8258,7 +8289,11 @@ paths:
                     required: [fileId, status, text, truncated]
                     properties:
                       fileId: { type: string, format: uuid }
-                      status: { type: string, enum: [pending, ready, failed, unsupported] }
+                      status:
+                        {
+                          type: string,
+                          enum: [pending, ready, failed, unsupported],
+                        }
                       text: { type: [string, "null"], maxLength: 500000 }
                       truncated: { type: boolean }
         "401":
@@ -13177,9 +13212,11 @@ components:
           required: [fileId, status, pageCount, sizeBytes, viewUrl, downloadUrl]
           properties:
             fileId: { type: string, format: uuid }
-            status: { type: string, enum: [not_requested, pending, ready, failed] }
+            status:
+              { type: string, enum: [not_requested, pending, ready, failed] }
             pageCount: { type: [integer, "null"], minimum: 1 }
-            sizeBytes: { type: [integer, "null"], minimum: 1, maximum: 104857600 }
+            sizeBytes:
+              { type: [integer, "null"], minimum: 1, maximum: 104857600 }
             viewUrl: { type: [string, "null"] }
             downloadUrl: { type: [string, "null"] }
     CourseResourceLink:
@@ -13209,6 +13246,25 @@ components:
         visibility: { type: string, enum: [class, staff] }
         position: { type: integer, minimum: 0 }
         version: { type: integer, minimum: 1 }
+    ResourceTextProgress:
+      description: Current live extraction attempt; terminal statuses return null. OCR counts are work pages before caps, excluding text-only pages. Does not change resource versions or ETags.
+      oneOf:
+        - type: "null"
+        - type: object
+          additionalProperties: false
+          required: [phase, completedPages, totalPages]
+          properties:
+            phase: { type: string, enum: [queued, preparing, saving] }
+            completedPages: { type: "null" }
+            totalPages: { type: "null" }
+        - type: object
+          additionalProperties: false
+          required: [phase, completedPages, totalPages]
+          properties:
+            phase: { type: string, const: ocr }
+            completedPages:
+              { type: integer, minimum: 0, description: At most totalPages. }
+            totalPages: { type: integer, minimum: 1 }
     CourseResource:
       oneOf:
         - "$ref": "#/components/schemas/CourseResourceLink"
@@ -13225,6 +13281,7 @@ components:
               mediaType,
               sizeBytes,
               textStatus,
+              textProgress,
               createdAt,
               sectionId,
               visibility,
@@ -13241,6 +13298,8 @@ components:
             mediaType: { type: string }
             sizeBytes: { type: integer, minimum: 1, maximum: 104857600 }
             textStatus: { "$ref": "#/components/schemas/ResourceTextStatus" }
+            textProgress:
+              { "$ref": "#/components/schemas/ResourceTextProgress" }
             createdAt: { type: string, format: date-time }
             sectionId: { type: [string, "null"], format: uuid }
             visibility: { type: string, enum: [class, staff] }

@@ -3,7 +3,7 @@ import { extractImageText } from "./image.js";
 import { MAX_TEXT_LENGTH, normalizeText } from "./normalize.js";
 import { extractOfficeText } from "./office.js";
 import { extractPdfText } from "./pdf.js";
-import type { ExtractedText } from "./store.js";
+import type { ExtractedText, RunningTextProgress } from "./store.js";
 import { ExtractionFailure } from "./tools.js";
 
 export type ExtractionOptions = {
@@ -12,6 +12,7 @@ export type ExtractionOptions = {
   signal?: AbortSignal;
   /** Epoch milliseconds after which no further PDF pages are OCR'd. */
   deadline?: number;
+  onProgress?: (progress: RunningTextProgress) => Promise<void>;
 };
 
 /** UTF-8 uses at most four bytes per code point, so this many bytes always covers the stored cap. */

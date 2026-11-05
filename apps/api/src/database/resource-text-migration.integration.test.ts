@@ -26,7 +26,7 @@ suite("resource text migration", () => {
         name.endsWith(".sql"),
       );
       for (const name of names)
-        if (name !== target)
+        if (name !== target && name !== "059_resource_text_progress.sql")
           await copyFile(
             join(getMigrationDirectory(), name),
             join(directory, name),
@@ -153,6 +153,23 @@ suite("resource text migration", () => {
         "SELECT 1 FROM course_file_texts WHERE search_vector @@ websearch_to_tsquery('english','eigenvalue')",
       );
       expect(match.rowCount).toBe(1);
+      await copyFile(
+        join(getMigrationDirectory(), "059_resource_text_progress.sql"),
+        join(directory, "059_resource_text_progress.sql"),
+      );
+      await runMigrations(pool, directory);
+      const legacy = await pool.query(
+        "SELECT status,progress_phase,progress_completed_pages,progress_total_pages,progress_attempt FROM course_file_texts ORDER BY status",
+      );
+      expect(legacy.rows).toEqual(
+        ["pending", "ready"].map((status) => ({
+          status,
+          progress_phase: null,
+          progress_completed_pages: null,
+          progress_total_pages: null,
+          progress_attempt: null,
+        })),
+      );
       await pool.query("DELETE FROM courses WHERE id=$1", [course]);
       expect(
         (await pool.query("SELECT 1 FROM course_file_texts")).rowCount,

@@ -125,6 +125,10 @@ async function open(page, { role = "student" } = {}) {
         page: { hasMore: false, nextCursor: null },
       });
     }
+    const resourceId =
+      /^\/api\/v1\/courses\/course-1\/resources\/([^/]+)$/.exec(path)?.[1];
+    if (resourceId)
+      return reply({ data: catalog.find((item) => item.id === resourceId) });
     if (path === "/api/v1/courses/course-1/resources")
       return reply({
         data: catalog,
@@ -194,9 +198,9 @@ test("instructor sees which files are not searchable yet", async ({ page }) => {
   await expect(
     page.getByText("Contents could not be read for search"),
   ).toBeVisible();
-  await expect(page.getByText("Contents not searchable yet")).toBeVisible();
+  await expect(page.getByText("Queued for extraction")).toBeVisible();
   await expect(page.locator(".resource-text-status")).toHaveCount(3);
-  const pending = page.getByText("Contents not searchable yet");
+  const pending = page.getByText("Queued for extraction");
   const failed = page.getByText("Contents could not be read for search");
   expect(
     await pending.evaluate(

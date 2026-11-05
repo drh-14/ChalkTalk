@@ -90,6 +90,18 @@ async function open(page, { role = "instructor", readText } = {}) {
         ? readText(route, textRequests.length, reply)
         : reply({ data: ready });
     }
+    if (path.endsWith("/resources/notes"))
+      return reply({
+        data: {
+          ...items[0],
+          textStatus: "pending",
+          textProgress: {
+            phase: "queued",
+            completedPages: null,
+            totalPages: null,
+          },
+        },
+      });
     if (path.endsWith("/resources/order")) {
       const body = req.postDataJSON();
       orders.push(body);
@@ -180,9 +192,7 @@ test("pending refresh and request failure retry recover", async ({ page }) => {
           : reply({ data: ready }),
   });
   await card(page).getByRole("button", { name: "View extracted text" }).click();
-  await expect(
-    panel(page).getByText("Text extraction is still processing."),
-  ).toBeVisible();
+  await expect(panel(page).getByText("Queued for extraction")).toBeVisible();
   await shot(page, "pending-refresh");
   await panel(page).getByRole("button", { name: "Refresh text" }).click();
   await expect(panel(page).getByRole("alert")).toContainText(
@@ -432,9 +442,7 @@ test("searchable PDF prepares, retries, polls and opens without changing the tex
   ]);
   expect(download.suggestedFilename()).toBe("reading-searchable.pdf");
   await panel(page).getByLabel("Text layout").selectOption("readable");
-  await expect(
-    panel(page).getByText("Text extraction is still processing."),
-  ).toBeVisible();
+  await expect(panel(page).getByText("Queued for extraction")).toBeVisible();
   expect(posts).toBe(2);
 });
 

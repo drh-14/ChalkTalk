@@ -26,6 +26,11 @@ type Options = {
   ocrLanguages: string;
   signal?: AbortSignal;
   deadline?: number;
+  onProgress?: (progress: {
+    phase: "ocr";
+    completedPages: number;
+    totalPages: number;
+  }) => Promise<void>;
 };
 
 const failed = (result: ToolResult) =>
@@ -191,6 +196,9 @@ export async function extractPdfText(
     characters[index]! < USABLE_PAGE_TEXT ||
     (characters[index]! < SPARSE_PAGE_TEXT && imagePages.has(index));
   let ocrPageCount = 0;
+  const totalPages = characters.filter((_, index) => needsOcr(index)).length;
+  if (totalPages > 0)
+    await options.onProgress?.({ phase: "ocr", completedPages: 0, totalPages });
   for (const [index, page] of pages.entries()) {
     if (!needsOcr(index)) continue;
     if (
@@ -246,6 +254,11 @@ export async function extractPdfText(
       await rm(`${prefix}.png`, { force: true });
     }
     ocrPageCount += 1;
+    await options.onProgress?.({
+      phase: "ocr",
+      completedPages: ocrPageCount,
+      totalPages,
+    });
   }
   return {
     text: pages.join("\n\n"),
