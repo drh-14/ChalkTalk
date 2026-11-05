@@ -1,0 +1,42 @@
+flowchart TB
+    Browser["Browser"]
+
+    subgraph VM["OVHcloud VM"]
+        direction TB
+        Web["Caddy + React"]
+        API["Express API"]
+        Collaboration["Hocuspocus + Yjs"]
+        Worker["Worker"]
+        Web -->|"HTTP/WS"| API
+        Web -->|"WS"| Collaboration
+    end
+
+    subgraph Supabase["Supabase"]
+        direction LR
+        DB["PostgreSQL"]
+        Storage["Object Storage"]
+    end
+
+    Resend["Resend"]
+
+    Browser -->|"HTTPS/WSS"| Web
+    API --> DB
+    API --> Storage
+    API -->|"HTTPS"| Resend
+    Collaboration --> DB
+    Worker --> DB
+    Worker --> Storage
+    Worker -->|"HTTPS"| Resend
+
+    classDef client fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A,stroke-width:1.5px
+    classDef compute fill:#FFEDD5,stroke:#EA580C,color:#7C2D12,stroke-width:1.5px
+    classDef database fill:#F3E8FF,stroke:#9333EA,color:#581C87,stroke-width:1.5px
+    classDef storage fill:#DCFCE7,stroke:#16A34A,color:#14532D,stroke-width:1.5px
+    classDef external fill:#F1F5F9,stroke:#64748B,color:#334155,stroke-width:1.5px
+    class Browser client
+    class Web,API,Collaboration,Worker compute
+    class DB database
+    class Storage storage
+    class Resend external
+    style VM fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:1.5px
+    style Supabase fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:1.5px
