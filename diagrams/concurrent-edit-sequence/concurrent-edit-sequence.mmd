@@ -2,15 +2,13 @@
 sequenceDiagram
     autonumber
     title ChalkTalk collaborative editing flow
-
-    participant Editor as Editor / Yjs client
-    participant Hocuspocus as Hocuspocus server
-    participant Database as PostgreSQL
-
-    Editor->>Hocuspocus: Connect with one-use ticket
-    Hocuspocus->>Database: Fetch Yjs state
-    Hocuspocus-->>Editor: Synchronize missing updates
-    Editor->>Editor: Apply edit to Y.Text content
-    Editor->>Hocuspocus: Send Yjs update
-    Hocuspocus->>Hocuspocus: Merge update into shared Y.Doc
-    Hocuspocus->>Database: Upload document state
+  participant Editor as Editor / Yjs client
+  participant Hocuspocus as Hocuspocus on OVHcloud VM
+  participant Database as Supabase PostgreSQL
+  Editor->>Hocuspocus: Connect with one-use ticket
+  Hocuspocus->>Database: Fetch Yjs state
+  Hocuspocus-->>Editor: Synchronize missing updates
+  Editor->>Editor: Apply edit to Y.Text content
+  Editor->>Hocuspocus: Send Yjs update
+  Hocuspocus->>Hocuspocus: Merge update into shared Y.Doc
+  Hocuspocus->>Database: Upload document state
