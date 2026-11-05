@@ -4,10 +4,9 @@ flowchart TB
     subgraph VM["OVHcloud VM"]
         direction TB
         Web["Caddy + React"]
-        API["Express API + Threads"]
+        API["Express API"]
         Collaboration["Hocuspocus + Yjs"]
         Worker["Worker"]
-        Migrate["Migrations"]
         Web -->|"HTTP/WS"| API
         Web -->|"WS"| Collaboration
     end
@@ -28,7 +27,6 @@ flowchart TB
     Worker --> DB
     Worker --> Storage
     Worker -->|"HTTPS"| Resend
-    Migrate --> DB
 
     classDef client fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A,stroke-width:1.5px
     classDef compute fill:#FFEDD5,stroke:#EA580C,color:#7C2D12,stroke-width:1.5px
@@ -36,7 +34,7 @@ flowchart TB
     classDef storage fill:#DCFCE7,stroke:#16A34A,color:#14532D,stroke-width:1.5px
     classDef external fill:#F1F5F9,stroke:#64748B,color:#334155,stroke-width:1.5px
     class Browser client
-    class Web,API,Collaboration,Worker,Migrate compute
+    class Web,API,Collaboration,Worker compute
     class DB database
     class Storage storage
     class Resend external
