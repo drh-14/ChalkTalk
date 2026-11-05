@@ -2,13 +2,12 @@
 sequenceDiagram
     autonumber
     title ChalkTalk background job flow
-
-    participant WebServer as Express web server
-    participant Worker as Node.js worker process
-    participant Database as PostgreSQL
-
-    WebServer->>Database: Insert job with queued status
-    Worker->>Database: Atomically claim job and load payload
-    Worker->>Worker: Perform background work
-    Worker->>Database: Store result and mark job succeeded
-    Database-->>Worker: Record completion
+  participant WebServer as Express API on OVHcloud VM
+  participant Worker as Worker on OVHcloud VM
+  participant Database as Supabase PostgreSQL
+  WebServer->>Database: Insert job with queued status
+  Worker->>Database: Atomically claim job and load payload
+  Worker->>Worker: Perform background work
+  Note over Worker: Email jobs send through Resend HTTPS API
+  Worker->>Database: Store result and mark job succeeded
+  Database-->>Worker: Record completion

@@ -4,9 +4,9 @@ sequenceDiagram
     title ChalkTalk login flow
 
     actor User
-    participant Frontend as React frontend
-    participant WebServer as Express web server
-    participant Database as PostgreSQL
+    participant Frontend as Caddy-served React frontend
+    participant WebServer as Express API on OVHcloud VM
+    participant Database as Supabase PostgreSQL
 
     User->>Frontend: Submit email and password
     Frontend->>WebServer: POST /api/v1/sessions
@@ -19,5 +19,5 @@ sequenceDiagram
     Database-->>WebServer: Session created
     WebServer-->>Frontend: 201 Created
     Note over Frontend,WebServer: Set secure, HttpOnly session cookie<br/>Return session details and CSRF token<br/>Cache-Control: no-store
-    Frontend->>Frontend: Browser stores cookie; app stores CSRF
+    Frontend->>Frontend: Browser stores cookie and app stores CSRF
     Frontend-->>User: Show authenticated application

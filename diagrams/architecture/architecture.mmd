@@ -1,0 +1,45 @@
+%% ChalkTalk deployment topology. Source for architecture.svg and architecture.png.
+flowchart TB
+    Browser["Course member<br/>Web browser"]
+
+    subgraph VM["OVHcloud VM · Docker Compose"]
+        direction TB
+        Web["Web container<br/>Caddy + built React/Vite frontend"]
+        API["API container<br/>Express REST + Threads WebSocket"]
+        Collaboration["Collaboration container<br/>Hocuspocus + Yjs WebSocket"]
+        Worker["Worker container<br/>background jobs + email delivery"]
+        Migrate["Migration job<br/>runs before app services"]
+        Web -->|"/api · internal HTTP/WS"| API
+        Web -->|"/collaboration · internal WS"| Collaboration
+    end
+
+    subgraph Supabase["Supabase managed services"]
+        direction LR
+        DB["PostgreSQL<br/>application data, jobs, Yjs state"]
+        Storage["Private Storage bucket<br/>S3-compatible API"]
+    end
+
+    Resend["Resend<br/>HTTPS email API"]
+
+    Browser -->|"HTTPS and WSS · one domain"| Web
+    API -->|"read/write data · queue jobs"| DB
+    API -->|"upload/download files"| Storage
+    Collaboration -->|"authorize · load/save Yjs"| DB
+    Worker -->|"claim jobs · record outcomes"| DB
+    Worker -->|"read files · OCR/cleanup"| Storage
+    API -->|"send auth mail · HTTPS"| Resend
+    Worker -->|"send queued mail · HTTPS"| Resend
+    Migrate -->|"apply schema migrations"| DB
+
+    classDef client fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A,stroke-width:1.5px
+    classDef compute fill:#FFEDD5,stroke:#EA580C,color:#7C2D12,stroke-width:1.5px
+    classDef database fill:#F3E8FF,stroke:#9333EA,color:#581C87,stroke-width:1.5px
+    classDef storage fill:#DCFCE7,stroke:#16A34A,color:#14532D,stroke-width:1.5px
+    classDef external fill:#F1F5F9,stroke:#64748B,color:#334155,stroke-width:1.5px
+    class Browser client
+    class Web,API,Collaboration,Worker,Migrate compute
+    class DB database
+    class Storage storage
+    class Resend external
+    style VM fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:1.5px
+    style Supabase fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:1.5px

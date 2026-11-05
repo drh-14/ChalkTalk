@@ -54,4 +54,4 @@ This is a **runnable starting point**, not a production-readiness guarantee. It 
 
 ## Not yet included
 
-**Do not entrust irreplaceable course data to this stack until off-host encrypted PostgreSQL and SeaweedFS backups, a seven-day retention policy, and a restore rehearsal are implemented.** The named volumes survive container recreation but not VM/disk loss. A real DNS/TLS/SES/storage end-to-end smoke test on the target VM is also required. The deployment diagram updates and backup automation were explicitly deferred for this skeleton.
+**Do not entrust irreplaceable course data to this stack until off-host encrypted PostgreSQL and SeaweedFS backups, a seven-day retention policy, and a restore rehearsal are implemented.** The named volumes survive container recreation but not VM/disk loss. A real DNS/TLS/SES/storage end-to-end smoke test on the target VM is also required. Backup automation remains deferred for this skeleton. The [architecture diagram](../diagrams/architecture/architecture.svg) shows the intended Supabase/Resend topology, not this runnable stack.
