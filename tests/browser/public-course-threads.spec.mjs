@@ -8,7 +8,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const evidence =
   process.env.THREADS_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/public-course-threads");
+  resolve(root, "test-results/browser-screenshots/public-course-threads");
 let vite;
 let origin;
 test.beforeAll(async () => {

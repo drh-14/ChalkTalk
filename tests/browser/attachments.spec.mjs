@@ -10,7 +10,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const screenshotDirectory =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/discussion-attachments");
+  resolve(root, "test-results/browser-screenshots/discussion-attachments");
 const attachment = (id, fileName, mediaType) => ({
   id,
   fileName,

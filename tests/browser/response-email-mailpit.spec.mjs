@@ -17,7 +17,7 @@ const screenshots =
   process.env.TEST_EVIDENCE_DIR ??
   resolve(
     import.meta.dirname,
-    "../../docs/pr-screenshots/response-email-links",
+    "../../test-results/browser-screenshots/response-email-links",
   );
 mkdirSync(screenshots, { recursive: true });
 

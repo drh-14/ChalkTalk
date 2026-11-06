@@ -8,7 +8,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(import.meta.dirname, "../..");
 const evidence =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/course-pulse");
+  resolve(root, "test-results/browser-screenshots/course-pulse");
 let vite, origin;
 test.beforeAll(async () => {
   await mkdir(evidence, { recursive: true });

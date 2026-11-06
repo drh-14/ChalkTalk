@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const screenshots = resolve(
   root,
-  "docs/pr-screenshots/course-discussion-controls",
+  "test-results/browser-screenshots/course-discussion-controls",
 );
 mkdirSync(screenshots, { recursive: true });
 let vite;

@@ -8,7 +8,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const screenshots =
   process.env.POST_FOLDERS_SCREENSHOT_DIR ??
-  resolve(root, "docs/pr-screenshots/post-folders");
+  resolve(root, "test-results/browser-screenshots/post-folders");
 const folderId = "01a0e5cc-58ae-7009-9f43-edde38b21440";
 const secondFolderId = "01a0e5cc-58ae-7009-9f43-edde38b21441";
 const folder = { id: folderId, name: "Week 1" };

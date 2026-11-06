@@ -1,6 +1,6 @@
 ## Context
 
-The approved design is recorded in `docs/design/2026-10-16-api-observability.md`. The API uses Express 5 and assigns `X-Request-Id`; queued jobs and daily digests now run in the separate worker process. Local Compose starts dependencies by default and app containers through `app` profile.
+The approved design is recorded in `documentation/design/2026-10-16-api-observability.md`. The API uses Express 5 and assigns `X-Request-Id`; queued jobs and daily digests now run in the separate worker process. Local Compose starts dependencies by default and app containers through `app` profile.
 
 ## Goals / Non-Goals
 

@@ -8,7 +8,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const screenshots = process.env.E2E_SCREENSHOTS_DIR
   ? resolve(process.env.E2E_SCREENSHOTS_DIR, "course-collaboration")
-  : resolve(root, "docs/pr-screenshots/course-collaboration");
+  : resolve(root, "test-results/browser-screenshots/course-collaboration");
 let vite, origin;
 test.beforeAll(async () => {
   await mkdir(screenshots, { recursive: true });

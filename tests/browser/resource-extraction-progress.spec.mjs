@@ -8,7 +8,7 @@ test.use({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 900 } });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const evidence = resolve(
   root,
-  "docs/pr-screenshots/resource-extraction-progress",
+  "test-results/browser-screenshots/resource-extraction-progress",
 );
 let vite, origin;
 test.beforeAll(async () => {

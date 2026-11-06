@@ -9,7 +9,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const screenshots =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/post-edit");
+  resolve(root, "test-results/browser-screenshots/post-edit");
 const png = readFileSync(
   resolve(root, "tests/browser/fixtures/attachment-diagram.png"),
 );

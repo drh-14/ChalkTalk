@@ -8,7 +8,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(import.meta.dirname, "../..");
 const screenshots =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/response-email-links");
+  resolve(root, "test-results/browser-screenshots/response-email-links");
 mkdirSync(screenshots, { recursive: true });
 const now = "2026-10-23T00:00:00Z";
 const author = { id: "author", displayName: "Course member" };
@@ -150,28 +150,57 @@ test("deep-linked reply keeps sibling pagination available at each ancestor", as
   await expect(page.locator("#followup-reply-2")).toBeFocused();
   const rootSibling = followup("root-sibling", "root-1", "Root sibling");
   const childSibling = followup("child-sibling", "reply-1", "Child sibling");
-  const laterRootSibling = followup("later-root-sibling", "root-1", "Later root sibling");
-  const laterChildSibling = followup("later-child-sibling", "reply-1", "Later child sibling");
+  const laterRootSibling = followup(
+    "later-root-sibling",
+    "root-1",
+    "Later root sibling",
+  );
+  const laterChildSibling = followup(
+    "later-child-sibling",
+    "reply-1",
+    "Later child sibling",
+  );
   await page.route("**/api/v1/followups/*/replies*", async (route) => {
     const url = new URL(route.request().url());
     const root = url.pathname.includes("root-1");
     const later = url.searchParams.has("cursor");
     const child = root
-      ? later ? laterRootSibling : rootSibling
-      : later ? laterChildSibling : childSibling;
+      ? later
+        ? laterRootSibling
+        : rootSibling
+      : later
+        ? laterChildSibling
+        : childSibling;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ data: [child], meta: { total: 3, nextCursor: later ? null : "next" } }),
+      body: JSON.stringify({
+        data: [child],
+        meta: { total: 3, nextCursor: later ? null : "next" },
+      }),
     });
   });
-  await page.locator("#followup-root-1").getByRole("button", { name: /Show .* replies/ }).first().click();
+  await page
+    .locator("#followup-root-1")
+    .getByRole("button", { name: /Show .* replies/ })
+    .first()
+    .click();
   await expect(page.getByText("Root sibling")).toBeVisible();
-  await page.locator("#followup-root-1").getByRole("button", { name: "Load more replies" }).first().click();
+  await page
+    .locator("#followup-root-1")
+    .getByRole("button", { name: "Load more replies" })
+    .first()
+    .click();
   await expect(page.getByText("Later root sibling")).toBeVisible();
-  await page.locator("#followup-reply-1").getByRole("button", { name: /Show .* replies/ }).click();
+  await page
+    .locator("#followup-reply-1")
+    .getByRole("button", { name: /Show .* replies/ })
+    .click();
   await expect(page.getByText("Child sibling")).toBeVisible();
-  await page.locator("#followup-reply-1").getByRole("button", { name: "Load more replies" }).click();
+  await page
+    .locator("#followup-reply-1")
+    .getByRole("button", { name: "Load more replies" })
+    .click();
   await expect(page.getByText("Later child sibling")).toBeVisible();
   await expect(page.locator("#followup-reply-2")).toHaveCount(1);
   await page.screenshot({

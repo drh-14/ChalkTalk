@@ -1,6 +1,6 @@
 ## Context
 
-See `proposal.md` for motivation and `docs/design/2026-10-27-public-course-threads.md` for the approved domain and architecture. Main currently has an Express API, PostgreSQL migrations through `051`, a course app bar, an S3-compatible attachment store, an existing post-notification bell, and a separate Yjs WebSocket runtime. PR #89 changes the bell projection but is not merged; this change shall start from main and avoid adopting its branch.
+See `proposal.md` for motivation and `documentation/design/2026-10-27-public-course-threads.md` for the approved domain and architecture. Main currently has an Express API, PostgreSQL migrations through `051`, a course app bar, an S3-compatible attachment store, an existing post-notification bell, and a separate Yjs WebSocket runtime. PR #89 changes the bell projection but is not merged; this change shall start from main and avoid adopting its branch.
 
 ## Goals / Non-Goals
 

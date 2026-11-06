@@ -149,6 +149,10 @@ vite.config.ts.timestamp-*
 .agents
 .cert/
 /test-results/
+/docs/pr-screenshots/
+/docs/screenshots/
+/documentation/browser-screenshots/
+/.github/pr-screenshots/
 
 # Saved Piazza exports contain real class data
 piazza-*.json

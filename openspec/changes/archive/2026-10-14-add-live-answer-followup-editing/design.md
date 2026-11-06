@@ -1,6 +1,6 @@
 ## Context
 
-The existing answer path stores a complete Yjs state and Markdown projection transactionally; followups store only Markdown. Both expose version-checked REST edits. See [approved architecture](../../../docs/design/2026-10-14-live-answer-followup-collaboration.md) for the detailed sequence and failure model.
+The existing answer path stores a complete Yjs state and Markdown projection transactionally; followups store only Markdown. Both expose version-checked REST edits. See [approved architecture](../../../../documentation/design/2026-10-14-live-answer-followup-collaboration.md) for the detailed sequence and failure model.
 
 ## Goals / Non-Goals
 
