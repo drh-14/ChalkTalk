@@ -799,14 +799,16 @@ async function main(): Promise<void> {
   try {
     const result = await seedAms161(pool, process.env);
     process.stdout.write(`AMS161 mock data ${result}.\n`);
-    // Loaded here so the fixture is read only when mock data is enabled.
-    const { seedCse416 } = await import("./seed-cse416.js");
-    const cse416 = await seedCse416(
+    // Loaded here so the fixtures are read only when mock data is enabled.
+    const { seedPiazzaCourses } = await import("./seed-piazza-courses.js");
+    const courses = await seedPiazzaCourses(
       pool,
       process.env,
       AMS161_DEMO.instructorEmail,
     );
-    process.stdout.write(`CSE 416 demo course ${cse416}.\n`);
+    if (courses !== "disabled")
+      for (const { label, result } of courses)
+        process.stdout.write(`${label} demo course ${result}.\n`);
   } finally {
     await pool.end();
   }
