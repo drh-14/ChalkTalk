@@ -9,7 +9,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(import.meta.dirname, "../..");
 const screenshots =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/course-email-preferences");
+  resolve(root, "test-results/browser-screenshots/course-email-preferences");
 mkdirSync(screenshots, { recursive: true });
 const now = "2026-10-21T00:00:00Z";
 const course = {

@@ -15,7 +15,10 @@ test.skip(
 
 const screenshots = process.env.E2E_SCREENSHOTS_DIR
   ? resolve(process.env.E2E_SCREENSHOTS_DIR, "session-viewers")
-  : resolve(import.meta.dirname, "../../docs/pr-screenshots/session-viewers");
+  : resolve(
+      import.meta.dirname,
+      "../../test-results/browser-screenshots/session-viewers",
+    );
 mkdirSync(screenshots, { recursive: true });
 
 const editorText = (page) =>

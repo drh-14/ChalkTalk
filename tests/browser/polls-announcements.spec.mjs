@@ -17,7 +17,7 @@ test.skip(
 const MAILPIT = process.env.E2E_MAILPIT_URL ?? "http://127.0.0.1:8025";
 const screenshots = resolve(
   import.meta.dirname,
-  "../../docs/pr-screenshots/polls-announcements",
+  "../../test-results/browser-screenshots/polls-announcements",
 );
 mkdirSync(screenshots, { recursive: true });
 

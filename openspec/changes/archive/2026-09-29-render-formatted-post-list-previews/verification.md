@@ -12,10 +12,4 @@
 
 Automated Chromium flows with mocked API responses passed on desktop and mobile widths after the compact-height adjustment. Three feed cards with varied body lengths each measured 7.5rem high; Related questions entries each measured 6rem high. Bold text and inline KaTeX rendered, link and image labels remained inert, keyboard navigation worked, and there were no external preview image requests or browser page errors. The compact cards fade and truncate display math at the preview edge as specified; full content remains available in post detail. Refreshed desktop and mobile screenshots were inspected visually.
 
-Screenshots are in `.github/pr-screenshots/rendered-previews/`:
-
-- `feed-card-desktop.png`
-- `feed-card-mobile.png`
-- `related-questions-desktop.png`
-- `related-questions-mobile.png`
-- `feed-card-keyboard-navigation.png`
+The repository copies of those screenshots were removed during screenshot cleanup.

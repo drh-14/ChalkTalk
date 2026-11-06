@@ -10,7 +10,7 @@ The web app keeps one tag:
 - One `query.set("tag", ...)` in `apps/web/src/posts/client.ts`.
 - `selectTag` replaces the tag, in `apps/web/src/posts/views.tsx`.
 
-The sidebar is one `<fieldset disabled={duplicate review}>` holding two `<select>` elements and an optional active-tag chip. The discussion view already tracks `desktopFilters` from `matchMedia("(min-width: 851px)")`. That flag starts `false` when `matchMedia` is unavailable, which is the case under jsdom. The collapsible-sidebar design (`docs/design/2026-09-29-collapsible-discussion-filters.md`) keeps presentation state local and unpersisted. This design follows the same rule.
+The sidebar is one `<fieldset disabled={duplicate review}>` holding two `<select>` elements and an optional active-tag chip. The discussion view already tracks `desktopFilters` from `matchMedia("(min-width: 851px)")`. That flag starts `false` when `matchMedia` is unavailable, which is the case under jsdom. The collapsible-sidebar design (`documentation/design/2026-09-29-collapsible-discussion-filters.md`) keeps presentation state local and unpersisted. This design follows the same rule.
 
 ## Goals / Non-Goals
 

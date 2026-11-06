@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const screenshots =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/discussion-layout");
+  resolve(root, "test-results/browser-screenshots/discussion-layout");
 let vite;
 let origin;
 test.beforeAll(async () => {

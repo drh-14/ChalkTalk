@@ -8,4 +8,4 @@ Add a non-null random UUID `incarnation` per membership row. Generate an ETag `"
 
 Single-member service methods return `{value,etag}` and HTTP emits `value` as the existing body. Idempotent joins save their exact ETag in `idempotency_records.response_headers`. Legacy unexpired records replay their original `"vN"` ETag, which cannot authorize a new write.
 
-See `docs/design/2026-11-03-membership-incarnation-etags.md` for alternatives and failure modes.
+See `documentation/design/2026-11-03-membership-incarnation-etags.md` for alternatives and failure modes.

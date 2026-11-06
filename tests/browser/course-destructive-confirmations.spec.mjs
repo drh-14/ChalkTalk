@@ -8,7 +8,10 @@ import { expect, test } from "@playwright/test";
 const root = resolve(import.meta.dirname, "../..");
 const screenshots =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/course-destructive-confirmations");
+  resolve(
+    root,
+    "test-results/browser-screenshots/course-destructive-confirmations",
+  );
 mkdirSync(screenshots, { recursive: true });
 
 const timestamp = "2026-11-03T00:00:00Z";

@@ -1,6 +1,6 @@
 ## Context
 
-See the agreed design in `docs/design/2026-10-11-course-statistics.md`. Current posts, answers, and memberships live in PostgreSQL; the statistics routes and view recorder are absent. The UI uses existing course navigation and data-client patterns.
+See the agreed design in `documentation/design/2026-10-11-course-statistics.md`. Current posts, answers, and memberships live in PostgreSQL; the statistics routes and view recorder are absent. The UI uses existing course navigation and data-client patterns.
 
 ## Goals / Non-Goals
 

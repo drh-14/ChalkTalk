@@ -1,6 +1,6 @@
 ## Context
 
-The existing notifications table, REST list/count/read API, follower fan-out, and React bell already provide one inbox. See the approved design at `docs/design/2026-10-27-notification-bell-events.md`.
+The existing notifications table, REST list/count/read API, follower fan-out, and React bell already provide one inbox. See the approved design at `documentation/design/2026-10-27-notification-bell-events.md`.
 
 ## Goals / Non-Goals
 

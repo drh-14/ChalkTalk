@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const screenshots =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/answer-save-only");
+  resolve(root, "test-results/browser-screenshots/answer-save-only");
 const now = "2026-10-18T00:00:00Z";
 const author = { id: "member-1", displayName: "Browser student" };
 

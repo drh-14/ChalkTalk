@@ -8,9 +8,15 @@ import { expect, test } from "@playwright/test";
 import { BASE, databaseUrl, seed, signIn } from "./fixtures/live-stack.mjs";
 
 test.use({ ignoreHTTPSErrors: true });
-test.skip(!databaseUrl, "Set E2E_DATABASE_URL or DATABASE_URL to the running stack's database");
+test.skip(
+  !databaseUrl,
+  "Set E2E_DATABASE_URL or DATABASE_URL to the running stack's database",
+);
 
-const screenshots = resolve(import.meta.dirname, "../../docs/pr-screenshots/scheduled-announcements");
+const screenshots = resolve(
+  import.meta.dirname,
+  "../../test-results/browser-screenshots/scheduled-announcements",
+);
 mkdirSync(screenshots, { recursive: true });
 
 /**
@@ -35,26 +41,40 @@ test("a TA schedules an announcement that students only see once it publishes", 
   // The TA writes the announcement and schedules it.
   await ta.page.goto(`${BASE}/courses/${courseId}`);
   await ta.page.getByRole("button", { name: "Create post" }).click();
-  await ta.page.getByRole("combobox", { name: "Post type" }).selectOption("note");
+  await ta.page
+    .getByRole("combobox", { name: "Post type" })
+    .selectOption("note");
   await ta.page.getByRole("textbox", { name: "Post title" }).fill(title);
   await ta.page.getByRole("textbox", { name: "Post body" }).click();
   await ta.page.keyboard.type("We will meet in Room 204.");
   await ta.page
-    .getByRole("checkbox", { name: "Post as announcement (pinned and emailed to the class)" })
+    .getByRole("checkbox", {
+      name: "Post as announcement (pinned and emailed to the class)",
+    })
     .check();
   const publish = ta.page.getByRole("group", { name: "Publish" });
   await publish.getByRole("radio", { name: "Later" }).check();
   await ta.page.getByLabel("Publish at").fill(soon());
-  await ta.page.screenshot({ path: resolve(screenshots, "compose-scheduled.png") });
+  await ta.page.screenshot({
+    path: resolve(screenshots, "compose-scheduled.png"),
+  });
   await ta.page.getByRole("button", { name: "Publish post" }).click();
-  await expect(ta.page.getByText(/Scheduled to publish/)).toBeVisible({ timeout: 20_000 });
-  await expect(ta.page.locator(".post-card", { hasText: title })).toContainText("Scheduled ·");
-  await ta.page.screenshot({ path: resolve(screenshots, "staff-scheduled.png") });
+  await expect(ta.page.getByText(/Scheduled to publish/)).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(ta.page.locator(".post-card", { hasText: title })).toContainText(
+    "Scheduled ·",
+  );
+  await ta.page.screenshot({
+    path: resolve(screenshots, "staff-scheduled.png"),
+  });
 
   // The student cannot see it yet.
   await student.page.goto(`${BASE}/courses/${courseId}`);
   await expect(student.page.locator(".post-card").first()).toBeVisible();
-  await expect(student.page.locator(".post-card", { hasText: title })).toHaveCount(0);
+  await expect(
+    student.page.locator(".post-card", { hasText: title }),
+  ).toHaveCount(0);
 
   // Once the worker publishes it, it is pinned at the top and announced.
   await expect
@@ -71,8 +91,12 @@ test("a TA schedules an announcement that students only see once it publishes", 
   await expect(card).toContainText(title);
   await expect(card).toContainText("Announcement");
   await expect(card).not.toContainText("Scheduled");
-  await expect(student.page.getByRole("button", { name: /Notifications, \d+ unread/ })).toBeVisible();
-  await student.page.screenshot({ path: resolve(screenshots, "student-published.png") });
+  await expect(
+    student.page.getByRole("button", { name: /Notifications, \d+ unread/ }),
+  ).toBeVisible();
+  await student.page.screenshot({
+    path: resolve(screenshots, "student-published.png"),
+  });
 
   await ta.context.close();
   await student.context.close();
