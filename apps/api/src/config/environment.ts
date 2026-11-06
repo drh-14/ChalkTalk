@@ -202,6 +202,10 @@ export function loadEnvironment(
       endpoint.hash
     )
       throw new Error("RESEND_API_BASE_URL must be an HTTP or HTTPS origin");
+    if (production && endpoint.origin !== "https://api.resend.com")
+      throw new Error(
+        "RESEND_API_BASE_URL must be https://api.resend.com when NODE_ENV=production",
+      );
     resendApiBaseUrl = endpoint.origin;
   }
   const positiveInteger = (name: string, fallback: number): number => {

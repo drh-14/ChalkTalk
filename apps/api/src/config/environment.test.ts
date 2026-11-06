@@ -170,6 +170,30 @@ describe("authentication environment", () => {
       ).toThrow("RESEND_API_BASE_URL");
     }
   });
+  it("restricts production Resend delivery to the official API origin", () => {
+    const production = {
+      ...base,
+      NODE_ENV: "production",
+      DATABASE_URL:
+        "postgresql://app:secret@db.example.com/chalktalk?sslmode=require",
+      RESEND_API_KEY: "re_test",
+      EMAIL_FROM: "ChalkTalk <noreply@joinchalktalk.com>",
+    };
+    expect(
+      loadEnvironment({
+        ...production,
+        RESEND_API_BASE_URL: "https://api.resend.com/",
+      }).email,
+    ).toMatchObject({ resendApiBaseUrl: "https://api.resend.com" });
+    for (const endpoint of [
+      "http://127.0.0.1:4000",
+      "https://example.com",
+      "http://api.resend.com",
+    ])
+      expect(() =>
+        loadEnvironment({ ...production, RESEND_API_BASE_URL: endpoint }),
+      ).toThrow("RESEND_API_BASE_URL must be https://api.resend.com");
+  });
   it("disables proxy trust by default and only accepts one explicit hop", () => {
     expect(loadEnvironment(base).trustProxyHops).toBe(0);
     expect(
