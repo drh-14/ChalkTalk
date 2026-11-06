@@ -57,8 +57,120 @@ describe("authentication environment", () => {
     ).toThrow("FRONTEND_BASE_URL");
   });
 
-  it("uses SMTP locally and requires explicit Resend credentials in HTTPS mode", () => {
+  it("selects local services by default and all managed services with NODE_ENV=production", () => {
+    expect(loadEnvironment(base).production).toBe(false);
+    expect(
+      loadEnvironment({ ...base, NODE_ENV: "development" }).production,
+    ).toBe(false);
+
+    expect(
+      loadEnvironment({
+        ...base,
+        NODE_ENV: "production",
+        DATABASE_URL:
+          "postgresql://app:secret@db.example.com:5432/chalktalk?sslmode=require",
+        RESEND_API_KEY: "re_test",
+        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+      }).production,
+    ).toBe(true);
+    for (const value of ["FALSE", "1", "yes", "", " true "])
+      expect(() => loadEnvironment({ ...base, NODE_ENV: value })).toThrow(
+        "NODE_ENV must be development, test, or production",
+      );
+    for (const legacy of ["LOCAL_DATABASE", "LOCAL_FILE_STORE", "PRODUCTION"])
+      expect(() => loadEnvironment({ ...base, [legacy]: "false" })).toThrow(
+        `Remove ${legacy}; deployment mode comes from NODE_ENV`,
+      );
+    // Vitest sets PROD in the environment inherited by spawned API processes.
+    // It is not a deployment-mode switch for the application.
+    expect(loadEnvironment({ ...base, PROD: "true" }).production).toBe(false);
+    expect(
+      loadObjectStorageConfig({
+        PROD: "true",
+        S3_ENDPOINT: "http://127.0.0.1:8333",
+      }).endpoint,
+    ).toBe("http://127.0.0.1:8333");
+  });
+
+  it("requires an explicit remote PostgreSQL URL in production", () => {
+    for (const databaseUrl of [
+      undefined,
+      "",
+      "not-a-url",
+      "http://db.example.com/chalktalk",
+      "postgresql://localhost/chalktalk",
+      "postgresql://app:secret@127.0.0.1/chalktalk",
+      "postgresql://app@db.example.com/chalktalk",
+      "postgresql://app:secret@db.example.com/",
+    ])
+      expect(() =>
+        loadEnvironment({
+          ...base,
+          NODE_ENV: "production",
+          DATABASE_URL: databaseUrl,
+        }),
+      ).toThrow("DATABASE_URL");
+  });
+  it("requires one TLS-enforcing sslmode for managed database connections", () => {
+    const databaseUrl = "postgresql://app:secret@db.example.com/chalktalk";
+    const production = {
+      ...base,
+      NODE_ENV: "production",
+      RESEND_API_KEY: "re_test",
+      EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+    };
+    for (const suffix of [
+      "",
+      "?sslmode=disable",
+      "?sslmode=allow",
+      "?sslmode=prefer",
+      "?sslmode=require&sslmode=disable",
+      "?sslmode=disable&sslmode=require",
+    ])
+      expect(() =>
+        loadEnvironment({
+          ...production,
+          DATABASE_URL: `${databaseUrl}${suffix}`,
+        }),
+      ).toThrow("sslmode");
+
+    for (const sslmode of ["require", "verify-ca", "verify-full"])
+      expect(
+        loadEnvironment({
+          ...production,
+          DATABASE_URL: `${databaseUrl}?sslmode=${sslmode}`,
+        }).databaseUrl,
+      ).toBe(`${databaseUrl}?sslmode=${sslmode}`);
+
+    expect(
+      loadEnvironment({ ...base, DATABASE_URL: databaseUrl }).databaseUrl,
+    ).toBe(databaseUrl);
+  });
+  it("supports explicit local Resend and requires production credentials", () => {
     expect(loadEnvironment(base).email.provider).toBe("smtp");
+    expect(() => loadEnvironment({ ...base, NODE_ENV: "production" })).toThrow(
+      "DATABASE_URL",
+    );
+    const production = {
+      ...base,
+      NODE_ENV: "production",
+      DATABASE_URL:
+        "postgresql://app:secret@db.example.com/chalktalk?sslmode=require",
+    };
+    expect(() => loadEnvironment(production)).toThrow("RESEND_API_KEY");
+    expect(() =>
+      loadEnvironment({ ...production, RESEND_API_KEY: "re_test" }),
+    ).toThrow("EMAIL_FROM");
+    expect(() =>
+      loadEnvironment({ ...production, EMAIL_PROVIDER: "smtp" }),
+    ).toThrow("NODE_ENV=production requires Resend");
+    expect(
+      loadEnvironment({
+        ...production,
+        RESEND_API_KEY: "re_test",
+        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+      }).email.provider,
+    ).toBe("resend");
     expect(() =>
       loadEnvironment({ ...base, EMAIL_PROVIDER: "invalid" }),
     ).toThrow("EMAIL_PROVIDER");
@@ -112,6 +224,30 @@ describe("authentication environment", () => {
       ).toThrow("RESEND_API_BASE_URL");
     }
   });
+  it("restricts production Resend delivery to the official API origin", () => {
+    const production = {
+      ...base,
+      NODE_ENV: "production",
+      DATABASE_URL:
+        "postgresql://app:secret@db.example.com/chalktalk?sslmode=require",
+      RESEND_API_KEY: "re_test",
+      EMAIL_FROM: "ChalkTalk <noreply@joinchalktalk.com>",
+    };
+    expect(
+      loadEnvironment({
+        ...production,
+        RESEND_API_BASE_URL: "https://api.resend.com/",
+      }).email,
+    ).toMatchObject({ resendApiBaseUrl: "https://api.resend.com" });
+    for (const endpoint of [
+      "http://127.0.0.1:4000",
+      "https://example.com",
+      "http://api.resend.com",
+    ])
+      expect(() =>
+        loadEnvironment({ ...production, RESEND_API_BASE_URL: endpoint }),
+      ).toThrow("RESEND_API_BASE_URL must be https://api.resend.com");
+  });
   it("disables proxy trust by default and only accepts one explicit hop", () => {
     expect(loadEnvironment(base).trustProxyHops).toBe(0);
     expect(
@@ -162,6 +298,48 @@ describe("authentication environment", () => {
 });
 
 describe("object storage environment", () => {
+  it("requires explicit HTTPS S3 settings and credentials for managed storage", () => {
+    const managed = {
+      NODE_ENV: "production",
+      S3_ENDPOINT: "https://project.storage.supabase.co/storage/v1/s3",
+      S3_BUCKET: "course-files",
+      S3_REGION: "us-east-1",
+      S3_ACCESS_KEY_ID: "server-only-key",
+      S3_SECRET_ACCESS_KEY: "server-only-secret",
+    };
+    expect(loadObjectStorageConfig(managed)).toEqual({
+      bucket: "course-files",
+      endpoint: managed.S3_ENDPOINT,
+      client: {
+        endpoint: managed.S3_ENDPOINT,
+        region: "us-east-1",
+        forcePathStyle: true,
+        credentials: {
+          accessKeyId: "server-only-key",
+          secretAccessKey: "server-only-secret",
+        },
+      },
+    });
+    for (const missing of [
+      "S3_ENDPOINT",
+      "S3_BUCKET",
+      "S3_REGION",
+      "S3_ACCESS_KEY_ID",
+      "S3_SECRET_ACCESS_KEY",
+    ] as const)
+      expect(() =>
+        loadObjectStorageConfig({ ...managed, [missing]: undefined }),
+      ).toThrow(missing);
+    for (const endpoint of [
+      "http://project.storage.supabase.co/storage/v1/s3",
+      "https://localhost:8333",
+      "https://user:pass@project.storage.supabase.co/storage/v1/s3",
+      "not-a-url",
+    ])
+      expect(() =>
+        loadObjectStorageConfig({ ...managed, S3_ENDPOINT: endpoint }),
+      ).toThrow("S3_ENDPOINT");
+  });
   it("uses the SDK credential chain for managed S3 without a custom endpoint", () => {
     expect(
       loadObjectStorageConfig({
