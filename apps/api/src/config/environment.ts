@@ -3,7 +3,6 @@ import type { S3ClientConfig } from "@aws-sdk/client-s3";
 function productionMode(source: NodeJS.ProcessEnv): boolean {
   for (const legacy of [
     "PRODUCTION",
-    "PROD",
     "LOCAL_DATABASE",
     "LOCAL_FILE_STORE",
   ] as const)
