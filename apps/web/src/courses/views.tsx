@@ -764,6 +764,15 @@ export function CourseDetail({
           </header>
         </>
       )}
+      {sharedCourse && (
+        <div className="page-heading">
+          <h2>Course settings</h2>
+          <p>
+            Course details, your email notifications, discussion rules, and
+            members.
+          </p>
+        </div>
+      )}
       {course.data.status === "deleting" && (
         <p className="form-message success" role="status">
           This course is being deleted. We’ll keep checking its progress.

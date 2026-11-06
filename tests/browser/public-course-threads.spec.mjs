@@ -1256,7 +1256,9 @@ test("staff board deletion requires confirmation and returns to the Thread list"
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete thread" }).click();
   await expect(page).toHaveURL(/\/courses\/course-1\/threads$/);
-  await expect(page.getByText("No threads yet.")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "No threads yet" }),
+  ).toBeVisible();
   expect(fixture.writes).toEqual([{ deleteBoard: true, ifMatch: '"v1"' }]);
   await page.screenshot({
     path: resolve(evidence, "board-deleted.png"),
@@ -1513,9 +1515,10 @@ test("Threads action buttons use compact dimensions and retain focus", async ({
     paddingLeft:
       element.ownerDocument.defaultView.getComputedStyle(element).paddingLeft,
   }));
-  expect(boardMetrics.minHeight).toBe("38.4px");
-  expect(boardMetrics.paddingTop).toBe("10.88px");
-  expect(boardMetrics.paddingLeft).toBe("16px");
+  // Page-header actions use the shared compact size.
+  expect(boardMetrics.minHeight).toBe("0px");
+  expect(boardMetrics.paddingTop).toBe("8px");
+  expect(boardMetrics.paddingLeft).toBe("15.2px");
   await page.locator(".threads-card").last().focus();
   await page.keyboard.press("Tab");
   await expect(boardAction).toBeFocused();
@@ -1532,9 +1535,9 @@ test("Threads action buttons use compact dimensions and retain focus", async ({
   const retryAction = page.getByRole("button", { name: "Try again" });
   await expect(retryAction).toBeVisible();
   await expect(retryAction).toHaveCSS("min-height", "0px");
-  await expect(retryAction).toHaveCSS("padding-top", "6.08px");
-  await expect(retryAction).toHaveCSS("padding-left", "12.8px");
-  expect((await retryAction.boundingBox()).height).toBeLessThan(32);
+  await expect(retryAction).toHaveCSS("padding-top", "8px");
+  await expect(retryAction).toHaveCSS("padding-left", "15.2px");
+  expect((await retryAction.boundingBox()).height).toBeLessThan(36);
   await page.keyboard.press("Tab");
   await expect(retryAction).toBeFocused();
   await expect(retryAction).toHaveCSS("outline-style", "solid");

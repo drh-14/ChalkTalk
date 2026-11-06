@@ -96,8 +96,8 @@ h2[tabindex="-1"]:focus {
   gap: 0.5rem 1rem;
   justify-content: space-between;
   margin: 0 auto;
-  min-height: 4rem;
-  padding: 0.5rem clamp(1rem, 3vw, 2.5rem);
+  min-height: 3.25rem;
+  padding: 0.35rem clamp(1rem, 3vw, 2.5rem);
 }
 .app-bar.home .app-bar-inner {
   max-width: 64rem;
@@ -113,17 +113,17 @@ h2[tabindex="-1"]:focus {
   text-decoration-color: rgba(255, 253, 247, 0.45);
 }
 .app-bar .wordmark {
-  font-size: 1.65rem;
+  font-size: 1.35rem;
 }
 .app-bar-start {
-  gap: 1.25rem;
+  gap: 1rem;
 }
 .app-bar-start .app-bar-back {
   border-left: 1px solid rgba(255, 253, 247, 0.28);
   color: rgba(255, 253, 247, 0.72);
-  font-size: 1rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  padding: 0.5rem 0 0.5rem 1.25rem;
+  padding: 0.35rem 0 0.35rem 1rem;
   text-decoration: none;
 }
 .app-bar-start .app-bar-back:hover {
@@ -153,7 +153,7 @@ h2[tabindex="-1"]:focus {
 .app-bar.course .app-bar-inner {
   display: grid;
   grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
-  padding-left: clamp(0.5rem, 1.5vw, 1.25rem);
+  padding-inline: clamp(0.75rem, 1.5vw, 1.25rem);
 }
 /* Lays the row out at its natural width so the app bar can tell whether it fits. */
 .app-bar.course .app-bar-inner.measuring {
@@ -171,17 +171,29 @@ h2[tabindex="-1"]:focus {
   flex-wrap: nowrap;
   justify-self: end;
 }
+/* The course name and chevron read as one control: the switcher button
+   covers the whole pill, so clicking the name opens the course list. */
 .app-bar-course {
   align-items: center;
+  border-radius: var(--radius-md);
   display: flex;
   gap: 0.6rem;
   min-width: 0;
+  padding: 0.3rem 0.5rem;
+  position: relative;
+}
+.app-bar-course:hover,
+.app-bar-course:has(.switcher-button[aria-expanded="true"]) {
+  background: rgba(255, 253, 247, 0.12);
+}
+.app-bar-course h1 {
+  padding-right: 1.4rem;
 }
 .app-bar-course h1 {
   color: #fffdf7;
-  max-width: 20rem;
+  max-width: 16rem;
   font-family: Fraunces, Georgia, serif;
-  font-size: 1.25rem;
+  font-size: 1.05rem;
   letter-spacing: -0.03em;
   line-height: 1.1;
   margin: 0;
@@ -192,24 +204,22 @@ h2[tabindex="-1"]:focus {
 }
 .course-switcher {
   flex: none;
-  position: relative;
 }
 .switcher-button {
   align-items: center;
   background: transparent;
-  border: 1px solid rgba(255, 253, 247, 0.28);
+  border: 0;
   border-radius: var(--radius-md);
-  color: #fffdf7;
+  color: rgba(255, 253, 247, 0.8);
   cursor: pointer;
-  display: inline-flex;
-  font-size: 0.8rem;
-  height: 1.75rem;
-  justify-content: center;
-  width: 1.75rem;
+  display: flex;
+  inset: 0;
+  justify-content: flex-end;
+  padding-right: 0.5rem;
+  position: absolute;
 }
-.switcher-button:hover,
-.switcher-button[aria-expanded="true"] {
-  background: rgba(255, 253, 247, 0.14);
+.switcher-button[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 .switcher-button:focus-visible {
   outline: 3px solid var(--focus);
@@ -223,7 +233,7 @@ h2[tabindex="-1"]:focus {
   color: var(--ink);
   left: 0;
   max-height: min(24rem, 70vh);
-  min-width: 16rem;
+  min-width: 20rem;
   overflow-y: auto;
   padding: var(--space-2);
   position: absolute;
@@ -276,10 +286,11 @@ h2[tabindex="-1"]:focus {
   gap: 0.25rem;
 }
 .course-tabs a {
-  border-radius: 0.55rem;
+  border-radius: 0.5rem;
   color: rgba(255, 253, 247, 0.78);
+  font-size: 0.9rem;
   font-weight: 600;
-  padding: 0.55rem 0.9rem;
+  padding: 0.4rem 0.7rem;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -302,12 +313,12 @@ h2[tabindex="-1"]:focus {
 .statistics-page {
   max-width: var(--page-width);
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 0 0 1.5rem;
   color: var(--ink, #29251f);
 }
 .statistics-heading {
   display: flex;
-  align-items: end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
@@ -887,11 +898,11 @@ h2[tabindex="-1"]:focus {
   margin-bottom: 0.5rem;
 }
 .post-view-picker {
-  margin: 0.5rem 0 0.9rem;
+  margin: 0.25rem 0 0.6rem;
 }
 .post-view-picker + .discussion-toolbar {
   margin-bottom: 0.5rem;
-  row-gap: 0.75rem;
+  row-gap: 0.5rem;
 }
 .post-merge-control input {
   width: 100%;
@@ -910,10 +921,10 @@ h2[tabindex="-1"]:focus {
   border: 1px solid var(--line-strong);
   color: var(--ink);
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  min-height: 2.5rem;
-  padding: 0.5rem 0.675rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.6rem;
 }
 .post-view-segments button:first-child {
   border-radius: var(--radius-md) 0 0 var(--radius-md);
@@ -949,8 +960,16 @@ h2[tabindex="-1"]:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(31, 77, 62, 0.14);
 }
+.discussion-toolbar {
+  flex-wrap: nowrap;
+}
+.discussion-toolbar > .search-field {
+  flex: 1;
+  min-width: 0;
+}
 .discussion-toolbar > button {
-  width: 100%;
+  flex: none;
+  white-space: nowrap;
 }
 .search-field input {
   flex: 1;
@@ -1023,6 +1042,48 @@ h2[tabindex="-1"]:focus {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
 }
+/* Date sections in the feed; each heading sticks while its posts scroll. */
+.feed-section-heading {
+  margin: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.feed-section-heading button {
+  align-items: center;
+  background: var(--surface-sunken);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  gap: 0.4rem;
+  padding: 0.4rem 1.25rem 0.4rem clamp(1rem, 3vw, 2.5rem);
+  text-align: left;
+  width: 100%;
+}
+.feed-section-heading button:hover {
+  background: var(--surface);
+}
+.feed-section-heading button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.feed-section-heading svg {
+  flex: none;
+  transition: transform 0.15s;
+}
+.feed-section-heading button[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+.feed-section-count {
+  color: var(--ink-muted);
+  font-weight: 600;
+  margin-left: auto;
+}
 .post-list > li {
   border-bottom: 1px solid var(--line);
 }
@@ -1041,7 +1102,7 @@ h2[tabindex="-1"]:focus {
 .post-list > li > .tag-list {
   margin-top: 0;
   overflow: hidden;
-  padding: 0 1.25rem 0.8rem clamp(1rem, 3vw, 2.5rem);
+  padding: 0 1.25rem 0.6rem clamp(1rem, 3vw, 2.5rem);
   white-space: nowrap;
   flex-wrap: nowrap;
 }
@@ -1059,10 +1120,10 @@ h2[tabindex="-1"]:focus {
 }
 .post-card {
   display: grid;
-  gap: 0.3rem;
+  gap: 0.2rem;
   grid-template-columns: minmax(0, 1fr);
   position: relative;
-  padding: 0.8rem 1.25rem 0.45rem clamp(1rem, 3vw, 2.5rem);
+  padding: 0.6rem 1.25rem 0.35rem clamp(1rem, 3vw, 2.5rem);
   box-sizing: border-box;
   overflow: hidden;
   text-decoration: none;
@@ -2076,9 +2137,11 @@ a {
   border: 0;
   border-radius: 0.55rem;
   cursor: pointer;
+  font-size: 0.95rem;
   font-weight: 700;
-  min-height: 3rem;
-  padding: 0.72rem 1rem;
+  line-height: 1.2;
+  min-height: 2.5rem;
+  padding: 0.55rem 1rem;
   transition:
     background 0.16s,
     transform 0.16s;
@@ -2093,8 +2156,9 @@ a {
 }
 .button.primary.create-post {
   background: #3a7a61;
-  min-height: 2.6rem;
-  padding-block: 0.5rem;
+  font-size: 0.9rem;
+  min-height: 0;
+  padding: 0.45rem 0.9rem;
 }
 .button.primary.create-post:hover:not(:disabled) {
   background: #336d56;
@@ -2209,7 +2273,7 @@ a:focus-visible {
 }
 .account-page-intro h1 {
   font-family: var(--font-serif);
-  font-size: clamp(2rem, 4vw, 3rem);
+  font-size: 2.25rem;
   letter-spacing: -0.04em;
   margin: 0.4rem 0;
 }
@@ -2230,8 +2294,8 @@ a:focus-visible {
   padding: clamp(1.25rem, 3vw, 2rem);
 }
 .account-section h2 {
-  font-family: var(--font-serif);
-  font-size: 1.5rem;
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.1rem;
   margin: 0 0 var(--space-3);
 }
 .account-section form,
@@ -2365,6 +2429,67 @@ a:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.account-menu {
+  position: relative;
+}
+.avatar-button {
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  padding: 0;
+}
+.avatar-button:hover .avatar,
+.avatar-button[aria-expanded="true"] .avatar {
+  box-shadow: 0 0 0 3px rgba(255, 253, 247, 0.35);
+}
+.avatar-button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.account-panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 40px rgba(29, 43, 38, 0.18);
+  color: var(--ink);
+  display: grid;
+  gap: 0.15rem;
+  min-width: 14rem;
+  padding: var(--space-2);
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-2));
+  z-index: 30;
+}
+.account-panel-name {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+  padding: 0.35rem 0.5rem 0.55rem;
+}
+.account-panel-name small {
+  color: var(--ink-muted);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.app-bar .account-panel .account-name,
+.app-bar .account-panel .text-button {
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  text-decoration: none;
+}
+.app-bar .account-panel .account-name:hover,
+.app-bar .account-panel .text-button:hover {
+  background: var(--surface-sunken);
+}
 .avatar {
   align-items: center;
   background: #ddae55;
@@ -2401,9 +2526,13 @@ a:focus-visible {
   background: #e9eee5;
   color: var(--accent-ink);
 }
+/* The two button sizes: standard (40px) for forms, compact (33px) for
+   page-header and row actions. */
 .button.compact {
+  font-size: 0.875rem;
+  line-height: 1.2;
   min-height: 0;
-  padding: 0.5rem 0.9rem;
+  padding: 0.5rem 0.95rem;
 }
 .button.danger {
   background: var(--danger-soft);
@@ -2425,7 +2554,7 @@ a:focus-visible {
 }
 .home-intro h1 {
   font-family: var(--font-serif);
-  font-size: clamp(2.2rem, 4vw, 3.4rem);
+  font-size: 2.25rem;
   letter-spacing: -0.05em;
   line-height: 1;
   margin: var(--space-3) 0;
@@ -2739,37 +2868,37 @@ a:focus-visible {
 
 .question-responses {
   display: grid;
-  gap: 1.8rem;
-  margin-top: 2.2rem;
+  gap: 1.25rem;
+  margin-top: 1.5rem;
 }
 .answer-sections {
   border-top: 0;
   margin-top: 0;
   padding-top: 0;
-  gap: 1rem;
+  gap: 0.75rem;
 }
 .shared-answer-slot {
   display: grid;
-  gap: 0.8rem;
-  padding: 1.25rem;
+  gap: 0.55rem;
+  padding: 0.9rem 1rem;
   border: 1px solid;
   border-radius: 0.55rem;
 }
 .shared-answer-slot h3 {
   margin: 0;
-  font-size: 1.3rem;
+  font-size: 1.02rem;
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.5rem;
 }
 .answer-kind-icon {
   display: inline-grid;
   place-items: center;
-  width: 1.8rem;
-  height: 1.8rem;
+  width: 1.35rem;
+  height: 1.35rem;
   border-radius: 0.3rem;
   color: #fff;
-  font-size: 1.15rem;
+  font-size: 0.85rem;
   font-weight: 700;
   line-height: 1;
 }
@@ -2793,7 +2922,7 @@ a:focus-visible {
 }
 .answer-start-prompt {
   width: 100%;
-  padding: 0.7rem 0.9rem;
+  padding: 0.55rem 0.8rem;
   border: 1px solid #a9b5aa;
   border-radius: 0.45rem;
   background: #fff;
@@ -2820,7 +2949,15 @@ a:focus-visible {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.7rem;
+  gap: 0.5rem;
+}
+/* Every response action is the same small rounded chip. */
+.response-actions .text-button {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  line-height: 1.2;
+  padding: 0.3rem 1.25rem;
+  text-decoration: none;
 }
 .answer-card-header h3 {
   display: none;
@@ -2828,7 +2965,7 @@ a:focus-visible {
 .response-byline {
   margin: 0;
   color: #53665a;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
 }
 .response-text {
   line-height: 1.55;
@@ -2842,8 +2979,10 @@ a:focus-visible {
   align-items: center;
   gap: 0.35rem;
   border: 1px solid #8cae9b;
-  border-radius: 0.4rem;
-  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  padding: 0.3rem 0.7rem;
   background: #fff;
   color: #235b46;
   font: inherit;
@@ -2868,13 +3007,13 @@ a:focus-visible {
 }
 .followup-sections {
   display: grid;
-  gap: 0.8rem;
+  gap: 0.65rem;
   border-top: 1px solid var(--line);
-  padding-top: 1.3rem;
+  padding-top: 1.1rem;
 }
 .discussion-detail article .followup-sections > h2 {
   margin: 0;
-  font-size: clamp(1.1rem, 1.3vw, 1.35rem);
+  font-size: 1.02rem;
 }
 .followup-prompt {
   width: 100%;
@@ -3052,7 +3191,7 @@ a:focus-visible {
 }
 .sessions-panel.course-collaboration {
   border-top: 0;
-  margin: var(--space-6) auto 0;
+  margin: 0 auto;
   max-width: var(--page-width);
   padding-top: 0;
   width: 100%;
@@ -3077,8 +3216,10 @@ a:focus-visible {
 }
 .sessions-panel .button,
 .session-view .button {
+  font-size: 0.875rem;
+  line-height: 1.2;
   min-height: 0;
-  padding: 0.45rem 0.85rem;
+  padding: 0.5rem 0.95rem;
 }
 .sessions-list {
   display: grid;
@@ -3939,4 +4080,142 @@ a:focus-visible {
 .scheduled-notice .form-message {
   flex-basis: 100%;
   margin: 0;
+}
+
+/* One page header style for every course tab. */
+main
+  :is(
+    .threads-title,
+    .threads-toolbar,
+    .sessions-header,
+    .course-files-heading,
+    .statistics-heading,
+    .page-heading
+  )
+  h2 {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin-block: 0;
+}
+main
+  :is(
+    .threads-title,
+    .sessions-header,
+    .course-files-heading,
+    .statistics-heading,
+    .page-heading
+  )
+  p {
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+  margin: 0.3rem 0 0;
+}
+.page-heading {
+  margin-bottom: var(--space-2);
+}
+main .section-title h2 {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.1rem;
+  letter-spacing: 0;
+}
+/* Header actions on every tab share one size. */
+main :is(.threads-toolbar, .sessions-header) .button.compact,
+main :is(.threads-toolbar, .sessions-header) .button.secondary {
+  font-size: 0.875rem;
+  line-height: 1.2;
+  min-height: 0;
+  padding: 0.5rem 0.95rem;
+}
+
+/* Empty states with a small illustration. */
+/* A soft dashed card holds the illustration and message. */
+.empty-state {
+  align-items: center;
+  background: var(--surface-raised);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+}
+.empty-state p {
+  max-width: 28rem;
+}
+.empty-state h3 {
+  color: var(--ink);
+  font-size: 1.15rem;
+  margin: var(--space-2) 0 0;
+}
+.empty-state p {
+  color: var(--ink-muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  margin: 0;
+}
+.empty-state .button {
+  margin-top: var(--space-2);
+}
+.discussion-detail .empty-state {
+  margin: 14vh auto 0;
+  max-width: 30rem;
+}
+.empty-art .empty-art-soft {
+  fill: #dfe9e0;
+}
+.empty-art .empty-art-warm {
+  fill: #f3dfb4;
+}
+.empty-art .empty-art-line {
+  fill: #9fb8a6;
+}
+.empty-art .empty-art-dot {
+  fill: #c99a45;
+}
+.empty-art .empty-art-stroke {
+  fill: none;
+  stroke: #3a7a61;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4;
+}
+.empty-art .empty-art-stroke.dark {
+  stroke: #b0802d;
+}
+.followup-heading-icon {
+  color: var(--accent);
+  margin-right: 0.35rem;
+  vertical-align: -0.15em;
+}
+.statistics-page .button {
+  font-size: 0.875rem;
+  line-height: 1.2;
+  min-height: 0;
+  padding: 0.5rem 0.95rem;
+}
+/* Card and section titles share one size on every page. */
+main :is(.course-files, .course-information, .statistics-page) h3 {
+  font-size: 1.1rem;
+}
+/* The syllabus picker matches the resource file pickers. */
+.course-information input[type="file"]::file-selector-button {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-lg);
+  color: #fffdf7;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  margin-inline-end: 0.5rem;
+  min-height: 2.5rem;
+  padding: 0.5rem 1rem;
+}
+.course-information input[type="file"] {
+  border: 0;
+  padding: 0;
 }

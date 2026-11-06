@@ -34,6 +34,7 @@ import {
   type Watch,
 } from "./client.js";
 import "./styles.css";
+import { EmptyState } from "../app/EmptyState.js";
 
 type Props = {
   courseId: string;
@@ -626,9 +627,29 @@ export function CourseThreads(props: Props) {
   );
   return (
     <section className="threads-area" aria-label="Threads">
-      {crumbs}
+      {board && crumbs}
       <div className="threads-toolbar">
-        <h2>{conversationId ? "Conversation" : (board?.title ?? "Threads")}</h2>
+        <div className="threads-title">
+          <h2>
+            {conversationId ? "Conversation" : (board?.title ?? "Threads")}
+          </h2>
+          {!boardId && (
+            <p>Open conversations for the whole course, updated live.</p>
+          )}
+        </div>
+        {!boardId && staff && active && (
+          <button
+            type="button"
+            className="button primary compact"
+            onClick={() => {
+              boardKey.current = null;
+              setTitle("");
+              setMode("create");
+            }}
+          >
+            Create thread
+          </button>
+        )}
         <button type="button" className="button secondary" onClick={refreshNow}>
           Refresh
         </button>
@@ -678,7 +699,15 @@ export function CourseThreads(props: Props) {
               </a>
             ))}
           </div>
-          {!loading && !boards.length && <p>No threads yet.</p>}
+          {!loading && !boards.length && (
+            <EmptyState art="threads" title="No threads yet">
+              Threads are open conversations for the whole course, like a class
+              group chat that stays on topic.
+              {staff && active
+                ? " Start the first one with Create thread."
+                : ""}
+            </EmptyState>
+          )}
           {boardCursor && (
             <button
               type="button"
@@ -690,17 +719,6 @@ export function CourseThreads(props: Props) {
           )}
           {staff && active && (
             <>
-              <button
-                type="button"
-                className="button primary"
-                onClick={() => {
-                  boardKey.current = null;
-                  setTitle("");
-                  setMode("create");
-                }}
-              >
-                Create thread
-              </button>
               {mode === "create" && (
                 <form className="threads-form" onSubmit={submitBoard}>
                   <label>

@@ -195,10 +195,10 @@ test("staff rename and delete a folder on desktop", async ({ page }) => {
   await page.getByRole("button", { name: "Save name" }).click();
   await expect(
     page
-      .getByRole("button", { name: "Delete" })
+      .getByRole("button", { name: "Delete", exact: true })
       .locator("xpath=..", { hasText: "Week A" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(
     filter.getByRole("checkbox", { name: "All posts" }),
   ).not.toBeChecked();
@@ -323,7 +323,7 @@ test("folder management preserves an unsaved post edit", async ({ page }) => {
     .getByRole("list", { name: "Managed folders" })
     .getByRole("listitem")
     .filter({ hasText: "Week A" })
-    .getByRole("button", { name: "Delete" })
+    .getByRole("button", { name: "Delete", exact: true })
     .click();
   await expect(editorFolder).toHaveValue("");
   await expect(title).toHaveValue("Unsaved chapter draft");
@@ -381,7 +381,7 @@ test("a late save response retains the deleted folder's newer revision", async (
     )
     .toBe(1);
   await page.getByText("Manage folders").click();
-  await page.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Post folder" })).toHaveValue(
     "",
   );
@@ -432,7 +432,7 @@ test("deleting a composer folder preserves its other draft fields", async ({
   await page.getByRole("checkbox", { name: "Post anonymously" }).check();
   await composerFolder.selectOption(folderId);
   await page.getByText("Manage folders").click();
-  await page.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(composerFolder).toHaveValue("");
   await expect(title).toHaveValue("Unsent folder question");
   await expect(body).toHaveText("Please explain this step.");
@@ -470,7 +470,9 @@ test("folder deletion preserves filters changed while pending", async ({
   const filter = page.getByRole("group", { name: "Filter by folder" });
   await filter.getByRole("checkbox", { name: "Week 1" }).check();
   await page.getByText("Manage folders").click();
-  const deleteClick = page.getByRole("button", { name: "Delete" }).click();
+  const deleteClick = page
+    .getByRole("button", { name: "Delete", exact: true })
+    .click();
   await expect
     .poll(() => state.requests.some((request) => request.method === "DELETE"))
     .toBe(true);

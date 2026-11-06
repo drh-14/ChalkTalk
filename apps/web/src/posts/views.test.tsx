@@ -3721,7 +3721,7 @@ it("lays out each card with a type badge, status, preview, and byline from the p
   expect(open.getByText(/A useful explanation/)).toBeTruthy();
   expect(open.getByText("2 hours ago")).toBeTruthy();
   expect(open.getByText("Anonymous")).toBeTruthy();
-  expect(screen.getByText("Choose a post to read it here.")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Select a post" })).toBeTruthy();
   const settled = await card("Settled question");
   expect(settled.getByText("Answered")).toBeTruthy();
   expect(settled.getByText("Pinned")).toBeTruthy();
@@ -4117,7 +4117,8 @@ it("lets staff pin and unpin a post with conditional requests and updates its ro
   await screen.findByRole("button", { name: "Pin" });
   const patches = calls.filter((call) => call.init?.method === "PATCH");
   expect(patches[1]!.init?.headers).toMatchObject({ "If-Match": '"v4"' });
-  expect(within(row).queryByText("Pinned")).toBeNull();
+  const unpinned = screen.getByRole("link", { name: /Pin me/ }).closest("li")!;
+  expect(within(unpinned).queryByText("Pinned")).toBeNull();
 });
 
 it.each(["oldest", "newest", "recent_activity", "relevance"] as const)(
@@ -4682,7 +4683,7 @@ it("prompts to choose or start a post when nothing is selected", async () => {
     />,
   );
   expect(
-    await screen.findByText("Choose a post to read it here."),
+    await screen.findByRole("heading", { name: "Select a post" }),
   ).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Start a new post" }));
   expect(screen.getByRole("textbox", { name: "Post title" })).toBeTruthy();
@@ -7192,4 +7193,81 @@ it("badges a scheduled announcement and lets staff publish it now or reschedule"
   expect(within(row).queryByText(/^Scheduled · /)).toBeNull();
   const patches = calls.filter((call) => call.init?.method === "PATCH");
   expect(patches[1]!.init?.body).toBe(JSON.stringify({ scheduledFor: null }));
+});
+
+it("groups the date-sorted feed into collapsible pinned and week sections", async () => {
+  vi.setSystemTime(new Date("2026-11-05T12:00:00"));
+  stubFetch(
+    vi.fn(async () =>
+      page([
+        {
+          ...post("p1", "Course rules"),
+          pinned: true,
+          lastActivityAt: "2026-10-01T12:00:00",
+        },
+        { ...post("t1", "Fresh today"), lastActivityAt: "2026-11-05T09:00:00" },
+        {
+          ...post("y1", "From yesterday"),
+          lastActivityAt: "2026-11-04T09:00:00",
+        },
+        { ...post("w1", "Monday post"), lastActivityAt: "2026-11-02T09:00:00" },
+        {
+          ...post("l1", "Last week post"),
+          lastActivityAt: "2026-10-27T09:00:00",
+        },
+        { ...post("o1", "Older post"), lastActivityAt: "2026-10-14T09:00:00" },
+      ]),
+    ),
+  );
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Older post");
+  const sections = () =>
+    [...document.querySelectorAll(".feed-section-heading button")].map(
+      (button) => button.textContent,
+    );
+  expect(sections()).toEqual([
+    "Pinned1",
+    "Today1",
+    "Yesterday1",
+    "Earlier this week1",
+    "Last week1",
+    "Week of Oct 11 – Oct 171",
+  ]);
+  const lastWeek = screen.getByRole("button", { name: /^Last week/ });
+  await user.click(lastWeek);
+  expect(lastWeek.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText("Last week post")).toBeNull();
+  expect(screen.getByText("Older post")).toBeTruthy();
+  await user.click(lastWeek);
+  expect(screen.getByText("Last week post")).toBeTruthy();
+});
+
+it("keeps search results in one ranked list without date sections", async () => {
+  stubFetch(
+    vi.fn(async () =>
+      page([
+        { ...post("a1", "Cutoff policy"), lastActivityAt: "2026-11-05" },
+        { ...post("a2", "Cutoff extension"), lastActivityAt: "2026-09-01" },
+      ]),
+    ),
+  );
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      query="cutoff"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await screen.findByText("Cutoff extension");
+  expect(document.querySelector(".feed-section-heading")).toBeNull();
 });

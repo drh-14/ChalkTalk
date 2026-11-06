@@ -72,6 +72,7 @@ import {
   type FeedFilter,
   type PostStatus,
 } from "./types.js";
+import { EmptyState } from "../app/EmptyState.js";
 
 /** Builds the course feed request; a search always sends its sort, otherwise only a non-default one. */
 function feedOptions(
@@ -418,6 +419,67 @@ function TagList({
       ))}
     </ul>
   );
+}
+
+type FeedSection = { key: string; label: string; posts: Post[] };
+
+/**
+ * Splits a date-sorted feed into Piazza-style sections: a leading run of
+ * pinned posts, then Today, Yesterday, Earlier this week, Last week, and one
+ * section per older Sunday-to-Saturday week. Relevance results stay one list.
+ */
+function feedSections(
+  posts: Post[],
+  sort: PostSort,
+  now = new Date(),
+): FeedSection[] {
+  if (sort === "relevance") return [{ key: "all", label: "", posts }];
+  const day = 24 * 60 * 60 * 1000;
+  const startOfDay = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const weekStart = (date: Date) => {
+    const start = startOfDay(date);
+    start.setDate(start.getDate() - start.getDay());
+    return start;
+  };
+  const short = (date: Date) =>
+    date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const today = startOfDay(now).getTime();
+  const thisWeek = weekStart(now).getTime();
+  const sections: FeedSection[] = [];
+  for (const post of posts) {
+    let key: string;
+    let label: string;
+    if (post.pinned && sections.every((section) => section.key === "pinned")) {
+      key = "pinned";
+      label = "Pinned";
+    } else {
+      const when = new Date(
+        sort === "recent_activity" ? post.lastActivityAt : post.createdAt,
+      );
+      const date = startOfDay(when).getTime();
+      if (date >= today) [key, label] = ["today", "Today"];
+      else if (date >= today - day) [key, label] = ["yesterday", "Yesterday"];
+      else if (date >= thisWeek)
+        [key, label] = ["this-week", "Earlier this week"];
+      else if (date >= thisWeek - 7 * day)
+        [key, label] = ["last-week", "Last week"];
+      else {
+        const start = weekStart(when);
+        const end = new Date(start.getTime() + 6 * day);
+        const year =
+          start.getFullYear() === now.getFullYear()
+            ? ""
+            : `, ${start.getFullYear()}`;
+        key = `week-${start.getTime()}`;
+        label = `Week of ${short(start)} – ${short(end)}${year}`;
+      }
+    }
+    const last = sections.at(-1);
+    if (last?.key === key) last.posts.push(post);
+    else sections.push({ key, label, posts: [post] });
+  }
+  return sections;
 }
 
 const SORTS: readonly PostSort[] = [
@@ -2396,6 +2458,9 @@ function DiscussionContent({
   const [courseError, setCourseError] = useState("");
   const [draftQuery, setDraftQuery] = useState(query ?? "");
   const [items, setItems] = useState<Post[]>([]);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [mergedItems, setMergedItems] = useState<MergedPost[]>([]);
   const [staff, setStaff] = useState(false);
   const [folders, setFolders] = useState<PostFolder[]>([]);
@@ -3661,7 +3726,7 @@ function DiscussionContent({
               >
                 {course?.status === "archived"
                   ? "View saved draft"
-                  : "+ Create post"}
+                  : "+ New post"}
               </button>
             </div>
             <p id="post-search-help" className="visually-hidden">
@@ -3769,77 +3834,124 @@ function DiscussionContent({
                       {readError}
                     </p>
                   )}
-                  <ul className="post-list">
-                    {items.map((post) => (
-                      <li
-                        key={post.id}
-                        className={post.id === postId ? "selected" : undefined}
-                      >
-                        <a
-                          className={`post-card${post.id === postId ? " selected" : ""}${post.unread && post.id !== postId ? " unread" : ""}`}
-                          href={postPath(courseId, post.id, search)}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            openPost(post.id);
-                          }}
-                          aria-current={post.id === postId ? "page" : undefined}
-                        >
-                          <span className="post-card-head">
-                            <span className="post-card-title">
-                              {post.unread && post.id !== postId && (
-                                <span className="unread-dot">
-                                  <span className="visually-hidden">
-                                    Unread:{" "}
-                                  </span>
-                                </span>
-                              )}
-                              <PostTypeBadge type={post.type} />
-                              <strong>{post.title}</strong>
+                  {feedSections(items, sort).map((section, index) => (
+                    <div
+                      key={`${section.key}-${index}`}
+                      className="feed-section"
+                    >
+                      {section.label && (
+                        <h3 className="feed-section-heading">
+                          <button
+                            type="button"
+                            aria-expanded={!collapsedSections.has(section.key)}
+                            onClick={() =>
+                              setCollapsedSections((current) => {
+                                const next = new Set(current);
+                                if (!next.delete(section.key))
+                                  next.add(section.key);
+                                return next;
+                              })
+                            }
+                          >
+                            <svg
+                              aria-hidden="true"
+                              viewBox="0 0 24 24"
+                              width="14"
+                              height="14"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="m6 9 6 6 6-6" />
+                            </svg>
+                            {section.label}
+                            <span className="feed-section-count">
+                              {section.posts.length}
                             </span>
-                            {postStatuses(post).length > 0 && (
-                              <span className="post-statuses">
-                                {postStatuses(post).map((status) => (
-                                  <PostStatusBadge
-                                    key={status.label}
-                                    status={status}
-                                  />
-                                ))}
-                              </span>
-                            )}
-                          </span>
-                          <div className="post-card-preview post-markdown">
-                            <PostBody
-                              bodyMarkdown={post.bodyMarkdown}
-                              inertLinks
-                            />
-                          </div>
-                          <span className="post-card-foot">
-                            <small>
-                              <PostByline post={post} />
-                            </small>
-                            {postTypeOf(post.type).extras?.(post) && (
-                              <span className="post-card-extras">
-                                {postTypeOf(post.type).extras?.(post)}
-                              </span>
-                            )}
-                            {post.folder && (
-                              <span
-                                className="post-card-extras post-card-folder"
-                                title={post.folder.name}
+                          </button>
+                        </h3>
+                      )}
+                      {!collapsedSections.has(section.key) && (
+                        <ul className="post-list">
+                          {section.posts.map((post) => (
+                            <li
+                              key={post.id}
+                              className={
+                                post.id === postId ? "selected" : undefined
+                              }
+                            >
+                              <a
+                                className={`post-card${post.id === postId ? " selected" : ""}${post.unread && post.id !== postId ? " unread" : ""}`}
+                                href={postPath(courseId, post.id, search)}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  openPost(post.id);
+                                }}
+                                aria-current={
+                                  post.id === postId ? "page" : undefined
+                                }
                               >
-                                {post.folder.name}
-                              </span>
-                            )}
-                          </span>
-                        </a>
-                        <TagList
-                          tags={post.tags}
-                          active={tags}
-                          onSelect={selectTag}
-                        />
-                      </li>
-                    ))}
-                  </ul>
+                                <span className="post-card-head">
+                                  <span className="post-card-title">
+                                    {post.unread && post.id !== postId && (
+                                      <span className="unread-dot">
+                                        <span className="visually-hidden">
+                                          Unread:{" "}
+                                        </span>
+                                      </span>
+                                    )}
+                                    <PostTypeBadge type={post.type} />
+                                    <strong>{post.title}</strong>
+                                  </span>
+                                  {postStatuses(post).length > 0 && (
+                                    <span className="post-statuses">
+                                      {postStatuses(post).map((status) => (
+                                        <PostStatusBadge
+                                          key={status.label}
+                                          status={status}
+                                        />
+                                      ))}
+                                    </span>
+                                  )}
+                                </span>
+                                <div className="post-card-preview post-markdown">
+                                  <PostBody
+                                    bodyMarkdown={post.bodyMarkdown}
+                                    inertLinks
+                                  />
+                                </div>
+                                <span className="post-card-foot">
+                                  <small>
+                                    <PostByline post={post} />
+                                  </small>
+                                  {postTypeOf(post.type).extras?.(post) && (
+                                    <span className="post-card-extras">
+                                      {postTypeOf(post.type).extras?.(post)}
+                                    </span>
+                                  )}
+                                  {post.folder && (
+                                    <span
+                                      className="post-card-extras post-card-folder"
+                                      title={post.folder.name}
+                                    >
+                                      {post.folder.name}
+                                    </span>
+                                  )}
+                                </span>
+                              </a>
+                              <TagList
+                                tags={post.tags}
+                                active={tags}
+                                onSelect={selectTag}
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
                 </>
               ) : query || hasFilters(activeFilters) ? (
                 <div className="feed-empty">
@@ -4015,10 +4127,9 @@ function DiscussionContent({
                     </article>
                   )
                 ) : (
-                  <div className="detail-prompt">
-                    <h2>Select a duplicate post</h2>
-                    <p>Choose a duplicate to review it here.</p>
-                  </div>
+                  <EmptyState art="posts" title="Select a duplicate post">
+                    Choose a merged duplicate on the left to review it here.
+                  </EmptyState>
                 )
               ) : postId ? (
                 <>
@@ -4223,19 +4334,24 @@ function DiscussionContent({
                   )}
                 </>
               ) : (
-                <div className="detail-prompt">
-                  <h2>Select a post</h2>
-                  <p>Choose a post to read it here.</p>
-                  {course?.status === "active" && (
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() => openComposer()}
-                    >
-                      Start a new post
-                    </button>
-                  )}
-                </div>
+                <EmptyState
+                  art="posts"
+                  title="Select a post"
+                  action={
+                    course?.status === "active" && (
+                      <button
+                        type="button"
+                        className="button secondary"
+                        onClick={() => openComposer()}
+                      >
+                        Start a new post
+                      </button>
+                    )
+                  }
+                >
+                  Pick a post on the left to read it and join the discussion, or
+                  ask the class something new.
+                </EmptyState>
               )}
             </div>
           </section>

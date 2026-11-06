@@ -23,9 +23,9 @@
   font-weight: 600;
 }
 .course-information {
-  max-width: 56rem;
+  max-width: none;
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 1.5rem 0;
   overflow-wrap: anywhere;
 }
 .course-information header {

@@ -1,7 +1,7 @@
 .course-files {
-  max-width: 56rem;
+  max-width: none;
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 1.5rem 0;
 }
 .course-files-heading p,
 .course-file-meta,
@@ -98,7 +98,6 @@
 
 .course-files button.button {
   border-radius: var(--radius-lg);
-  padding: var(--space-3) var(--space-5);
 }
 
 .course-files input[type="file"]::file-selector-button {
@@ -109,8 +108,8 @@
   border-radius: var(--radius-lg);
   font: inherit;
   font-weight: 700;
-  min-height: 3rem;
-  padding: var(--space-3) var(--space-5);
+  min-height: 2.5rem;
+  padding: 0.5rem 1rem;
   cursor: pointer;
   transition:
     background 0.16s,

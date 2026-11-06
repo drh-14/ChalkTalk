@@ -613,6 +613,26 @@ function AccountControls({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
+  // The account menu closes on Escape or a click anywhere outside it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: Event) => {
+      if (
+        event instanceof KeyboardEvent
+          ? event.key === "Escape"
+          : !menu.current?.contains(event.target as Node)
+      )
+        setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [menuOpen]);
   async function signOut() {
     if (pending || !canLeave()) return;
     setPending(true);
@@ -650,15 +670,44 @@ function AccountControls({
             );
         }}
       />
-      <span className="avatar" aria-hidden="true">
-        {firstNameOf(session)[0]}
-      </span>
-      <a className="account-name" href="/account" onClick={onAccountClick}>
-        {session.user.displayName}
-      </a>
-      <button className="text-button" onClick={signOut} disabled={pending}>
-        {pending ? "Signing out…" : "Sign out"}
-      </button>
+      <div className="account-menu" ref={menu}>
+        <button
+          type="button"
+          className="avatar-button"
+          aria-label={`Account menu for ${session.user.displayName}`}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <span className="avatar" aria-hidden="true">
+            {firstNameOf(session)[0]}
+          </span>
+        </button>
+        {menuOpen && (
+          <div className="account-panel">
+            <p className="account-panel-name">
+              {session.user.displayName}
+              <small>{session.user.email}</small>
+            </p>
+            <a
+              className="account-name"
+              href="/account"
+              onClick={(event) => {
+                setMenuOpen(false);
+                onAccountClick?.(event);
+              }}
+            >
+              Account settings
+            </a>
+            <button
+              className="text-button"
+              onClick={signOut}
+              disabled={pending}
+            >
+              {pending ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
+        )}
+      </div>
       {error && (
         <p className="form-message error" role="alert">
           {error}
@@ -886,7 +935,19 @@ function CourseSwitcher({
         aria-controls="course-switcher-panel"
         onClick={() => setOpen((value) => !value)}
       >
-        <span aria-hidden="true">▾</span>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          width="16"
+          height="16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
       </button>
       {open && (
         <div id="course-switcher-panel" className="switcher-panel">

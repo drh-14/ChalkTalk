@@ -105,7 +105,7 @@ it("creates a course session with a required title and no post anchor", async ()
 it("does not allow starting in an archived course", async () => {
   api([]);
   panel(false);
-  await screen.findByText("No collaboration sessions yet.");
+  await screen.findByRole("heading", { name: "No collaboration sessions yet" });
   expect(
     screen.queryByRole("button", { name: "Start live session" }),
   ).toBeNull();

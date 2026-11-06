@@ -7,6 +7,7 @@ import {
   type CodeSession,
   type SessionLanguage,
 } from "./client.js";
+import { EmptyState } from "../app/EmptyState.js";
 
 const languageLabel = (language: SessionLanguage) =>
   SESSION_LANGUAGES.find((option) => option.value === language)?.label ??
@@ -111,7 +112,7 @@ export function CourseCollaboration({
         {active && !starting && (
           <button
             type="button"
-            className="button secondary"
+            className="button primary compact"
             onClick={() => setStarting(true)}
           >
             Start live session
@@ -211,7 +212,10 @@ export function CourseCollaboration({
           ))}
         </ul>
       ) : (
-        <p className="sessions-empty">No collaboration sessions yet.</p>
+        <EmptyState art="sessions" title="No collaboration sessions yet">
+          Start a live session to write code and sketch on a shared whiteboard
+          together in real time.
+        </EmptyState>
       )}
       {cursor && (
         <button
