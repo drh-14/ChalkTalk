@@ -46,13 +46,13 @@ The browser keeps the bell's existing focus/Escape/outside-click behavior and 60
 
 ## Technology choices
 
-| Concern | Choice | Why | Runner-up |
-|---|---|---|---|
-| Event and read state | Existing PostgreSQL `notifications` table | Atomic with content writes; one badge/list authority | Separate moderation inbox adds duplication |
-| Delivery to UI | Existing REST list/count/read endpoints and polling | Already deployed, adequate for course scale | WebSocket adds a new lifecycle for no stated latency requirement |
-| Response preview | Resolve current text in notification projection | Avoids retaining text after edit/deletion and rechecks access | Persisted excerpt can leak scrubbed content |
-| Panel pagination | Existing cursor plus visible “Load more” | Makes all events reachable and predictable | Infinite scroll obscures loading/errors |
-| Styling | Existing React and CSS patterns | No dependency or design-system split | New notification UI package is unnecessary |
+| Concern              | Choice                                              | Why                                                           | Runner-up                                                        |
+| -------------------- | --------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Event and read state | Existing PostgreSQL `notifications` table           | Atomic with content writes; one badge/list authority          | Separate moderation inbox adds duplication                       |
+| Delivery to UI       | Existing REST list/count/read endpoints and polling | Already deployed, adequate for course scale                   | WebSocket adds a new lifecycle for no stated latency requirement |
+| Response preview     | Resolve current text in notification projection     | Avoids retaining text after edit/deletion and rechecks access | Persisted excerpt can leak scrubbed content                      |
+| Panel pagination     | Existing cursor plus visible “Load more”            | Makes all events reachable and predictable                    | Infinite scroll obscures loading/errors                          |
+| Styling              | Existing React and CSS patterns                     | No dependency or design-system split                          | New notification UI package is unnecessary                       |
 
 These choices rely only on technology already in the repository; no new library version or maintenance claim is made.
 
@@ -71,14 +71,14 @@ The bell is near-real-time rather than instantaneous: the badge refreshes on the
 
 ## Failure modes
 
-| Condition | Result |
-|---|---|
-| Notification API is slow/down | Existing page remains visible; panel reports retryable loading error; content writes are unaffected unless the database itself fails. |
-| Response edited/deleted after event | Preview reflects current text or becomes a text-free unavailable fallback; no deleted text survives in the event row. |
-| Private-post access or course membership revoked | List and count omit the event; direct post APIs still enforce their own access checks. |
-| Merge undone or canonical target unavailable | Merge card disappears from list/count; no dead or private canonical link is emitted. |
-| Browser has a stale card during access revocation | The destination API denies access; the panel refresh drops the card. The UI must not cache private excerpts beyond its in-memory session. |
-| Pagination data changes between pages | Existing cursor order may omit or shift a concurrent event; reopening refreshes the panel. This is acceptable for an inbox, not an audit log. |
+| Condition                                         | Result                                                                                                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Notification API is slow/down                     | Existing page remains visible; panel reports retryable loading error; content writes are unaffected unless the database itself fails.         |
+| Response edited/deleted after event               | Preview reflects current text or becomes a text-free unavailable fallback; no deleted text survives in the event row.                         |
+| Private-post access or course membership revoked  | List and count omit the event; direct post APIs still enforce their own access checks.                                                        |
+| Merge undone or canonical target unavailable      | Merge card disappears from list/count; no dead or private canonical link is emitted.                                                          |
+| Browser has a stale card during access revocation | The destination API denies access; the panel refresh drops the card. The UI must not cache private excerpts beyond its in-memory session.     |
+| Pagination data changes between pages             | Existing cursor order may omit or shift a concurrent event; reopening refreshes the panel. This is acceptable for an inbox, not an audit log. |
 
 ## Reversibility
 

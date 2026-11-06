@@ -33,7 +33,7 @@ See proposal.md for motivation and specs/live-code-sessions/spec.md for required
 
 The collaboration server lives in the API workspace beside the worker, so it shares configuration, the pool, and domain queries. It listens on `COLLABORATION_PORT` (default 3100) and serves Hocuspocus over `ws`. `npm run dev` gains a `collab` process; Docker Compose gains a `collaboration` service mirroring `worker`. In development Vite proxies `/collaboration` (with `ws: true`) to it, so the browser uses `wss://localhost:5173/collaboration` and the existing certificate. The ticket response's `webSocketUrl` comes from `COLLABORATION_PUBLIC_URL`.
 
-*Alternatives:* attaching the WebSocket to the Express server would couple an API restart to dropping every editor, and would mix long-lived connections into request handling. A separate package was rejected because it would duplicate configuration and queries.
+_Alternatives:_ attaching the WebSocket to the Express server would couple an API restart to dropping every editor, and would mix long-lived connections into request handling. A separate package was rejected because it would duplicate configuration and queries.
 
 ### D2. Yjs document model: one `Y.Doc` per session, one `Y.Text('content')`
 
@@ -60,7 +60,7 @@ API transactions that change access call `pg_notify('collaboration_events', json
 
 Every 15 seconds a sweep also rechecks every open connection's authorization, which covers missed notifications, a dropped listener, and expired login sessions. Revocation therefore normally takes well under a second and at most one sweep interval. The spec's 5-second bound relies on notifications; the sweep is a backstop. The listener reconnects with backoff and runs a sweep immediately after reconnecting.
 
-*Alternatives:* Redis pub/sub was rejected as a new service with no benefit at one node. Polling alone at under 5 seconds would query once per connection per second.
+_Alternatives:_ Redis pub/sub was rejected as a new service with no benefit at one node. Polling alone at under 5 seconds would query once per connection per second.
 
 ### D5. Persistence: debounced snapshots
 
@@ -97,7 +97,7 @@ The number 020 leaves 016–019 free for the open branches and is renumbered at 
 
 The post detail page shows `SessionsPanel` below the post body: active and recent sessions visible to the viewer, plus a **Start live code session** button.
 
-*Alternative:* reusing `PostEditor` was rejected, because its Markdown toolbar, LaTeX diagnostics, and whole-text replacement do not fit a CRDT-bound code buffer.
+_Alternative:_ reusing `PostEditor` was rejected, because its Markdown toolbar, LaTeX diagnostics, and whole-text replacement do not fit a CRDT-bound code buffer.
 
 ### D11. Contract and documentation updates
 
