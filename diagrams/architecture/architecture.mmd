@@ -1,0 +1,39 @@
+%%{init: {"layout": "elk", "flowchart": {"padding": 27}, "themeCSS": "#my-svg-VM .cluster-label { translate: -272px 12px; }"}}%%
+flowchart TB
+  subgraph VM[OVHcloud VM]
+    direction TB
+    Web[Caddy + React]
+    API[Express API]
+    Collaboration[Hocuspocus + Yjs]
+    Worker
+  end
+  subgraph Supabase
+    direction LR
+    DB[PostgreSQL]
+    Storage[Object Storage]
+  end
+  Web -->|/api<br/>HTTP/WS| API
+  Web -->|/collaboration<br/>WS| Collaboration
+  Browser -->|HTTPS/WSS| Web
+  API -->|read/write data<br/>queue jobs| DB
+  API -->|upload/download<br/>files| Storage
+  API -->|send auth email<br/>HTTPS| Resend[Resend API]
+  Collaboration -->|authorize<br/>load/save Yjs| DB
+  Worker -->|claim jobs<br/>record outcomes| DB
+  Worker -->|read files<br/>OCR/cleanup| Storage
+  Worker -->|send queued email<br/>HTTPS| Resend
+  classDef client fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A,stroke-width:1.5px
+  classDef compute fill:#FFEDD5,stroke:#EA580C,color:#7C2D12,stroke-width:1.5px
+  classDef database fill:#F3E8FF,stroke:#9333EA,color:#581C87,stroke-width:1.5px
+  classDef storage fill:#DCFCE7,stroke:#16A34A,color:#14532D,stroke-width:1.5px
+  classDef external fill:#F1F5F9,stroke:#64748B,color:#334155,stroke-width:1.5px
+  class Browser client
+  class Web compute
+  class API compute
+  class Collaboration compute
+  class Worker compute
+  class DB database
+  class Storage storage
+  class Resend external
+  style VM fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:1.5px
+  style Supabase fill:#F8FAFC,stroke:#94A3B8,color:#0F172A,stroke-width:1.5px
