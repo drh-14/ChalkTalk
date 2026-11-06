@@ -52,7 +52,7 @@ const emailSender = createEmailSender(environment);
 const authService = new AuthService(pool, environment, emailSender);
 const { bucket, endpoint, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
-if (endpoint) await ensureStorageBucket(s3, bucket, environment.localFileStore);
+if (endpoint) await ensureStorageBucket(s3, bucket, !environment.production);
 pool.on("error", () => {
   logApiEvent(observability, "database_pool_error");
 });

@@ -37,7 +37,7 @@ function renderCompose(
       env: {
         ...process.env,
         COMPOSE_PROFILES: profile,
-        COMPOSE_ENV_FILE: ".env.example",
+        COMPOSE_ENV_FILE: "../../.env.example",
         SEAWEEDFS_ACCESS_KEY_ID: credentials?.accessKey ?? "",
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
         AWS_ACCESS_KEY_ID: ambientAws?.accessKey ?? "",
@@ -51,13 +51,37 @@ function renderCompose(
   };
 }
 
+function renderProductionCompose() {
+  const output = execFileSync(
+    "docker",
+    [
+      "compose",
+      "--env-file",
+      "deployment/production/.env.example",
+      "-f",
+      "deployment/production/compose.yml",
+      "config",
+      "--format",
+      "json",
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        COMPOSE_ENV_FILE: ".env.example",
+      },
+    },
+  );
+  return JSON.parse(output) as { services: Record<string, ComposeService> };
+}
+
 describe("default Compose object storage", () => {
   it("starts a pinned single-node SeaweedFS service with localhost S3 and a named data volume", () => {
     const configuration = renderCompose();
     const seaweedfs = configuration.services.seaweedfs;
 
     expect(Object.keys(configuration.services).sort()).toEqual([
-      "mailpit",
       "postgres",
       "seaweedfs",
     ]);
@@ -160,6 +184,8 @@ describe("application Compose worker", () => {
     );
     expect(worker.depends_on?.seaweedfs.condition).toBe("service_healthy");
     expect(worker.environment).toMatchObject({
+      EMAIL_PROVIDER: "resend",
+      NODE_ENV: "development",
       S3_ENDPOINT: "http://seaweedfs:8333",
       S3_BUCKET: "chalktalk-resources",
       S3_REGION: "us-east-1",
@@ -172,5 +198,26 @@ describe("application Compose worker", () => {
         target: "/app/node_modules",
       }),
     );
+  });
+});
+
+describe("production Compose", () => {
+  it("uses only application services with production validation and Resend", () => {
+    const services = renderProductionCompose().services;
+    expect(Object.keys(services).sort()).toEqual([
+      "api",
+      "collaboration",
+      "migrate",
+      "web",
+      "worker",
+    ]);
+    for (const name of ["api", "worker", "collaboration", "migrate"]) {
+      expect(services[name].environment).toMatchObject({
+        NODE_ENV: "production",
+      });
+      expect(services[name].environment).toHaveProperty("RESEND_API_KEY");
+    }
+    expect(services.web.environment).not.toHaveProperty("RESEND_API_KEY");
+    expect(services.api.ports).toBeUndefined();
   });
 });

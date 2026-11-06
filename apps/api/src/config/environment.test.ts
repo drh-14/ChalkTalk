@@ -8,31 +8,37 @@ const base = {
 };
 
 describe("authentication environment", () => {
-  it("selects local database and file storage unless strict flags choose managed services", () => {
-    expect(loadEnvironment(base).localDatabase).toBe(true);
-    expect(loadEnvironment(base).localFileStore).toBe(true);
+  it("selects local services by default and all managed services with NODE_ENV=production", () => {
+    expect(loadEnvironment(base).production).toBe(false);
+    expect(
+      loadEnvironment({ ...base, NODE_ENV: "development" }).production,
+    ).toBe(false);
     expect(
       loadEnvironment({
         ...base,
-        LOCAL_DATABASE: "false",
+        NODE_ENV: "production",
         DATABASE_URL:
           "postgresql://app:secret@db.example.com:5432/chalktalk?sslmode=require",
-      }).localDatabase,
-    ).toBe(false);
-    expect(
-      loadEnvironment({ ...base, LOCAL_FILE_STORE: "false" }).localFileStore,
-    ).toBe(false);
+        RESEND_API_KEY: "re_test",
+        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+      }).production,
+    ).toBe(true);
     for (const value of ["FALSE", "1", "yes", "", " true "])
-      expect(() => loadEnvironment({ ...base, LOCAL_DATABASE: value })).toThrow(
-        "LOCAL_DATABASE must be true or false",
+      expect(() => loadEnvironment({ ...base, NODE_ENV: value })).toThrow(
+        "NODE_ENV must be development, test, or production",
       );
-    for (const value of ["FALSE", "0", "no", "", " true "])
-      expect(() =>
-        loadEnvironment({ ...base, LOCAL_FILE_STORE: value }),
-      ).toThrow("LOCAL_FILE_STORE must be true or false");
+    for (const legacy of [
+      "LOCAL_DATABASE",
+      "LOCAL_FILE_STORE",
+      "PRODUCTION",
+      "PROD",
+    ])
+      expect(() => loadEnvironment({ ...base, [legacy]: "false" })).toThrow(
+        `Remove ${legacy}; deployment mode comes from NODE_ENV`,
+      );
   });
 
-  it("requires an explicit remote PostgreSQL URL when local database is disabled", () => {
+  it("requires an explicit remote PostgreSQL URL in production", () => {
     for (const databaseUrl of [
       undefined,
       "",
@@ -46,13 +52,19 @@ describe("authentication environment", () => {
       expect(() =>
         loadEnvironment({
           ...base,
-          LOCAL_DATABASE: "false",
+          NODE_ENV: "production",
           DATABASE_URL: databaseUrl,
         }),
       ).toThrow("DATABASE_URL");
   });
   it("requires one TLS-enforcing sslmode for managed database connections", () => {
     const databaseUrl = "postgresql://app:secret@db.example.com/chalktalk";
+    const production = {
+      ...base,
+      NODE_ENV: "production",
+      RESEND_API_KEY: "re_test",
+      EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+    };
     for (const suffix of [
       "",
       "?sslmode=disable",
@@ -63,8 +75,7 @@ describe("authentication environment", () => {
     ])
       expect(() =>
         loadEnvironment({
-          ...base,
-          LOCAL_DATABASE: "false",
+          ...production,
           DATABASE_URL: `${databaseUrl}${suffix}`,
         }),
       ).toThrow("sslmode");
@@ -72,8 +83,7 @@ describe("authentication environment", () => {
     for (const sslmode of ["require", "verify-ca", "verify-full"])
       expect(
         loadEnvironment({
-          ...base,
-          LOCAL_DATABASE: "false",
+          ...production,
           DATABASE_URL: `${databaseUrl}?sslmode=${sslmode}`,
         }).databaseUrl,
       ).toBe(`${databaseUrl}?sslmode=${sslmode}`);
@@ -82,8 +92,31 @@ describe("authentication environment", () => {
       loadEnvironment({ ...base, DATABASE_URL: databaseUrl }).databaseUrl,
     ).toBe(databaseUrl);
   });
-  it("uses SMTP locally and requires explicit Resend credentials in HTTPS mode", () => {
+  it("supports explicit local Resend and requires production credentials", () => {
     expect(loadEnvironment(base).email.provider).toBe("smtp");
+    expect(() => loadEnvironment({ ...base, NODE_ENV: "production" })).toThrow(
+      "DATABASE_URL",
+    );
+    const production = {
+      ...base,
+      NODE_ENV: "production",
+      DATABASE_URL:
+        "postgresql://app:secret@db.example.com/chalktalk?sslmode=require",
+    };
+    expect(() => loadEnvironment(production)).toThrow("RESEND_API_KEY");
+    expect(() =>
+      loadEnvironment({ ...production, RESEND_API_KEY: "re_test" }),
+    ).toThrow("EMAIL_FROM");
+    expect(() =>
+      loadEnvironment({ ...production, EMAIL_PROVIDER: "smtp" }),
+    ).toThrow("NODE_ENV=production requires Resend");
+    expect(
+      loadEnvironment({
+        ...production,
+        RESEND_API_KEY: "re_test",
+        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+      }).email.provider,
+    ).toBe("resend");
     expect(() =>
       loadEnvironment({ ...base, EMAIL_PROVIDER: "invalid" }),
     ).toThrow("EMAIL_PROVIDER");
@@ -189,7 +222,7 @@ describe("authentication environment", () => {
 describe("object storage environment", () => {
   it("requires explicit HTTPS S3 settings and credentials for managed storage", () => {
     const managed = {
-      LOCAL_FILE_STORE: "false",
+      NODE_ENV: "production",
       S3_ENDPOINT: "https://project.storage.supabase.co/storage/v1/s3",
       S3_BUCKET: "course-files",
       S3_REGION: "us-east-1",

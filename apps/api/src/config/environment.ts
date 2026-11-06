@@ -1,24 +1,31 @@
 import type { S3ClientConfig } from "@aws-sdk/client-s3";
 
-function localMode(
-  source: NodeJS.ProcessEnv,
-  name: "LOCAL_DATABASE" | "LOCAL_FILE_STORE",
-): boolean {
-  const value = source[name];
-  if (value === undefined || value === "true") return true;
-  if (value === "false") return false;
-  throw new Error(`${name} must be true or false`);
+function productionMode(source: NodeJS.ProcessEnv): boolean {
+  for (const legacy of [
+    "PRODUCTION",
+    "PROD",
+    "LOCAL_DATABASE",
+    "LOCAL_FILE_STORE",
+  ] as const)
+    if (source[legacy] !== undefined)
+      throw new Error(`Remove ${legacy}; deployment mode comes from NODE_ENV`);
+  if (
+    source.NODE_ENV !== undefined &&
+    !["development", "test", "production"].includes(source.NODE_ENV)
+  )
+    throw new Error("NODE_ENV must be development, test, or production");
+  return source.NODE_ENV === "production";
 }
 
 function remoteDatabaseUrl(value: string | undefined): string {
   if (!value)
-    throw new Error("DATABASE_URL is required when LOCAL_DATABASE=false");
+    throw new Error("DATABASE_URL is required when NODE_ENV=production");
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw new Error(
-      "DATABASE_URL must be a PostgreSQL URL when LOCAL_DATABASE=false",
+      "DATABASE_URL must be a PostgreSQL URL when NODE_ENV=production",
     );
   }
   if (
@@ -39,7 +46,7 @@ function remoteDatabaseUrl(value: string | undefined): string {
     !["require", "verify-ca", "verify-full"].includes(sslModes[0])
   )
     throw new Error(
-      "DATABASE_URL must specify sslmode=require, verify-ca, or verify-full when LOCAL_DATABASE=false",
+      "DATABASE_URL must specify sslmode=require, verify-ca, or verify-full when NODE_ENV=production",
     );
   return value;
 }
@@ -56,8 +63,8 @@ export function loadObjectStorageConfig(
   const endpoint = source.S3_ENDPOINT;
   const accessKeyId = source.S3_ACCESS_KEY_ID;
   const secretAccessKey = source.S3_SECRET_ACCESS_KEY;
-  const localFileStore = localMode(source, "LOCAL_FILE_STORE");
-  if (!localFileStore) {
+  const production = productionMode(source);
+  if (production) {
     for (const [name, value] of [
       ["S3_ENDPOINT", endpoint],
       ["S3_BUCKET", source.S3_BUCKET],
@@ -66,13 +73,13 @@ export function loadObjectStorageConfig(
       ["S3_SECRET_ACCESS_KEY", secretAccessKey],
     ])
       if (!value?.trim())
-        throw new Error(`${name} is required when LOCAL_FILE_STORE=false`);
+        throw new Error(`${name} is required when NODE_ENV=production`);
     let parsed: URL;
     try {
       parsed = new URL(endpoint!);
     } catch {
       throw new Error(
-        "S3_ENDPOINT must be an HTTPS URL when LOCAL_FILE_STORE=false",
+        "S3_ENDPOINT must be an HTTPS URL when NODE_ENV=production",
       );
     }
     if (
@@ -85,7 +92,7 @@ export function loadObjectStorageConfig(
       parsed.hash
     )
       throw new Error(
-        "S3_ENDPOINT must be a remote HTTPS URL when LOCAL_FILE_STORE=false",
+        "S3_ENDPOINT must be a remote HTTPS URL when NODE_ENV=production",
       );
   }
   if (Boolean(accessKeyId) !== Boolean(secretAccessKey))
@@ -113,8 +120,7 @@ export function loadObjectStorageConfig(
 
 export interface Environment {
   databaseUrl: string | undefined;
-  localDatabase: boolean;
-  localFileStore: boolean;
+  production: boolean;
   port: number;
   trustProxyHops: 0 | 1;
   frontendOrigins: ReadonlySet<string>;
@@ -162,14 +168,17 @@ export interface Environment {
 export function loadEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): Environment {
-  const localDatabase = localMode(source, "LOCAL_DATABASE");
-  const localFileStore = localMode(source, "LOCAL_FILE_STORE");
-  const databaseUrl = localDatabase
-    ? source.DATABASE_URL
-    : remoteDatabaseUrl(source.DATABASE_URL);
+  const production = productionMode(source);
+  const databaseUrl = production
+    ? remoteDatabaseUrl(source.DATABASE_URL)
+    : source.DATABASE_URL;
   const port = Number(source.PORT ?? "3000");
   const smtpPort = Number(source.SMTP_PORT ?? "1025");
-  const emailProvider = source.EMAIL_PROVIDER ?? "smtp";
+  if (production && source.EMAIL_PROVIDER && source.EMAIL_PROVIDER !== "resend")
+    throw new Error("NODE_ENV=production requires Resend");
+  const emailProvider = production
+    ? "resend"
+    : (source.EMAIL_PROVIDER ?? "smtp");
   if (emailProvider !== "smtp" && emailProvider !== "resend")
     throw new Error("EMAIL_PROVIDER must be smtp or resend");
   if (emailProvider === "resend" && !source.RESEND_API_KEY?.trim())
@@ -280,8 +289,7 @@ export function loadEnvironment(
 
   return {
     databaseUrl,
-    localDatabase,
-    localFileStore,
+    production,
     port,
     trustProxyHops,
     frontendOrigins,
