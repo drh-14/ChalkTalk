@@ -41,7 +41,7 @@ services:
       dockerfile: deployment/local/Dockerfile.dev
     working_dir: /app
     env_file:
-      - ${COMPOSE_ENV_FILE:-../../.env}
+      - ../../${COMPOSE_ENV_FILE:-.env}
     environment: &api-environment
       DATABASE_URL: postgresql://chalktalk:chalktalk@postgres:5432/chalktalk
       NODE_ENV: development
@@ -73,7 +73,7 @@ services:
     build: *development-build
     working_dir: /app
     env_file:
-      - ${COMPOSE_ENV_FILE:-../../.env}
+      - ../../${COMPOSE_ENV_FILE:-.env}
     environment: *api-environment
     command: npm run dev --workspace=@chalktalk/api
     volumes:
@@ -111,7 +111,7 @@ services:
     build: *development-build
     working_dir: /app
     env_file:
-      - ${COMPOSE_ENV_FILE:-../../.env}
+      - ../../${COMPOSE_ENV_FILE:-.env}
     environment: *api-environment
     command: npm run dev:worker --workspace=@chalktalk/api
     volumes:
@@ -137,7 +137,7 @@ services:
     build: *development-build
     working_dir: /app
     env_file:
-      - ${COMPOSE_ENV_FILE:-../../.env}
+      - ../../${COMPOSE_ENV_FILE:-.env}
     environment: *api-environment
     command: npm run dev:collab --workspace=@chalktalk/api
     volumes:
@@ -154,7 +154,7 @@ services:
     build: *development-build
     working_dir: /app
     env_file:
-      - ${COMPOSE_ENV_FILE:-../../.env}
+      - ../../${COMPOSE_ENV_FILE:-.env}
     environment: *api-environment
     command: npm run db:seed:mock
     volumes:
@@ -169,7 +169,7 @@ services:
     build: *development-build
     working_dir: /app
     env_file:
-      - ${COMPOSE_ENV_FILE:-../../.env}
+      - ../../${COMPOSE_ENV_FILE:-.env}
     environment:
       VITE_API_PROXY_TARGET: http://api:3000
       VITE_COLLABORATION_PROXY_TARGET: ws://collaboration:3100

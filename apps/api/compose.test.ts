@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 15_000 });
@@ -38,7 +38,7 @@ function renderCompose(
       env: {
         ...process.env,
         COMPOSE_PROFILES: profile,
-        COMPOSE_ENV_FILE: "../../.env.example",
+        COMPOSE_ENV_FILE: ".env.example",
         SEAWEEDFS_ACCESS_KEY_ID: credentials?.accessKey ?? "",
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
         AWS_ACCESS_KEY_ID: ambientAws?.accessKey ?? "",
@@ -78,6 +78,44 @@ function renderProductionCompose() {
 }
 
 describe("default Compose object storage", () => {
+  it("resolves default and overridden environment files from the repository root", () => {
+    for (const envFile of [undefined, ".env.example"]) {
+      const output = execFileSync(
+        "docker",
+        [
+          "compose",
+          "--env-file",
+          ".env.example",
+          "--profile",
+          "app",
+          "config",
+          "--no-env-resolution",
+          "--format",
+          "json",
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: { ...process.env, COMPOSE_ENV_FILE: envFile ?? "" },
+        },
+      );
+      const configuration = JSON.parse(output) as {
+        services: Record<string, { env_file: Array<{ path: string }> }>;
+      };
+      for (const service of [
+        "migrate",
+        "api",
+        "worker",
+        "collaboration",
+        "seed-mock",
+        "web",
+      ])
+        expect(configuration.services[service].env_file).toEqual([
+          { path: resolve(process.cwd(), envFile ?? ".env") },
+        ]);
+    }
+  });
+
   it("keeps checkout-derived project and volume names for local commands", () => {
     for (const files of [
       [],
@@ -92,7 +130,7 @@ describe("default Compose object storage", () => {
           env: {
             ...process.env,
             COMPOSE_PROJECT_NAME: "",
-            COMPOSE_ENV_FILE: "../../.env.example",
+            COMPOSE_ENV_FILE: ".env.example",
           },
         },
       );
