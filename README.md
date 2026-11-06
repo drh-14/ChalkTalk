@@ -156,7 +156,7 @@ The command fetches one request per second, so a large class takes several minut
 Ordinary full-text and fuzzy search needs no external service. To add semantic matching, set `EMBEDDING_API_KEY` for an OpenAI-compatible embeddings endpoint in the ignored `.env` (and optionally `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL`), then use the explicit pgvector override:
 
 ```bash
-docker compose -f deployment/local/compose.yml -f deployment/local/compose.semantic.yml --profile app up --build --wait
+docker compose -f docker-compose.yml -f deployment/local/compose.semantic.yml --profile app up --build --wait
 ```
 
 This runs the optional vector migration. Do not switch an existing populated PostgreSQL volume between the ordinary and pgvector images without a migration/backup plan. Search falls back to lexical/fuzzy when the optional provider, key, or vector schema is unavailable.

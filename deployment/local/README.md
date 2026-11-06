@@ -4,4 +4,4 @@ From the repository root, copy `.env.example` to the ignored `.env`, fill `AUTH_
 
 This stack runs PostgreSQL and SeaweedFS locally. API and worker send real emails through Resend HTTPS; there is no Mailpit container. Do not use real recipients in automated tests. `RESEND_API_BASE_URL` may point to a mock origin for isolated tests, but normal development should omit it.
 
-The optional semantic-search override is `docker compose -f deployment/local/compose.yml -f deployment/local/compose.semantic.yml --profile app up --build --wait`.
+The optional semantic-search override is `docker compose -f docker-compose.yml -f deployment/local/compose.semantic.yml --profile app up --build --wait`.

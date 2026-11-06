@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { basename } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 15_000 });
@@ -77,6 +78,39 @@ function renderProductionCompose() {
 }
 
 describe("default Compose object storage", () => {
+  it("keeps checkout-derived project and volume names for local commands", () => {
+    for (const files of [
+      [],
+      ["-f", "docker-compose.yml", "-f", "deployment/local/compose.semantic.yml"],
+    ]) {
+      const output = execFileSync(
+        "docker",
+        ["compose", "--env-file", ".env.example", ...files, "config", "--format", "json"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            COMPOSE_PROJECT_NAME: "",
+            COMPOSE_ENV_FILE: "../../.env.example",
+          },
+        },
+      );
+      const configuration = JSON.parse(output) as {
+        name: string;
+        volumes: Record<string, { name: string }>;
+      };
+      const project = basename(process.cwd()).toLowerCase();
+      expect(configuration.name).toBe(project);
+      expect(configuration.volumes["postgres-data"].name).toBe(
+        `${project}_postgres-data`,
+      );
+      expect(configuration.volumes["seaweedfs-data"].name).toBe(
+        `${project}_seaweedfs-data`,
+      );
+    }
+  });
+
   it("starts a pinned single-node SeaweedFS service with localhost S3 and a named data volume", () => {
     const configuration = renderCompose();
     const seaweedfs = configuration.services.seaweedfs;
