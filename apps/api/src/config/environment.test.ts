@@ -68,7 +68,7 @@ describe("authentication environment", () => {
         ...base,
         NODE_ENV: "production",
         DATABASE_URL:
-          "postgresql://app:secret@db.example.com:5432/chalktalk?sslmode=require",
+          "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=require",
         RESEND_API_KEY: "re_test",
         EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
       }).production,
@@ -97,10 +97,10 @@ describe("authentication environment", () => {
       undefined,
       "",
       "not-a-url",
-      "http://db.example.com/chalktalk",
+      "http://db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk",
       "postgresql://localhost/chalktalk",
       "postgresql://app:secret@127.0.0.1/chalktalk",
-      "postgresql://app@db.example.com/chalktalk",
+      "postgresql://app@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk",
       "postgresql://app:secret@db.example.com/",
     ])
       expect(() =>
@@ -112,7 +112,7 @@ describe("authentication environment", () => {
       ).toThrow("DATABASE_URL");
   });
   it("requires one TLS-enforcing sslmode for managed database connections", () => {
-    const databaseUrl = "postgresql://app:secret@db.example.com/chalktalk";
+    const databaseUrl = "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk";
     const production = {
       ...base,
       NODE_ENV: "production",
@@ -146,6 +146,34 @@ describe("authentication environment", () => {
       loadEnvironment({ ...base, DATABASE_URL: databaseUrl }).databaseUrl,
     ).toBe(databaseUrl);
   });
+  it("accepts only Supabase direct and session-pooler database destinations", () => {
+    const production = {
+      ...base,
+      NODE_ENV: "production",
+      RESEND_API_KEY: "re_test",
+      EMAIL_FROM: "sender@example.edu",
+    };
+    for (const databaseUrl of [
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require",
+      "postgresql://custom_role:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=verify-full",
+      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require",
+      "postgresql://custom_role.abcdefghijklmnopqrst:secret@aws-12-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-ca",
+    ])
+      expect(loadEnvironment({ ...production, DATABASE_URL: databaseUrl }).databaseUrl).toBe(databaseUrl);
+    for (const databaseUrl of [
+      "postgresql://postgres:secret@db.example.com:5432/postgres?sslmode=require",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co.evil.test:5432/postgres?sslmode=require",
+      "postgresql://postgres:secret@db.short.supabase.co:5432/postgres?sslmode=require",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:6543/postgres?sslmode=require",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co/postgres?sslmode=require",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require&host=evil.test",
+      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require",
+      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com.evil.test:5432/postgres?sslmode=require",
+      "postgresql://postgres.otherprojectxxxxxxxx:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require#fragment",
+      "postgresql://postgres:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require",
+    ])
+      expect(() => loadEnvironment({ ...production, DATABASE_URL: databaseUrl })).toThrow("DATABASE_URL");
+  });
   it("supports explicit local Resend and requires production credentials", () => {
     expect(loadEnvironment(base).email.provider).toBe("smtp");
     expect(() => loadEnvironment({ ...base, NODE_ENV: "production" })).toThrow(
@@ -155,7 +183,7 @@ describe("authentication environment", () => {
       ...base,
       NODE_ENV: "production",
       DATABASE_URL:
-        "postgresql://app:secret@db.example.com/chalktalk?sslmode=require",
+        "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=require",
     };
     expect(() => loadEnvironment(production)).toThrow("RESEND_API_KEY");
     expect(() =>
@@ -229,7 +257,7 @@ describe("authentication environment", () => {
       ...base,
       NODE_ENV: "production",
       DATABASE_URL:
-        "postgresql://app:secret@db.example.com/chalktalk?sslmode=require",
+        "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=require",
       RESEND_API_KEY: "re_test",
       EMAIL_FROM: "ChalkTalk <noreply@joinchalktalk.com>",
     };
@@ -301,7 +329,8 @@ describe("object storage environment", () => {
   it("requires explicit HTTPS S3 settings and credentials for managed storage", () => {
     const managed = {
       NODE_ENV: "production",
-      S3_ENDPOINT: "https://project.storage.supabase.co/storage/v1/s3",
+      S3_ENDPOINT: "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
+      DATABASE_URL: "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require",
       S3_BUCKET: "course-files",
       S3_REGION: "us-east-1",
       S3_ACCESS_KEY_ID: "server-only-key",
@@ -331,14 +360,34 @@ describe("object storage environment", () => {
         loadObjectStorageConfig({ ...managed, [missing]: undefined }),
       ).toThrow(missing);
     for (const endpoint of [
-      "http://project.storage.supabase.co/storage/v1/s3",
+      "http://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
       "https://localhost:8333",
-      "https://user:pass@project.storage.supabase.co/storage/v1/s3",
+      "https://user:pass@abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
       "not-a-url",
+      "https://abcdefghijklmnopqrst.storage.supabase.co.evil.test/storage/v1/s3",
+      "https://abcdefghijklmnopqrst.storage.supabase.co:8443/storage/v1/s3",
+      "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3/",
+      "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3?x=1",
+      "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3#fragment",
+      "https://zzzzzzzzzzzzzzzzzzzz.storage.supabase.co/storage/v1/s3",
+      "https://short.storage.supabase.co/storage/v1/s3",
     ])
       expect(() =>
         loadObjectStorageConfig({ ...managed, S3_ENDPOINT: endpoint }),
       ).toThrow("S3_ENDPOINT");
+    expect(
+      loadObjectStorageConfig({
+        ...managed,
+        S3_ENDPOINT: "https://abcdefghijklmnopqrst.supabase.co/storage/v1/s3",
+      }).endpoint,
+    ).toBe("https://abcdefghijklmnopqrst.supabase.co/storage/v1/s3");
+    expect(() => loadObjectStorageConfig({ ...managed, DATABASE_URL: undefined })).toThrow("DATABASE_URL");
+    expect(() =>
+      loadObjectStorageConfig({
+        ...managed,
+        DATABASE_URL: "postgresql://postgres.zzzzzzzzzzzzzzzzzzzz:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require",
+      }),
+    ).toThrow("S3_ENDPOINT");
   });
   it("uses the SDK credential chain for managed S3 without a custom endpoint", () => {
     expect(

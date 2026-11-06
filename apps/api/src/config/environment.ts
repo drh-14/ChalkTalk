@@ -21,7 +21,7 @@ function productionMode(source: NodeJS.ProcessEnv): boolean {
   return source.NODE_ENV === "production";
 }
 
-function remoteDatabaseUrl(value: string | undefined): string {
+function supabaseDatabaseProjectRef(value: string | undefined): string {
   if (!value)
     throw new Error("DATABASE_URL is required when NODE_ENV=production");
   let url: URL;
@@ -34,25 +34,45 @@ function remoteDatabaseUrl(value: string | undefined): string {
   }
   if (
     !["postgres:", "postgresql:"].includes(url.protocol) ||
-    !url.hostname ||
-    ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
     !url.username ||
     !url.password ||
     url.pathname === "/" ||
-    !url.pathname
+    !url.pathname ||
+    url.hash
   )
     throw new Error(
-      "DATABASE_URL must be a remote PostgreSQL URL with credentials and database",
+      "DATABASE_URL must be a PostgreSQL URL with credentials and database",
+    );
+  const direct = /^db\.([a-z0-9]{20})\.supabase\.co$/.exec(url.hostname);
+  const pooler = /^aws-\d+-[a-z]{2}(?:-[a-z]+)+-\d+\.pooler\.supabase\.com$/.test(
+    url.hostname,
+  );
+  const poolerUsername = /^(.+)\.([a-z0-9]{20})$/.exec(
+    url.username,
+  );
+  if (
+    url.port !== "5432" ||
+    (!direct && !pooler) ||
+    (pooler && !poolerUsername)
+  )
+    throw new Error(
+      "DATABASE_URL must use a Supabase direct or session-pooler endpoint on port 5432",
     );
   const sslModes = url.searchParams.getAll("sslmode");
   if (
     sslModes.length !== 1 ||
+    [...url.searchParams.keys()].some((key) => key !== "sslmode") ||
     !["require", "verify-ca", "verify-full"].includes(sslModes[0])
   )
     throw new Error(
       "DATABASE_URL must specify sslmode=require, verify-ca, or verify-full when NODE_ENV=production",
     );
-  return value;
+  return direct ? direct[1] : poolerUsername![2];
+}
+
+function remoteDatabaseUrl(value: string | undefined): string {
+  supabaseDatabaseProjectRef(value);
+  return value!;
 }
 
 export function loadObjectStorageConfig(
@@ -86,17 +106,22 @@ export function loadObjectStorageConfig(
         "S3_ENDPOINT must be an HTTPS URL when NODE_ENV=production",
       );
     }
+    const storageHost = /^([a-z0-9]{20})(?:\.storage)?\.supabase\.co$/.exec(
+      parsed.hostname,
+    );
     if (
       parsed.protocol !== "https:" ||
-      !parsed.hostname ||
-      ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname) ||
+      !storageHost ||
+      parsed.port ||
+      parsed.pathname !== "/storage/v1/s3" ||
       parsed.username ||
       parsed.password ||
       parsed.search ||
-      parsed.hash
+      parsed.hash ||
+      storageHost[1] !== supabaseDatabaseProjectRef(source.DATABASE_URL)
     )
       throw new Error(
-        "S3_ENDPOINT must be a remote HTTPS URL when NODE_ENV=production",
+        "S3_ENDPOINT must be a same-project Supabase HTTPS S3 URL when NODE_ENV=production",
       );
   }
   if (Boolean(accessKeyId) !== Boolean(secretAccessKey))
