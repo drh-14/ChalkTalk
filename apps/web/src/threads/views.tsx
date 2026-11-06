@@ -674,7 +674,11 @@ export function CourseThreads(props: Props) {
           </button>
         </p>
       )}
-      {loading && <p role="status">Loading Threads…</p>}
+      {loading && (
+        <p role="status" className="loading-line">
+          Loading Threads…
+        </p>
+      )}
       {!boardId && (
         <>
           <div className="threads-list" aria-label="Public threads">

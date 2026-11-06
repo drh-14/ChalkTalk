@@ -206,7 +206,7 @@ export function CourseHome({
   if (!courses)
     return (
       <section className="courses-card" aria-live="polite">
-        Loading your courses…
+        <span className="loading-line">Loading your courses…</span>
       </section>
     );
   return (
@@ -728,11 +728,13 @@ export function CourseDetail({
   }
   if (!course || !members || !ownMembership)
     return (
-      <section className="course-detail loading" aria-live="polite">
+      <section className="course-detail" aria-live="polite">
         {error ? (
           <p role="alert">{error}</p>
         ) : (
-          <p role="status">Loading course settings…</p>
+          <p role="status" className="loading-line">
+            Loading course settings…
+          </p>
         )}
         {error && (
           <button className="text-button" onClick={() => refresh()}>

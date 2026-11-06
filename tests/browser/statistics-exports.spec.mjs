@@ -72,6 +72,24 @@ async function open(page) {
           generatedAt: "2026-10-21T12:00:00Z",
         },
       });
+    if (url.pathname === "/api/v1/courses/course-1/statistics/pulse")
+      return respond({
+        data: {
+          courseId: "course-1",
+          timeZone: "UTC",
+          firstQuestionAt: null,
+          lastQuestionAt: null,
+          questions: 0,
+          answered: 0,
+          unanswered: 0,
+          medianFirstAnswerMinutes: null,
+          hours: Array.from({ length: 7 }, () => Array(24).fill(0)),
+          weeks: [],
+          topics: [],
+          helpers: [],
+          generatedAt: "2026-10-21T12:00:00Z",
+        },
+      });
     if (url.pathname === "/api/v1/courses/course-1/statistics/students")
       return respond({
         data: [
@@ -100,6 +118,8 @@ async function open(page) {
         body: "date,questions_created,answers_created,posts_viewed\r\n2026-10-21,1,0,2\r\n",
       });
     }
+    if (url.pathname === "/api/v1/courses/course-1/threads/unread-count")
+      return respond({ data: { count: 0 } });
     if (url.pathname === "/api/v1/users/me/notifications/unread-count")
       return respond({ data: { count: 0 } });
     if (url.pathname === "/api/v1/courses")
@@ -112,6 +132,8 @@ async function open(page) {
   await expect(
     page.getByRole("heading", { name: "Course statistics" }),
   ).toBeVisible();
+  // Exports belong to the Activity view; Course pulse is the default.
+  await page.getByRole("button", { name: "Activity" }).click();
   return downloads;
 }
 

@@ -367,7 +367,7 @@ export function SessionView({
     );
   if (!session)
     return (
-      <p className="session-view" role="status">
+      <p className="session-view loading-line" role="status">
         Loading session…
       </p>
     );

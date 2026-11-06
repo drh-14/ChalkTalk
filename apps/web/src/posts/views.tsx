@@ -73,6 +73,7 @@ import {
   type PostStatus,
 } from "./types.js";
 import { EmptyState } from "../app/EmptyState.js";
+import { FeedSkeleton, PostSkeleton } from "../app/Loading.js";
 
 /** Builds the course feed request; a search always sends its sort, otherwise only a non-default one. */
 function feedOptions(
@@ -1406,7 +1407,11 @@ function Composer({
       {restoredDraft && (
         <p role="status">Saved draft restored for this course.</p>
       )}
-      {loadingDraft && <p role="status">Loading saved draft…</p>}
+      {loadingDraft && (
+        <p role="status" className="loading-line">
+          Loading saved draft…
+        </p>
+      )}
       {loadingDraft && draftError && (
         <button
           type="button"
@@ -1999,6 +2004,8 @@ type DiscussionProps = {
   filters?: FeedFilters;
   onFiltersChange?: (filters: FeedFilters) => void;
   onBeforeLeaveChange?: (guard: () => boolean) => void;
+  /** Whether the viewer is course staff, when the caller already knows. */
+  staff?: boolean;
 };
 
 export function Discussion(props: DiscussionProps) {
@@ -2452,6 +2459,7 @@ function DiscussionContent({
   filters: routeFilters,
   onFiltersChange,
   onBeforeLeaveChange,
+  staff: knownStaff,
 }: DiscussionProps) {
   const [localCourse, setCourse] = useState<Course>();
   const course = sharedCourse ?? localCourse;
@@ -2462,7 +2470,8 @@ function DiscussionContent({
     () => new Set(),
   );
   const [mergedItems, setMergedItems] = useState<MergedPost[]>([]);
-  const [staff, setStaff] = useState(false);
+  // Start from the caller's answer so staff-only sidebar entries do not pop in.
+  const [staff, setStaff] = useState(knownStaff ?? false);
   const [folders, setFolders] = useState<PostFolder[]>([]);
   const [folderError, setFolderError] = useState("");
   const [folderCycle, setFolderCycle] = useState(0);
@@ -2566,6 +2575,9 @@ function DiscussionContent({
   }, []);
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
+  // Scrolling near the end of the feed loads the next page automatically.
+  const feedEnd = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<() => void>(() => {});
   const currentFeed = useRef(0);
   const activeFilters = onFiltersChange ? (routeFilters ?? {}) : localFilters;
   const activeFiltersRef = useRef(activeFilters);
@@ -2902,6 +2914,43 @@ function DiscussionContent({
     };
   }, [courseId, postView, selectedReviewId]);
 
+  useEffect(() => {
+    const end = feedEnd.current;
+    if (
+      !end ||
+      !cursor ||
+      pageError ||
+      typeof IntersectionObserver === "undefined"
+    )
+      return;
+    // The feed scrolls inside its own pane on wide screens; on narrow ones
+    // the page scrolls instead. Re-observing after every page re-checks a
+    // still-visible end marker.
+    const pane = end.closest<HTMLElement>(".post-list-scroll");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting))
+          loadMoreRef.current();
+      },
+      {
+        root: pane && pane.scrollHeight > pane.clientHeight + 1 ? pane : null,
+        rootMargin: "300px 0px",
+      },
+    );
+    observer.observe(end);
+    return () => observer.disconnect();
+  }, [cursor, pageError, pagePending, loading]);
+  loadMoreRef.current = loadMore;
+  /** Switches between the feed and staff duplicate review, guarding drafts. */
+  function switchPostView(view: "posts" | "duplicates") {
+    if (view === postView) return true;
+    if (!leaveComposer()) return false;
+    setSelectedReviewId(undefined);
+    setReviewDetail(undefined);
+    setReviewDetailError("");
+    setPostView(view);
+    return true;
+  }
   function loadMore() {
     if (!cursor || pageBusy.current) return;
     pageBusy.current = true;
@@ -3396,20 +3445,40 @@ function DiscussionContent({
             >
               <ChoiceGroup
                 name="Show"
-                value={filter}
-                disabled={postView === "duplicates"}
+                value={postView === "duplicates" ? "" : filter}
                 choices={filterOptions.map((item) => ({
                   value: item.key,
                   label: item.ariaLabel ?? item.label,
                   nested: item.nested,
                 }))}
                 onChange={(key) => {
+                  if (!switchPostView("posts")) return;
                   const next = { ...activeFilters };
                   if (key === "all") delete next.filter;
                   else next.filter = key;
                   changeFilters(next);
                 }}
               />
+              {staff && (
+                <button
+                  type="button"
+                  className={`filter-choice review-choice${postView === "duplicates" ? " active" : ""}`}
+                  aria-pressed={postView === "duplicates"}
+                  onClick={() =>
+                    switchPostView(
+                      postView === "duplicates" ? "posts" : "duplicates",
+                    )
+                  }
+                >
+                  <span>
+                    Duplicates
+                    <span className="visually-hidden"> (merged posts)</span>
+                  </span>
+                  <span className="review-choice-note" aria-hidden="true">
+                    Staff
+                  </span>
+                </button>
+              )}
             </FilterSection>
             <FilterSection
               name="Sort by"
@@ -3634,52 +3703,12 @@ function DiscussionContent({
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                {filtersCollapsed ? (
-                  <>
-                    <path d="m6 7 5 5-5 5" />
-                    <path d="m12 7 5 5-5 5" />
-                  </>
-                ) : (
-                  <>
-                    <path d="m12 7-5 5 5 5" />
-                    <path d="m18 7-5 5 5 5" />
-                  </>
-                )}
+                <path d="m12 7-5 5 5 5" />
+                <path d="m18 7-5 5 5 5" />
               </svg>
             </button>
           )}
           <section className="discussion-feed" aria-label="Posts">
-            {staff && (
-              <div
-                className="post-view-picker"
-                role="group"
-                aria-label="Post view"
-              >
-                <div className="post-view-segments">
-                  {(
-                    [
-                      ["posts", "Active"],
-                      ["duplicates", "Duplicate"],
-                    ] as const
-                  ).map(([view, label]) => (
-                    <button
-                      key={view}
-                      type="button"
-                      aria-pressed={postView === view}
-                      onClick={() => {
-                        if (view !== postView && !leaveComposer()) return;
-                        setSelectedReviewId(undefined);
-                        setReviewDetail(undefined);
-                        setReviewDetailError("");
-                        setPostView(view);
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             <div className="discussion-toolbar">
               <div role="search" className="search-field">
                 <label className="visually-hidden" htmlFor="post-search">
@@ -3737,7 +3766,8 @@ function DiscussionContent({
               {postView === "posts" &&
                 !loading &&
                 !feedError &&
-                items.some((item) => item.unread && item.id !== postId) && (
+                items.length > 0 &&
+                (items.some((item) => item.unread && item.id !== postId) ? (
                   <div className="feed-read-bar">
                     <span>
                       {
@@ -3755,7 +3785,24 @@ function DiscussionContent({
                       Mark all read
                     </button>
                   </div>
-                )}
+                ) : (
+                  <p className="feed-caught-up">
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="14"
+                      height="14"
+                      aria-hidden="true"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                    All caught up
+                  </p>
+                ))}
               {newPostCount > 0 &&
                 postView === "posts" &&
                 !loading &&
@@ -3776,7 +3823,7 @@ function DiscussionContent({
               tabIndex={0}
             >
               {loading ? (
-                <p role="status">Loading posts…</p>
+                <FeedSkeleton />
               ) : feedError ? (
                 <>
                   <p role="alert">{feedError}</p>
@@ -3987,6 +4034,7 @@ function DiscussionContent({
                         : "Load more posts"}
                   </button>
                   {pageError && <p role="alert">{pageError}</p>}
+                  <div ref={feedEnd} className="feed-end" aria-hidden="true" />
                 </>
               )}
               {items.length > 0 && !loading && !feedError && askOffer && (
@@ -4065,7 +4113,7 @@ function DiscussionContent({
                   reviewDetailError ? (
                     <p role="alert">{reviewDetailError}</p>
                   ) : !reviewDetail || reviewDetail.id !== selectedReviewId ? (
-                    <p role="status">Loading duplicate…</p>
+                    <PostSkeleton label="Loading duplicate…" />
                   ) : (
                     <article>
                       <p className="post-kind">
@@ -4144,7 +4192,7 @@ function DiscussionContent({
                   ) : !detail ||
                     detail.id !== postId ||
                     detail.courseId !== courseId ? (
-                    <p role="status">Loading post…</p>
+                    <PostSkeleton />
                   ) : detail.deleted ? (
                     <p>This post was deleted.</p>
                   ) : (

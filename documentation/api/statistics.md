@@ -130,6 +130,186 @@ curl --request GET '/api/v1/courses/course_123/statistics' \
 
 ---
 
+<a id="getCoursePulse"></a>
+
+### **`GET /api/v1/courses/{courseId}/statistics/pulse`**
+
+Summarizes every published, non-deleted question in the course, regardless of when the course record was created, so imported semesters are included. Weekday, hour, and week buckets use the requested IANA time zone. A question is answered when it has at least one non-deleted answer, and its first-answer time runs from question creation to that answer's creation. Helpers count distinct non-deleted answers each current member contributed to; anonymous answers never count, so no anonymous author is identified.
+
+**Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
+
+**Access:** Instructor or TA.
+
+**Request media:** None.
+
+#### Request headers
+
+`Accept: application/json` (optional): Requests the documented JSON response when the success response has a body.
+
+`Cookie` (required): Supplies the `__Host-chalktalk_session` opaque session credential.
+
+#### Path parameters
+
+`courseId` (string, required, 1–255 characters): Identifies the course resource.
+
+#### Query parameters
+
+`timeZone` (string, optional, at most 64 characters; default `UTC`): IANA time zone name used for weekday, hour, and week buckets, such as `America/New_York`.
+
+#### Request body
+
+None.
+
+#### Multipart parts
+
+None.
+
+**Success:** `200 OK`.
+
+**Response media:** `application/json`.
+
+#### Response headers
+
+`Cache-Control: private, no-store`: The summary is private to course staff and is not cached.
+
+#### Response body
+
+##### `data` (object, required): The course question pulse.
+
+`data.courseId` (string, required): Opaque stable identifier.
+
+`data.timeZone` (string, required): The IANA time zone used for buckets.
+
+`data.firstQuestionAt` (string or null, required): Creation time of the earliest counted question in ISO 8601 date-time format; `null` without questions.
+
+`data.lastQuestionAt` (string or null, required): Creation time of the latest counted question in ISO 8601 date-time format; `null` without questions.
+
+`data.questions` (integer, required): Counted questions.
+
+`data.answered` (integer, required): Counted questions with at least one non-deleted answer.
+
+`data.unanswered` (integer, required): Counted questions without a non-deleted answer.
+
+`data.medianFirstAnswerMinutes` (number or null, required): Median minutes from question creation to its first non-deleted answer, over answered questions; `null` when none is answered.
+
+`data.hours` (list of 7 lists of 24 integers, required): Questions created per local weekday, Sunday first, and local hour, 0 through 23.
+
+###### `data.weeks` (list of objects, required): One entry per local Sunday-to-Saturday week from the first to the last question's week, including weeks without questions; empty without questions.
+
+`data.weeks[].weekStart` (string, required): The week's local Sunday in ISO 8601 full-date format.
+
+`data.weeks[].questions` (integer, required): Questions created in the week.
+
+###### `data.topics` (list of objects, required): Up to 10 tags, ordered by question count and then name.
+
+`data.topics[].tag` (string, required): Tag name.
+
+`data.topics[].questions` (integer, required): Counted questions with the tag.
+
+`data.topics[].unanswered` (integer, required): Those questions without a non-deleted answer.
+
+`data.topics[].medianFirstAnswerMinutes` (number or null, required): Median first-answer minutes for the tag's answered questions; `null` when none is answered.
+
+###### `data.helpers` (list of objects, required): Up to 5 current members, ordered by answers and then display name.
+
+`data.helpers[].userId` (string, required): Opaque stable identifier.
+
+`data.helpers[].displayName` (string, required): The member's display name.
+
+`data.helpers[].role` (enum: student, ta, instructor, required): The member's course role.
+
+`data.helpers[].answers` (integer, required): Distinct non-deleted, non-anonymous answers the member contributed to.
+
+`data.generatedAt` (string, required): UTC timestamp in ISO 8601 date-time format.
+
+#### Example request
+
+```bash
+curl --request GET '/api/v1/courses/course_123/statistics/pulse?timeZone=America/New_York' \
+    --header 'Accept: application/json' \
+    --header 'Cookie: __Host-chalktalk_session=opaque_session'
+```
+
+#### Example success response
+
+The `hours` example is shortened; each response holds 7 lists of 24 counts.
+
+```json
+{
+  "data": {
+    "courseId": "course_123",
+    "timeZone": "America/New_York",
+    "firstQuestionAt": "2024-09-03T14:30:00Z",
+    "lastQuestionAt": "2024-09-24T02:00:00Z",
+    "questions": 3,
+    "answered": 2,
+    "unanswered": 1,
+    "medianFirstAnswerMinutes": 45,
+    "hours": [
+      [0, 0, "…"],
+      [0, 0, "…"]
+    ],
+    "weeks": [
+      { "weekStart": "2024-09-01", "questions": 2 },
+      { "weekStart": "2024-09-08", "questions": 0 },
+      { "weekStart": "2024-09-15", "questions": 0 },
+      { "weekStart": "2024-09-22", "questions": 1 }
+    ],
+    "topics": [
+      {
+        "tag": "hw1",
+        "questions": 2,
+        "unanswered": 0,
+        "medianFirstAnswerMinutes": 45
+      },
+      {
+        "tag": "hw2",
+        "questions": 1,
+        "unanswered": 1,
+        "medianFirstAnswerMinutes": null
+      }
+    ],
+    "helpers": [
+      {
+        "userId": "user_123",
+        "displayName": "Kevin Darby",
+        "role": "ta",
+        "answers": 13
+      }
+    ],
+    "generatedAt": "2026-11-06T14:30:00Z"
+  }
+}
+```
+
+#### Errors
+
+##### `400 Bad Request`
+
+`invalid_request`: The time zone is not a known IANA zone name or is longer than 64 characters.
+
+##### `401 Unauthorized`
+
+`authentication_required`: Authentication is missing or invalid.
+
+##### `403 Forbidden`
+
+`permission_denied`: A staff role is required.
+
+##### `404 Not Found`
+
+`not_found`: The course is absent or hidden.
+
+##### `500 Internal Server Error`
+
+`internal_error`: The server could not complete the request.
+
+##### `503 Service Unavailable`
+
+`service_unavailable`: A required service is temporarily unavailable.
+
+---
+
 <a id="listStudentStatistics"></a>
 
 ### **`GET /api/v1/courses/{courseId}/statistics/students`**

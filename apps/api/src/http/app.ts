@@ -1197,6 +1197,23 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/courses/:courseId/statistics/pulse",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        const data = await statistics().pulse(
+          param(request.params.courseId),
+          current.session.user.id,
+          request.query.timeZone,
+        );
+        response.set("Cache-Control", "private, no-store").json({ data });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/courses/:courseId/statistics/students",
     optionalReadOrigin,
     async (request, response, next) => {

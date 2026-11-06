@@ -544,7 +544,6 @@ export function CourseResources({
       )}
       {notice && <p role="status">{notice}</p>}
       {working === "file" && <p role="status">Uploading your file…</p>}
-      {loading && <p role="status">Loading course resources…</p>}
       {canUpload && (
         <div className="resource-management" hidden={!!activeQuery}>
           <form onSubmit={addSection} className="course-links-form">
@@ -753,6 +752,12 @@ export function CourseResources({
         </section>
       )}
       <div hidden={!!activeQuery}>
+        {/* Loading shows where the list will appear, so nothing above it moves. */}
+        {loading && (
+          <p role="status" className="loading-line">
+            Loading course resources…
+          </p>
+        )}
         {!loading && (
           <>
             <label className="resource-sort">

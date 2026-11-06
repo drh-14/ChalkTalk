@@ -96,3 +96,39 @@ export async function downloadStatisticsCsv(
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+export type Pulse = {
+  courseId: string;
+  timeZone: string;
+  firstQuestionAt: string | null;
+  lastQuestionAt: string | null;
+  questions: number;
+  answered: number;
+  unanswered: number;
+  medianFirstAnswerMinutes: number | null;
+  /** Seven weekday rows (Sunday first) of 24 hourly question counts. */
+  hours: number[][];
+  weeks: { weekStart: string; questions: number }[];
+  topics: {
+    tag: string;
+    questions: number;
+    unanswered: number;
+    medianFirstAnswerMinutes: number | null;
+  }[];
+  helpers: {
+    userId: string;
+    displayName: string;
+    role: string;
+    answers: number;
+  }[];
+  generatedAt: string;
+};
+export async function getPulse(
+  courseId: string,
+  timeZone: string,
+): Promise<Pulse> {
+  const result = await get<{ data: Pulse }>(
+    `/courses/${encodeURIComponent(courseId)}/statistics/pulse?timeZone=${encodeURIComponent(timeZone)}`,
+  );
+  return result.data;
+}

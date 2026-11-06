@@ -13,6 +13,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { getMathAnalysis } from "./mathDiagnostics.js";
 import { Discussion } from "./views.js";
 
+// Staff open merged duplicates from the Duplicates entry in the sidebar's
+// Show section; pressing it again returns to the posts feed.
+const DUPLICATES = { name: /^Duplicates/ };
+
 // These tests own their mocked requests; the live session lists have their own tests.
 vi.mock("../sessions/LiveSessionLists.js", () => ({
   YourLiveSessions: () => null,
@@ -971,34 +975,25 @@ it("keeps the controls above a focusable scroll region for posts and duplicates"
   expect(
     within(feed).getByRole("searchbox", { name: "Search posts" }),
   ).toBeTruthy();
-  const picker = within(feed).getByRole("group", { name: "Post view" });
-  expect(within(picker).queryByText("Post view")).toBeNull();
+  await screen.findByRole("button", DUPLICATES);
   expect(
-    within(picker)
-      .getByRole("button", { name: "Active" })
-      .getAttribute("aria-pressed"),
-  ).toBe("true");
-  expect(
-    within(picker)
-      .getByRole("button", { name: "Duplicate" })
-      .getAttribute("aria-pressed"),
+    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
   ).toBe("false");
-  await user.click(within(picker).getByRole("button", { name: "Duplicate" }));
   expect(
-    within(picker)
-      .getByRole("button", { name: "Duplicate" })
-      .getAttribute("aria-pressed"),
+    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
+  ).toBe("false");
+  await user.click(screen.getByRole("button", DUPLICATES));
+  expect(
+    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
   ).toBe("true");
   expect(
     within(listings).getByRole("button", { name: "Old question" }),
   ).toBeTruthy();
-  within(picker).getByRole("button", { name: "Active" }).focus();
+  screen.getByRole("button", DUPLICATES).focus();
   await user.keyboard("{Enter}");
   expect(
-    within(picker)
-      .getByRole("button", { name: "Active" })
-      .getAttribute("aria-pressed"),
-  ).toBe("true");
+    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
+  ).toBe("false");
   expect(await within(listings).findByText("First")).toBeTruthy();
 });
 
@@ -1039,10 +1034,10 @@ it("paginates duplicate posts with the active query and resets them after switch
       onNavigate={vi.fn()}
     />,
   );
-  const picker = await screen.findByRole("group", { name: "Post view" });
+  await screen.findByRole("button", DUPLICATES);
   const listings = screen.getByRole("region", { name: "Post listings" });
   await within(listings).findByText("Active post");
-  await user.click(within(picker).getByRole("button", { name: "Duplicate" }));
+  await user.click(screen.getByRole("button", DUPLICATES));
   await within(listings).findByRole("button", { name: "First duplicate" });
   await user.click(
     within(listings).getByRole("button", { name: "Load more posts" }),
@@ -1066,10 +1061,10 @@ it("paginates duplicate posts with the active query and resets them after switch
       .getAllByRole("button", { name: /duplicate$/ })
       .map((button) => button.textContent),
   ).toEqual(["First duplicate", "Second duplicate"]);
-  await user.click(within(picker).getByRole("button", { name: "Active" }));
+  await user.click(screen.getByRole("button", DUPLICATES));
   await within(listings).findByText("Active post");
   expect(within(listings).queryByText("Second duplicate")).toBeNull();
-  await user.click(within(picker).getByRole("button", { name: "Duplicate" }));
+  await user.click(screen.getByRole("button", DUPLICATES));
   await waitFor(() => expect(duplicateRequests()).toHaveLength(3));
   expect(duplicateRequests().at(-1)!.searchParams.has("cursor")).toBe(false);
   await within(listings).findByRole("button", { name: "First duplicate" });
@@ -1160,12 +1155,7 @@ it("lets staff review merged posts without exposing their body and unmerge one",
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(
-    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
-      "button",
-      { name: "Duplicate" },
-    ),
-  );
+  await user.click(await screen.findByRole("button", DUPLICATES));
   expect(await screen.findByText("Old question")).toBeTruthy();
   const listings = screen.getByRole("region", { name: "Post listings" });
   expect(
@@ -1204,12 +1194,7 @@ it("lets staff review merged posts without exposing their body and unmerge one",
       .getAllByRole("button", { name: /Earlier duplicate|Old question/ })
       .map((button) => button.getAttribute("aria-label")),
   ).toEqual(["Earlier duplicate"]);
-  await user.click(
-    within(screen.getByRole("group", { name: "Post view" })).getByRole(
-      "button",
-      { name: "Active" },
-    ),
-  );
+  await user.click(await screen.findByRole("button", DUPLICATES));
   await within(listings).findByText("Old question");
   expect(
     within(listings)
@@ -1265,12 +1250,7 @@ it("opens a duplicate card's canonical post in a new tab without replacing revie
       onNavigate={onNavigate}
     />,
   );
-  await user.click(
-    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
-      "button",
-      { name: "Duplicate" },
-    ),
-  );
+  await user.click(await screen.findByRole("button", DUPLICATES));
   const canonicalLink = await screen.findByRole("link", {
     name: "Canonical question",
   });
@@ -1339,12 +1319,7 @@ it("shows the selected duplicate's retained detail instead of the canonical post
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(
-    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
-      "button",
-      { name: "Duplicate" },
-    ),
-  );
+  await user.click(await screen.findByRole("button", DUPLICATES));
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   const card = screen
     .getByRole("button", { name: "Old question" })
@@ -1414,16 +1389,14 @@ it("does not show a late duplicate review after switching back to posts", async 
       onNavigate={vi.fn()}
     />,
   );
-  const picker = await screen.findByRole("group", { name: "Post view" });
-  await user.click(within(picker).getByRole("button", { name: "Duplicate" }));
+  await screen.findByRole("button", DUPLICATES);
+  await user.click(screen.getByRole("button", DUPLICATES));
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   await waitFor(() => expect(finishReview).toBeDefined());
-  await user.click(within(picker).getByRole("button", { name: "Active" }));
+  await user.click(screen.getByRole("button", DUPLICATES));
   expect(
-    within(picker)
-      .getByRole("button", { name: "Active" })
-      .getAttribute("aria-pressed"),
-  ).toBe("true");
+    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
+  ).toBe("false");
   finishReview!(
     json({
       data: {
@@ -1457,7 +1430,7 @@ it("does not offer merged-post review to students", async () => {
     />,
   );
   await screen.findByText("No posts yet.");
-  expect(screen.queryByRole("group", { name: "Post view" })).toBeNull();
+  expect(screen.queryByRole("button", DUPLICATES)).toBeNull();
 });
 
 it("only offers merging while staff are viewing posts", async () => {
@@ -1486,15 +1459,15 @@ it("only offers merging while staff are viewing posts", async () => {
   expect(
     await screen.findByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
-  const postView = screen.getByRole("group", { name: "Post view" });
-  await user.click(within(postView).getByRole("button", { name: "Duplicate" }));
+  await screen.findByRole("button", DUPLICATES);
+  await user.click(screen.getByRole("button", DUPLICATES));
   expect(
     screen.getByRole("heading", { name: "Select a duplicate post" }),
   ).toBeTruthy();
   expect(
     screen.queryByRole("button", { name: "Merge as duplicate" }),
   ).toBeNull();
-  await user.click(within(postView).getByRole("button", { name: "Active" }));
+  await user.click(screen.getByRole("button", DUPLICATES));
   expect(
     screen.getByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
@@ -1666,12 +1639,7 @@ it("lets staff find a canonical post and confirm a merge from post detail", asyn
           link.textContent?.match(/Unaffected post|Course cutoff guide/)?.[0],
       ),
   ).toEqual(["Unaffected post", "Course cutoff guide"]);
-  await user.click(
-    within(screen.getByRole("group", { name: "Post view" })).getByRole(
-      "button",
-      { name: "Duplicate" },
-    ),
-  );
+  await user.click(await screen.findByRole("button", DUPLICATES));
   expect(
     await within(listings).findByRole("button", {
       name: "Old cutoff question",
@@ -3099,12 +3067,7 @@ it("shows a duplicate's time in staff review detail but not on its review card",
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(
-    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
-      "button",
-      { name: "Duplicate" },
-    ),
-  );
+  await user.click(await screen.findByRole("button", DUPLICATES));
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   const detail = screen.getByRole("region", { name: "Post detail" });
   await waitFor(() => expect(timeIn(detail)?.textContent).toBe("2 hours ago"));
@@ -3661,17 +3624,18 @@ it("disables the sidebar filters in the staff duplicate view", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(
-    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
-      "button",
-      { name: "Duplicate" },
-    ),
-  );
+  await user.click(await screen.findByRole("button", DUPLICATES));
   const sidebar = screen.getByRole("complementary", { name: "Post filters" });
+  // Show stays usable, with nothing chosen, so picking a filter leaves review.
+  expect(
+    filterChoices("Show").every(
+      (input) => !input.matches(":disabled") && !input.checked,
+    ),
+  ).toBe(true);
+  expect(
+    filterChoices("Sort by").every((input) => input.matches(":disabled")),
+  ).toBe(true);
   for (const section of ["Show", "Sort by"] as const) {
-    expect(
-      filterChoices(section).every((input) => input.matches(":disabled")),
-    ).toBe(true);
     const header = within(sidebar).getByRole("button", { name: section });
     expect(header.matches(":disabled")).toBe(false);
     await user.click(header);
@@ -3989,12 +3953,7 @@ it("disables tag chips and the tag match in the staff duplicate view", async () 
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(
-    within(await screen.findByRole("group", { name: "Post view" })).getByRole(
-      "button",
-      { name: "Duplicate" },
-    ),
-  );
+  await user.click(await screen.findByRole("button", DUPLICATES));
   expect(
     screen
       .getByRole("button", { name: "Remove tag filter a" })
@@ -5330,7 +5289,7 @@ it("guards unsaved post edits when opening Create or switching duplicate views",
     (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
       .value,
   ).toBe("Note unsaved");
-  await user.click(screen.getByRole("button", { name: "Duplicate" }));
+  await user.click(screen.getByRole("button", DUPLICATES));
   expect(
     (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
       .value,

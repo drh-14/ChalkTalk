@@ -7,6 +7,7 @@ import {
   type StudentRow,
   type Summary,
 } from "./client.js";
+import { CoursePulse } from "./pulse.js";
 
 const periodLabels: Record<Period, string> = {
   "7d": "Last 7 days",
@@ -22,7 +23,53 @@ function responseTime(seconds: number | null) {
   return `${(seconds / 86400).toFixed(1)} days`;
 }
 
+type View = "pulse" | "activity";
+
 export function CourseStatistics({ courseId }: { courseId: string }) {
+  const [view, setView] = useState<View>("pulse");
+  return (
+    <section className="statistics-page" aria-labelledby="statistics-title">
+      <div className="statistics-heading">
+        <div>
+          <h2 id="statistics-title">Course statistics</h2>
+          <p>
+            {view === "pulse"
+              ? "When students ask, what they ask about, and who answers"
+              : "Discussion activity and current student participation"}
+          </p>
+        </div>
+        <div
+          className="statistics-views"
+          role="group"
+          aria-label="Statistics view"
+        >
+          {(
+            [
+              ["pulse", "Course pulse"],
+              ["activity", "Activity"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={view === value}
+              onClick={() => setView(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {view === "pulse" ? (
+        <CoursePulse courseId={courseId} />
+      ) : (
+        <ActivityStatistics courseId={courseId} />
+      )}
+    </section>
+  );
+}
+
+export function ActivityStatistics({ courseId }: { courseId: string }) {
   const [period, setPeriod] = useState<Period>("30d");
   const [cycle, setCycle] = useState(0);
   const [summary, setSummary] = useState<Summary>();
@@ -108,12 +155,8 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
     ) ?? []),
   );
   return (
-    <section className="statistics-page" aria-labelledby="statistics-title">
-      <div className="statistics-heading">
-        <div>
-          <h2 id="statistics-title">Course statistics</h2>
-          <p>Discussion activity and current student participation</p>
-        </div>
+    <>
+      <div className="statistics-activity-toolbar">
         <label>
           Period{" "}
           <select
@@ -130,22 +173,22 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
             ))}
           </select>
         </label>
-      </div>
-      <div className="statistics-exports">
-        <button
-          className="button"
-          disabled={!!exporting}
-          onClick={() => void download("daily")}
-        >
-          Download daily activity CSV
-        </button>
-        <button
-          className="button"
-          disabled={!!exporting}
-          onClick={() => void download("students")}
-        >
-          Download student roster CSV
-        </button>
+        <div className="statistics-exports">
+          <button
+            className="button"
+            disabled={!!exporting}
+            onClick={() => void download("daily")}
+          >
+            Download daily activity CSV
+          </button>
+          <button
+            className="button"
+            disabled={!!exporting}
+            onClick={() => void download("students")}
+          >
+            Download student roster CSV
+          </button>
+        </div>
       </div>
       {exportError && (
         <p className="form-message error" role="alert">
@@ -156,7 +199,11 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
         Recorded views begin when course statistics is enabled. Earlier view
         counts may be incomplete.
       </p>
-      {loading && <p role="status">Loading statistics…</p>}
+      {loading && (
+        <p role="status" className="loading-line">
+          Loading statistics…
+        </p>
+      )}
       {error && (
         <p className="form-message error" role="alert">
           {error}{" "}
@@ -290,6 +337,6 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
           </section>
         </>
       )}
-    </section>
+    </>
   );
 }

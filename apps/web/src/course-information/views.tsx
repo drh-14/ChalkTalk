@@ -203,7 +203,11 @@ function InformationPanel({ courseId, canEdit, csrfToken }: Props) {
           </button>
         )}
       </header>
-      {loading && <p role="status">Loading course information…</p>}
+      {loading && (
+        <p role="status" className="loading-line">
+          Loading course information…
+        </p>
+      )}
       {error && (
         <p role="alert" className="course-information-error">
           {error}
@@ -390,7 +394,11 @@ function StaffPanel({
           </button>
         </>
       )}
-      {!data && !error && <p role="status">Loading staff…</p>}
+      {!data && !error && (
+        <p role="status" className="loading-line">
+          Loading staff…
+        </p>
+      )}
       {data?.length === 0 && <p>No staff details are available.</p>}
       <div className="course-staff-grid">
         {data?.map((person) => (

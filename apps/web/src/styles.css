@@ -618,27 +618,60 @@ h2[tabindex="-1"]:focus {
   overflow: hidden;
   padding-inline: 0;
 }
+/* The filters toggle is one circle, level with search. Expanded, the full
+   circle sits on the sidebar's edge; collapsed, it slides to the page edge
+   so only its right half shows, with the arrows turned outward. */
 .filter-collapse-toggle {
   align-items: center;
   background: var(--surface-raised);
   border: 1px solid var(--line-strong);
-  border-radius: 50%;
+  border-radius: 999px;
   color: var(--accent-ink);
   cursor: pointer;
   display: flex;
-  height: 2rem;
+  height: 2.4rem;
   justify-content: center;
-  left: max(0px, calc(var(--filter-track-width) - 1rem));
-  padding: 0.25rem;
+  left: calc(var(--filter-track-width) - 1.2rem);
+  padding: 0;
   position: absolute;
-  top: 0.75rem;
-  transition: left 220ms ease;
-  width: 2rem;
+  top: 1.2rem;
+  transition:
+    left 220ms ease,
+    width 150ms ease,
+    border-radius 220ms ease;
+  width: 2.4rem;
   z-index: 2;
+}
+.filter-collapse-toggle:hover {
+  background: var(--surface);
 }
 .filter-collapse-toggle svg {
   height: 1rem;
+  transition: transform 220ms ease;
   width: 1rem;
+}
+.discussion-columns.filters-collapsed .filter-collapse-toggle {
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+  justify-content: flex-end;
+  left: 0;
+  padding-right: 0.2rem;
+  width: 1.5rem;
+}
+.discussion-columns.filters-collapsed
+  .filter-collapse-toggle:is(:hover, :focus-visible) {
+  width: 1.85rem;
+}
+.discussion-columns.filters-collapsed .filter-collapse-toggle svg {
+  transform: scaleX(-1);
+}
+/* The filter sidebar scrolls without drawing a scrollbar: it is a short
+   list, and a bar that appears on hover flashes as the pointer crosses it. */
+.discussion-columns .discussion-sidebar {
+  scrollbar-width: none;
+}
+.discussion-columns .discussion-sidebar::-webkit-scrollbar {
+  display: none;
 }
 .filter-collapse-toggle:focus-visible {
   outline: 3px solid var(--focus);
@@ -845,7 +878,7 @@ h2[tabindex="-1"]:focus {
 }
 .discussion-columns.filters-collapsed .discussion-feed > .post-view-picker,
 .discussion-columns.filters-collapsed .discussion-feed > .discussion-toolbar {
-  margin-left: 2.5rem;
+  margin-left: 2.1rem;
 }
 .discussion-detail {
   background: var(--surface-raised);
@@ -1642,47 +1675,120 @@ h2[tabindex="-1"]:focus {
 .post-body-label {
   font-weight: 600;
 }
-.post-body-mode,
-.post-format-toolbar {
+/* One framed editor: Write/Preview tabs and an icon toolbar on top, the
+   text area, then a hint footer. */
+.editor-frame {
+  background: #fff;
+  border: 1px solid #b9cbbd;
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+.editor-frame:focus-within {
+  border-color: #487c60;
+  box-shadow: 0 0 0 3px rgba(31, 77, 62, 0.12);
+}
+.editor-bar {
+  align-items: center;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem;
+  gap: 0.25rem 0.75rem;
+  justify-content: space-between;
+  padding: 0 0.4rem;
+}
+.post-body-mode {
+  display: flex;
+  gap: 0.15rem;
+}
+.post-body-mode button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: -1px;
+  padding: 0.6rem 0.7rem 0.5rem;
+}
+.post-body-mode button:hover {
+  color: var(--ink);
+}
+.post-body-mode button[aria-pressed="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--ink);
+}
+.post-format-toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem;
+  padding: 0.25rem 0;
 }
 .post-format-toolbar[hidden] {
   display: none;
 }
-.post-body-mode button,
-.post-format-toolbar button {
-  border: 1px solid #b9cbbd;
-  background: #fff;
-  color: #284337;
-  border-radius: 0.4rem;
-  padding: 0.35rem 0.55rem;
-  font: inherit;
-  cursor: pointer;
+.post-format-group {
+  display: flex;
+  gap: 0.1rem;
 }
-.post-body-mode button[aria-pressed="true"] {
+.post-format-group + .post-format-group {
+  border-left: 1px solid var(--line);
+  margin-left: 0.2rem;
+  padding-left: 0.3rem;
+}
+.post-format-toolbar button {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: 0.35rem;
+  color: #3f5a4c;
+  cursor: pointer;
+  display: inline-flex;
+  height: 1.9rem;
+  justify-content: center;
+  padding: 0;
+  width: 1.9rem;
+}
+.post-format-toolbar button:hover:not(:disabled) {
   background: #e3efe7;
-  border-color: #487c60;
+  color: var(--ink);
+}
+.post-format-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .post-body-mode button:focus-visible,
-.post-format-toolbar button:focus-visible,
-.post-source-editor .cm-focused {
+.post-format-toolbar button:focus-visible {
   outline: 2px solid #276f4d;
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .post-source-editor .cm-editor {
-  min-height: 12rem;
-  max-height: 28rem;
-  overflow: auto;
-  border: 1px solid #b9cbbd;
-  border-radius: 0.5rem;
   background: #fff;
   font-size: 0.95rem;
+  max-height: 28rem;
+  min-height: 10rem;
+  overflow: auto;
+}
+.post-source-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.post-source-editor .cm-scroller {
+  font-family: inherit;
+  line-height: 1.55;
 }
 .post-source-editor .cm-content {
-  min-height: 11rem;
-  padding: 0.65rem;
+  min-height: 9rem;
+  padding: 0.7rem 0.8rem;
+}
+.editor-hint {
+  border-top: 1px solid var(--line);
+  color: var(--ink-muted);
+  display: block;
+  font-size: 0.78rem;
+  padding: 0.4rem 0.8rem;
 }
 .post-source-editor .invalid-math {
   text-decoration: underline wavy #c62828 2px;
@@ -1712,11 +1818,9 @@ h2[tabindex="-1"]:focus {
   margin: 0.3rem 0;
 }
 .post-preview {
-  min-height: 12rem;
-  padding: 0.65rem;
-  border: 1px solid #b9cbbd;
-  border-radius: 0.5rem;
   background: #fff;
+  min-height: 10rem;
+  padding: 0.7rem 0.8rem;
 }
 .post-markdown .katex-display {
   overflow-x: auto;
@@ -2160,8 +2264,11 @@ a {
   min-height: 0;
   padding: 0.45rem 0.9rem;
 }
+/* Beside the search field, New post darkens on hover instead of lifting
+   out of line. */
 .button.primary.create-post:hover:not(:disabled) {
-  background: #336d56;
+  background: var(--accent);
+  transform: none;
 }
 .button:focus-visible,
 .text-button:focus-visible,
@@ -4218,4 +4325,822 @@ main :is(.course-files, .course-information, .statistics-page) h3 {
 .course-information input[type="file"] {
   border: 0;
   padding: 0;
+}
+
+/* Statistics views: Course pulse and Activity. */
+.statistics-views {
+  display: inline-flex;
+}
+.statistics-views button {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+}
+.statistics-views button:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+.statistics-views button:last-child {
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.statistics-views button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.statistics-views button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  position: relative;
+}
+.statistics-activity-toolbar {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+  margin: var(--space-4) 0 var(--space-3);
+}
+.statistics-activity-toolbar label {
+  display: grid;
+  gap: 0.3rem;
+  font-weight: 600;
+}
+.statistics-activity-toolbar select {
+  background: #fff;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.5rem;
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+  min-height: 2.5rem;
+  min-width: 11rem;
+  padding: 0.45rem 0.7rem;
+}
+.statistics-activity-toolbar .statistics-exports {
+  margin: 0;
+}
+
+/* Course pulse. The heatmap uses one green ramp from light (few) to dark (many). */
+.pulse {
+  --pulse-0: #efede4;
+  --pulse-1: #dcebe0;
+  --pulse-2: #bcd9c4;
+  --pulse-3: #93c0a1;
+  --pulse-4: #66a37d;
+  --pulse-5: #3d8161;
+  --pulse-6: #1f5c43;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: var(--space-4);
+}
+.pulse-meta {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  justify-content: space-between;
+}
+.pulse-span {
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+  margin: 0;
+}
+.pulse-tiles {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+}
+.pulse-tile {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  box-shadow: 0 2px 12px rgba(34, 31, 27, 0.04);
+  padding: 1.2rem;
+}
+.pulse-tile h3 {
+  color: var(--ink);
+  font-size: 1rem;
+  margin: 0;
+}
+.pulse-tile-value {
+  color: #25201b;
+  font-size: 1.5rem;
+  font-weight: 750;
+  line-height: 1.2;
+  margin: 0.5rem 0 0.2rem;
+}
+.pulse-tile p:last-child {
+  color: #625e57;
+  font-size: 0.9rem;
+  margin: 0;
+}
+.pulse-heatmap {
+  display: grid;
+  gap: 3px;
+  grid-template-columns: 2.5rem repeat(24, minmax(0, 1fr));
+  margin-top: var(--space-3);
+}
+.pulse-heatmap-row {
+  display: contents;
+}
+.pulse-day,
+.pulse-hour {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+.pulse-day {
+  align-self: center;
+}
+.pulse-hour {
+  text-align: left;
+}
+.pulse-cell {
+  background: var(--pulse-0);
+  height: 1.35rem;
+  border-radius: 3px;
+  display: block;
+  position: relative;
+}
+.pulse-cell.step-1 {
+  background: var(--pulse-1);
+}
+.pulse-cell.step-2 {
+  background: var(--pulse-2);
+}
+.pulse-cell.step-3 {
+  background: var(--pulse-3);
+}
+.pulse-cell.step-4 {
+  background: var(--pulse-4);
+}
+.pulse-cell.step-5 {
+  background: var(--pulse-5);
+}
+.pulse-cell.step-6 {
+  background: var(--pulse-6);
+}
+.pulse-scale {
+  align-items: center;
+  color: var(--ink-muted);
+  display: flex;
+  font-size: 0.75rem;
+  gap: 3px;
+  justify-content: flex-end;
+  margin: var(--space-3) 0 0;
+}
+.pulse-scale .pulse-cell {
+  height: 0.85rem;
+  width: 0.85rem;
+}
+.pulse-scale .pulse-cell:first-of-type {
+  margin-left: 0.35rem;
+}
+.pulse-scale .pulse-cell:last-of-type {
+  margin-right: 0.35rem;
+}
+/* Tooltips on hover and keyboard focus for cells and bars. */
+.pulse [data-tip]:is(:hover, :focus-visible)::after {
+  background: var(--ink);
+  border-radius: var(--radius-sm);
+  bottom: calc(100% + 6px);
+  color: #fffdf7;
+  content: attr(data-tip);
+  font-size: 0.75rem;
+  font-weight: 600;
+  left: 50%;
+  padding: 0.3rem 0.5rem;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 5;
+}
+.pulse [data-tip]:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+.pulse-cell[data-tip]:hover {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+.pulse-weeks {
+  align-items: stretch;
+  display: flex;
+  gap: 4px;
+  height: 10rem;
+  margin-top: var(--space-4);
+}
+.pulse-week {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.pulse-week-plot {
+  align-items: center;
+  border-bottom: 1px solid var(--line-strong);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.pulse-bar {
+  background: #66a37d;
+  border-radius: 4px 4px 0 0;
+  display: block;
+  max-width: 1.5rem;
+  min-height: 2px;
+  position: relative;
+  width: 60%;
+}
+.pulse-bar:hover,
+.pulse-bar:focus-visible {
+  background: #3d8161;
+}
+.pulse-bar.peak {
+  background: #1f5c43;
+}
+.pulse-peak-label {
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.pulse-week-label {
+  color: var(--ink-muted);
+  font-size: 0.7rem;
+  height: 1rem;
+  margin-top: 0.35rem;
+  overflow: visible;
+  white-space: nowrap;
+  width: 0;
+}
+.pulse-columns {
+  align-items: start;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+}
+.pulse-columns .statistics-card {
+  margin: 0;
+}
+.statistics-card table.pulse-topics {
+  min-width: 0;
+}
+.pulse-topics :is(th, td) {
+  padding: 0.6rem 0.5rem;
+}
+.pulse-topics td:nth-child(2),
+.pulse-topics td:last-child {
+  white-space: nowrap;
+}
+.pulse-inline-bar {
+  background: var(--pulse-0);
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.5rem;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+  width: 3.5rem;
+}
+.pulse-inline-bar > span {
+  background: #3d8161;
+  border-radius: 999px;
+  display: block;
+  height: 100%;
+}
+.pulse-helpers {
+  display: grid;
+  gap: 0.55rem;
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+}
+.pulse-helpers li {
+  align-items: center;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr) 1.75rem;
+}
+.pulse-helpers .pulse-inline-bar {
+  height: 0.65rem;
+  margin: 0;
+  width: 100%;
+}
+.pulse-helper-name {
+  align-items: center;
+  display: flex;
+  font-weight: 600;
+  gap: 0.4rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pulse-helper-name small {
+  background: var(--surface-sunken);
+  border-radius: 999px;
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.05rem 0.45rem;
+}
+.pulse-helper-count {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+.pulse-footnote {
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  margin: var(--space-3) 0 0;
+}
+@media (max-width: 640px) {
+  .pulse-heatmap {
+    gap: 2px;
+    grid-template-columns: 2rem repeat(24, minmax(0, 1fr));
+  }
+  .pulse-hour {
+    font-size: 0.6rem;
+  }
+}
+/* Two-column tables in table mode stay compact; tiles pair up on phones. */
+.pulse .statistics-card table:has(thead th:nth-child(2):last-child) {
+  max-width: 28rem;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .pulse-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pulse-tile {
+    padding: 0.9rem;
+  }
+  .pulse-tile-value {
+    font-size: 1.15rem;
+  }
+  .pulse-topics .pulse-inline-bar {
+    display: none;
+  }
+  .pulse-topics :is(th, td) {
+    padding: 0.55rem 0.35rem;
+  }
+}
+/* The page scrollbar matches the thin pane scrollbars. */
+html {
+  scrollbar-color: #a8b8ac transparent;
+  scrollbar-width: thin;
+}
+/* On wider screens the app bar stays in view; in-page jumps land below it. */
+@media (min-width: 701px) {
+  .app-bar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+  }
+  html {
+    scroll-padding-top: 4.5rem;
+  }
+}
+
+/* File pickers outside the resource pages match the secondary button. */
+main input[type="file"]::file-selector-button {
+  background: #e9eee5;
+  border: 0;
+  border-radius: 0.55rem;
+  color: var(--accent-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  margin-inline-end: 0.6rem;
+  padding: 0.5rem 0.95rem;
+}
+main input[type="file"]:hover::file-selector-button {
+  background: #dfe8db;
+}
+/* A composer's Cancel is a secondary button, not an answer action chip. */
+.response-composer .response-actions .text-button {
+  background: #e9eee5;
+  border: 0;
+  border-radius: 0.55rem;
+  color: var(--accent-ink);
+  font-size: 0.95rem;
+  min-height: 2.5rem;
+  padding: 0.55rem 1rem;
+}
+/* Composer fields read as one form with the framed editor. */
+.post-composer :is(input:not([type="checkbox"]), textarea, select) {
+  font-weight: 400;
+}
+.post-composer .post-title-input {
+  resize: none;
+}
+.post-composer form > .button.primary {
+  justify-self: start;
+  min-width: 9rem;
+}
+.post-composer .attachment-picker {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.post-preview-empty {
+  color: var(--ink-muted);
+  margin: 0;
+}
+.post-composer input[type="file"] {
+  background: none;
+  border: 0;
+  padding: 0;
+  width: auto;
+}
+/* The file picker is a compact button; the real input covers it invisibly
+   so keyboard, screen readers, and clicks still reach it. */
+.attachment-picker {
+  align-items: center;
+  background: #e9eee5;
+  border-radius: 0.55rem;
+  color: var(--accent-ink);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.875rem;
+  font-weight: 700;
+  gap: 0.4rem;
+  padding: 0.5rem 0.9rem;
+  position: relative;
+  width: fit-content;
+}
+.attachment-picker:hover {
+  background: #dfe8db;
+}
+.attachment-picker input[type="file"] {
+  cursor: pointer;
+  inset: 0;
+  opacity: 0;
+  position: absolute;
+  width: 100%;
+}
+.attachment-picker:has(input:focus-visible) {
+  outline: 2px solid #276f4d;
+  outline-offset: 2px;
+}
+.attachment-picker:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.attachment-selection ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+.attachment-selection li {
+  align-items: center;
+  background: var(--surface-sunken);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.82rem;
+  gap: 0.3rem;
+  padding: 0.15rem 0.3rem 0.15rem 0.7rem;
+}
+.attachment-selection li .text-button {
+  padding: 0.15rem 0.35rem;
+}
+/* A response composer ends in one row: options on the left, actions on the
+   right; messages and selected files wrap below. */
+.response-composer {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.response-composer > :is(.post-body-field, p, .form-message) {
+  flex-basis: 100%;
+}
+.response-composer > .form-message,
+.response-composer > p[role="alert"] {
+  order: 10;
+}
+.response-composer > .checkbox-label {
+  font-size: 0.9rem;
+}
+.response-composer > .response-actions {
+  margin-left: auto;
+}
+.response-composer .response-actions {
+  flex-direction: row-reverse;
+}
+/* In a response composer, chosen files drop to their own line below the row. */
+.response-composer > .attachment-selection {
+  display: contents;
+}
+.response-composer > .attachment-selection > :is(ul, .form-message) {
+  flex-basis: 100%;
+  margin: 0;
+  order: 9;
+}
+/* Answers read body first, then contributors, then one row of actions. */
+.answer-card > .response-byline {
+  font-size: 0.8rem;
+  order: 3;
+}
+.answer-card > .response-actions {
+  order: 4;
+}
+.answer-card > .form-message {
+  order: 5;
+}
+/* Every response action, including the vote, is the same icon-and-label chip. */
+.response-actions :is(.text-button, .response-vote) {
+  align-items: center;
+  background: #fff;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 700;
+  gap: 0.35rem;
+  line-height: 1.2;
+  min-height: 2rem;
+  padding: 0.3rem 1.25rem;
+  text-decoration: none;
+}
+.response-actions .response-vote {
+  color: var(--accent-ink);
+  padding-inline: 0.85rem;
+}
+.response-actions .response-vote[aria-pressed="true"] {
+  background: #d3eadb;
+}
+.response-actions :is(.text-button, .response-vote) .action-icon {
+  flex: none;
+  height: 14px;
+  width: 14px;
+}
+.response-actions :is(.text-button, .response-vote):hover:not(:disabled) {
+  background: #f4f8f4;
+}
+/* An answer's header row only takes space when it shows the Endorsed badge. */
+.answer-card-header:not(:has(.answer-endorsed)) {
+  display: none;
+}
+.response-text > :first-child {
+  margin-top: 0;
+}
+/* The end-of-feed marker needs a size to register as visible. */
+.feed-end {
+  height: 1px;
+}
+/* Staff-only entry for reviewing merged duplicates, under the Show list. */
+.review-choice {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  display: flex;
+  font: inherit;
+  font-size: 0.86rem;
+  justify-content: space-between;
+  margin-top: 0.35rem;
+  padding-top: 0.55rem;
+  text-align: left;
+  width: 100%;
+}
+.review-choice.active {
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.review-choice-note {
+  background: var(--surface-sunken);
+  border-radius: 999px;
+  color: var(--ink-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.05rem 0.45rem;
+}
+.review-choice:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+/* The search row clears the filters tab in both states. */
+@media (min-width: 851px) {
+  .discussion-columns .discussion-feed > .discussion-toolbar {
+    margin-left: clamp(1rem, 3vw, 2.5rem);
+  }
+}
+/* Search and New post share one shape so the row reads as one control. */
+.discussion-toolbar > .search-field,
+.discussion-toolbar > .button {
+  border-radius: 0.6rem;
+}
+.feed-caught-up {
+  align-items: center;
+  color: var(--ink-muted);
+  display: inline-flex;
+  font-size: 0.82rem;
+  gap: 0.35rem;
+  margin: 0;
+}
+.feed-caught-up svg {
+  color: #3d8161;
+}
+
+/* Loading states (app/Loading.tsx). Placeholders and loading messages stay
+   invisible for a moment, so fast loads never flash them; skeletons are
+   shaped like the content they stand in for, so nothing moves on arrival. */
+@keyframes loading-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.loading-line,
+.feed-skeleton,
+.post-skeleton,
+.lines-skeleton,
+.course-name-placeholder {
+  animation: loading-appear 200ms ease 150ms both;
+}
+.loading-line {
+  color: var(--ink-muted);
+}
+.skeleton {
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  background: linear-gradient(
+      90deg,
+      var(--line) 0%,
+      var(--surface-sunken) 50%,
+      var(--line) 100%
+    )
+    0 0 / 200% 100%;
+  border-radius: 999px;
+  display: block;
+  height: 0.75rem;
+}
+.skeleton-row {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+}
+.skeleton-line {
+  width: 100%;
+}
+.skeleton-line.short {
+  width: 62%;
+}
+.skeleton-chip {
+  border-radius: 0.4rem;
+  flex: none;
+  height: 1.1rem;
+  width: 4.2rem;
+}
+.skeleton-title {
+  height: 1rem;
+}
+.skeleton-meta {
+  width: 45%;
+}
+.skeleton-meta.wide {
+  width: 38%;
+}
+.feed-skeleton ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.feed-skeleton li {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem 1.25rem 1.1rem clamp(1rem, 3vw, 2.5rem);
+}
+.post-skeleton > div,
+.lines-skeleton > div {
+  display: grid;
+  gap: 0.8rem;
+}
+.post-skeleton > div {
+  max-width: 52rem;
+}
+.skeleton-kind {
+  height: 0.8rem;
+  width: 5rem;
+}
+.skeleton-heading {
+  border-radius: 0.6rem;
+  height: 2rem;
+  margin-block: 0.2rem 0.3rem;
+  width: 55%;
+}
+.skeleton-row.actions {
+  margin-block: 0.6rem 1.2rem;
+}
+.skeleton-button {
+  border-radius: 0.55rem;
+  height: 2.1rem;
+}
+.lines-skeleton {
+  padding-block: 0.25rem;
+}
+/* The course name and tabs wait for the course and the viewer's role, then
+   appear together instead of sliding as the name's width arrives. */
+.course-name-placeholder {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  display: inline-block;
+  height: 1.1rem;
+  vertical-align: middle;
+  width: 13rem;
+}
+.course-tabs {
+  transition:
+    opacity 180ms ease,
+    visibility 180ms;
+}
+.course-tabs.pending {
+  opacity: 0;
+  visibility: hidden;
+}
+/* Loaded content settles in instead of snapping. */
+@keyframes content-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.post-list > li,
+.discussion-detail article {
+  animation: content-appear 160ms ease both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .post-list > li,
+  .discussion-detail article {
+    animation: none;
+  }
+}
+/* Course pulse placeholder: the real frame with shimmering values. */
+.pulse-skeleton {
+  animation: loading-appear 200ms ease 150ms both;
+}
+.pulse-skeleton .pulse-meta {
+  align-items: center;
+  min-height: 2.05rem;
+}
+.pulse-skeleton .skeleton-value {
+  border-radius: 0.5rem;
+  height: 1.5rem;
+  margin: 0.6rem 0 0.4rem;
+  width: 55%;
+}
+.pulse-skeleton .pulse-tile .skeleton-line {
+  margin-block: 0.3rem;
+}
+.pulse-skeleton .pulse-bar {
+  border-radius: 4px 4px 0 0;
+  width: 60%;
+}
+.pulse-skeleton-lines {
+  display: grid;
+  gap: 1.1rem;
+  margin-top: var(--space-4);
+}
+.pulse-skeleton-lines .skeleton:nth-child(even) {
+  width: 80%;
+}
+/* On phones the pulse summary wraps above its table toggle, and tile values
+   wrap, so the placeholder reserves the same room. */
+@media (max-width: 700px) {
+  .pulse-skeleton .pulse-meta {
+    min-height: 4.75rem;
+  }
+  .pulse-skeleton .pulse-tile {
+    min-height: 8.3rem;
+  }
 }

@@ -107,6 +107,14 @@ describe("Piazza conversion", () => {
     );
   });
 
+  it("drops the NaN Piazza appends to pasted image names", () => {
+    expect(
+      toMarkdown(
+        '<p><img src="/redirect/s3?x=1" alt="Screenshot.jpgNaN" /></p>',
+      ),
+    ).toBe("![Screenshot.jpg](https://piazza.com/redirect/s3?x=1)");
+  });
+
   it("keeps each table cell on one line and escapes pipes", () => {
     expect(
       toMarkdown(

@@ -1220,7 +1220,10 @@ function CourseFrame({
         canLeave={() => beforeLeave.current()}
         onHomeClick={(event) => follow(event, "/home")}
         tabs={
-          <nav className="course-tabs" aria-label="Course navigation">
+          <nav
+            className={`course-tabs${visibleCourse && staff !== undefined ? "" : " pending"}`}
+            aria-label="Course navigation"
+          >
             {tabs.map((tab) => (
               <a
                 key={tab.key}
@@ -1257,9 +1260,17 @@ function CourseFrame({
         <div className="app-bar-course">
           <h1 id="course-title-heading" ref={headingRef} tabIndex={-1}>
             {visibleCourse?.data.name ??
-              (error?.courseId === courseId
-                ? "Course unavailable"
-                : "Loading course…")}
+              (error?.courseId === courseId ? (
+                "Course unavailable"
+              ) : (
+                <>
+                  <span
+                    className="course-name-placeholder"
+                    aria-hidden="true"
+                  />
+                  <span className="visually-hidden">Loading course…</span>
+                </>
+              ))}
           </h1>
           <CourseSwitcher
             currentCourseId={courseId}
@@ -1283,8 +1294,12 @@ function CourseFrame({
               Try again
             </button>
           </div>
-        ) : !visibleCourse ? (
-          <p role="status">Loading course…</p>
+        ) : !visibleCourse || staff === undefined ? (
+          // The course and the viewer's role load together, so tabs and
+          // staff-only controls appear once instead of popping in.
+          <p role="status" className="loading-line">
+            Loading course…
+          </p>
         ) : section === "session" ? (
           <SessionView
             key={route.sessionId}
@@ -1318,27 +1333,23 @@ function CourseFrame({
             staff={staff === true}
           />
         ) : section === "threads" ? (
-          staff === undefined ? (
-            <p role="status">Loading Threads…</p>
-          ) : (
-            <CourseThreads
-              key={`${courseId}:${route.threadId ?? ""}:${route.conversationId ?? ""}`}
-              courseId={courseId}
-              boardId={route.threadId}
-              conversationId={route.conversationId}
-              locationTarget={`${window.location.search}${window.location.hash}`}
-              userId={session.user.id}
-              staff={staff}
-              active={visibleCourse.data.status === "active"}
-              csrfToken={session.csrfToken}
-              onNavigate={onNavigate}
-              onUnreadChange={updateThreadsUnread}
-              signalVersion={threadSignalVersion}
-              onSignalSettled={onThreadRefreshSettled}
-              live={threadLive}
-              typingNames={threadTypingNames}
-            />
-          )
+          <CourseThreads
+            key={`${courseId}:${route.threadId ?? ""}:${route.conversationId ?? ""}`}
+            courseId={courseId}
+            boardId={route.threadId}
+            conversationId={route.conversationId}
+            locationTarget={`${window.location.search}${window.location.hash}`}
+            userId={session.user.id}
+            staff={staff}
+            active={visibleCourse.data.status === "active"}
+            csrfToken={session.csrfToken}
+            onNavigate={onNavigate}
+            onUnreadChange={updateThreadsUnread}
+            signalVersion={threadSignalVersion}
+            onSignalSettled={onThreadRefreshSettled}
+            live={threadLive}
+            typingNames={threadTypingNames}
+          />
         ) : section === "settings" ? (
           <CourseDetail
             key={courseId}
@@ -1350,9 +1361,7 @@ function CourseFrame({
             userId={session.user.id}
           />
         ) : section === "statistics" ? (
-          staff === undefined ? (
-            <p role="status">Loading statistics…</p>
-          ) : staff ? (
+          staff ? (
             <CourseStatistics courseId={courseId} />
           ) : (
             <p role="alert">Statistics are available to course staff.</p>
@@ -1361,6 +1370,7 @@ function CourseFrame({
           <Discussion
             courseId={courseId}
             course={visibleCourse.data}
+            staff={staff}
             userId={session.user.id}
             postId={route.postId}
             query={route.query}
@@ -1468,7 +1478,7 @@ export function App() {
   if (!ready)
     return (
       <main className="loading" aria-live="polite">
-        Loading ChalkTalk…
+        <span className="loading-line">Loading ChalkTalk…</span>
       </main>
     );
   if (route.name === "home" && session)
