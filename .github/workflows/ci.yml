@@ -84,6 +84,7 @@ jobs:
           git check-ignore -q .env
           ! git check-ignore -q .env.example
           cp .env.example .env
+          printf "\nRESEND_API_BASE_URL=http://127.0.0.1:9\n" >> .env
           mkdir -p .cert
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
             -keyout .cert/localhost-key.pem \
@@ -144,6 +145,7 @@ jobs:
       - name: Prepare local-only secrets and HTTPS certificate
         run: |
           cp .env.example .env
+          printf "\nRESEND_API_BASE_URL=http://127.0.0.1:9\n" >> .env
           sed -i 's/^OBSERVABILITY_ENABLED=false$/OBSERVABILITY_ENABLED=true/' .env
           cat >> .env <<EOF_CONFIG
           METRICS_TOKEN=$(openssl rand -hex 32)

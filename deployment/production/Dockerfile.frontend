@@ -9,5 +9,5 @@ COPY apps/web apps/web
 RUN npm run build --workspace=@chalktalk/web
 
 FROM caddy:2.10-alpine
-COPY deployment/Caddyfile /etc/caddy/Caddyfile
+COPY deployment/production/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /app/apps/web/dist /srv

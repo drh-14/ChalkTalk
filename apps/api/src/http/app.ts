@@ -89,8 +89,7 @@ type AuthContext = {
 function testEnvironment(): Environment {
   return {
     databaseUrl: undefined,
-    localDatabase: true,
-    localFileStore: true,
+    production: false,
     port: 3000,
     trustProxyHops: 0,
     frontendOrigins: new Set(["https://localhost:5173"]),

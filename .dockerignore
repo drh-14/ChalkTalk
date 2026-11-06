@@ -7,3 +7,5 @@ apps/*/node_modules
 apps/*/dist
 coverage
 *.log
+
+.worktrees
