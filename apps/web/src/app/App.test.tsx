@@ -134,7 +134,10 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole("heading", { name: "Welcome back, Ada" });
-    await user.click(screen.getByRole("link", { name: "Ada Lovelace" }));
+    await user.click(
+      screen.getByRole("button", { name: "Account menu for Ada Lovelace" }),
+    );
+    await user.click(screen.getByRole("link", { name: "Account settings" }));
     expect(window.location.pathname).toBe("/account");
     expect(
       await screen.findByRole("heading", { name: "Account settings" }),
@@ -167,11 +170,16 @@ describe("ChalkTalk auth entry", () => {
       screen.getByRole("textbox", { name: "Post title" }),
       "My draft",
     );
-    await user.click(screen.getByRole("link", { name: "Ada Lovelace" }));
+    const accountMenu = screen.getByRole("button", {
+      name: "Account menu for Ada Lovelace",
+    });
+    await user.click(accountMenu);
+    await user.click(screen.getByRole("link", { name: "Account settings" }));
     expect(window.location.pathname).toBe(`/courses/${course.id}`);
     await screen.findByText("Draft saved.");
     expect(confirm).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("link", { name: "Ada Lovelace" }));
+    await user.click(accountMenu);
+    await user.click(screen.getByRole("link", { name: "Account settings" }));
     expect(window.location.pathname).toBe("/account");
     confirm.mockRestore();
   });
@@ -373,20 +381,27 @@ describe("ChalkTalk auth entry", () => {
     expect(banner.getByRole("link", { name: "ChalkTalk" })).toBeTruthy();
     expect(banner.getByRole("link", { name: "All courses" })).toBeTruthy();
     expect(screen.getByRole("banner").querySelector(".course-icon")).toBeNull();
+    const accountMenu = banner.getByRole("button", {
+      name: "Account menu for Ada Lovelace",
+    });
+    await user.click(accountMenu);
     expect(banner.getByText("Ada Lovelace")).toBeTruthy();
-    const signOut = banner.getByRole("button", { name: "Sign out" });
+    expect(banner.getByRole("button", { name: "Sign out" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Create post" }));
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
       "My draft",
     );
-    await user.click(signOut);
+    await user.click(accountMenu);
+    await user.click(banner.getByRole("button", { name: "Sign out" }));
     expect(
       fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
     ).toBe(false);
     await screen.findByText("Draft saved.");
     expect(confirm).not.toHaveBeenCalled();
-    await user.click(signOut);
+    if (!banner.queryByRole("button", { name: "Sign out" }))
+      await user.click(accountMenu);
+    await user.click(banner.getByRole("button", { name: "Sign out" }));
     await screen.findByRole("heading", {
       name: "Discuss the work that matters.",
     });
@@ -1384,6 +1399,9 @@ describe("ChalkTalk auth entry", () => {
     await screen.findByRole("heading", { name: "Welcome back, Ada" });
     expect(screen.getByText("Linear Algebra II")).toBeTruthy();
     expect(screen.queryByText("Data Structures")).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Account menu for Ada Lovelace" }),
+    );
     await user.click(screen.getByRole("button", { name: "Sign out" }));
 
     await screen.findByRole("heading", {

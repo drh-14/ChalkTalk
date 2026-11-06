@@ -1,7 +1,7 @@
 .threads-area {
   max-width: var(--page-width);
   margin: 0 auto;
-  padding: 1.5rem 0 3rem;
+  padding: 0 0 3rem;
 }
 .threads-crumbs {
   display: flex;
@@ -18,8 +18,8 @@
   gap: 0.8rem;
   margin-bottom: 1.25rem;
 }
-.threads-toolbar h2 {
-  margin: 0 auto 0 0;
+.threads-title {
+  margin-right: auto;
 }
 .threads-connection {
   font-size: 0.82rem;
@@ -104,12 +104,11 @@
   gap: 0.7rem;
   margin: 0.75rem 0;
 }
-.threads-area .button:not(.compact) {
-  min-height: 2.4rem;
-  padding: 0.68rem 1rem;
-}
-.threads-area .button.compact {
-  padding: 0.38rem 0.8rem;
+.threads-area :is(.threads-toolbar, .threads-actions:not(form *)) .button {
+  font-size: 0.875rem;
+  line-height: 1.2;
+  min-height: 0;
+  padding: 0.5rem 0.95rem;
 }
 .threads-messages {
   list-style: none;
@@ -147,7 +146,7 @@
 }
 @media (max-width: 600px) {
   .threads-area {
-    padding: 1rem 0.6rem 2rem;
+    padding: 1rem 0 2rem;
   }
   .threads-message-head {
     display: block;

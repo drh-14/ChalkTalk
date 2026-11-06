@@ -193,7 +193,10 @@ function InformationPanel({ courseId, canEdit, csrfToken }: Props) {
   return (
     <div className="course-information">
       <header>
-        <h2>Course information</h2>
+        <div className="page-heading">
+          <h2>Course information</h2>
+          <p>Course overview, policies, and the syllabus.</p>
+        </div>
         {canEdit && data && !editing && (
           <button className="button primary" onClick={() => setEditing(true)}>
             Edit course information
@@ -370,7 +373,10 @@ function StaffPanel({
   }, [courseId, cycle, active]);
   return (
     <div className="course-information">
-      <h2>Staff</h2>
+      <div className="page-heading">
+        <h2>Staff</h2>
+        <p>Instructors and teaching assistants for this course.</p>
+      </div>
       {error && (
         <>
           <p role="alert" className="course-information-error">
