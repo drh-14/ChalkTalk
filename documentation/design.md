@@ -129,7 +129,7 @@ The system consists of a frontend, an API server, a separate background worker, 
 flowchart TB
     Browser["Frontend · React/Vite"] -->|"HTTPS REST"| API["API server · Express"]
     API -->|"course data and queued jobs"| DB[("PostgreSQL")]
-    API -->|"upload and download"| Store[("SeaweedFS / AWS S3")]
+    API -->|"upload and download"| Store[("S3-compatible object storage")]
     Worker["Separate background worker"] -->|"claim jobs and schedule digest"| DB
     Worker -->|"file cleanup"| Store
     Worker -->|"queued email"| Mail["Email provider"]
@@ -144,13 +144,13 @@ flowchart TB
 
 **PostgreSQL.** PostgreSQL stores users, courses, memberships, posts, answers, followups, sessions, and the job queue. Course-scoped tables use course identifiers and relational constraints; API authorization checks determine which rows a user can access.
 
-**Object store.** The object store holds uploaded images and documents. It is AWS S3 in the managed deployment and SeaweedFS in the self-hosted deployment. Both use the same S3 API, so the application code is identical in both.
+**Object store.** The object store holds uploaded images and documents through an S3-compatible API. Local development uses SeaweedFS; the single-VM production deployment uses private Supabase Storage. The application code is identical in both.
 
-**Email provider.** The email provider delivers verification, password reset, and notification emails. The application supports Resend HTTPS or SMTP, with local development defaulting to Mailpit SMTP. The worker sends queued email; direct authentication request flows send email from the API. The deployment guide remains a separate concern.
+**Email provider.** The email provider delivers verification, password reset, and notification emails. The application supports Resend HTTPS or SMTP; the local and single-VM production Compose stacks use Resend. The worker sends queued email; direct authentication request flows send email from the API. See the [deployment guides](../deployment/README.md) for configuration.
 
 # Deployment
 
-Because ChalkTalk offers both a managed cloud deployment and a self-managed deployment, the implementation and hosting of some services differ between the two versions. In the managed deployment, the React frontend is deployed to Vercel. The API server and background worker run on AWS ECS. PostgreSQL is provided by AWS RDS, and AWS S3 provides object storage. In the self-managed deployment, the frontend and backend components run as containers managed through Docker Compose. The deployment includes PostgreSQL for application data and durable jobs and SeaweedFS for S3-compatible object storage. The email provider is selected by configuration; see the [local setup](../README.md#start-locally) for its settings.
+The [local development stack](../README.md#start-locally) runs PostgreSQL and SeaweedFS in Compose. The [single-VM production stack](../deployment/production/README.md) runs the frontend, API, collaboration service, and worker in Compose while Supabase hosts PostgreSQL and private object storage. Both stacks use Resend HTTPS for email.
 
 ### **AI module**
 

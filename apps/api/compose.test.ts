@@ -119,11 +119,24 @@ describe("default Compose object storage", () => {
   it("keeps checkout-derived project and volume names for local commands", () => {
     for (const files of [
       [],
-      ["-f", "docker-compose.yml", "-f", "deployment/local/compose.semantic.yml"],
+      [
+        "-f",
+        "docker-compose.yml",
+        "-f",
+        "deployment/local/compose.semantic.yml",
+      ],
     ]) {
       const output = execFileSync(
         "docker",
-        ["compose", "--env-file", ".env.example", ...files, "config", "--format", "json"],
+        [
+          "compose",
+          "--env-file",
+          ".env.example",
+          ...files,
+          "config",
+          "--format",
+          "json",
+        ],
         {
           cwd: process.cwd(),
           encoding: "utf8",

@@ -9,6 +9,7 @@ Deliver ChalkTalk application email through an explicitly selected provider whil
 ### Requirement: Explicit provider selection
 
 Normal local and production deployment SHALL use Resend HTTPS, with an API key and verified sender required at startup. Neither Compose stack SHALL run Mailpit or send through SMTP. The local test environment MAY use an HTTP or HTTPS mock Resend origin. Production SHALL reject SMTP selection and SHALL NOT fall back to another provider. Existing mail triggers, recipients, and content SHALL be unchanged.
+Production SHALL reject a `RESEND_API_BASE_URL` override unless it is the official `https://api.resend.com` origin.
 
 #### Scenario: Local development
 
@@ -29,6 +30,11 @@ Normal local and production deployment SHALL use Resend HTTPS, with an API key a
 
 - **WHEN** a production process sets `EMAIL_PROVIDER=smtp`
 - **THEN** startup fails rather than sending through SMTP
+
+#### Scenario: Production Resend origin override
+
+- **WHEN** a production process sets `RESEND_API_BASE_URL` to any other origin
+- **THEN** startup fails rather than sending to that origin
 
 #### Scenario: Local operator authorization
 

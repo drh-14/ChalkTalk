@@ -58,7 +58,7 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 | `AUTH_TOKEN_SECRET`                                                                 | Independent random session-signing secret (at least 32 characters). |
 | `EMAIL_FROM`, `RESEND_API_KEY`                                                      | Resend HTTPS sender on a verified domain and sending-only key.      |
 
-The production images and Compose set `NODE_ENV=production`; there is no custom mode flag in the env file. Production rejects missing or malformed managed values instead of falling back to a local endpoint or ambient S3 credentials; it also rejects SMTP selection. Remove any old `PROD`, `PRODUCTION`, `LOCAL_DATABASE`, or `LOCAL_FILE_STORE` settings. `TRUST_PROXY_HOPS=1` is set by Compose; Caddy must remain the **only public entry point**, or per-IP rate limits can trust a spoofed proxy header.
+The production images and Compose set `NODE_ENV=production`; there is no custom mode flag in the env file. Production rejects missing or malformed managed values instead of falling back to a local endpoint or ambient S3 credentials; it also rejects SMTP selection. `RESEND_API_BASE_URL`, if set, must be the official `https://api.resend.com` origin; omit it for normal delivery. Remove any old `PROD`, `PRODUCTION`, `LOCAL_DATABASE`, or `LOCAL_FILE_STORE` settings. `TRUST_PROXY_HOPS=1` is set by Compose; Caddy must remain the **only public entry point**, or per-IP rate limits can trust a spoofed proxy header.
 
 ## Operate and verify
 

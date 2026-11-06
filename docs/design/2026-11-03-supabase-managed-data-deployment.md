@@ -1,7 +1,9 @@
 # Supabase-backed production data services
 
-Status: approved for implementation
+Status: superseded by the [current deployment specification](../../openspec/specs/single-vm-deployment/spec.md) and [production guide](../../deployment/production/README.md)
 Date: 2026-11-03
+
+This document records an earlier proposal, not the current deployment contract. In particular, its `LOCAL_DATABASE` and `LOCAL_FILE_STORE` selectors were rejected; production mode now comes from `NODE_ENV=production`.
 
 ## Context
 
