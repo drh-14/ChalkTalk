@@ -92,16 +92,16 @@ The system tracks engagement signals per post, including view count, followup ac
 
 ### **Role Permissions**
 
-| Action               | Student  | TA    | Instructor |
-| :------------------- | :------- | :---- | :--------- |
-| Create question/note | Yes      | Yes   | Yes        |
-| Create poll          | No       | Yes   | Yes        |
-| Create announcement  | No       | Yes   | Yes        |
-| Endorse answers      | No       | Yes   | Yes        |
-| Delete readable post | Own only | Yes   | Yes        |
-| Create Thread board  | No       | Yes   | Yes        |
-| Manage members       | No       | No    | Yes        |
-| Archive/delete class | No       | No    | Yes        |
+| Action               | Student  | TA  | Instructor |
+| :------------------- | :------- | :-- | :--------- |
+| Create question/note | Yes      | Yes | Yes        |
+| Create poll          | No       | Yes | Yes        |
+| Create announcement  | No       | Yes | Yes        |
+| Endorse answers      | No       | Yes | Yes        |
+| Delete readable post | Own only | Yes | Yes        |
+| Create Thread board  | No       | Yes | Yes        |
+| Manage members       | No       | No  | Yes        |
+| Archive/delete class | No       | No  | Yes        |
 
 # Nonfunctional Requirements
 

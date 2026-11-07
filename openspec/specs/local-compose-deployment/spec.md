@@ -1,6 +1,7 @@
 # local-compose-deployment Specification
 
 ## Purpose
+
 Provide a reproducible single-Compose local development stack with the database capabilities and named process images needed by ChalkTalk.
 
 ## Requirements
