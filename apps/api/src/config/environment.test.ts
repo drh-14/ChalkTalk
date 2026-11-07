@@ -77,19 +77,23 @@ describe("authentication environment", () => {
       expect(() => loadEnvironment({ ...base, NODE_ENV: value })).toThrow(
         "NODE_ENV must be development, test, or production",
       );
-    for (const legacy of ["LOCAL_DATABASE", "LOCAL_FILE_STORE", "PRODUCTION"])
+    for (const legacy of [
+      "LOCAL_DATABASE",
+      "LOCAL_FILE_STORE",
+      "PRODUCTION",
+      "PROD",
+    ]) {
       expect(() => loadEnvironment({ ...base, [legacy]: "false" })).toThrow(
         `Remove ${legacy}; deployment mode comes from NODE_ENV`,
       );
-    // Vitest sets PROD in the environment inherited by spawned API processes.
-    // It is not a deployment-mode switch for the application.
-    expect(loadEnvironment({ ...base, PROD: "true" }).production).toBe(false);
-    expect(
-      loadObjectStorageConfig({
-        PROD: "true",
-        S3_ENDPOINT: "http://127.0.0.1:8333",
-      }).endpoint,
-    ).toBe("http://127.0.0.1:8333");
+      expect(() =>
+        loadObjectStorageConfig({
+          [legacy]: "false",
+          S3_ENDPOINT: "http://127.0.0.1:8333",
+        }),
+      ).toThrow(`Remove ${legacy}; deployment mode comes from NODE_ENV`);
+    }
+    expect(process.env.PROD).toBeUndefined();
   });
 
   it("requires an explicit remote PostgreSQL URL in production", () => {

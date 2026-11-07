@@ -8,6 +8,7 @@ export default defineConfig({
           name: "api",
           include: ["apps/api/**/*.test.ts"],
           environment: "node",
+          setupFiles: ["./tests/vitest-api-setup.ts"],
         },
       },
       {

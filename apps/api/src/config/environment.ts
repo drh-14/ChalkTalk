@@ -7,6 +7,7 @@ import {
 
 function productionMode(source: NodeJS.ProcessEnv): boolean {
   for (const legacy of [
+    "PROD",
     "PRODUCTION",
     "LOCAL_DATABASE",
     "LOCAL_FILE_STORE",
