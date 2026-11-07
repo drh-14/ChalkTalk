@@ -45,12 +45,11 @@ function supabaseDatabaseProjectRef(value: string | undefined): string {
       "DATABASE_URL must be a PostgreSQL URL with credentials and database",
     );
   const direct = /^db\.([a-z0-9]{20})\.supabase\.co$/.exec(url.hostname);
-  const pooler = /^aws-\d+-[a-z]{2}(?:-[a-z]+)+-\d+\.pooler\.supabase\.com$/.test(
-    url.hostname,
-  );
-  const poolerUsername = /^(.+)\.([a-z0-9]{20})$/.exec(
-    url.username,
-  );
+  const pooler =
+    /^aws-\d+-[a-z]{2}(?:-[a-z]+)+-\d+\.pooler\.supabase\.com$/.test(
+      url.hostname,
+    );
+  const poolerUsername = /^(.+)\.([a-z0-9]{20})$/.exec(url.username);
   if (
     url.port !== "5432" ||
     (!direct && !pooler) ||

@@ -60,7 +60,7 @@ The system SHALL start dispatch of eligible previous-day digests at or after 00:
 
 #### Scenario: Provider failure
 
-- **WHEN** SMTP rejects a digest attempt in local development, or Resend rejects or ambiguously accepts a production digest attempt
+- **WHEN** the configured provider rejects or ambiguously accepts a digest attempt
 - **THEN** the intent remains retryable with its identical snapshot and provider payload
 
 #### Scenario: Access revoked before send
