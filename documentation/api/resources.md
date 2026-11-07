@@ -207,6 +207,47 @@ Replaces the resource's file with the resource's `If-Match`, using the same mult
 
 ### Deferred resource catalog operations
 
+<a id="listResourceQuestions"></a>
+
+#### `GET /api/v1/courses/{courseId}/resources/{resourceId}/questions`
+
+Lists the posts anchored to the current file of a PDF resource, for the in-app viewer's markers and page panel; see [slide-anchored questions](../../openspec/specs/slide-anchored-questions/spec.md). Current members who can read the resource may call it, in active or archived courses. It takes no query parameters.
+
+Only posts the caller may read are included, under the feed's rules: private posts appear only for their author and staff, and deleted posts and confirmed duplicates are excluded. Entries are ordered by page, then creation time, then post ID, with at most 500 entries.
+
+Success is `200 application/json` with `Cache-Control: private, no-store`:
+
+```json
+{
+  "resourceId": "019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a8b",
+  "fileId": "019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a8c",
+  "data": [
+    {
+      "id": "019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a90",
+      "type": "question",
+      "title": "Why is the rotation left-heavy?",
+      "page": 14,
+      "box": { "x": 0.1, "y": 0.2, "width": 0.4, "height": 0.3 },
+      "answered": true,
+      "unresolvedFollowups": 0,
+      "unread": false,
+      "createdAt": "2026-11-06T14:30:00Z"
+    }
+  ],
+  "earlierVersionCount": 2
+}
+```
+
+- `fileId`: the resource's current file. New anchors must name it in [Create post](posts.md#createPost).
+- `answered` and `unresolvedFollowups`: present only for questions.
+- `earlierVersionCount`: the number of readable posts anchored to files the resource used before.
+
+**Errors:**
+
+- `401 authentication_required`: authentication is missing.
+- `400 invalid_request`: a query parameter was supplied.
+- `404 not_found`: the course or resource is missing, deleted, or hidden from the caller, or the resource is a link or a non-PDF upload. These cases are indistinguishable.
+
 The following global `/resources/{resourceId}` and region contracts remain deferred; the implemented catalog uses course-scoped resource routes. Region-level OCR and descriptions remain deferred; whole-file text extraction is covered by [Search course resources](#searchCourseResources).
 
 <a id="getResource"></a>
