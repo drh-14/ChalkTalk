@@ -8,29 +8,48 @@ Deliver ChalkTalk application email through an explicitly selected provider whil
 
 ### Requirement: Explicit provider selection
 
-The system SHALL support SMTP for local Mailpit and Resend HTTPS when explicitly selected, without automatic fallback between providers. Resend mode SHALL require an API key and sender address at startup. Its API base URL SHALL default to the Resend HTTPS origin and MAY be configured as an HTTP or HTTPS origin for local integration testing. Selecting a provider SHALL NOT change email triggers, recipients, or content.
+Normal local and production deployment SHALL use Resend HTTPS, with an API key required at startup and the verified-domain sender fixed in application constants. A legacy `EMAIL_FROM` environment value SHALL NOT override that sender. Neither Compose stack SHALL run Mailpit or send through SMTP. The local test environment MAY use an HTTP or HTTPS mock Resend origin. Production SHALL reject SMTP selection and SHALL NOT fall back to another provider. Existing mail triggers, recipients, and content SHALL be unchanged.
+Production SHALL reject a `RESEND_API_BASE_URL` override unless it is the official `https://api.resend.com` origin.
 
 #### Scenario: Local development
 
-- **WHEN** SMTP mode is selected with Mailpit configured
-- **THEN** existing authentication and queued email is delivered through SMTP without Resend credentials
+- **WHEN** the local Compose application starts with a Resend key
+- **THEN** authentication and queued emails use Resend HTTPS
 
-#### Scenario: Missing production credentials
+#### Scenario: Missing local credentials
 
-- **WHEN** Resend mode is selected without usable API key or sender address
-- **THEN** application startup fails clearly without attempting SMTP
+- **WHEN** the local Compose application starts without a Resend key
+- **THEN** startup fails clearly
+
+#### Scenario: Production delivery
+
+- **WHEN** the production application starts with valid Resend configuration
+- **THEN** authentication and queued emails use Resend HTTPS
+
+#### Scenario: Production SMTP override
+
+- **WHEN** a production process sets `EMAIL_PROVIDER=smtp`
+- **THEN** startup fails rather than sending through SMTP
+
+#### Scenario: Production Resend origin override
+
+- **WHEN** a production process sets `RESEND_API_BASE_URL` to any other origin
+- **THEN** startup fails rather than sending to that origin
 
 #### Scenario: Local operator authorization
 
 - **WHEN** an operator configures Resend delivery
-- **THEN** only the API key and verified sender are required; no extra credential bootstrap is performed
+- **THEN** only the API key is required; the verified sender is fixed in code; no extra credential bootstrap is performed
 
 #### Scenario: Configurable local Resend endpoint
 
-- **WHEN** Resend mode is selected with a valid alternate API origin
-- **THEN** the Resend client sends to that origin with the configured API key and sender
-- **WHEN** the alternate API origin is malformed or contains credentials, a path, query, or fragment,
-- **THEN** application startup fails clearly
+- **WHEN** Resend is configured with a valid alternate API origin for testing
+- **THEN** the client sends to that origin
+
+#### Scenario: Legacy sender environment setting
+
+- **WHEN** Resend is selected with a valid API key and a legacy `EMAIL_FROM` setting
+- **THEN** the application still uses the fixed verified-domain address
 
 ### Requirement: Durable identical queued retries
 

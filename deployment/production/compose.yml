@@ -1,0 +1,110 @@
+name: chalktalk
+
+x-api-build: &api-build
+  context: ../..
+  dockerfile: deployment/production/Dockerfile.api
+
+x-app-environment: &app-environment
+  env_file: ${COMPOSE_ENV_FILE:-.env}
+  environment:
+    PORT: "3000"
+    COLLABORATION_PORT: "3100"
+    NODE_ENV: production
+    DATABASE_URL: ${DATABASE_URL:?Set the Supabase DATABASE_URL in deployment/production/.env}
+    S3_ENDPOINT: ${S3_ENDPOINT:?Set the Supabase S3_ENDPOINT in deployment/production/.env}
+    S3_BUCKET: ${S3_BUCKET:?Set the private Supabase S3_BUCKET in deployment/production/.env}
+    S3_REGION: ${S3_REGION:?Set the Supabase S3_REGION in deployment/production/.env}
+    S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?Set the server-only Supabase S3_ACCESS_KEY_ID}
+    S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?Set the server-only Supabase S3_SECRET_ACCESS_KEY}
+    RESEND_API_KEY: ${RESEND_API_KEY:?Set RESEND_API_KEY in deployment/production/.env}
+    FRONTEND_ORIGINS: https://${DOMAIN:?Set DOMAIN in deployment/production/.env}
+    FRONTEND_BASE_URL: https://${DOMAIN:?Set DOMAIN in deployment/production/.env}
+    COLLABORATION_PUBLIC_URL: wss://${DOMAIN:?Set DOMAIN in deployment/production/.env}/collaboration
+    TRUST_PROXY_HOPS: "1"
+
+x-bounded-logs: &bounded-logs
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  migrate:
+    image: chalktalk-api:local
+    build: *api-build
+    <<: *app-environment
+    command: ["node", "apps/api/dist/database/migrate.js"]
+    restart: "no"
+    networks: [edge]
+    logging: *bounded-logs
+
+  api:
+    image: chalktalk-api:local
+    build: *api-build
+    <<: *app-environment
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [edge]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *bounded-logs
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deployment/production/Dockerfile.worker
+    <<: *app-environment
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [edge]
+    logging: *bounded-logs
+
+  collaboration:
+    build:
+      context: ../..
+      dockerfile: deployment/production/Dockerfile.collaboration
+    <<: *app-environment
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [edge]
+    logging: *bounded-logs
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deployment/production/Dockerfile.frontend
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in deployment/production/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      collaboration: { condition: service_started }
+    networks: [edge]
+    logging: *bounded-logs
+
+networks:
+  edge: {}
+
+volumes:
+  caddy-data: {}
+  caddy-config: {}
