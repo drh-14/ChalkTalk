@@ -67,6 +67,6 @@ The worker claims jobs from PostgreSQL, retries transient failures, and performs
 
 ## Reliability and verification
 
-Unsafe API requests require the session-bound CSRF token and an allowed origin. Passwords are hashed; sessions use secure, HttpOnly cookies. Mutations validate authorization and use transactions, idempotency keys, and/or conditional versions where their API contracts specify them. Errors use the documented API envelope rather than exposing internal details. See [authentication](api/auth.md) and [OpenAPI](openapi.yaml).
+Public registration, verification, and session-bootstrap unsafe requests require an allowed origin; authenticated unsafe requests additionally require the session-bound CSRF token. Passwords are hashed; sessions use secure, HttpOnly cookies. Mutations validate authorization and use transactions, idempotency keys, and/or conditional versions where their API contracts specify them. Errors use the documented API envelope rather than exposing internal details. See [authentication](api/auth.md) and [OpenAPI](openapi.yaml).
 
 The repository uses unit, API/database integration, browser, and targeted live-provider tests. UI changes are exercised in a real browser; mocked APIs are the default, and isolated full-stack checks cover changes that require them. Production validation additionally needs a public-domain smoke test of signup, post and file access, collaboration, and email delivery. Observability and retention are described in [observability](api/observability.md).
