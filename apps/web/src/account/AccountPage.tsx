@@ -92,7 +92,9 @@ function CourseEmailSettings({
     >
       <legend>{course.name}</legend>
       {!preferences && !error && (
-        <p role="status">Loading email preferences…</p>
+        <p role="status" className="loading-line">
+          Loading email preferences…
+        </p>
       )}
       {emailChoices.map(([key, label]) => (
         <label className="checkbox-label" key={key}>
@@ -341,7 +343,11 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
           {loadError}
         </p>
       )}
-      {!profile && !loadError && <p role="status">Loading account…</p>}
+      {!profile && !loadError && (
+        <p role="status" className="loading-line">
+          Loading account…
+        </p>
+      )}
       {profile && (
         <div className="account-page-sections">
           <section
@@ -391,7 +397,11 @@ export function AccountPage({ session, onUserChange, onDeleted }: Props) {
             <p>
               Choose emails for each course. In-app notifications are unchanged.
             </p>
-            {!courses && !coursesError && <p role="status">Loading courses…</p>}
+            {!courses && !coursesError && (
+              <p role="status" className="loading-line">
+                Loading courses…
+              </p>
+            )}
             {coursesError && (
               <p className="form-message error" role="alert">
                 {coursesError}

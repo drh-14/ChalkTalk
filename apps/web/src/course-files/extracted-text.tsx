@@ -137,7 +137,11 @@ export function ResourceExtractedText({
             />
           ) : (
             <>
-              {loading && <p role="status">Loading extracted text…</p>}
+              {loading && (
+                <p role="status" className="loading-line">
+                  Loading extracted text…
+                </p>
+              )}
               {error && (
                 <div role="alert">
                   <p>{error}</p>

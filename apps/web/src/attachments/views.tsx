@@ -32,6 +32,19 @@ export function AttachmentSelection({
         (existingCount ?? queue.uploadedCount) + queue.files.length <
           MAX_ATTACHMENTS && (
           <label className="attachment-picker">
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
             Add files
             <input
               type="file"

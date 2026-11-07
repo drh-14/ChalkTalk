@@ -824,7 +824,8 @@ test.describe("rendered discussion attachments", () => {
             expect(style.radius).toBeGreaterThanOrEqual(13);
             expect(style.padding).toBeGreaterThanOrEqual(20);
             expect(style.color).toBe("rgb(59, 102, 85)");
-            expect(style.background).toBe("rgba(0, 0, 0, 0)");
+            // A white pill stands out on the green and amber answer areas.
+            expect(style.background).toBe("rgb(255, 255, 255)");
             expect(style.border).toBe(style.color);
           }
           await page.screenshot({

@@ -183,7 +183,11 @@ export function CourseCollaboration({
         </p>
       )}
       {!sessions ? (
-        !error && <p role="status">Loading sessions…</p>
+        !error && (
+          <p role="status" className="loading-line">
+            Loading sessions…
+          </p>
+        )
       ) : sessions.length ? (
         <ul className="sessions-list">
           {sessions.map((session) => (

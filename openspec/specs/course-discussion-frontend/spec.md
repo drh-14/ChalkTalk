@@ -22,12 +22,12 @@ The protected `/courses/{courseId}` route SHALL show question and note post card
 
 ### Requirement: Desktop post listings scroll independently
 
-On screens wider than 850px, the discussion route SHALL fill the viewport below the course header with three full-height columns (the feed filter sidebar, the post list, and the post detail pane), separated by single dividers and without enclosing rounded panels. The page itself SHALL not scroll on this route. The left-hand post cards and their Load more control SHALL occupy a visibly scrollable region. The Posts/Duplicate posts selector, search field, and Create post button SHALL remain above that region. The region SHALL have an accessible name and be keyboard-focusable. The same structure SHALL apply to normal posts and staff duplicate review cards. The right-hand detail pane SHALL scroll independently of the post list, SHALL keep its accessible name, and SHALL be keyboard-focusable so its content can be scrolled without a pointer. Scrolling either column SHALL not move the other or the filter sidebar. On screens at or below 850px, the cards and the detail pane SHALL use natural page scrolling rather than nested scroll areas.
+On screens wider than 850px, the discussion route SHALL fill the viewport below the course header with three full-height columns (the feed filter sidebar, the post list, and the post detail pane), separated by single dividers and without enclosing rounded panels. The page itself SHALL not scroll on this route. The left-hand post cards SHALL occupy a visibly scrollable region. The search field and Create post button SHALL remain above that region. The region SHALL have an accessible name and be keyboard-focusable. The same structure SHALL apply to normal posts and staff duplicate review cards. The right-hand detail pane SHALL scroll independently of the post list, SHALL keep its accessible name, and SHALL be keyboard-focusable so its content can be scrolled without a pointer. Scrolling either column SHALL not move the other or the filter sidebar. On screens at or below 850px, the cards and the detail pane SHALL use natural page scrolling rather than nested scroll areas.
 
 #### Scenario: A member browses a long post list
 
 - **WHEN** a member scrolls the desktop post list
-- **THEN** post cards and Load more move within the post list column while its controls remain available above the list, and the filter sidebar and post detail pane do not move
+- **THEN** post cards move within the post list column while its controls remain available above the list, and the filter sidebar and post detail pane do not move
 
 #### Scenario: A member reads a long post
 
@@ -41,7 +41,7 @@ On screens wider than 850px, the discussion route SHALL fill the viewport below 
 
 #### Scenario: Staff switch to duplicate posts
 
-- **WHEN** a TA or instructor selects Duplicate posts
+- **WHEN** a TA or instructor selects Duplicates
 - **THEN** duplicate review cards use the same keyboard-accessible scroll region
 
 ### Requirement: Post detail is shareable and viewer-safe
@@ -225,17 +225,22 @@ On the settings route, course-specific membership and administration data SHALL 
 
 ### Requirement: Staff can merge and review duplicate posts
 
-The discussion page SHALL show TAs and instructors a canonical-post selection control for the current post and a Posts/Duplicate posts selector above the left feed. Each staff review card SHALL show only the duplicate's title and “Merged into” followed by a link named for its canonical post, never the post type or retained source body. Selecting the card or its title SHALL be keyboard-accessible and show the retained source in the right pane, where staff see the source body, staff-visible author, tags, canonical target link, and unmerge action. Selecting the card's canonical link SHALL open the canonical post in a new tab and leave the duplicate review unchanged. The merge-as-duplicate control SHALL not appear in this mode. Students SHALL not see these controls. Following an old merged-post route SHALL navigate to the canonical post route.
+The discussion page SHALL show TAs and instructors a canonical-post selection control for the current post and a **Duplicates** entry, marked as staff-only, at the end of the filter sidebar's Show section. The entry SHALL be a toggle button that exposes whether duplicate review is on; pressing it again, or choosing any Show filter, SHALL return to the posts feed with that filter. While duplicate review is on, no Show filter SHALL be selected. Each staff review card SHALL show only the duplicate's title and “Merged into” followed by a link named for its canonical post, never the post type or retained source body. Selecting the card or its title SHALL be keyboard-accessible and show the retained source in the right pane, where staff see the source body, staff-visible author, tags, canonical target link, and unmerge action. Selecting the card's canonical link SHALL open the canonical post in a new tab and leave the duplicate review unchanged. The merge-as-duplicate control SHALL not appear in this mode. Students SHALL not see these controls. Following an old merged-post route SHALL navigate to the canonical post route.
 
 #### Scenario: Staff review and unmerge
 
-- **WHEN** a TA selects Duplicate posts and unmerges a source
+- **WHEN** a TA selects Duplicates and unmerges a source
 - **THEN** the restricted review card disappears and the restored source is available in normal posts
 
 #### Scenario: Staff confirm a merge
 
 - **WHEN** a TA selects a different canonical post from course search and confirms
 - **THEN** the client sends a conditional merge request and navigates to the canonical post
+
+#### Scenario: Staff leave duplicate review from the sidebar
+
+- **WHEN** a TA reviewing duplicates chooses Questions in the Show section
+- **THEN** the feed returns to posts filtered to questions and Duplicates is no longer pressed
 
 ### Requirement: The post composer provides selection-aware formatting controls
 
@@ -484,8 +489,8 @@ On screens at or below 850px, the Show and Sort by sections, and the Tags sectio
 
 #### Scenario: Staff review duplicates
 
-- **WHEN** a TA or instructor switches the post view to Duplicate
-- **THEN** the sidebar's filter and sort choices, tag chips, and Match control are disabled
+- **WHEN** a TA or instructor turns on Duplicates
+- **THEN** the sidebar's sort choices, tag chips, and Match control are disabled, and the Show choices stay enabled with none selected
 
 #### Scenario: A member filters by a tag
 
@@ -875,3 +880,70 @@ The Threads, Collaboration, Course resources (Course information, Staff, and Res
 
 - **WHEN** a member opens Threads in a course without threads
 - **THEN** an empty state explains what threads are for, and staff in an active course see Create thread in the page header
+
+### Requirement: The feed loads more posts as the reader scrolls
+
+When the loaded feed has a further cursor page, the browser SHALL request it automatically once the reader scrolls within about 300 pixels of the end of the post list, without requiring a Load more click. It SHALL observe the post list's own scroll region on wide screens and the page on narrow screens. It SHALL not request a page while one is loading, after a failed page until retry, or while the first page is loading. The Load more button SHALL remain available as a keyboard and fallback control, and the same rules SHALL apply to staff duplicate review.
+
+#### Scenario: A member reaches the end of the loaded posts
+
+- **WHEN** a member scrolls to the bottom of a feed with 25 loaded posts and a next cursor
+- **THEN** the next page is requested once and its cards are appended below the existing ones
+
+#### Scenario: A later page fails
+
+- **WHEN** an automatic later-page request fails
+- **THEN** no further automatic request is sent and the retry control remains available
+
+### Requirement: The feed status row confirms when everything is read
+
+When the loaded feed has posts and none of them other than the open post is unread, the feed status row SHALL show a check mark with **All caught up** instead of the unread count. It SHALL use the row's existing stable height.
+
+#### Scenario: Every loaded post is read
+
+- **WHEN** a member opens a course whose loaded posts are all read
+- **THEN** the status row above the list shows All caught up and no Mark all read control
+
+### Requirement: Loading states hold the page layout
+
+While course data loads, the browser SHALL show placeholders in the place and shape of the content they stand for, so content does not move when it arrives:
+
+- the feed SHALL show placeholder post cards, and an opening post SHALL show placeholders for its kind, title, byline, actions, and body;
+- answer areas and followups SHALL show placeholder lines inside their already-drawn sections;
+- Course pulse SHALL show its tiles, heatmap grid, weekly chart, topics, and helpers frames with their real titles and placeholder values;
+- other course pages SHALL show one loading message where their content will appear, below the page heading, never centered in the window or above content that is already shown.
+
+The course header SHALL show a placeholder for the course name, and the course tabs and staff-only controls SHALL appear together once both the course and the viewer's role are known, so tabs do not shift and staff-only entries do not appear later. Placeholders and loading messages SHALL become visible only after about 150 milliseconds, so fast loads show no placeholder. Each placeholder SHALL announce what is loading to assistive technology while its shapes stay hidden from it. Shimmer and fade-in animation SHALL be disabled when the viewer prefers reduced motion.
+
+#### Scenario: A slow feed
+
+- **WHEN** the first feed page takes a second to load
+- **THEN** placeholder post cards appear in the list, the status announces "Loading posts…", and the cards replace them without moving the search row or sidebar
+
+#### Scenario: A fast load
+
+- **WHEN** a page's data arrives within 150 milliseconds
+- **THEN** no placeholder or loading message becomes visible
+
+#### Scenario: A staff member reloads the discussion
+
+- **WHEN** a TA reloads a course page
+- **THEN** the course tabs, Statistics tab, and the Duplicates entry appear together with the course name, and nothing in the header or sidebar shifts afterward
+
+### Requirement: The course header stays in view
+
+On screens wider than 700px, the course header SHALL stay at the top of the window while the page scrolls, and in-page anchor targets SHALL scroll into view below it.
+
+#### Scenario: A member scrolls a long settings page
+
+- **WHEN** a member scrolls course settings on a wide screen
+- **THEN** the course header and tabs remain visible at the top
+
+### Requirement: The filter sidebar collapses behind a pull tab
+
+On screens wider than 850px, a round button on the boundary between the filter sidebar and the post list SHALL collapse and expand the sidebar, exposing its state with `aria-expanded`. When collapsed, half of the button SHALL remain visible at the left edge as a pull tab, aligned with the search row, so the sidebar can be reopened.
+
+#### Scenario: A member hides the filters
+
+- **WHEN** a member collapses the filter sidebar
+- **THEN** the post list widens, the half-round tab remains at the left edge, and activating it reopens the sidebar with the same filters selected

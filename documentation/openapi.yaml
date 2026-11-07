@@ -6856,6 +6856,177 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  "/courses/{courseId}/statistics/pulse":
+    get:
+      tags:
+        - Statistics
+      summary: Retrieve the course question pulse
+      description:
+        Summarize every published, non-deleted question in the course, including
+        imported semesters, bucketed by weekday, hour, and week in the requested IANA
+        time zone. A question is answered when it has a non-deleted answer. Helpers count
+        distinct non-deleted answers each current member contributed to; anonymous
+        answers never count.
+      operationId: getCoursePulse
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: timeZone
+          in: query
+          required: false
+          description: IANA time zone name used for weekday, hour, and week buckets.
+          schema:
+            type: string
+            maxLength: 64
+            default: UTC
+            examples:
+              - America/New_York
+      responses:
+        "200":
+          description: Retrieve the course question pulse completed successfully.
+          headers:
+            Cache-Control:
+              description: The summary is private to course staff and is not cached.
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/CoursePulseResponse"
+              example:
+                data:
+                  courseId: course_123
+                  timeZone: America/New_York
+                  firstQuestionAt: "2024-09-03T14:30:00Z"
+                  lastQuestionAt: "2024-09-24T02:00:00Z"
+                  questions: 3
+                  answered: 2
+                  unanswered: 1
+                  medianFirstAnswerMinutes: 45
+                  hours:
+                    - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                    - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+                    - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                    - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                    - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                    - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                    - [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                  weeks:
+                    - weekStart: "2024-09-01"
+                      questions: 2
+                    - weekStart: "2024-09-08"
+                      questions: 0
+                    - weekStart: "2024-09-15"
+                      questions: 0
+                    - weekStart: "2024-09-22"
+                      questions: 1
+                  topics:
+                    - tag: hw1
+                      questions: 2
+                      unanswered: 0
+                      medianFirstAnswerMinutes: 45
+                    - tag: hw2
+                      questions: 1
+                      unanswered: 1
+                      medianFirstAnswerMinutes: null
+                  helpers:
+                    - userId: user_123
+                      displayName: Kevin Darby
+                      role: ta
+                      answers: 13
+                  generatedAt: "2026-11-06T14:30:00Z"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                invalid_request:
+                  summary: The time zone is unknown or too long.
+                  value:
+                    error:
+                      code: invalid_request
+                      message: Statistics query is invalid.
+                      requestId: req_getCoursePulse
+                      details: []
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_getCoursePulse
+                      details: []
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                permission_denied:
+                  summary: A staff role is required.
+                  value:
+                    error:
+                      code: permission_denied
+                      message: A staff role is required.
+                      requestId: req_getCoursePulse
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The course is absent or hidden.
+                  value:
+                    error:
+                      code: not_found
+                      message: The course is absent or hidden.
+                      requestId: req_getCoursePulse
+                      details: []
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                internal_error:
+                  summary: The server could not complete the request.
+                  value:
+                    error:
+                      code: internal_error
+                      message: The server could not complete the request.
+                      requestId: req_getCoursePulse
+                      details: []
+        "503":
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                service_unavailable:
+                  summary: A required service is temporarily unavailable.
+                  value:
+                    error:
+                      code: service_unavailable
+                      message: A required service is temporarily unavailable.
+                      requestId: req_getCoursePulse
+                      details: []
   "/courses/{courseId}/statistics/students":
     get:
       tags:
@@ -15611,6 +15782,141 @@ components:
       additionalProperties: false
       required:
         - data
+    CoursePulseResponse:
+      type: object
+      properties:
+        data:
+          "$ref": "#/components/schemas/CoursePulse"
+      additionalProperties: false
+      required:
+        - data
+    CoursePulse:
+      type: object
+      additionalProperties: false
+      required:
+        - courseId
+        - timeZone
+        - firstQuestionAt
+        - lastQuestionAt
+        - questions
+        - answered
+        - unanswered
+        - medianFirstAnswerMinutes
+        - hours
+        - weeks
+        - topics
+        - helpers
+        - generatedAt
+      properties:
+        courseId:
+          type: string
+          description: Opaque stable identifier.
+          minLength: 1
+          maxLength: 255
+        timeZone:
+          type: string
+          description: The IANA time zone used for buckets.
+        firstQuestionAt:
+          type: [string, "null"]
+          format: date-time
+          description: Creation time of the earliest counted question; null without questions.
+        lastQuestionAt:
+          type: [string, "null"]
+          format: date-time
+          description: Creation time of the latest counted question; null without questions.
+        questions:
+          type: integer
+          minimum: 0
+          description: Counted questions.
+        answered:
+          type: integer
+          minimum: 0
+          description: Counted questions with at least one non-deleted answer.
+        unanswered:
+          type: integer
+          minimum: 0
+          description: Counted questions without a non-deleted answer.
+        medianFirstAnswerMinutes:
+          type: [number, "null"]
+          minimum: 0
+          description:
+            Median minutes from question creation to its first non-deleted answer over
+            answered questions; null when none is answered.
+        hours:
+          type: array
+          description: Questions per local weekday, Sunday first, and local hour 0 through 23.
+          minItems: 7
+          maxItems: 7
+          items:
+            type: array
+            minItems: 24
+            maxItems: 24
+            items:
+              type: integer
+              minimum: 0
+        weeks:
+          type: array
+          description:
+            One entry per local Sunday-to-Saturday week from the first to the last
+            question's week, including weeks without questions.
+          items:
+            type: object
+            additionalProperties: false
+            required: [weekStart, questions]
+            properties:
+              weekStart:
+                type: string
+                format: date
+                description: The week's local Sunday.
+              questions:
+                type: integer
+                minimum: 0
+        topics:
+          type: array
+          description: Up to 10 tags ordered by question count, then name.
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required: [tag, questions, unanswered, medianFirstAnswerMinutes]
+            properties:
+              tag:
+                type: string
+              questions:
+                type: integer
+                minimum: 0
+              unanswered:
+                type: integer
+                minimum: 0
+              medianFirstAnswerMinutes:
+                type: [number, "null"]
+                minimum: 0
+                description: Median first-answer minutes for the tag's answered questions.
+        helpers:
+          type: array
+          description:
+            Up to 5 current members ordered by distinct non-deleted, non-anonymous
+            answers contributed, then display name.
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required: [userId, displayName, role, answers]
+            properties:
+              userId:
+                type: string
+              displayName:
+                type: string
+              role:
+                type: string
+                enum: [student, ta, instructor]
+              answers:
+                type: integer
+                minimum: 1
+        generatedAt:
+          type: string
+          format: date-time
+          description: UTC timestamp in ISO 8601 date-time format.
     CourseDigestResponse:
       type: object
       properties:

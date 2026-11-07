@@ -200,9 +200,12 @@ turndown.addRule("piazzaImages", {
   filter: "img",
   replacement: (_content, node) => {
     const src = (node as HTMLElement).getAttribute("src");
-    return src
-      ? `![${(node as HTMLElement).getAttribute("alt") ?? ""}](${absolute(src)})`
-      : "";
+    // Piazza appends a literal "NaN" to pasted images' file-name alt text.
+    const alt = ((node as HTMLElement).getAttribute("alt") ?? "").replace(
+      /NaN$/,
+      "",
+    );
+    return src ? `![${alt}](${absolute(src)})` : "";
   },
 });
 

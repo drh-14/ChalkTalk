@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { CourseStatistics } from "./views.js";
+import { ActivityStatistics } from "./views.js";
 
 afterEach(() => {
   cleanup();
@@ -48,7 +48,7 @@ it("shows recorded activity and a zero-activity student, then changes period", a
   );
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
-  render(<CourseStatistics courseId="course_1" />);
+  render(<ActivityStatistics courseId="course_1" />);
   expect(await screen.findByText("Ada")).toBeTruthy();
   expect(
     screen.getByText("4", { selector: ".statistics-metric-value" }),
@@ -100,7 +100,7 @@ it("loads another student page and retries a failed summary", async () => {
   });
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
-  render(<CourseStatistics courseId="course_1" />);
+  render(<ActivityStatistics courseId="course_1" />);
   expect((await screen.findByRole("alert")).textContent).toContain(
     "Temporarily unavailable",
   );
@@ -140,7 +140,7 @@ it("discards an old student page after the period changes", async () => {
     }),
   );
   const user = userEvent.setup();
-  render(<CourseStatistics courseId="course_1" />);
+  render(<ActivityStatistics courseId="course_1" />);
   expect(await screen.findByText("Ada")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Load more students" }));
   await user.selectOptions(screen.getByLabelText("Period"), "7d");
@@ -177,7 +177,7 @@ it("scopes an empty response-time metric to the selected period", async () => {
           }),
     ),
   );
-  render(<CourseStatistics courseId="course_1" />);
+  render(<ActivityStatistics courseId="course_1" />);
   expect(
     await screen.findByText("No answers", {
       selector: ".statistics-metric-value",
@@ -207,7 +207,7 @@ it("shows no activity for a zero-filled daily series", async () => {
           }),
     ),
   );
-  render(<CourseStatistics courseId="course_1" />);
+  render(<ActivityStatistics courseId="course_1" />);
   expect(await screen.findByText("No activity in this period.")).toBeTruthy();
   expect(screen.queryByRole("img")).toBeNull();
 });
@@ -229,8 +229,8 @@ it("downloads the selected period's daily CSV and retains statistics on export f
   });
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
-  render(<CourseStatistics courseId="course_1" />);
-  await screen.findByText("Course statistics");
+  render(<ActivityStatistics courseId="course_1" />);
+  await screen.findByRole("button", { name: "Download daily activity CSV" });
   await user.selectOptions(screen.getByLabelText("Period"), "7d");
   await screen.findByText("No students are currently enrolled.");
   await user.click(
@@ -247,7 +247,9 @@ it("downloads the selected period's daily CSV and retains statistics on export f
   expect((await screen.findByRole("alert")).textContent).toContain(
     "Export unavailable",
   );
-  expect(screen.getByText("Course statistics")).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Download daily activity CSV" }),
+  ).toBeTruthy();
 });
 
 it.each(["period", "course"] as const)(
@@ -265,7 +267,7 @@ it.each(["period", "course"] as const)(
     });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
-    const { rerender } = render(<CourseStatistics courseId="course_1" />);
+    const { rerender } = render(<ActivityStatistics courseId="course_1" />);
     await screen.findByText("No students are currently enrolled.");
     await user.click(
       screen.getByRole("button", { name: "Download daily activity CSV" }),
@@ -278,7 +280,7 @@ it.each(["period", "course"] as const)(
     if (change === "period") {
       await user.selectOptions(screen.getByLabelText("Period"), "7d");
     } else {
-      rerender(<CourseStatistics courseId="course_2" />);
+      rerender(<ActivityStatistics courseId="course_2" />);
     }
     await screen.findByText("No students are currently enrolled.");
     await waitFor(() =>
@@ -321,7 +323,7 @@ it("keeps the current export busy when an older export completes", async () => {
     }),
   );
   const user = userEvent.setup();
-  render(<CourseStatistics courseId="course_1" />);
+  render(<ActivityStatistics courseId="course_1" />);
   await screen.findByText("No students are currently enrolled.");
   await user.click(
     screen.getByRole("button", { name: "Download daily activity CSV" }),
@@ -370,12 +372,12 @@ it("does not download an old course's completed student export", async () => {
     }),
   );
   const user = userEvent.setup();
-  const { rerender } = render(<CourseStatistics courseId="course_1" />);
+  const { rerender } = render(<ActivityStatistics courseId="course_1" />);
   await screen.findByText("No students are currently enrolled.");
   await user.click(
     screen.getByRole("button", { name: "Download student roster CSV" }),
   );
-  rerender(<CourseStatistics courseId="course_2" />);
+  rerender(<ActivityStatistics courseId="course_2" />);
   await waitFor(() =>
     expect(
       screen.getByRole<HTMLButtonElement>("button", {

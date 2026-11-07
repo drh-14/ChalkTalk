@@ -145,6 +145,129 @@ export class StatisticsService {
     };
   }
 
+  /**
+   * The course's whole question history in the viewer's time zone: when
+   * questions are asked, how they trend by week and topic, how fast they are
+   * answered, and who answers. Anonymous answers never count toward helpers.
+   */
+  async pulse(courseId: string, userId: string, timeZoneInput: unknown) {
+    const timeZone = timeZoneInput === undefined ? "UTC" : timeZoneInput;
+    if (typeof timeZone !== "string" || timeZone.length > 64) throw invalid();
+    await this.authorized(courseId, userId);
+    const zone = await this.query<{ name: string }>(
+      "SELECT name FROM pg_timezone_names WHERE name=$1",
+      [timeZone],
+    );
+    if (!zone.rowCount) throw invalid();
+    // Published, non-deleted questions with their first non-deleted answer.
+    const questions = `WITH q AS (
+        SELECT p.id,p.created_at,
+          (SELECT min(a.created_at) FROM answers a
+            WHERE a.post_id=p.id AND a.deleted_at IS NULL) AS first_answer_at
+        FROM posts p
+        WHERE p.course_id=$1 AND p.type='question' AND p.deleted_at IS NULL
+          AND p.scheduled_for IS NULL
+      )`;
+    const median =
+      "(percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM q.first_answer_at-q.created_at)) FILTER (WHERE q.first_answer_at IS NOT NULL) / 60)::float8";
+    const [totals, hours, weeks, topics, helpers] = await Promise.all([
+      this.query<{
+        questions: number;
+        answered: number;
+        median: number | null;
+        first_at: Date | null;
+        last_at: Date | null;
+      }>(
+        `${questions} SELECT count(*)::int AS questions,
+          count(q.first_answer_at)::int AS answered,
+          ${median} AS median,
+          min(q.created_at) AS first_at,max(q.created_at) AS last_at FROM q`,
+        [courseId],
+      ),
+      this.query<{ day: number; hour: number; count: number }>(
+        `${questions} SELECT extract(dow FROM q.created_at AT TIME ZONE $2)::int AS day,
+          extract(hour FROM q.created_at AT TIME ZONE $2)::int AS hour,
+          count(*)::int AS count FROM q GROUP BY 1,2`,
+        [courseId, timeZone],
+      ),
+      this.query<{ week: string; count: number }>(
+        `${questions} SELECT (date_trunc('week',(q.created_at AT TIME ZONE $2)+interval '1 day')-interval '1 day')::date::text AS week,
+          count(*)::int AS count FROM q GROUP BY 1`,
+        [courseId, timeZone],
+      ),
+      this.query<{
+        tag: string;
+        questions: number;
+        unanswered: number;
+        median: number | null;
+      }>(
+        `${questions} SELECT t.name AS tag,count(*)::int AS questions,
+          count(*) FILTER (WHERE q.first_answer_at IS NULL)::int AS unanswered,
+          ${median} AS median
+        FROM q JOIN post_tags pt ON pt.post_id=q.id JOIN tags t ON t.id=pt.tag_id
+        GROUP BY t.name ORDER BY questions DESC,t.name LIMIT 10`,
+        [courseId],
+      ),
+      this.query<{
+        user_id: string;
+        display_name: string;
+        role: string;
+        answers: number;
+      }>(
+        `SELECT u.id AS user_id,u.display_name,m.role,count(DISTINCT e.answer_id)::int AS answers
+        FROM answer_contribution_events e
+        JOIN answers a ON a.id=e.answer_id AND a.deleted_at IS NULL AND NOT a.anonymous
+        JOIN course_memberships m ON m.course_id=e.course_id AND m.user_id=e.user_id
+        JOIN users u ON u.id=e.user_id AND u.deleted_at IS NULL
+        WHERE e.course_id=$1
+        GROUP BY u.id,u.display_name,m.role
+        ORDER BY answers DESC,u.display_name LIMIT 5`,
+        [courseId],
+      ),
+    ]);
+    const total = totals.rows[0]!;
+    const grid = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
+    for (const row of hours.rows) grid[row.day]![row.hour] = row.count;
+    // Every week from the first to the last question, including quiet ones.
+    const counts = new Map(weeks.rows.map((row) => [row.week, row.count]));
+    const keys = [...counts.keys()].sort();
+    const series: { weekStart: string; questions: number }[] = [];
+    if (keys.length)
+      for (
+        let time = Date.parse(`${keys[0]}T00:00:00Z`);
+        time <= Date.parse(`${keys.at(-1)}T00:00:00Z`);
+        time += 7 * 86400000
+      ) {
+        const weekStart = dateKey(new Date(time));
+        series.push({ weekStart, questions: counts.get(weekStart) ?? 0 });
+      }
+    return {
+      courseId,
+      timeZone,
+      firstQuestionAt: total.first_at?.toISOString() ?? null,
+      lastQuestionAt: total.last_at?.toISOString() ?? null,
+      questions: total.questions,
+      answered: total.answered,
+      unanswered: total.questions - total.answered,
+      medianFirstAnswerMinutes: total.median,
+      hours: grid,
+      weeks: series,
+      topics: topics.rows.map((row) => ({
+        tag: row.tag,
+        questions: row.questions,
+        unanswered: row.unanswered,
+        medianFirstAnswerMinutes: row.median,
+      })),
+      helpers: helpers.rows.map((row) => ({
+        userId: row.user_id,
+        displayName: row.display_name,
+        role: row.role,
+        answers: row.answers,
+      })),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
   async students(
     courseId: string,
     userId: string,

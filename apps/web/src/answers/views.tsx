@@ -8,6 +8,8 @@ import {
 } from "../attachments/views.js";
 import { useAttachmentQueue } from "../attachments/queue.js";
 import { formatPostTime } from "../posts/time.js";
+import { LinesSkeleton } from "../app/Loading.js";
+import { ActionIcon } from "../posts/ActionIcon.js";
 import {
   createAnswer,
   deleteAnswer,
@@ -375,7 +377,8 @@ function VoteButton({
       disabled={disabled}
       onClick={onClick}
     >
-      <span aria-hidden="true">👍</span> <span>{count}</span>
+      <ActionIcon name="upvote" />
+      <span>{count}</span>
     </button>
   );
 }
@@ -698,6 +701,7 @@ function AnswerCard({
             type="button"
             onClick={() => setEditing(true)}
           >
+            <ActionIcon name="edit" />
             Edit answer
           </button>
         )}
@@ -712,6 +716,7 @@ function AnswerCard({
                 disabled={pending}
                 onClick={() => void act("endorse")}
               >
+                <ActionIcon name="endorse" />
                 Endorse answer
               </button>
               <button
@@ -720,6 +725,7 @@ function AnswerCard({
                 disabled={pending}
                 onClick={() => void act("delete")}
               >
+                <ActionIcon name="delete" />
                 Delete answer
               </button>
             </>
@@ -783,7 +789,7 @@ export function AnswerSections(props: Props) {
                   </button>
                 </p>
               ) : (
-                <p role="status">Loading answers…</p>
+                <LinesSkeleton label="Loading answers…" />
               )
             ) : found ? (
               <AnswerCard
@@ -1423,7 +1429,7 @@ export function FollowupSections(props: Props) {
           </button>
         </p>
       )}
-      {!page && !error && <p role="status">Loading followups…</p>}
+      {!page && !error && <LinesSkeleton label="Loading followups…" />}
       {page &&
         [
           ...page.data,

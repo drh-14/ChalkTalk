@@ -19,3 +19,12 @@ When importing a Piazza class, the importer SHALL convert each HTML table in a p
 
 - **WHEN** a table cell contains `a|b` and a `<br>` between two words
 - **THEN** the cell becomes `a\|b` and the two words are separated by a space on one line
+
+### Requirement: Imported image names drop Piazza's NaN suffix
+
+When importing a Piazza class, the importer SHALL remove a trailing `NaN` that Piazza appends to the alternative text of pasted images, so the imported Markdown image shows the original file name. Re-importing a class SHALL replace earlier converted content with the corrected name.
+
+#### Scenario: A pasted screenshot is imported
+
+- **WHEN** a Piazza post contains an image whose alternative text is `Screenshot.jpgNaN`
+- **THEN** the imported body contains `![Screenshot.jpg](...)`
