@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { EmailSender } from "../../apps/api/src/auth/service.js";
 
 const APPROVED_RECIPIENT_SHA256 =
-  "ec4fdd41a99982e0d6ce27616a039dd68b1bc59182b316cb5220f4a48bc955ad";
+  "1df1c8c207742ce445de1177ef78dca9d1e8e9da202abeb409d6f7a1ff01afc9";
 
 export type LiveConfig = {
   recipient: string;
