@@ -43,7 +43,7 @@ Collaboration sessions are course-scoped private shared code editors, independen
 
 ## Resources, search, and statistics
 
-Course Resources is a flat list of instructor-uploaded files and named external links. Current course members may view resources; instructors upload or add links. The API serves original file bytes only after checking membership. The current catalog does not provide regions, section visibility, OCR text, or region-level links. See [resources](api/resources.md).
+Course Resources groups instructor-managed files and named external links under instructor-created sections, with ungrouped entries also supported. Sections and individual resources can be class-visible or staff-only. Current course members may read only the resources visible to their role; instructors manage sections, uploads, and links. The API checks membership and visibility before serving original file bytes. Catalog uploads support whole-file text extraction, including OCR for scanned PDF pages and images, and resource search uses titles and ready extracted text. Instructor-defined regions, region search, and region-level links remain deferred. See [resources](api/resources.md) and the [organized resources specification](../openspec/specs/organized-course-resources/spec.md).
 
 Post search uses PostgreSQL full-text and fuzzy matching, scoped by course and post visibility. Related questions appear while composing a question. Semantic post search can be enabled with an embedding provider and PostgreSQL pgvector; ordinary search works without it. Neither resource-region search nor AI-generated answers is part of the current feature set. See [post search](api/posts.md).
 
