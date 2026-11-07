@@ -6,7 +6,7 @@ import { createServer } from "vite";
 import { expect, test } from "@playwright/test";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const evidence = resolve(root, "docs/pr-screenshots/course-files");
+const evidence = resolve(root, "test-results/browser-screenshots/course-files");
 const file = {
   kind: "upload",
   id: "file-1",

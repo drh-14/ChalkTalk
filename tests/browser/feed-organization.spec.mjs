@@ -7,7 +7,10 @@ import { expect, test } from "@playwright/test";
 const base = process.env.FEED_BROWSER_URL ?? "http://localhost:5174";
 const screenshots = resolve(
   process.env.FEED_SCREENSHOTS_DIR ??
-    resolve(import.meta.dirname, "../../docs/pr-screenshots/feed-organization"),
+    resolve(
+      import.meta.dirname,
+      "../../test-results/browser-screenshots/feed-organization",
+    ),
 );
 mkdirSync(screenshots, { recursive: true });
 const courseId = "01a0e5cc-58ae-7009-9f43-d5453c12bca9";

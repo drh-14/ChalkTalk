@@ -20,7 +20,7 @@ const screenshots = process.env.E2E_SCREENSHOTS_DIR
   ? resolve(process.env.E2E_SCREENSHOTS_DIR, "session-invitations")
   : resolve(
       import.meta.dirname,
-      "../../docs/pr-screenshots/session-invitations",
+      "../../test-results/browser-screenshots/session-invitations",
     );
 mkdirSync(screenshots, { recursive: true });
 

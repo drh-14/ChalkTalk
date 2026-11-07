@@ -1,6 +1,6 @@
 ## Context
 
-See `docs/design/2026-11-01-course-collaboration-sessions.md` for the approved architecture, migration, authorization, and failure-mode details.
+See `documentation/design/2026-11-01-course-collaboration-sessions.md` for the approved architecture, migration, authorization, and failure-mode details.
 
 ## Decisions
 

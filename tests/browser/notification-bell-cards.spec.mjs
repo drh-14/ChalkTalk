@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(import.meta.dirname, "../..");
 const screenshots = resolve(
   root,
-  "docs/pr-screenshots/notification-bell-cards",
+  "test-results/browser-screenshots/notification-bell-cards",
 );
 mkdirSync(screenshots, { recursive: true });
 let vite;

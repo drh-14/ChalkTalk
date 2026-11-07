@@ -18,7 +18,7 @@ const screenshots = process.env.E2E_SCREENSHOTS_DIR
   ? resolve(process.env.E2E_SCREENSHOTS_DIR, "session-whiteboard")
   : resolve(
       import.meta.dirname,
-      "../../docs/pr-screenshots/session-whiteboard",
+      "../../test-results/browser-screenshots/session-whiteboard",
     );
 mkdirSync(screenshots, { recursive: true });
 const own = new URL(BASE).hostname;

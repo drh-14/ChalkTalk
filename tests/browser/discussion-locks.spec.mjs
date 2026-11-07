@@ -7,7 +7,10 @@ import { expect, test } from "@playwright/test";
 /* global window, PopStateEvent -- page.evaluate callbacks run in the browser. */
 
 const root = resolve(import.meta.dirname, "../..");
-const screenshots = resolve(root, "docs/pr-screenshots/discussion-locks");
+const screenshots = resolve(
+  root,
+  "test-results/browser-screenshots/discussion-locks",
+);
 mkdirSync(screenshots, { recursive: true });
 let vite;
 let origin;

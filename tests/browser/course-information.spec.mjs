@@ -5,7 +5,10 @@ import { mkdir } from "node:fs/promises";
 import { createServer } from "vite";
 import { expect, test } from "@playwright/test";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const evidence = resolve(root, "docs/pr-screenshots/course-information");
+const evidence = resolve(
+  root,
+  "test-results/browser-screenshots/course-information",
+);
 let vite, origin;
 test.beforeAll(async () => {
   await mkdir(evidence, { recursive: true });

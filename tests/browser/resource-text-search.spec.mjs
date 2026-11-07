@@ -7,7 +7,10 @@ import { expect, test } from "@playwright/test";
 // Local development may load a localhost certificate while tests bind to 127.0.0.1.
 test.use({ ignoreHTTPSErrors: true });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../.."),
-  evidence = resolve(root, "docs/pr-screenshots/resource-search-ui");
+  evidence = resolve(
+    root,
+    "test-results/browser-screenshots/resource-search-ui",
+  );
 let vite, origin;
 test.beforeAll(async () => {
   await mkdir(evidence, { recursive: true });

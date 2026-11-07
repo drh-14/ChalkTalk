@@ -1,6 +1,6 @@
 ## Context
 
-The answer creation path stores `body_markdown` and an empty Yjs marker `[0,0]` in one transaction. See [the approved design](../../../../docs/design/2026-10-09-yjs-answer-document-core.md) and the new capability spec for behavior.
+The answer creation path stores `body_markdown` and an empty Yjs marker `[0,0]` in one transaction. See [the approved design](../../../../documentation/design/2026-10-09-yjs-answer-document-core.md) and the new capability spec for behavior.
 
 ## Goals / Non-Goals
 

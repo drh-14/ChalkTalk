@@ -5,7 +5,10 @@ import { createServer } from "vite";
 import { expect, test } from "@playwright/test";
 
 const root = resolve(import.meta.dirname, "../..");
-const screenshots = resolve(root, "docs/pr-screenshots/post-visibility");
+const screenshots = resolve(
+  root,
+  "test-results/browser-screenshots/post-visibility",
+);
 mkdirSync(screenshots, { recursive: true });
 let vite;
 let origin;

@@ -14,7 +14,7 @@ test.skip(
 
 const screenshots = resolve(
   import.meta.dirname,
-  "../../docs/pr-screenshots/private-posts",
+  "../../test-results/browser-screenshots/private-posts",
 );
 mkdirSync(screenshots, { recursive: true });
 

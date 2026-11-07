@@ -5,7 +5,10 @@ import { createServer } from "vite";
 import { expect, test } from "@playwright/test";
 test.use({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 900 } });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const evidence = resolve(root, "docs/pr-screenshots/resource-extracted-text");
+const evidence = resolve(
+  root,
+  "test-results/browser-screenshots/resource-extracted-text",
+);
 let vite, origin;
 test.beforeAll(async () => {
   await mkdir(evidence, { recursive: true });

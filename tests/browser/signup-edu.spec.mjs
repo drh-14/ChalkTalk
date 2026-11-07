@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 const root = resolve(import.meta.dirname, "../..");
 const screenshots =
   process.env.TEST_EVIDENCE_DIR ??
-  resolve(root, "docs/pr-screenshots/signup-edu");
+  resolve(root, "test-results/browser-screenshots/signup-edu");
 mkdirSync(screenshots, { recursive: true });
 let vite;
 let origin;
