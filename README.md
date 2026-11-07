@@ -59,9 +59,9 @@ To delete a post you can read, open its detail view and select **Delete post**. 
 
 The React/Vite client (`apps/web`) talks to the Express API (`apps/api`). PostgreSQL stores application data and background jobs; a separate worker sends mail and processes queued work. The API handles Threads WebSockets; a collaboration server handles live-session WebSockets. Uploaded files use S3-compatible storage (SeaweedFS locally). See the [architecture diagram](diagrams/architecture/architecture.svg), [design](documentation/design.md), [database reference](documentation/database.md), and [API reference](documentation/openapi.yaml). The [`documentation/api/`](documentation/api/) directory explains individual API areas.
 
-For the existing single-VM deployment skeleton, see the [Compose deployment guide](deployment/README.md). The instructions below are for local development.
+For the single-VM deployment with separate frontend, API, Hocuspocus, and worker images, managed Supabase PostgreSQL and Storage, and Resend HTTPS, see the [Compose deployment guide](deployment/production/README.md). The instructions below are for local development; they do not connect to Supabase.
 
-The Compose setup below is for **reproducible local development**. It includes a local mail sink, hot-reloading servers, and development credentials. Do not expose it publicly without replacing those settings, TLS termination, storage, backups, and email configuration.
+The Compose setup below is for **reproducible local development**. It includes hot-reloading servers, local data services, and real Resend HTTPS email. Do not expose it publicly without replacing those settings, TLS termination, storage, backups, and email configuration.
 
 ## Start locally
 
@@ -77,7 +77,7 @@ mkcert -key-file .cert/localhost-key.pem -cert-file .cert/localhost.pem localhos
 openssl rand -hex 32              # copy the output into AUTH_TOKEN_SECRET in .env
 ```
 
-Edit the ignored `.env` before starting. At minimum, replace `AUTH_TOKEN_SECRET` with the generated value. Keep `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` equal to the HTTPS URL you will open, and use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
+Edit the ignored `.env` before starting. At minimum, replace `AUTH_TOKEN_SECRET` with the generated value and configure `RESEND_API_KEY` with your team key. Real verification and notification emails will be sent from ChalkTalk's fixed sender. Keep `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` equal to the HTTPS URL you will open, and use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
 
 For a repeatable local demo without creating accounts by hand, optionally set `MOCK_DATA=true` and `AMS161_DEMO_INSTRUCTOR_PASSWORD` (12–128 characters) in `.env` **before the first start**. Leave `MOCK_DATA=false` for an empty installation. See [Demo data](#demo-data) below.
 
@@ -89,7 +89,7 @@ For a repeatable local demo without creating accounts by hand, optionally set `M
 docker compose --profile app up --build --wait
 ```
 
-Compose starts PostgreSQL, Mailpit, SeaweedFS, a one-shot migration and optional seed, the API, background worker, collaboration server, and web client. The web client is [https://localhost:5173](https://localhost:5173). The first image build may take a few minutes. Re-running the command is safe: migrations are tracked and persistent data stays in named volumes. For foreground logs instead, omit `--wait`; inspect a service with `docker compose --profile app logs -f api` (or `web`, `worker`, `collaboration`, `migrate`).
+Compose starts PostgreSQL, SeaweedFS, a one-shot migration and optional seed, the API, background worker, collaboration server, and web client. The web client is [https://localhost:5173](https://localhost:5173). The first image build may take a few minutes. Re-running the command is safe: migrations are tracked and persistent data stays in named volumes. For foreground logs instead, omit `--wait`; inspect a service with `docker compose --profile app logs -f api` (or `web`, `worker`, `collaboration`, `migrate`).
 
 **Services in Compose, application on your computer (fast edit loop):**
 
@@ -98,24 +98,24 @@ npm ci
 docker compose up -d
 set -a; source .env; set +a
 npm run db:migrate
+npm run migrate:semantic --workspace=@chalktalk/api
 # Optional, only when MOCK_DATA=true: npm run db:seed:mock
 npm run dev
 ```
 
-Here Compose starts only PostgreSQL, Mailpit, and SeaweedFS. If you enabled mock data, run the commented seed command after migrations and before `npm run dev`. `npm run dev` starts Vite, the API, the worker, and the collaboration server together; use `npm run dev:web`, `dev:api`, `dev:worker`, or `dev:collab` to run one separately. The `source` command exports `.env` to migrations and all four local processes; run it again in a new terminal. Do **not** start the full Compose app profile simultaneously with `npm run dev`, or ports and workers will conflict.
+Here Compose starts only PostgreSQL and SeaweedFS. If you enabled mock data, run the commented seed command after migrations and before `npm run dev`. `npm run dev` starts Vite, the API, the worker, and the collaboration server together; use `npm run dev:web`, `dev:api`, `dev:worker`, or `dev:collab` to run one separately. The `source` command exports `.env` to migrations and all four local processes; run it again in a new terminal. Do **not** start the full Compose app profile simultaneously with `npm run dev`, or ports and workers will conflict.
 
-For resource text extraction in direct mode, the worker also needs Poppler's `pdfinfo`, `pdftotext` and `pdftoppm`, plus Tesseract and the configured language packs on `PATH`. The Compose images include these tools with English. If a tool or configured language is missing at startup, the worker logs `resource_text_tools_unavailable` and leaves extraction jobs pending until a corrected worker restarts; other job lanes continue.
+For resource text extraction in direct mode, the worker also needs Poppler's `pdfinfo`, `pdftotext` and `pdftoppm`, plus Tesseract and English language data on `PATH`. The Compose images include these tools. If a tool or English language data is missing at startup, the worker logs `resource_text_tools_unavailable` and leaves extraction jobs pending until a corrected worker restarts; other job lanes continue.
 
 ### 3. Open the app and verify it
 
-| Local endpoint                                   | Purpose                                                |
-| ------------------------------------------------ | ------------------------------------------------------ |
-| [https://localhost:5173](https://localhost:5173) | Web app; Vite proxies `/api` and `/collaboration`      |
-| [http://localhost:8025](http://localhost:8025)   | Mailpit inbox for verification and notification emails |
-| `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store                   |
-| `http://localhost:3000/health`                   | API health, **direct application mode only**           |
+| Local endpoint                                   | Purpose                                           |
+| ------------------------------------------------ | ------------------------------------------------- |
+| [https://localhost:5173](https://localhost:5173) | Web app; Vite proxies `/api` and `/collaboration` |
+| `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store              |
+| `http://localhost:3000/health`                   | API health, **direct application mode only**      |
 
-In full Compose mode, the API is not exposed on a host port; the web proxy exposes its health route at `https://localhost:5173/api/health`. Sign up using a valid `.edu` email address, then open Mailpit to follow the verification link. Mailpit **does not deliver real email**. The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
+In full Compose mode, the API is not exposed on a host port; the web proxy exposes its health route at `https://localhost:5173/api/health`. Sign up using a valid `.edu` email address, then follow the verification link delivered to your inbox through Resend. The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
 
 ### Environment variables
 
@@ -126,8 +126,7 @@ Copying `.env.example` provides the local defaults. The table identifies what to
 | `AUTH_TOKEN_SECRET`                                                                 | **Required:** replace the template with a random secret of at least 32 characters; used to sign auth tokens.                                                                                                                                                                                              |
 | `FRONTEND_ORIGINS`, `FRONTEND_BASE_URL`                                             | HTTPS browser origin(s) and canonical public URL. `FRONTEND_BASE_URL` must be one of `FRONTEND_ORIGINS`; defaults to `https://localhost:5173`. Update both if the host or `WEB_PORT` changes.                                                                                                             |
 | `DATABASE_URL`                                                                      | PostgreSQL connection used by **direct** local processes and migrations. The default matches Compose's local database. Full Compose overrides it with the internal `postgres` host.                                                                                                                       |
-| `EMAIL_PROVIDER`, `EMAIL_FROM`, `RESEND_API_KEY`, `RESEND_API_BASE_URL`             | Local default is Mailpit SMTP. Select `resend`, set `EMAIL_FROM` to a verified-domain sender and set the sending-only `RESEND_API_KEY` for API and worker. `RESEND_API_BASE_URL` is optional and intended for isolated local mocks. Keep credentials server-side only.                                    |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM`                                | Used only when `EMAIL_PROVIDER=smtp`: direct mode sends to Mailpit at `localhost:1025` by default. Full development Compose routes SMTP to its `mailpit` service. `SMTP_USER` and `SMTP_PASSWORD` are optional for authenticated SMTP.                                                                    |
+| `EMAIL_PROVIDER`, `RESEND_API_KEY`, `RESEND_API_BASE_URL`                           | Local Compose selects Resend. Set a sending-only API key; the sender is fixed in code. `RESEND_API_BASE_URL` is only for isolated mocked-network tests. Production selects Resend through `NODE_ENV=production`.                                                                                          |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Direct mode uses local SeaweedFS at `127.0.0.1:8333`. Full Compose sets its internal endpoint and credentials from `SEAWEEDFS_ACCESS_KEY_ID` / `SEAWEEDFS_SECRET_ACCESS_KEY`; these are **local object-store keys**, not AWS keys. Keep the direct-mode S3 keys in sync if you change the SeaweedFS keys. |
 | `PORT`, `COLLABORATION_PORT`, `COLLABORATION_PUBLIC_URL`                            | Direct-mode API port (3000), WebSocket port (3100), and browser WebSocket URL. Full Compose sets its internal API port; the public WebSocket URL defaults to the frontend HTTPS host plus `/collaboration`.                                                                                               |
 | `VITE_TLS_KEY_PATH`, `VITE_TLS_CERT_PATH`                                           | Direct Vite TLS files generated above. Full Compose mounts `.cert/` and supplies container paths.                                                                                                                                                                                                         |
@@ -135,12 +134,12 @@ Copying `.env.example` provides the local defaults. The table identifies what to
 | `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`                        | Optional semantic search provider. Do not put the key in browser/Vite variables; private post text and search queries are sent to that provider. See [Optional semantic search](#optional-semantic-search).                                                                                               |
 | `OBSERVABILITY_ENABLED`, `METRICS_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`  | Optional local monitoring. When enabled, set the first to `true` and generate **different** random secrets for the token and Grafana password. Default Grafana host port is 3001.                                                                                                                         |
 | `COLLABORATION_IDLE_END_MINUTES`, `LOG_SPOOL_DIRECTORY`                             | Live-session idle timeout and observability log location. API rate limits are fixed in `apps/api/src/config/constants.ts` rather than set through environment variables.                                                                                                                                  |
-| `RESOURCE_OCR_MAX_PAGES`, `RESOURCE_OCR_LANGUAGES`                                  | Worker text extraction. Caps OCR'd PDF pages per file (0–2000, default 200). 0 keeps PDF text layers only; images are still OCR'd and the startup probe still requires Tesseract. Languages: `+`-joined Tesseract codes (default `eng`); each needs a `tesseract-ocr-<code>` package in the worker image. |
-| `RATE_LIMIT_*`, `COLLABORATION_IDLE_END_MINUTES`, `LOG_SPOOL_DIRECTORY`             | Tunable API rate limits, live-session idle timeout, and observability log location. The `.env.example` defaults are suitable for local development.                                                                                                                                                       |
 
-`WEB_PORT` is a Compose-only host-port override (default 5173), not an API variable. `COMPOSE_ENV_FILE` can point Compose services to another env file, but Compose variable interpolation also needs `docker compose --env-file <file>` or exported shell variables. Most teammates should simply use `.env`.
+Resource OCR is limited to 200 PDF pages needing OCR per file and uses English Tesseract data, as fixed in `apps/api/src/config/constants.ts`; it does not use environment variables.
 
-For **real email delivery**, verify your sender domain in Resend, configure `EMAIL_PROVIDER=resend`, `EMAIL_FROM="ChalkTalk <noreply@your-domain.example>"`, and a sending-only `RESEND_API_KEY` for both API and worker. Use `RESEND_API_BASE_URL` only for isolated mock tests; omit it for real Resend. Local Compose still defaults to Mailpit. Queued retries use a frozen payload and stable Resend idempotency key; Resend’s bounded key window does not guarantee exactly-once delivery after expiry. For opt-out timing during delivery, see [course email preferences](documentation/api/courses.md#courseEmailPreferences). Never commit or share provider credentials.
+`NODE_ENV=production` is set by the production images/Compose and is not a custom user mode flag. `WEB_PORT` is a Compose-only host-port override (default 5173), not an API variable. For local Compose, `COMPOSE_ENV_FILE` can point services to another env file relative to the repository root, but Compose variable interpolation also needs `docker compose --env-file <file>` or exported shell variables. Most teammates should simply use `.env`.
+
+For **real email delivery**, configure a sending-only `RESEND_API_KEY` for both API and worker. The sender is fixed as `ChalkTalk <noreply@joinchalktalk.com>` in API constants. Local Compose selects `EMAIL_PROVIDER=resend`. Use `RESEND_API_BASE_URL` only for isolated mock tests; omit it for real Resend. Queued retries use a frozen payload and stable Resend idempotency key; Resend’s bounded key window does not guarantee exactly-once delivery after expiry. For opt-out timing during delivery, see [course email preferences](documentation/api/courses.md#courseEmailPreferences). Never commit or share provider credentials.
 
 For a **manual live Resend acceptance check**, start a disposable PostgreSQL server bound to loopback and set `TEST_DATABASE_URL` to its administrative database. Set `RESEND_LIVE_CONFIRM=send-synthetic-mail`, `RESEND_LIVE_RECIPIENT` to the approved test inbox, and the normal Resend variables, then run `npm run test:email:live`. The command creates and removes its own uniquely named database, sends no more than twelve synthetic messages, and refuses a non-approved recipient, remote database, or mock Resend endpoint. This command is never part of regular CI; it checks provider acceptance, not inbox arrival. See [live validation design](docs/design/2026-11-02-resend-live-validation.md).
 
@@ -165,13 +164,9 @@ The command fetches one request per second, so a large class takes several minut
 
 ### Optional semantic search
 
-Ordinary full-text and fuzzy search needs no external service. To add semantic matching, set `EMBEDDING_API_KEY` for an OpenAI-compatible embeddings endpoint in the ignored `.env` (and optionally `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL`), then use the explicit pgvector override:
+The main local Compose stack uses PostgreSQL with pgvector and runs the vector migration alongside ordinary migrations. No separate semantic-search Compose file is needed. Ordinary full-text and fuzzy search still works without an external service. To add semantic matching, set `EMBEDDING_API_KEY` for an OpenAI-compatible embeddings endpoint in the ignored `.env` (and optionally `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL`), then start the usual stack with `docker compose --profile app up --build --wait`.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.semantic.yml --profile app up --build --wait
-```
-
-This runs the optional vector migration. Do not switch an existing populated PostgreSQL volume between the ordinary and pgvector images without a migration/backup plan. Search falls back to lexical/fuzzy when the optional provider, key, or vector schema is unavailable.
+If you have an existing populated local volume created with the earlier `postgres:17-alpine` image, back it up before switching images. Search falls back to lexical/fuzzy when the optional provider or key is unavailable. Production remains separately configured against Supabase and does not run the optional vector migration automatically.
 
 ### Optional local observability
 
@@ -193,7 +188,7 @@ docker compose --profile app down                 # stop app and dependencies; k
 docker compose down                               # stop dependency-only mode; keep data
 ```
 
-`docker compose down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**; use it only to intentionally reset the environment. If ports 5432, 5173, 1025, 8025, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, confirm `mkcert -install` ran and `.cert/localhost.pem` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before reseeding or deleting data.
+`docker compose down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, confirm `mkcert -install` ran and `.cert/localhost.pem` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before reseeding or deleting data.
 
 Run the repository checks before submitting code:
 
