@@ -92,16 +92,16 @@ The system tracks engagement signals per post, including view count, followup ac
 
 ### **Role Permissions**
 
-| Action               | Student  | TA    | Instructor |
-| :------------------- | :------- | :---- | :--------- |
-| Create question/note | Yes      | Yes   | Yes        |
-| Create poll          | No       | Yes   | Yes        |
-| Create announcement  | No       | Yes   | Yes        |
-| Endorse answers      | No       | Yes   | Yes        |
-| Delete readable post | Own only | Yes   | Yes        |
-| Create Thread board  | No       | Yes   | Yes        |
-| Manage members       | No       | No    | Yes        |
-| Archive/delete class | No       | No    | Yes        |
+| Action               | Student  | TA  | Instructor |
+| :------------------- | :------- | :-- | :--------- |
+| Create question/note | Yes      | Yes | Yes        |
+| Create poll          | No       | Yes | Yes        |
+| Create announcement  | No       | Yes | Yes        |
+| Endorse answers      | No       | Yes | Yes        |
+| Delete readable post | Own only | Yes | Yes        |
+| Create Thread board  | No       | Yes | Yes        |
+| Manage members       | No       | No  | Yes        |
+| Archive/delete class | No       | No  | Yes        |
 
 # Nonfunctional Requirements
 
@@ -146,19 +146,19 @@ flowchart TB
 
 **PostgreSQL.** PostgreSQL stores users, courses, memberships, posts, answers, followups, sessions, and the job queue. Course-scoped tables use course identifiers and relational constraints; API authorization checks determine which rows a user can access.
 
-**Object store.** The object store holds uploaded images and documents. The implemented deployments use SeaweedFS. The application speaks the S3 API, so an S3-compatible managed service can replace it through configuration.
+**Object store.** The object store holds uploaded images and documents. Local development uses SeaweedFS; production uses private Supabase Storage through its S3-compatible interface. Application access checks remain in the API.
 
-**Email provider.** The email provider delivers verification, password reset, and notification emails. The application supports Resend HTTPS or SMTP, with local development defaulting to Mailpit SMTP. The worker sends queued email; direct authentication request flows send email from the API. The deployment guide remains a separate concern.
+**Email provider.** The email provider delivers verification, password reset, and notification emails. The application supports Resend HTTPS or SMTP; the local and production Compose stacks use Resend HTTPS. The worker sends queued email; direct authentication request flows send email from the API. See the [deployment guides](../deployment/README.md) for provider configuration.
 
 # Deployment
 
-ChalkTalk runs as containers managed through Docker Compose: the root `docker-compose.yml` for local development and a [single-VM deployment skeleton](../deployment/README.md) with PostgreSQL for application data and durable jobs and SeaweedFS for S3-compatible object storage. The skeleton is not production-ready; its guide lists the backups and end-to-end checks that remain. The managed cloud deployment in the original plan (Vercel, AWS ECS, RDS and S3) has not been built. The email provider is selected by configuration; see the [local setup](../README.md#start-locally) for its settings.
+ChalkTalk runs as containers managed through Docker Compose: the root `docker-compose.yml` uses local PostgreSQL and SeaweedFS, while the [single-VM production stack](../deployment/production/README.md) uses managed Supabase PostgreSQL and Storage. The production guide lists the backups and end-to-end checks that remain; the stack is not a production-readiness guarantee. The managed cloud deployment in the original plan (Vercel, AWS ECS, RDS and S3) has not been built. See the [deployment guides](../deployment/README.md) for configuration.
 
 ### **Optional semantic search**
 
 Deployments can enable embedding-based post search through the `EMBEDDING_*` settings described in the [README](../README.md#optional-semantic-search). The API uses the configured embeddings endpoint for search queries, and the worker generates embeddings for indexed posts. The provider key is a server-side secret supplied by the deployment operator. Without the optional provider and vector schema, post search uses PostgreSQL full-text and fuzzy matching.
 
-A managed deployment would send system metrics and request logs to AWS CloudWatch, which must cover the 60-second metrics interval and one-year log retention in the nonfunctional requirements. The implemented local monitoring stack has a separate retention policy; see [local observability](api/observability.md).
+The current single-VM production stack does not implement the metrics or one-year log-retention targets above. It retains only bounded Docker logs; see the [production deployment guide](../deployment/production/README.md#operate-and-verify). Local monitoring has a separate retention policy; see [local observability](api/observability.md).
 
 ### **Background jobs**
 

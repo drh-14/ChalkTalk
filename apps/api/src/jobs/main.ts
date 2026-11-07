@@ -4,9 +4,9 @@ import { createEmailSender } from "../auth/email.js";
 import {
   loadEnvironment,
   loadObjectStorageConfig,
-  loadResourceTextConfig,
   requireDatabaseUrl,
 } from "../config/environment.js";
+import { RESOURCE_TEXT_OCR_CONFIG } from "../config/constants.js";
 import { createPool } from "../database/pool.js";
 import { s3DigestImageReader } from "../digest/images.js";
 import { DigestService } from "../digest/service.js";
@@ -46,7 +46,7 @@ const semantic = embeddingConfig
     )
   : undefined;
 pool.on("error", () => logApiEvent(observability, "database_pool_error"));
-const resourceText = loadResourceTextConfig();
+const resourceText = RESOURCE_TEXT_OCR_CONFIG;
 const { bucket, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
 const worker = new JobWorker(

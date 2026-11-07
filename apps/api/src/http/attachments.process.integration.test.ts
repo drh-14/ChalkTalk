@@ -151,7 +151,6 @@ integration("authenticated attachment API and separate cleanup process", () => {
         "attachment-smoke-secret-longer-than-thirty-two-characters",
       FRONTEND_ORIGINS: origin,
       FRONTEND_BASE_URL: origin,
-      OBSERVABILITY_ENABLED: "false",
       S3_ENDPOINT: endpoint,
       S3_BUCKET: bucket,
       S3_REGION: "us-east-1",
