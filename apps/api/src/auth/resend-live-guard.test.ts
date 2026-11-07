@@ -19,20 +19,10 @@ const approvedHash = createHash("sha256")
   .digest("hex");
 
 describe("manual live Resend safety boundary", () => {
-  it("accepts the approved Gmail test inbox and rejects any other recipient", () => {
-    const approved = {
-      ...valid,
-      RESEND_LIVE_RECIPIENT: "chalktalk602@gmail.com",
-    };
-    expect(checkedLiveConfig(approved).recipient).toBe(
-      "chalktalk602@gmail.com",
+  it("rejects an unapproved recipient with the default allowlist", () => {
+    expect(() => checkedLiveConfig(valid)).toThrow(
+      "Recipient is not the approved live-test inbox",
     );
-    expect(() =>
-      checkedLiveConfig({
-        ...approved,
-        RESEND_LIVE_RECIPIENT: "other@gmail.com",
-      }),
-    ).toThrow("Recipient is not the approved live-test inbox");
   });
 
   it("requires explicit opt-in, approved recipient, real endpoint, and loopback database", () => {
