@@ -99,12 +99,12 @@ The system SHALL allow an authenticated user to update their display name and ve
 
 ### Requirement: Local development parity
 
-The system SHALL support browser authentication locally over HTTPS with the same secure production cookie attributes and SHALL capture development emails without delivering them to external recipients.
+The system SHALL support browser authentication locally over HTTPS with the same secure production cookie attributes. Local email delivery SHALL follow the configured provider as specified in [outbound email transport](../outbound-email-transport/spec.md).
 
 #### Scenario: View a local verification email
 
 - **WHEN** a local verification request requires delivery
-- **THEN** the message is available in the configured local SMTP capture inbox
+- **THEN** the message is sent through the configured provider
 
 ### Requirement: Signed-in account page
 

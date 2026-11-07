@@ -3,7 +3,78 @@ import {
   FRONTEND_BASE_URL_DEFAULT,
   FRONTEND_ORIGINS_DEFAULT,
   RATE_LIMITS,
+  RESEND_EMAIL_FROM,
 } from "./constants.js";
+
+function productionMode(source: NodeJS.ProcessEnv): boolean {
+  for (const legacy of [
+    "PROD",
+    "PRODUCTION",
+    "LOCAL_DATABASE",
+    "LOCAL_FILE_STORE",
+  ] as const)
+    if (source[legacy] !== undefined)
+      throw new Error(`Remove ${legacy}; deployment mode comes from NODE_ENV`);
+  if (
+    source.NODE_ENV !== undefined &&
+    !["development", "test", "production"].includes(source.NODE_ENV)
+  )
+    throw new Error("NODE_ENV must be development, test, or production");
+  return source.NODE_ENV === "production";
+}
+
+function supabaseDatabaseProjectRef(value: string | undefined): string {
+  if (!value)
+    throw new Error("DATABASE_URL is required when NODE_ENV=production");
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      "DATABASE_URL must be a PostgreSQL URL when NODE_ENV=production",
+    );
+  }
+  if (
+    !["postgres:", "postgresql:"].includes(url.protocol) ||
+    !url.username ||
+    !url.password ||
+    url.pathname === "/" ||
+    !url.pathname ||
+    url.hash
+  )
+    throw new Error(
+      "DATABASE_URL must be a PostgreSQL URL with credentials and database",
+    );
+  const direct = /^db\.([a-z0-9]{20})\.supabase\.co$/.exec(url.hostname);
+  const pooler =
+    /^aws-\d+-[a-z]{2}(?:-[a-z]+)+-\d+\.pooler\.supabase\.com$/.test(
+      url.hostname,
+    );
+  const poolerUsername = /^(.+)\.([a-z0-9]{20})$/.exec(url.username);
+  if (
+    url.port !== "5432" ||
+    (!direct && !pooler) ||
+    (pooler && !poolerUsername)
+  )
+    throw new Error(
+      "DATABASE_URL must use a Supabase direct or session-pooler endpoint on port 5432",
+    );
+  const sslModes = url.searchParams.getAll("sslmode");
+  if (
+    sslModes.length !== 1 ||
+    [...url.searchParams.keys()].some((key) => key !== "sslmode") ||
+    !["require", "verify-ca", "verify-full"].includes(sslModes[0])
+  )
+    throw new Error(
+      "DATABASE_URL must specify sslmode=require, verify-ca, or verify-full when NODE_ENV=production",
+    );
+  return direct ? direct[1] : poolerUsername![2];
+}
+
+function remoteDatabaseUrl(value: string | undefined): string {
+  supabaseDatabaseProjectRef(value);
+  return value!;
+}
 
 export function loadObjectStorageConfig(
   source: NodeJS.ProcessEnv = process.env,
@@ -17,6 +88,43 @@ export function loadObjectStorageConfig(
   const endpoint = source.S3_ENDPOINT;
   const accessKeyId = source.S3_ACCESS_KEY_ID;
   const secretAccessKey = source.S3_SECRET_ACCESS_KEY;
+  const production = productionMode(source);
+  if (production) {
+    for (const [name, value] of [
+      ["S3_ENDPOINT", endpoint],
+      ["S3_BUCKET", source.S3_BUCKET],
+      ["S3_REGION", source.S3_REGION],
+      ["S3_ACCESS_KEY_ID", accessKeyId],
+      ["S3_SECRET_ACCESS_KEY", secretAccessKey],
+    ])
+      if (!value?.trim())
+        throw new Error(`${name} is required when NODE_ENV=production`);
+    let parsed: URL;
+    try {
+      parsed = new URL(endpoint!);
+    } catch {
+      throw new Error(
+        "S3_ENDPOINT must be an HTTPS URL when NODE_ENV=production",
+      );
+    }
+    const storageHost = /^([a-z0-9]{20})(?:\.storage)?\.supabase\.co$/.exec(
+      parsed.hostname,
+    );
+    if (
+      parsed.protocol !== "https:" ||
+      !storageHost ||
+      parsed.port ||
+      parsed.pathname !== "/storage/v1/s3" ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash ||
+      storageHost[1] !== supabaseDatabaseProjectRef(source.DATABASE_URL)
+    )
+      throw new Error(
+        "S3_ENDPOINT must be a same-project Supabase HTTPS S3 URL when NODE_ENV=production",
+      );
+  }
   if (Boolean(accessKeyId) !== Boolean(secretAccessKey))
     throw new Error(
       "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together",
@@ -42,6 +150,7 @@ export function loadObjectStorageConfig(
 
 export interface Environment {
   databaseUrl: string | undefined;
+  production: boolean;
   port: number;
   trustProxyHops: 0 | 1;
   frontendOrigins: ReadonlySet<string>;
@@ -86,35 +195,24 @@ export interface Environment {
   };
 }
 
-/** Worker settings for resource text extraction (OCR page cap and Tesseract languages). */
-export function loadResourceTextConfig(
-  source: NodeJS.ProcessEnv = process.env,
-): { maxOcrPages: number; ocrLanguages: string } {
-  const pages = source.RESOURCE_OCR_MAX_PAGES ?? "200";
-  if (!/^\d{1,4}$/.test(pages) || Number(pages) > 2000)
-    throw new Error(
-      "RESOURCE_OCR_MAX_PAGES must be an integer between 0 and 2000",
-    );
-  const ocrLanguages = source.RESOURCE_OCR_LANGUAGES ?? "eng";
-  if (!/^[a-z_]{3,}(\+[a-z_]{3,})*$/.test(ocrLanguages))
-    throw new Error(
-      "RESOURCE_OCR_LANGUAGES must be Tesseract language codes joined by +",
-    );
-  return { maxOcrPages: Number(pages), ocrLanguages };
-}
-
 export function loadEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): Environment {
+  const production = productionMode(source);
+  const databaseUrl = production
+    ? remoteDatabaseUrl(source.DATABASE_URL)
+    : source.DATABASE_URL;
   const port = Number(source.PORT ?? "3000");
   const smtpPort = Number(source.SMTP_PORT ?? "1025");
-  const emailProvider = source.EMAIL_PROVIDER ?? "smtp";
+  if (production && source.EMAIL_PROVIDER && source.EMAIL_PROVIDER !== "resend")
+    throw new Error("NODE_ENV=production requires Resend");
+  const emailProvider = production
+    ? "resend"
+    : (source.EMAIL_PROVIDER ?? "smtp");
   if (emailProvider !== "smtp" && emailProvider !== "resend")
     throw new Error("EMAIL_PROVIDER must be smtp or resend");
   if (emailProvider === "resend" && !source.RESEND_API_KEY?.trim())
     throw new Error("RESEND_API_KEY is required when EMAIL_PROVIDER=resend");
-  if (emailProvider === "resend" && !source.EMAIL_FROM?.trim())
-    throw new Error("EMAIL_FROM is required when EMAIL_PROVIDER=resend");
   let resendApiBaseUrl = "https://api.resend.com";
   if (emailProvider === "resend" && source.RESEND_API_BASE_URL !== undefined) {
     let endpoint: URL;
@@ -132,6 +230,10 @@ export function loadEnvironment(
       endpoint.hash
     )
       throw new Error("RESEND_API_BASE_URL must be an HTTP or HTTPS origin");
+    if (production && endpoint.origin !== "https://api.resend.com")
+      throw new Error(
+        "RESEND_API_BASE_URL must be https://api.resend.com when NODE_ENV=production",
+      );
     resendApiBaseUrl = endpoint.origin;
   }
   const positiveInteger = (name: string, fallback: number): number => {
@@ -179,16 +281,8 @@ export function loadEnvironment(
     throw new Error("AUTH_TOKEN_SECRET must contain at least 32 characters");
   }
 
-  const observabilityEnabled = source.OBSERVABILITY_ENABLED === "true";
-  if (
-    source.OBSERVABILITY_ENABLED !== undefined &&
-    !["true", "false"].includes(source.OBSERVABILITY_ENABLED)
-  )
-    throw new Error("OBSERVABILITY_ENABLED must be true or false");
-  if (
-    observabilityEnabled &&
-    (!source.METRICS_TOKEN || source.METRICS_TOKEN.length < 32)
-  )
+  const observabilityEnabled = !production && Boolean(source.METRICS_TOKEN);
+  if (observabilityEnabled && source.METRICS_TOKEN!.length < 32)
     throw new Error(
       "METRICS_TOKEN must contain at least 32 characters when observability is enabled",
     );
@@ -218,7 +312,8 @@ export function loadEnvironment(
     );
 
   return {
-    databaseUrl: source.DATABASE_URL,
+    databaseUrl,
+    production,
     port,
     trustProxyHops,
     frontendOrigins,
@@ -241,7 +336,7 @@ export function loadEnvironment(
       emailProvider === "resend"
         ? {
             provider: "resend",
-            from: source.EMAIL_FROM!.trim(),
+            from: RESEND_EMAIL_FROM,
             resendApiKey: source.RESEND_API_KEY!.trim(),
             resendApiBaseUrl,
           }

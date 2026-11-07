@@ -1,6 +1,6 @@
 # Local API observability
 
-**Implementation status:** The Express API and dedicated background worker expose local-only metrics and sanitized JSON events when `OBSERVABILITY_ENABLED=true`. This is an operator endpoint, not part of the browser `/api/v1` session API. It is not a production monitoring deployment.
+**Implementation status:** The Express API and dedicated background worker expose local-only metrics and sanitized JSON events when a valid `METRICS_TOKEN` is configured in development. This is an operator endpoint, not part of the browser `/api/v1` session API. Production does not enable this monitoring stack.
 
 ## `GET /metrics`
 

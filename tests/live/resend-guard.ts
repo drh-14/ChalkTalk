@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import type { EmailSender } from "../../apps/api/src/auth/service.js";
+import { RESEND_EMAIL_FROM } from "../../apps/api/src/config/constants.js";
 
 const APPROVED_RECIPIENT_SHA256 =
-  "ec4fdd41a99982e0d6ce27616a039dd68b1bc59182b316cb5220f4a48bc955ad";
+  "1df1c8c207742ce445de1177ef78dca9d1e8e9da202abeb409d6f7a1ff01afc9";
 
 export type LiveConfig = {
   recipient: string;
@@ -27,9 +28,7 @@ export function checkedLiveConfig(
     !source.RESEND_API_KEY?.startsWith("re_")
   )
     throw new Error("A configured Resend API key is required");
-  const sender = source.EMAIL_FROM?.trim() ?? "";
-  if (!/^(?:[^<>]+ <)?[a-z0-9._%+-]+@joinchalktalk\.com>?$/i.test(sender))
-    throw new Error("EMAIL_FROM must use the verified ChalkTalk domain");
+  const sender = RESEND_EMAIL_FROM;
   if (
     source.RESEND_API_BASE_URL &&
     source.RESEND_API_BASE_URL !== "https://api.resend.com"

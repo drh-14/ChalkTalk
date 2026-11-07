@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadEnvironment } from "../config/environment.js";
+import { RESEND_EMAIL_FROM } from "../config/constants.js";
 import { createEmailSender } from "./email.js";
 
 describe("configured Resend API endpoint", () => {
@@ -44,7 +45,6 @@ describe("configured Resend API endpoint", () => {
       AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
       EMAIL_PROVIDER: "resend",
       RESEND_API_KEY: "re_local_secret",
-      EMAIL_FROM: "sender@example.edu",
       RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
     });
     await createEmailSender(environment).send(
@@ -56,7 +56,7 @@ describe("configured Resend API endpoint", () => {
         authorization: "Bearer re_local_secret",
         idempotencyKey: "job-local-1",
         body: {
-          from: "sender@example.edu",
+          from: RESEND_EMAIL_FROM,
           to: "student@example.edu",
           subject: "Course update",
           text: "Hello",
@@ -92,7 +92,6 @@ describe("configured Resend API endpoint", () => {
           "a-long-enough-authentication-secret-for-email-tests",
         EMAIL_PROVIDER: "resend",
         RESEND_API_KEY: "re_local_secret",
-        EMAIL_FROM: "sender@example.edu",
         RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
       }),
     );

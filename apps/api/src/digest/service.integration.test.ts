@@ -35,6 +35,7 @@ import {
 } from "../observability/index.js";
 import { PostService } from "../posts/service.js";
 import { DigestService } from "./service.js";
+import { RESEND_EMAIL_FROM } from "../config/constants.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
@@ -1239,7 +1240,6 @@ integration("daily course email digest", () => {
           AUTH_TOKEN_SECRET: secret,
           EMAIL_PROVIDER: "resend",
           RESEND_API_KEY: "re_mock_secret",
-          EMAIL_FROM: "old@example.edu",
           RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
         };
         const first = new DigestService(
@@ -1263,22 +1263,25 @@ integration("daily course email digest", () => {
         ).toMatchObject({
           provider: "resend",
           message: {
-            from: "old@example.edu",
+            from: RESEND_EMAIL_FROM,
             subject: (requests[0] as { subject: string }).subject,
           },
         });
         await pool.query(
           "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
         );
+        const retrySender = createEmailSender(
+          loadEnvironment(
+            change === "provider"
+              ? { AUTH_TOKEN_SECRET: secret, SMTP_FROM: RESEND_EMAIL_FROM }
+              : source,
+          ),
+        );
         const retry = new DigestService(
           pool,
-          createEmailSender(
-            loadEnvironment(
-              change === "provider"
-                ? { AUTH_TOKEN_SECRET: secret, SMTP_FROM: source.EMAIL_FROM }
-                : { ...source, EMAIL_FROM: "new@example.edu" },
-            ),
-          ),
+          change === "sender"
+            ? { ...retrySender, defaultFrom: "replacement@example.edu" }
+            : retrySender,
           environment.frontendBaseUrl,
           "digest-http-sender",
         );
@@ -1574,7 +1577,6 @@ integration("daily course email digest", () => {
           AUTH_TOKEN_SECRET: secret,
           EMAIL_PROVIDER: "resend",
           RESEND_API_KEY: "re_mock_secret",
-          EMAIL_FROM: "sender@example.edu",
           RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
         }),
       );

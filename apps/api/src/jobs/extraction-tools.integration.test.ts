@@ -79,7 +79,6 @@ integration("worker without the extraction toolchain", () => {
       env: {
         ...process.env,
         PATH: emptyPath,
-        OBSERVABILITY_ENABLED: "false",
         DATABASE_URL: `${url}?options=-csearch_path%3D${schema}`,
         AUTH_TOKEN_SECRET: "test-secret-with-at-least-32-characters",
         S3_BUCKET: "test-course-files",
