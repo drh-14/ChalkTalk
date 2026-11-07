@@ -12,3 +12,9 @@ export const RATE_LIMITS = Object.freeze({
   collaborationCreatePerUser: 30,
   collaborationTicketPerUser: 300,
 });
+
+/** Resource text extraction uses the Tesseract language installed in the worker image. */
+export const RESOURCE_TEXT_OCR_CONFIG = Object.freeze({
+  maxOcrPages: 200,
+  ocrLanguages: "eng",
+});
