@@ -58,7 +58,7 @@ Optional embedding-based search helps surface related posts with different wordi
 
 # **Rough Architecture**
 
-The original two-deployment proposal has been superseded. See the [current design](design.md#runtime-architecture-and-deployment) and [maintained architecture diagram](../diagrams/architecture/architecture.svg) for the approved production and local topology. For the runnable, earlier single-VM Compose skeleton, see its separate [deployment guide](../deployment/README.md).
+The original two-deployment proposal has been superseded. See the [current design](design.md#runtime-architecture-and-deployment) and [maintained architecture diagram](../diagrams/architecture/architecture.svg) for the approved production and local topology.
 
 #
 
