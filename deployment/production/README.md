@@ -62,6 +62,8 @@ The production images and Compose set `NODE_ENV=production`; there is no custom 
 
 ## Operate and verify
 
+Production runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoint, or event spool, even if `METRICS_TOKEN` is accidentally set. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy.
+
 - `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
 - `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml restart api worker collaboration`
 - `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.

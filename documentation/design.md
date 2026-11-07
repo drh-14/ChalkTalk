@@ -158,7 +158,7 @@ ChalkTalk runs as containers managed through Docker Compose: the root `docker-co
 
 Deployments can enable embedding-based post search through the `EMBEDDING_*` settings described in the [README](../README.md#optional-semantic-search). The API uses the configured embeddings endpoint for search queries, and the worker generates embeddings for indexed posts. The provider key is a server-side secret supplied by the deployment operator. Without the optional provider and vector schema, post search uses PostgreSQL full-text and fuzzy matching.
 
-A managed deployment would send system metrics and request logs to AWS CloudWatch, which must cover the 60-second metrics interval and one-year log retention in the nonfunctional requirements. The implemented local monitoring stack has a separate retention policy; see [local observability](api/observability.md).
+The current single-VM production stack does not implement the metrics or one-year log-retention targets above. It retains only bounded Docker logs; see the [production deployment guide](../deployment/production/README.md#operate-and-verify). Local monitoring has a separate retention policy; see [local observability](api/observability.md).
 
 ### **Background jobs**
 
