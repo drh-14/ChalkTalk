@@ -22,13 +22,27 @@ const courseObjectKey = `course-files/${courseId}/notes.txt`;
 const fileObjectKey = `course-files/${courseId}/deleted.txt`;
 const serverPath = fileURLToPath(new URL("../server.ts", import.meta.url));
 const workerPath = fileURLToPath(new URL("./main.ts", import.meta.url));
-const port = 30_000 + Math.floor(Math.random() * 20_000);
+let port: number;
 let admin: Pool;
 let pool: Pool;
 let s3: Server;
 let s3Endpoint: string;
 const deletedObjects: string[] = [];
 const children: ChildProcess[] = [];
+
+/**
+ * Asks the OS for a free port. A random fixed range can collide with ports
+ * other test servers were given by listen(0) on the same runner.
+ */
+async function freePort(): Promise<number> {
+  const listener = createServer();
+  await new Promise<void>((resolve) =>
+    listener.listen(0, "127.0.0.1", resolve),
+  );
+  const { port } = listener.address() as AddressInfo;
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
+  return port;
+}
 
 const start = (path: string): ChildProcess => {
   const processHandle = spawn(process.execPath, ["--import", "tsx", path], {
@@ -50,7 +64,9 @@ const start = (path: string): ChildProcess => {
 };
 
 const waitFor = async (condition: () => Promise<boolean>): Promise<void> => {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  // Each stage boots a fresh `node --import tsx` process, which can take
+  // well over 6s on a loaded CI runner.
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if (await condition()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -59,6 +75,7 @@ const waitFor = async (condition: () => Promise<boolean>): Promise<void> => {
 
 integration("separate HTTP and job worker processes", () => {
   beforeAll(async () => {
+    port = await freePort();
     s3 = createServer((request, response) => {
       const path = new URL(request.url ?? "/", "http://localhost").pathname;
       if (path === "/test-course-files/" && request.method === "HEAD") {
@@ -202,5 +219,5 @@ integration("separate HTTP and job worker processes", () => {
       );
       return result.rows[0]?.status === "succeeded";
     });
-  }, 15_000);
+  }, 120_000);
 });

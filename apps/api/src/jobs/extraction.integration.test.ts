@@ -443,19 +443,24 @@ suite("resource text extraction jobs", () => {
           (await job(fileId)).id,
           attempts,
         ]);
-        let aborted = false;
+        let aborted = false,
+          entered = false;
         const subject = worker({
           heartbeatMs: 50,
           extract: (_path, _type, _directory, options: ExtractionOptions) =>
-            new Promise<ExtractedText>((_resolve, reject) =>
+            new Promise<ExtractedText>((_resolve, reject) => {
+              entered = true;
               options.signal!.addEventListener("abort", () => {
                 aborted = true;
                 reject(options.signal!.reason);
-              }),
-            ),
+              });
+            }),
         });
         const extracting = subject.runOnce("extraction");
         await waitFor(async () => (await job(fileId)).status === "running");
+        // Take the lease only once extraction has started; a takeover during
+        // the earlier progress write or download ends the job before extract runs.
+        await waitFor(async () => entered);
         await pool.query(
           "UPDATE jobs SET locked_by='another-worker' WHERE id=$1",
           [(await job(fileId)).id],
