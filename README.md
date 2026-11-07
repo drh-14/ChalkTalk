@@ -105,7 +105,7 @@ npm run dev
 
 Here Compose starts only PostgreSQL and SeaweedFS. If you enabled mock data, run the commented seed command after migrations and before `npm run dev`. `npm run dev` starts Vite, the API, the worker, and the collaboration server together; use `npm run dev:web`, `dev:api`, `dev:worker`, or `dev:collab` to run one separately. The `source` command exports `.env` to migrations and all four local processes; run it again in a new terminal. Do **not** start the full Compose app profile simultaneously with `npm run dev`, or ports and workers will conflict.
 
-For resource text extraction in direct mode, the worker also needs Poppler's `pdfinfo`, `pdftotext` and `pdftoppm`, plus Tesseract and the configured language packs on `PATH`. The Compose images include these tools with English. If a tool or configured language is missing at startup, the worker logs `resource_text_tools_unavailable` and leaves extraction jobs pending until a corrected worker restarts; other job lanes continue.
+For resource text extraction in direct mode, the worker also needs Poppler's `pdfinfo`, `pdftotext` and `pdftoppm`, plus Tesseract and English language data on `PATH`. The Compose images include these tools. If a tool or English language data is missing at startup, the worker logs `resource_text_tools_unavailable` and leaves extraction jobs pending until a corrected worker restarts; other job lanes continue.
 
 ### 3. Open the app and verify it
 
@@ -134,9 +134,8 @@ Copying `.env.example` provides the local defaults. The table identifies what to
 | `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`                        | Optional semantic search provider. Do not put the key in browser/Vite variables; private post text and search queries are sent to that provider. See [Optional semantic search](#optional-semantic-search).                                                                                               |
 | `OBSERVABILITY_ENABLED`, `METRICS_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`  | Optional local monitoring. When enabled, set the first to `true` and generate **different** random secrets for the token and Grafana password. Default Grafana host port is 3001.                                                                                                                         |
 | `COLLABORATION_IDLE_END_MINUTES`, `LOG_SPOOL_DIRECTORY`                             | Live-session idle timeout and observability log location. API rate limits are fixed in `apps/api/src/config/constants.ts` rather than set through environment variables.                                                                                                                                  |
-| `RATE_LIMIT_*`, `COLLABORATION_IDLE_END_MINUTES`, `LOG_SPOOL_DIRECTORY`             | Tunable API rate limits, live-session idle timeout, and observability log location. The `.env.example` defaults are suitable for local development.                                                                                                                                                       |
 
-Resource OCR is fixed at 200 PDF pages per file with English Tesseract data in `apps/api/src/config/constants.ts`; it does not use environment variables.
+Resource OCR is limited to 200 PDF pages needing OCR per file and uses English Tesseract data, as fixed in `apps/api/src/config/constants.ts`; it does not use environment variables.
 
 `NODE_ENV=production` is set by the production images/Compose and is not a custom user mode flag. `WEB_PORT` is a Compose-only host-port override (default 5173), not an API variable. For local Compose, `COMPOSE_ENV_FILE` can point services to another env file relative to the repository root, but Compose variable interpolation also needs `docker compose --env-file <file>` or exported shell variables. Most teammates should simply use `.env`.
 

@@ -70,4 +70,4 @@ The production images and Compose set `NODE_ENV=production`; there is no custom 
 
 For updates, record the old SHA, check out the new tested SHA, verify backups, and rebuild/restart. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. A real VM and disposable Supabase-project smoke test must pass before placing non-test course data here.
 
-The API and worker images include qpdf, Poppler, Tesseract, and English OCR data. OCR uses the fixed 200-page cap and English language in `apps/api/src/config/constants.ts`; no OCR environment variables are required.
+The API and worker images include qpdf, Poppler, Tesseract, and English OCR data. For the fixed OCR settings, see [resource extraction configuration](../../README.md#environment-variables); no OCR environment variables are required.
