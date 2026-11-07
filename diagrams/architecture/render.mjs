@@ -1,37 +1,31 @@
 #!/usr/bin/env node
-/** Render the editable architecture SVG to its matching PNG preview. */
+/** Render the editable Mermaid source to the architecture SVG and PNG. */
 import { execFileSync } from "node:child_process";
-import console from "node:console";
-import { createRequire } from "node:module";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
 
-const svgUrl = new URL("./architecture.svg", import.meta.url);
-const pngPath = fileURLToPath(new URL("./architecture.png", import.meta.url));
-const svg = readFileSync(svgUrl, "utf8");
-const dimensions = svg.match(/<svg\b[^>]*\bwidth="(\d+)"[^>]*\bheight="(\d+)"/);
-if (!dimensions)
-  throw new Error("Architecture SVG needs explicit width and height.");
+const source = fileURLToPath(new URL("./architecture.mmd", import.meta.url));
 
-// Mermaid CLI already supplies Puppeteer for diagram rendering; no extra dependency is needed.
-const mmdcPath = realpathSync(
-  execFileSync("which", ["mmdc"], { encoding: "utf8" }).trim(),
-);
-const puppeteer = createRequire(mmdcPath)("puppeteer");
-const browser = await puppeteer.launch({
-  headless: true,
-  args: ["--no-sandbox"],
-});
-try {
-  const page = await browser.newPage();
-  await page.setViewport({
-    width: Number(dimensions[1]),
-    height: Number(dimensions[2]),
-    deviceScaleFactor: 1,
-  });
-  await page.goto(svgUrl.href);
-  await page.screenshot({ path: pngPath });
-  console.log(`Rendered ${pngPath}`);
-} finally {
-  await browser.close();
+for (const [format, scale] of [
+  ["svg", "1"],
+  ["png", "2"],
+]) {
+  const output = fileURLToPath(
+    new URL(`./architecture.${format}`, import.meta.url),
+  );
+  execFileSync(
+    "mmdc",
+    ["-i", source, "-o", output, "-b", "white", "-s", scale],
+    { stdio: "inherit" },
+  );
+
+  if (format === "svg") {
+    const svg = readFileSync(output, "utf8");
+    const labeled = svg.replace(
+      /<svg\b([^>]*)>/,
+      '<svg$1 aria-labelledby="architecture-title architecture-description"><title id="architecture-title">ChalkTalk deployment architecture</title><desc id="architecture-description">A browser connects to services on an OVHcloud VM. A Node.js worker runs jobs, Hocuspocus and Yjs provide CRDT collaboration, the services use Supabase PostgreSQL and object storage, and the API and worker connect to the Resend API over HTTPS.</desc>',
+    );
+    if (labeled === svg) throw new Error("Mermaid did not produce an SVG root");
+    writeFileSync(output, labeled);
+  }
 }
