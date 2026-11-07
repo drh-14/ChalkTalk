@@ -134,6 +134,115 @@ const finish = (
   );
 
 suite("resource text extraction", () => {
+  it("projects queued, live OCR, stale and terminal metadata consistently without version changes", async () => {
+    const created = await upload({ title: "Progress contract" }, "content");
+    expect(created.status).toBe(201);
+    const { id, fileId, version } = created.body.data;
+    const queued = { phase: "queued", completedPages: null, totalPages: null };
+    expect(created.body.data.textProgress).toEqual(queued);
+    const read = await get(`/resources/${id}`);
+    expect(read.headers["cache-control"]).toContain("no-store");
+    expect(read.body.data.textProgress).toEqual(queued);
+    await pool.query(
+      "UPDATE jobs SET status='running',attempts=1,locked_by='progress-contract',locked_until=now()+interval '1 minute' WHERE kind='extract_file_text' AND deduplication_key=$1",
+      [`file:${fileId}`],
+    );
+    await pool.query(
+      "UPDATE course_file_texts SET progress_phase='ocr',progress_completed_pages=7,progress_total_pages=18,progress_attempt=1 WHERE file_id=$1",
+      [fileId],
+    );
+    const expected = { phase: "ocr", completedPages: 7, totalPages: 18 };
+    expect((await get(`/resources/${id}`)).body.data).toMatchObject({
+      version,
+      textProgress: expected,
+    });
+    expect(
+      (await get("/resources")).body.data.find(
+        (r: { id: string }) => r.id === id,
+      ).textProgress,
+    ).toEqual(expected);
+    expect(
+      (await get("/resources/search?q=Progress%20contract")).body.data.find(
+        (r: { resource: { id: string } }) => r.resource.id === id,
+      ).resource.textProgress,
+    ).toEqual(expected);
+    await pool.query(
+      "UPDATE jobs SET attempts=2 WHERE kind='extract_file_text' AND deduplication_key=$1",
+      [`file:${fileId}`],
+    );
+    expect((await get(`/resources/${id}`)).body.data.textProgress).toEqual(
+      queued,
+    );
+    await pool.query(
+      "UPDATE course_file_texts SET progress_attempt=2 WHERE file_id=$1",
+      [fileId],
+    );
+    expect((await get(`/resources/${id}`)).body.data.textProgress).toEqual(
+      expected,
+    );
+    await pool.query(
+      "UPDATE jobs SET locked_until=now()-interval '1 second' WHERE kind='extract_file_text' AND deduplication_key=$1",
+      [`file:${fileId}`],
+    );
+    expect((await get(`/resources/${id}`)).body.data.textProgress).toEqual(
+      queued,
+    );
+    await pool.query(
+      "UPDATE course_file_texts SET status='ready',text='done',progress_phase=NULL,progress_completed_pages=NULL,progress_total_pages=NULL,progress_attempt=NULL WHERE file_id=$1",
+      [fileId],
+    );
+    expect((await get(`/resources/${id}`)).body.data).toMatchObject({
+      version,
+      textStatus: "ready",
+      textProgress: null,
+    });
+    expect((await get(`/resources/${id}/text`)).body.data).not.toHaveProperty(
+      "textProgress",
+    );
+  });
+  it("enforces complete progress shapes and clears every terminal progress column", async () => {
+    const created = await upload({ title: "Progress constraints" }, "content");
+    const fileId = created.body.data.fileId;
+    for (const values of [
+      ["queued", 0, null, null],
+      ["unknown", null, null, 1],
+      [null, 1, null, null],
+      ["preparing", null, null, null],
+      ["ocr", null, 18, 1],
+      ["ocr", -1, 18, 1],
+      ["ocr", 19, 18, 1],
+      ["ocr", 0, 0, 1],
+      ["saving", 1, 18, 1],
+      [null, null, null, 1],
+    ])
+      await expect(
+        pool.query(
+          "UPDATE course_file_texts SET progress_phase=$2,progress_completed_pages=$3,progress_total_pages=$4,progress_attempt=$5 WHERE file_id=$1",
+          [fileId, ...values],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+    for (const values of [
+      ["queued", null, null, null],
+      ["preparing", null, null, 1],
+      ["ocr", 0, 18, 1],
+      ["ocr", 18, 18, 1],
+      ["saving", null, null, 1],
+    ])
+      await pool.query(
+        "UPDATE course_file_texts SET progress_phase=$2,progress_completed_pages=$3,progress_total_pages=$4,progress_attempt=$5 WHERE file_id=$1",
+        [fileId, ...values],
+      );
+    await expect(
+      pool.query(
+        "UPDATE course_file_texts SET status='ready',text='done' WHERE file_id=$1",
+        [fileId],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+    await pool.query(
+      "UPDATE course_file_texts SET progress_phase=NULL,progress_completed_pages=NULL,progress_total_pages=NULL,progress_attempt=NULL WHERE file_id=$1",
+      [fileId],
+    );
+  });
   beforeAll(async () => {
     admin = new Pool({ connectionString: url });
     await admin.query(`CREATE SCHEMA "${schema}"`);

@@ -1,3 +1,6 @@
+import { useProgressWatcher } from "./use-progress.js";
+import { ProgressProvider, ResourceProgress } from "./progress.js";
+import { progressKey } from "./progress-watcher.js";
 import { ApiError } from "../auth/client.js";
 import {
   useEffect,
@@ -33,7 +36,7 @@ type Props = {
 };
 const SEARCH_DELAY_MS = 300;
 const textStatusNotice = {
-  pending: "Contents not searchable yet",
+  pending: "Queued for extraction",
   failed: "Contents could not be read for search",
   unsupported: "Contents are not searchable",
 } as const;
@@ -69,12 +72,14 @@ function fileRetryKey(
   }
   return key;
 }
-export function CourseResources({
-  courseId,
-  canUpload,
-  csrfToken,
-  staff,
-}: Props) {
+export function CourseResources(props: Props) {
+  return (
+    <ProgressProvider key={props.courseId}>
+      <ResourcesContent {...props} />
+    </ProgressProvider>
+  );
+}
+function ResourcesContent({ courseId, canUpload, csrfToken, staff }: Props) {
   const [items, setItems] = useState<Resource[]>([]),
     [sections, setSections] = useState<Section[]>([]),
     [version, setVersion] = useState(1),
@@ -103,6 +108,37 @@ export function CourseResources({
     [searchError, setSearchError] = useState<string>(),
     [searchCycle, setSearchCycle] = useState(0);
   const activeQuery = query.trim();
+  const watcher = useProgressWatcher();
+  useEffect(() => {
+    if (!watcher) return;
+    const merge = (old: Resource, update: Resource) =>
+      progressKey(old) === progressKey(update)
+        ? {
+            ...old,
+            textStatus: update.textStatus,
+            textProgress: update.textProgress,
+          }
+        : old;
+    watcher.onUpdate = (update) => {
+      setItems((rows) => rows.map((r) => merge(r, update)));
+      setResults((rows) =>
+        rows.map((r) => ({ ...r, resource: merge(r.resource, update) })),
+      );
+    };
+    watcher.onInvalidate = (old) => {
+      setItems((rows) =>
+        rows.filter((r) => progressKey(r) !== progressKey(old)),
+      );
+      setResults((rows) =>
+        rows.filter((r) => progressKey(r.resource) !== progressKey(old)),
+      );
+    };
+    return () => {
+      watcher.onUpdate = undefined;
+      watcher.onInvalidate = undefined;
+    };
+  }, [watcher]);
+
   const [working, setWorking] = useState<"file" | "link">();
   const keys = useRef(new Map<string, string>()),
     fileKeys = useRef(new WeakMap<File, Map<string, string>>()),
@@ -721,6 +757,11 @@ export function CourseResources({
                     </span>
                     {resource.kind === "link" && <span>External link</span>}
                   </div>
+                  {staff &&
+                    resource.kind === "upload" &&
+                    resource.textStatus === "pending" && (
+                      <ResourceProgress resource={resource} />
+                    )}
                   {match.snippet && (
                     <p className="resource-snippet">
                       {highlighted(match.snippet)}
@@ -731,6 +772,7 @@ export function CourseResources({
                       key={`${resource.fileId}:${resource.version}`}
                       courseId={courseId}
                       resourceId={resource.id}
+                      resource={resource}
                       mediaType={resource.mediaType}
                       csrfToken={csrfToken}
                       name={resource.title ?? resource.fileName ?? ""}
@@ -1056,19 +1098,23 @@ function ResourceRow({
         {staff &&
           item.kind === "upload" &&
           item.textStatus &&
-          item.textStatus !== "ready" && (
+          item.textStatus !== "ready" &&
+          (item.textStatus === "pending" ? (
+            <ResourceProgress resource={item} />
+          ) : (
             <span
               className={`resource-text-status resource-text-status-${item.textStatus}`}
             >
               {textStatusNotice[item.textStatus]}
             </span>
-          )}
+          ))}
       </div>
       {item.kind === "upload" && (
         <ResourceExtractedText
           key={`${item.fileId}:${item.version}`}
           courseId={courseId}
           resourceId={item.id}
+          resource={item}
           mediaType={item.mediaType}
           csrfToken={csrfToken}
           name={name}

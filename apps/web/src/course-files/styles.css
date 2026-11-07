@@ -480,3 +480,15 @@
   border-radius: var(--radius-md);
   background: var(--surface-raised);
 }
+
+.resource-extraction-progress {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 100%;
+}
+.resource-extraction-progress progress {
+  width: 12rem;
+  max-width: 100%;
+  accent-color: var(--accent, #2563eb);
+}

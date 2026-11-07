@@ -54,7 +54,15 @@ function pdfWith(pages: number, layer: Record<number, string> = {}) {
   };
 }
 const extractPdf = (
-  options: { deadline?: number; maxOcrPages?: number } = {},
+  options: {
+    deadline?: number;
+    maxOcrPages?: number;
+    onProgress?: (progress: {
+      phase: string;
+      completedPages: number | null;
+      totalPages: number | null;
+    }) => Promise<void>;
+  } = {},
 ) =>
   withTempDirectory((directory) =>
     extractPdfText("source.pdf", directory, {
@@ -477,5 +485,45 @@ describe("scratch disk", () => {
       expect(await readdir(scratch)).toEqual([]);
     });
     expect(seen).toEqual([["page-1.png"], ["page-2.png"], ["page-3.png"]]);
+  });
+});
+
+describe("truthful OCR work progress", () => {
+  it("counts OCR work before the cap and awaits every completed page", async () => {
+    pdfWith(4, { 0: dense, 2: dense });
+    tools.responses.tesseract = () =>
+      result({ stdout: Buffer.from("recognized page") });
+    const progress: unknown[] = [];
+    const extracted = await extractPdf({
+      maxOcrPages: 1,
+      onProgress: async (value) => {
+        await Promise.resolve();
+        progress.push(value);
+      },
+    });
+    expect(progress).toEqual([
+      { phase: "ocr", completedPages: 0, totalPages: 2 },
+      { phase: "ocr", completedPages: 1, totalPages: 2 },
+    ]);
+    expect(extracted).toMatchObject({ truncated: true, ocrPageCount: 1 });
+  });
+  it("never fabricates OCR progress for text-only PDFs", async () => {
+    pdfWith(2, { 0: dense, 1: dense });
+    const onProgress = vi.fn();
+    await extractPdf({ onProgress });
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+  it("stops extraction when an awaited progress write loses ownership", async () => {
+    pdfWith(2);
+    const tesseract = vi.fn(() => result());
+    tools.responses.tesseract = tesseract;
+    await expect(
+      extractPdf({
+        onProgress: async () => {
+          throw Error("lease lost");
+        },
+      }),
+    ).rejects.toThrow("lease lost");
+    expect(tesseract).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,4 @@
+import type { TextProgress } from "../resource-text/store.js";
 import { retireSearchablePdf } from "../resource-text/searchable-pdf-store.js";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -44,6 +45,7 @@ export type CourseResource =
       mediaType: string;
       sizeBytes: number;
       textStatus: TextStatus;
+      textProgress: TextProgress | null;
       createdAt: string;
       sectionId: string | null;
       visibility: "class" | "staff";
@@ -67,10 +69,17 @@ type Row = {
   media_type: string;
   size_bytes: string;
   text_status: TextStatus | null;
+  text_progress: TextProgress | null;
   created_at: Date;
   active_revision_id: string;
 };
-const select = `SELECT r.*,v.kind,v.url,v.file_id,f.file_name,f.media_type,f.size_bytes,t.status text_status FROM course_resources r JOIN course_resource_revisions v ON v.id=r.active_revision_id LEFT JOIN course_files f ON f.id=v.file_id LEFT JOIN course_file_texts t ON t.file_id=v.file_id LEFT JOIN course_resource_sections s ON s.id=r.section_id`;
+const progressProjection = `CASE WHEN COALESCE(t.status,'pending')<>'pending' THEN NULL
+ WHEN t.progress_phase IN ('preparing','ocr','saving') AND EXISTS (
+ SELECT 1 FROM jobs j WHERE j.kind='extract_file_text' AND j.deduplication_key='file:'||v.file_id::text
+ AND j.status='running' AND j.attempts=t.progress_attempt AND j.locked_until>clock_timestamp())
+ THEN jsonb_build_object('phase',t.progress_phase,'completedPages',t.progress_completed_pages,'totalPages',t.progress_total_pages)
+ ELSE jsonb_build_object('phase','queued','completedPages',NULL,'totalPages',NULL) END`;
+const select = `SELECT r.*,v.kind,v.url,v.file_id,f.file_name,f.media_type,f.size_bytes,t.status text_status,${progressProjection} text_progress FROM course_resources r JOIN course_resource_revisions v ON v.id=r.active_revision_id LEFT JOIN course_files f ON f.id=v.file_id LEFT JOIN course_file_texts t ON t.file_id=v.file_id LEFT JOIN course_resource_sections s ON s.id=r.section_id`;
 const visible = `r.deleted_at IS NULL AND (m.role IN ('ta','instructor') OR (r.visibility='class' AND COALESCE(s.visibility,'class')='class')) AND (v.kind='link' OR f.deleted_at IS NULL)`;
 const invalid = (message = "Resource metadata is invalid") =>
   new AuthError(422, "validation_failed", message);
@@ -135,6 +144,7 @@ const project = (r: Row): CourseResource => {
         mediaType: r.media_type,
         sizeBytes: Number(r.size_bytes),
         textStatus: r.text_status ?? "pending",
+        textProgress: r.text_progress,
       };
 };
 export class CourseResourceService {
@@ -429,7 +439,7 @@ export class CourseResourceService {
            WHERE course_id=$1 AND search_vector @@ websearch_to_tsquery('english',$3)
          ),
          candidates AS (
-           SELECT r.*,v.kind,v.url,v.file_id,f.file_name,f.media_type,f.size_bytes,t.status text_status,
+           SELECT r.*,v.kind,v.url,v.file_id,f.file_name,f.media_type,f.size_bytes,t.status text_status,${progressProjection} text_progress,
              to_tsvector('english',r.title) @@ query.q title_lexical,
              hit.file_id IS NOT NULL text_match,
              COALESCE((SELECT min(public.strict_word_similarity(terms.term,lower(r.title))) FROM terms),0) fuzzy,

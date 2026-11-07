@@ -1,6 +1,8 @@
+import { ProgressLabel } from "./progress.js";
+import { useTextProgress } from "./use-progress.js";
 import { SearchablePdfView } from "./searchable-pdf.js";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { extractedText, type ExtractedText } from "./client.js";
+import { extractedText, type ExtractedText, type Resource } from "./client.js";
 import { readableExtractedText, extractedTextFilename } from "./text-format.js";
 
 export function ResourceExtractedText({
@@ -9,12 +11,14 @@ export function ResourceExtractedText({
   name,
   mediaType,
   csrfToken,
+  resource,
 }: {
   courseId: string;
   resourceId: string;
   name: string;
   mediaType?: string;
   csrfToken: string;
+  resource?: Resource;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [cycle, setCycle] = useState(0);
@@ -22,7 +26,32 @@ export function ResourceExtractedText({
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [layout, setLayout] = useState("readable");
+  const pdfLayout = layout === "pdf";
   const [downloadUrl, setDownloadUrl] = useState<string>();
+  const state = useTextProgress(
+    resource,
+    expanded && layout !== "pdf" && data?.status === "pending",
+  );
+  const readyFetched = useRef(false);
+  useEffect(() => {
+    if (!expanded || layout === "pdf" || state.inaccessible) return;
+    if (
+      state.resource?.textStatus === "ready" &&
+      data?.status === "pending" &&
+      !readyFetched.current
+    ) {
+      readyFetched.current = true;
+      setCycle((c) => c + 1);
+    } else if (
+      state.resource?.textStatus === "failed" ||
+      state.resource?.textStatus === "unsupported"
+    ) {
+      setData(
+        (old) =>
+          old && { ...old, status: state.resource!.textStatus!, text: null },
+      );
+    }
+  }, [state.resource, state.inaccessible, expanded, layout, data?.status]);
   const displayedText = useMemo(
     () =>
       layout === "original"
@@ -50,7 +79,7 @@ export function ResourceExtractedText({
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
   useEffect(() => {
-    if (!expanded) return;
+    if (!expanded || pdfLayout) return;
     const controller = new AbortController();
     setLoading(true);
     setData(undefined);
@@ -71,8 +100,9 @@ export function ResourceExtractedText({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [courseId, resourceId, expanded, cycle]);
+  }, [courseId, resourceId, expanded, cycle, pdfLayout]);
   function close() {
+    readyFetched.current = false;
     setExpanded(false);
     trigger.current?.focus();
   }
@@ -88,7 +118,7 @@ export function ResourceExtractedText({
       >
         {expanded ? "Hide extracted text" : "View extracted text"}
       </button>
-      {expanded && (
+      {expanded && !state.inaccessible && (
         <section
           id={id}
           role="region"
@@ -181,13 +211,38 @@ export function ResourceExtractedText({
                     </>
                   ) : (
                     <>
-                      <p>
-                        {data.status === "pending"
-                          ? "Text extraction is still processing."
-                          : data.status === "failed"
-                            ? "Text could not be extracted from this file."
-                            : "Text extraction is not supported for this file."}
-                      </p>
+                      <div role="status">
+                        {data.status === "pending" ? (
+                          <ProgressLabel
+                            progress={
+                              (state.resource ?? resource)?.textProgress
+                            }
+                          />
+                        ) : data.status === "failed" ? (
+                          "Text could not be extracted from this file."
+                        ) : (
+                          "Text extraction is not supported for this file."
+                        )}
+                      </div>
+                      {state.error && <p role="status">{state.error}</p>}
+                      {state.superseded && (
+                        <p role="status">
+                          This file was replaced. Reload the page to see its
+                          latest status.
+                        </p>
+                      )}
+                      {state.stopped && (
+                        <p>
+                          Automatic checks paused.{" "}
+                          <button
+                            type="button"
+                            className="button secondary resource-action"
+                            onClick={state.retry}
+                          >
+                            Check again
+                          </button>
+                        </p>
+                      )}
                       {data.status === "pending" && (
                         <button
                           type="button"

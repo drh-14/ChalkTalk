@@ -443,7 +443,7 @@ describe("staff text status indicator", () => {
       />,
     );
     await screen.findByRole("link", { name: "Ready file" });
-    expect(screen.getByText("Contents not searchable yet")).toBeTruthy();
+    expect(screen.getByText("Queued for extraction")).toBeTruthy();
     expect(
       screen.getByText("Contents could not be read for search"),
     ).toBeTruthy();

@@ -20,6 +20,8 @@ import {
 } from "../resource-text/extract.js";
 import {
   storeExtractedText,
+  storeTextProgress,
+  clearTextProgress,
   storeExtractionFailure,
   type ExtractedText,
 } from "../resource-text/store.js";
@@ -757,7 +759,11 @@ export class JobWorker {
       return;
     if (error instanceof ExtractionFailure && error.code === "shutdown") {
       await this.pool.query(
-        "UPDATE jobs SET status='queued',attempts=attempts-1,available_at=now(),locked_by=NULL,locked_until=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
+        `WITH requeued AS (UPDATE jobs SET status='queued',attempts=attempts-1,available_at=now(),locked_by=NULL,locked_until=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 RETURNING kind,payload)
+          UPDATE course_file_texts SET ${clearTextProgress}
+          WHERE status='pending' AND file_id IN (
+            SELECT (payload->>'fileId')::uuid FROM requeued WHERE kind='extract_file_text'
+          )`,
         [job.id, this.workerId, job.attempts],
       );
       return;
@@ -767,7 +773,11 @@ export class JobWorker {
       error.code === "object_store_unavailable"
     ) {
       await this.pool.query(
-        "UPDATE jobs SET status='queued',attempts=attempts-1,available_at=now()+interval '60 seconds',locked_by=NULL,locked_until=NULL,last_error=$4,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
+        `WITH requeued AS (UPDATE jobs SET status='queued',attempts=attempts-1,available_at=now()+interval '60 seconds',locked_by=NULL,locked_until=NULL,last_error=$4,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 RETURNING kind,payload)
+          UPDATE course_file_texts SET ${clearTextProgress}
+          WHERE status='pending' AND file_id IN (
+            SELECT (payload->>'fileId')::uuid FROM requeued WHERE kind='extract_file_text'
+          )`,
         [job.id, this.workerId, job.attempts, error.code],
       );
       return;
@@ -786,6 +796,15 @@ export class JobWorker {
               configuration,
             ],
           );
+          if (
+            updated.rowCount === 1 &&
+            job.kind === "extract_file_text" &&
+            job.payload.fileId
+          )
+            await client.query(
+              `UPDATE course_file_texts SET ${clearTextProgress} WHERE file_id=$1 AND status='pending'`,
+              [job.payload.fileId],
+            );
           if (
             updated.rowCount === 1 &&
             job.kind === "extract_file_text" &&
@@ -905,49 +924,76 @@ export class JobWorker {
     if (!file) return;
     const store = this.objectStore,
       options = this.resourceText;
-    await this.withExtractionLease(job, shutdown, (signal, deadline) =>
-      withTempDirectory(async (directory) => {
-        const path = join(directory, "source");
-        await downloadObject(store, file.object_key, path, signal);
-        let result: ExtractedText;
-        try {
-          result = await (options.extract ?? extractText)(
-            path,
-            file.media_type,
-            directory,
-            {
-              maxOcrPages: options.maxOcrPages,
-              ocrLanguages: options.ocrLanguages,
-              signal,
-              deadline,
-            },
-          );
-        } catch (error) {
-          if (signal.aborted) throw signal.reason;
-          if (error instanceof ExtractionFailure && error.permanent) {
-            await this.transaction(
-              (client) =>
-                storeExtractionFailure(
-                  client,
-                  fileId,
-                  error.code === "unsupported_media_type"
-                    ? "unsupported"
-                    : "failed",
-                  error.code,
-                ),
+    // Distinguish a retired resource from an actual job-lease loss by identity.
+    const obsolete = new ExtractionFailure("lease_lost", false);
+    try {
+      await this.withExtractionLease(job, shutdown, (signal, deadline) =>
+        withTempDirectory(async (directory) => {
+          const progress: NonNullable<ExtractionOptions["onProgress"]> = async (
+            value,
+          ) => {
+            if (signal.aborted) throw signal.reason;
+            const changed = await this.transaction(
+              (db) => storeTextProgress(db, fileId, job.attempts, value),
               job,
             );
-            return;
+            if (!changed) throw obsolete;
+          };
+          await progress({
+            phase: "preparing",
+            completedPages: null,
+            totalPages: null,
+          });
+          const path = join(directory, "source");
+          await downloadObject(store, file.object_key, path, signal);
+          let result: ExtractedText;
+          try {
+            result = await (options.extract ?? extractText)(
+              path,
+              file.media_type,
+              directory,
+              {
+                maxOcrPages: options.maxOcrPages,
+                ocrLanguages: options.ocrLanguages,
+                signal,
+                deadline,
+                onProgress: progress,
+              },
+            );
+          } catch (error) {
+            if (signal.aborted) throw signal.reason;
+            if (error instanceof ExtractionFailure && error.permanent) {
+              await this.transaction(
+                (client) =>
+                  storeExtractionFailure(
+                    client,
+                    fileId,
+                    error.code === "unsupported_media_type"
+                      ? "unsupported"
+                      : "failed",
+                    error.code,
+                  ),
+                job,
+              );
+              return;
+            }
+            throw error;
           }
-          throw error;
-        }
-        if (signal.aborted) throw signal.reason;
-        await this.transaction(
-          (client) => storeExtractedText(client, fileId, result),
-          job,
-        );
-      }),
-    );
+          if (signal.aborted) throw signal.reason;
+          await progress({
+            phase: "saving",
+            completedPages: null,
+            totalPages: null,
+          });
+          await this.transaction(
+            (client) => storeExtractedText(client, fileId, result),
+            job,
+          );
+        }),
+      );
+    } catch (error) {
+      if (error !== obsolete) throw error;
+    }
   }
 
   private async generateSearchablePdf(
