@@ -23,22 +23,7 @@ Parse `LOCAL_DATABASE` and `LOCAL_FILE_STORE` as strict `true`/`false` values, d
 
 For the persistent VM application, use the Supabase direct PostgreSQL connection where IPv6 is available. If the VM cannot reach it over IPv6, use Supabase's IPv4 session pooler rather than transaction pooling: ChalkTalk migrations use session-level advisory locks, and services use transactions. Obtain connection strings from the Supabase dashboard rather than constructing them. Migrations remain a one-shot prestart step and must be tested against a disposable Supabase project before production. The storage client uses Supabase's documented S3 endpoint, region, bucket and server-side S3 key pair, without replacing the existing file-service abstraction.
 
-## Structure
-
-```mermaid
-flowchart LR
-  Browser["Browser"] -->|"HTTPS and WebSocket"| Gateway["OVH gateway"]
-  Gateway -->|"API requests"| API["ChalkTalk API"]
-  Gateway -->|"live sessions"| Live["Collaboration server"]
-  API -->|"authorized queries"| DB["Supabase Postgres"]
-  Live -->|"sessions and documents"| DB
-  Worker["ChalkTalk worker"] -->|"jobs and notifications"| DB
-  Migrate["One-shot migrations"] -->|"schema changes"| DB
-  API -->|"authorized object I/O"| Storage["Supabase Storage S3"]
-  Worker -->|"file cleanup and extraction"| Storage
-```
-
-At deployment, `Gateway` is the frontend/Caddy container; `API`, `Live`, and `Worker` are separate containers with distinct Dockerfiles. `Migrate` runs the API image once with the migration command. No Supabase credential is baked into any image; Compose injects it at runtime.
+At deployment, the frontend/Caddy gateway, API, collaboration server, and worker are separate containers with distinct Dockerfiles. Migrations run the API image once with a different command. No Supabase credential is baked into any image; Compose injects it at runtime.
 
 The data connection choice is resolved once per process from the environment, before constructing a PostgreSQL pool or S3 client. API, worker, collaboration, migration and seed entry points must all use the same resolved mode. This prevents the production API from reaching Supabase while a migration or worker silently reaches a local database. Compose is responsible only for starting the selected local dependencies and passing a coherent environment; it is not an alternative authorization layer. The production migration container must have outbound network access to Supabase: the current deployment places it only on an internal Compose network, which would make a remote database unreachable.
 

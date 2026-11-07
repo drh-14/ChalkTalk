@@ -1096,7 +1096,6 @@ function CourseFrame({
   const beforeLeave = useRef<() => boolean>(() => true);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const visibleCourse = course?.data.id === courseId ? course : undefined;
-  const courseLoaded = Boolean(visibleCourse);
   useEffect(() => {
     let active = true;
     setCourse(undefined);
@@ -1147,8 +1146,8 @@ function CourseFrame({
     };
   }, [courseId]);
   useEffect(() => {
-    if (courseLoaded) headingRef.current?.focus();
-  }, [route.name, courseId, courseLoaded]);
+    if (visibleCourse) headingRef.current?.focus();
+  }, [route.name, visibleCourse]);
   const section =
     route.name === "course-settings"
       ? "settings"
