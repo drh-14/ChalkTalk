@@ -58,29 +58,14 @@ Optional embedding-based search helps surface related posts with different wordi
 
 # **Rough Architecture**
 
-ChalkTalk is designed as a single application that can be deployed in two ways, so that the same codebase serves both our own production usage and any external adopter's needs.
-
-Two deployment models, one system
-
-- **Managed (Cloud) deployment:** Hosted and operated by the ChalkTalk team (us) on AWS. Instructors sign up and use the platform directly, with no infrastructure of their own. The team configures any optional embedding provider and is responsible for uptime, backups, and cost. **Status:** planned, not built.
-- **Self-managed deployment:** The full application, published as open source, runnable by any instructor, department, or open-courseware maintainer on their own infrastructure via Docker. A setup script provisions the application together with its database, collaboration relay, and file storage in containers. The self-hoster can configure an embedding provider or use full-text and fuzzy search alone, so operating cost and data ownership stay with them.
-
-Both deployments run the identical application image; only the infrastructure underneath differs (managed cloud services vs. equivalent containers). This means a feature or fix built once benefits both deployment paths automatically, rather than requiring two maintained versions of the app.
-
-![ChalkTalk architecture](../diagrams/architecture/architecture.png)
-
-Why two models  
-A single hosted platform would commit the team to open-ended cost and liability well past the class project, while a self-host-only model has too much setup friction for most instructors to actually adopt it. Supporting both lets ChalkTalk run as a real, dogfooded deployment for our own course, while staying genuinely free and adoptable by anyone else, without their use depending on the team continuing to operate it indefinitely.
-
-**Tenancy**  
-The data model is multi-tenant from the outset, with every course scoped to an organization even in single-course deployments. This lets the same schema serve many institutions on the managed cloud deployment, while a self-hosted instance can default to one course for simplicity or opt into hosting several, with no changes to the underlying data model.
+The original two-deployment proposal has been superseded. See the [current design](design.md#runtime-architecture-and-deployment) and [maintained architecture diagram](../diagrams/architecture/architecture.svg) for the approved production and local topology. For the runnable, earlier single-VM Compose skeleton, see its separate [deployment guide](../deployment/README.md).
 
 #
 
 # **Functional Requirements**
 
 **Account Creation and Management**  
-Users can create, manage, and delete accounts. See the [account design](design.md#account-creation-and-management) for the user journey and the [authentication API](api/auth.md) for admission, verification, and account contracts.
+Users can create, manage, and delete accounts. See the [identity design](design.md#identity-courses-and-access) for the user journey and the [authentication API](api/auth.md) for admission, verification, and account contracts.
 
 **Classes**  
 Users can create classes, which function as independent, isolated forums. When a class is created, the creating user becomes the instructor of that class.
@@ -121,10 +106,10 @@ When a user drafts a new question, related existing posts are surfaced live thro
 **Course Resources**  
 Instructors can upload or link resources relating to the course, such as syllabus documents, lecture notes, assignments, course policies, and external links.
 
-Uploaded documents can be divided into instructor-defined regions, such as a diagram or paragraph on a given page. Each region is independently searchable and can be directly linked to from posts, responses, and followups. Text within a defined region is extracted via OCR to support search. **Status:** whole-file text extraction and [resource search](api/resources.md#searchCourseResources) are built; regions are not.
+See the [current resource design](design.md#resources-search-and-statistics) and [resource API](api/resources.md) for implemented and deferred capabilities.
 
 **Live Collaborative Sessions**  
-Course collaboration sessions are independent of posts; see the [current collaboration design](design.md#threads-resources-and-live-collaboration).
+Course collaboration sessions are independent of posts; see the [current collaboration design](design.md#threads-and-live-collaboration).
 
 **Statistics**  
 Course statistics are compiled per course in a statistics tab. These statistics include:
@@ -137,7 +122,7 @@ Course statistics are compiled per course in a statistics tab. These statistics 
 Response time is defined as the time between when a question is posted and when an endorsed answer is posted in response.
 
 **Knowledge Surfacing**  
-Knowledge surfacing operates within each course; see the [knowledge-surfacing design](design.md#knowledge-surfacing) for the engagement signals and per-course digest. **Status:** not built, pending a team decision.
+For current notification and digest behavior, see the [design](design.md#notifications-and-email) and [daily course email digest](api/daily-course-email-digest.md).
 
 #
 
