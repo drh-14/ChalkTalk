@@ -131,7 +131,7 @@ The system consists of a frontend, an API server, a separate background worker, 
 flowchart TB
     Browser["Frontend · React/Vite"] -->|"HTTPS REST"| API["API server · Express"]
     API -->|"course data and queued jobs"| DB[("PostgreSQL")]
-    API -->|"upload and download"| Store[("SeaweedFS / AWS S3")]
+    API -->|"upload and download"| Store[("Object store")]
     Worker["Separate background worker"] -->|"claim jobs and schedule digest"| DB
     Worker -->|"file cleanup"| Store
     Worker -->|"queued email"| Mail["Email provider"]

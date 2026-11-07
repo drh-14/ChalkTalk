@@ -57,14 +57,14 @@
 
   <rect class="box" x="80" y="855" width="320" height="145" rx="5" fill="#F3E8FF" stroke="#9333EA"/>
   <text class="title" x="240" y="912" fill="#581C87">Application Database</text>
-  <text class="subtitle" x="240" y="954" fill="#581C87">PostgreSQL / AWS RDS</text>
+  <text class="subtitle" x="240" y="954" fill="#581C87">PostgreSQL / Supabase</text>
   <rect class="box" x="440" y="855" width="320" height="145" rx="5" fill="#CFFAFE" stroke="#0891B2"/>
   <text class="title" x="600" y="912" fill="#164E63">Collaboration Relay</text>
   <text class="subtitle" x="600" y="954" fill="#164E63">Redis</text>
   <rect class="box" x="800" y="855" width="320" height="145" rx="5" fill="#DCFCE7" stroke="#16A34A"/>
   <text class="title" x="960" y="912" fill="#14532D">Object Store</text>
-  <text class="subtitle" x="960" y="954" fill="#14532D">SeaweedFS / AWS S3</text>
+  <text class="subtitle" x="960" y="954" fill="#14532D">SeaweedFS / Supabase</text>
   <rect class="box" x="1160" y="855" width="320" height="145" rx="5" fill="#F1F5F9" stroke="#64748B"/>
   <text class="title" x="1320" y="912" fill="#334155">Email Provider</text>
-  <text class="subtitle" x="1320" y="954" fill="#334155">SMTP Server / AWS SES</text>
+  <text class="subtitle" x="1320" y="954" fill="#334155">Resend HTTPS</text>
 </svg>

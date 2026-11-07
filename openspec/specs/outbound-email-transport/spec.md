@@ -16,9 +16,9 @@ Production SHALL reject a `RESEND_API_BASE_URL` override unless it is the offici
 - **WHEN** the local Compose application starts with a Resend key
 - **THEN** authentication and queued emails use Resend HTTPS
 
-#### Scenario: Missing production credentials
+#### Scenario: Missing local credentials
 
-- **WHEN** the local application starts without a Resend key
+- **WHEN** the local Compose application starts without a Resend key
 - **THEN** startup fails clearly
 
 #### Scenario: Production delivery
