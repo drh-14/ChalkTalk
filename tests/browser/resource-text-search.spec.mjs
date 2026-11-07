@@ -150,7 +150,13 @@ test("student finds a lecture by words inside its slides", async ({ page }) => {
     .fill("eigenvalue");
   const results = page.getByRole("region", { name: "Search results" });
   await expect(
-    results.getByRole("link", { name: "Week 7: Spectral theorem" }),
+    results.getByRole("link", {
+      name: "Week 7: Spectral theorem",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", "/courses/course-1/resources/week7/view");
+  await expect(
+    results.getByRole("link", { name: "Download Week 7: Spectral theorem" }),
   ).toHaveAttribute(
     "href",
     "/api/v1/courses/course-1/files/week7-file/download",
@@ -244,6 +250,7 @@ test("instructor keeps open edits across a search", async ({ page }) => {
   const results = page.getByRole("region", { name: "Search results" });
   const lecture = results.getByRole("link", {
     name: "Week 7: Spectral theorem",
+    exact: true,
   });
   await expect(lecture).toBeVisible();
   await expect(page.locator('form[aria-label="Edit section"]')).toBeHidden();
@@ -260,13 +267,23 @@ test("instructor keeps open edits across a search", async ({ page }) => {
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(lecture).toBeFocused();
-  // Each upload result carries its own "View extracted text" control, so the
-  // tab order is link, control, link, control, then out of the results.
+  // Each PDF result carries its title, Download, and "View extracted text", so
+  // the tab order runs through those three per result, then out of the results.
   const viewText = results.getByRole("button", { name: "View extracted text" });
+  await page.keyboard.press("Tab");
+  await expect(
+    results.getByRole("link", { name: "Download Week 7: Spectral theorem" }),
+  ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(viewText.first()).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(results.getByRole("link", { name: "Homework 4" })).toBeFocused();
+  await expect(
+    results.getByRole("link", { name: "Homework 4", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    results.getByRole("link", { name: "Download Homework 4" }),
+  ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(viewText.nth(1)).toBeFocused();
   await page.keyboard.press("Tab");
@@ -294,7 +311,7 @@ test("student sees no extraction status on the same files", async ({
 }) => {
   await open(page);
   await expect(
-    page.getByRole("link", { name: "Scanned problem set" }),
+    page.getByRole("link", { name: "Scanned problem set", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".resource-text-status")).toHaveCount(0);
   await shot(page, "student-no-status");
@@ -307,7 +324,7 @@ test("search results fit a mobile screen", async ({ page }) => {
     .getByRole("searchbox", { name: "Search resources" })
     .fill("eigenvalue");
   await expect(
-    page.getByRole("link", { name: "Week 7: Spectral theorem" }),
+    page.getByRole("link", { name: "Week 7: Spectral theorem", exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(

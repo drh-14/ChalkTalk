@@ -197,6 +197,7 @@ async function open(
         title: existing?.title ?? "Uploaded resource",
         fileId: "new-file",
         fileName: "New notes.txt",
+        mediaType: "text/plain",
         kind: "upload",
         sectionId: existing?.sectionId ?? null,
         visibility: existing?.visibility ?? "class",
@@ -297,8 +298,12 @@ test("student sees grouped public and ungrouped resources but no staff section o
     page.getByRole("heading", { name: "Lecture readings" }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ungrouped" })).toBeVisible();
+  // PDF titles open the in-app viewer; Download keeps the original file.
   await expect(
-    page.getByRole("link", { name: "Week one lecture notes" }),
+    page.getByRole("link", { name: "Week one lecture notes", exact: true }),
+  ).toHaveAttribute("href", "/courses/course-1/resources/notes/view");
+  await expect(
+    page.getByRole("link", { name: "Download Week one lecture notes" }),
   ).toHaveAttribute(
     "href",
     "/api/v1/courses/course-1/files/notes-file/download",
@@ -330,7 +335,7 @@ test("instructor moves and renames a resource with conditional save", async ({
   await expect(
     page
       .getByRole("region", { name: "Ungrouped" })
-      .getByRole("link", { name: "Revised lecture handout" }),
+      .getByRole("link", { name: "Revised lecture handout", exact: true }),
   ).toBeVisible();
   expect(
     requests.find((r) => r.method() === "PATCH").headers()["if-match"],
@@ -349,8 +354,9 @@ test("instructor replaces a file and removes a resource", async ({ page }) => {
     buffer: Buffer.from("New notes"),
   });
   await form.getByRole("button", { name: "Save resource" }).click();
+  // The replacement is a text file, so its title downloads it.
   await expect(
-    page.getByRole("link", { name: "Week one lecture notes" }),
+    page.getByRole("link", { name: "Week one lecture notes", exact: true }),
   ).toHaveAttribute("href", "/api/v1/courses/course-1/files/new-file/download");
   await shot(page, "file-replaced");
   await page
@@ -358,7 +364,7 @@ test("instructor replaces a file and removes a resource", async ({ page }) => {
     .click();
   await page.getByRole("button", { name: "Confirm remove resource" }).click();
   await expect(
-    page.getByRole("link", { name: "Week one lecture notes" }),
+    page.getByRole("link", { name: "Week one lecture notes", exact: true }),
   ).toHaveCount(0);
   await shot(page, "resource-removed");
 });
@@ -430,7 +436,9 @@ test("mobile TA sees staff materials while archived course remains download-only
   await expect(
     page.getByRole("heading", { name: "Staff materials" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Grading guide" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Grading guide", exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Add section" })).toHaveCount(
     0,
   );
