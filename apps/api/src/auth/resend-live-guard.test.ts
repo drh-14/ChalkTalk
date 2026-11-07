@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import type { EmailSender } from "./service.js";
+import { RESEND_EMAIL_FROM } from "../config/constants.js";
 import {
   checkedLiveConfig,
   redirectTestMail,
@@ -10,7 +11,6 @@ const valid = {
   RESEND_LIVE_CONFIRM: "send-synthetic-mail",
   RESEND_LIVE_RECIPIENT: "approved@example.test",
   EMAIL_PROVIDER: "resend",
-  EMAIL_FROM: "notifications@joinchalktalk.com",
   RESEND_API_KEY: "re_test_key",
   TEST_DATABASE_URL: "postgres://test:secret@127.0.0.1:5432/postgres",
 };
@@ -19,16 +19,37 @@ const approvedHash = createHash("sha256")
   .digest("hex");
 
 describe("manual live Resend safety boundary", () => {
+  it("accepts the approved Gmail test inbox and rejects any other recipient", () => {
+    const approved = {
+      ...valid,
+      RESEND_LIVE_RECIPIENT: "chalktalk602@gmail.com",
+    };
+    expect(checkedLiveConfig(approved).recipient).toBe(
+      "chalktalk602@gmail.com",
+    );
+    expect(() =>
+      checkedLiveConfig({
+        ...approved,
+        RESEND_LIVE_RECIPIENT: "other@gmail.com",
+      }),
+    ).toThrow("Recipient is not the approved live-test inbox");
+  });
+
   it("requires explicit opt-in, approved recipient, real endpoint, and loopback database", () => {
     expect(checkedLiveConfig(valid, approvedHash).recipient).toBe(
       valid.RESEND_LIVE_RECIPIENT,
     );
+    expect(
+      checkedLiveConfig(
+        { ...valid, EMAIL_FROM: "sender@gmail.com" },
+        approvedHash,
+      ).sender,
+    ).toBe(RESEND_EMAIL_FROM);
     for (const [key, value] of [
       ["RESEND_LIVE_CONFIRM", ""],
       ["RESEND_LIVE_RECIPIENT", "someone-else@gmail.com"],
       ["EMAIL_PROVIDER", "smtp"],
       ["RESEND_API_KEY", ""],
-      ["EMAIL_FROM", "sender@gmail.com"],
       ["RESEND_API_BASE_URL", "http://127.0.0.1:3000"],
       [
         "TEST_DATABASE_URL",
@@ -47,7 +68,7 @@ describe("manual live Resend safety boundary", () => {
     );
     const send = vi.fn(async () => undefined);
     const wrapped = redirectTestMail(
-      { provider: "resend", defaultFrom: valid.EMAIL_FROM, prepare, send },
+      { provider: "resend", defaultFrom: RESEND_EMAIL_FROM, prepare, send },
       valid.RESEND_LIVE_RECIPIENT,
       "synthetic.example.edu",
       2,

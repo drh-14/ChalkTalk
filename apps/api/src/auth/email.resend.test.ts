@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadEnvironment } from "../config/environment.js";
+import { RESEND_EMAIL_FROM } from "../config/constants.js";
 import {
   createEmailSender,
   EmailConfigurationError,
@@ -26,7 +27,6 @@ const environment = loadEnvironment({
   AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
   EMAIL_PROVIDER: "resend",
   RESEND_API_KEY: "re_secret_test",
-  EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
 });
 
 describe("Resend HTTPS email sender", () => {
@@ -61,7 +61,7 @@ describe("Resend HTTPS email sender", () => {
       { signal: controller.signal, idempotencyKey: "digest/delivery-1" },
     );
     expect(keys).toEqual(["re_secret_test"]);
-    expect(sender.defaultFrom).toBe("ChalkTalk <noreply@example.edu>");
+    expect(sender.defaultFrom).toBe(RESEND_EMAIL_FROM);
     expect(send).toHaveBeenCalledWith(
       {
         from: "Original <original@example.edu>",
@@ -87,7 +87,6 @@ describe("Resend HTTPS email sender", () => {
       AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
       EMAIL_PROVIDER: "resend",
       RESEND_API_KEY: "re_secret_test",
-      EMAIL_FROM: "sender@example.edu",
       RESEND_API_BASE_URL: "http://127.0.0.1:4000",
     });
     await createEmailSender(custom).send({
