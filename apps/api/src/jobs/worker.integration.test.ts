@@ -25,6 +25,7 @@ import {
   PermanentEmailDeliveryError,
 } from "../auth/email.js";
 import { loadEnvironment } from "../config/environment.js";
+import { RESEND_EMAIL_FROM } from "../config/constants.js";
 import { PostService, postEtag } from "../posts/service.js";
 import { AnswerService, answerEtag } from "../answers/service.js";
 import type { EmailSender } from "../auth/service.js";
@@ -581,7 +582,6 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             "test-secret-that-is-longer-than-thirty-two-characters",
           EMAIL_PROVIDER: "resend",
           RESEND_API_KEY: "re_mock_secret",
-          EMAIL_FROM: "sender@example.edu",
           RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
         };
         const sender = createEmailSender(loadEnvironment(environmentSource));
@@ -604,30 +604,32 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             version: 1,
             provider: "resend",
             message: {
-              from: "sender@example.edu",
+              from: RESEND_EMAIL_FROM,
               subject: requests[0]!.body.subject,
             },
           },
         });
+        const retrySender =
+          change === "sender" || change === "provider"
+            ? createEmailSender(
+                loadEnvironment(
+                  change === "provider"
+                    ? {
+                        AUTH_TOKEN_SECRET: environmentSource.AUTH_TOKEN_SECRET,
+                        SMTP_FROM: RESEND_EMAIL_FROM,
+                      }
+                    : environmentSource,
+                ),
+              )
+            : sender;
         const retryWorker =
           change === "sender" || change === "provider"
             ? new JobWorker(
                 pool,
                 "http-provider-worker",
-                createEmailSender(
-                  loadEnvironment(
-                    change === "provider"
-                      ? {
-                          AUTH_TOKEN_SECRET:
-                            environmentSource.AUTH_TOKEN_SECRET,
-                          SMTP_FROM: environmentSource.EMAIL_FROM,
-                        }
-                      : {
-                          ...environmentSource,
-                          EMAIL_FROM: "replacement@example.edu",
-                        },
-                  ),
-                ),
+                change === "sender"
+                  ? { ...retrySender, defaultFrom: "replacement@example.edu" }
+                  : retrySender,
                 "https://app.example.edu",
               )
             : liveWorker;
@@ -675,7 +677,7 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             ).rows[0],
           ).toEqual({ status: "canceled", frozen_email: null });
         }
-        expect(requests[0]!.body.from).toContain("sender@example.edu");
+        expect(requests[0]!.body.from).toBe(RESEND_EMAIL_FROM);
       } finally {
         await new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
@@ -1899,7 +1901,6 @@ integration("JobWorker PostgreSQL lifecycle", () => {
                   "test-secret-that-is-longer-than-thirty-two-characters",
                 EMAIL_PROVIDER: "resend",
                 RESEND_API_KEY: "re_mock_secret",
-                EMAIL_FROM: "sender@example.edu",
                 RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
               }),
             ),
