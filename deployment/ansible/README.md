@@ -26,7 +26,7 @@ Set these **repository Actions variables**:
 
 To establish `VM_KNOWN_HOSTS`, compare the SSH server-key fingerprint against an independent trusted observation (for example the OVHcloud console). Only then place the corresponding public host key line in the variable. This key is the **server's** key, not the `ubuntu` login key. If host identity changes intentionally, reverify it before changing the variable.
 
-Before the first app deployment, manually create the Supabase project and **private** Storage bucket and disable the Supabase Data API. ChalkTalk's application migrations use `public` tables and do not rely on Data API RLS. The playbook cannot verify that dashboard setting and does not initialize Supabase. Verify `notifications@joinchalktalk.com` as a Resend sender before sending mail; bootstrap writes fixed `EMAIL_PROVIDER=resend` and `EMAIL_FROM=notifications@joinchalktalk.com` values alongside the `RESEND_API_KEY` secret.
+Before the first app deployment, manually create the Supabase project and **private** Storage bucket and disable the Supabase Data API. ChalkTalk's application migrations use `public` tables and do not rely on Data API RLS. The playbook cannot verify that dashboard setting and does not initialize Supabase. Verify `notifications@joinchalktalk.com` as a Resend sender before sending mail. This VM-only bootstrap supplies `RESEND_API_KEY` but does not start the current main app; the production runtime planned in #184 selects Resend when `NODE_ENV=production` and uses the built-in sender `ChalkTalk <notifications@joinchalktalk.com>`.
 
 ## Run and inspect
 

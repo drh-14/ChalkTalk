@@ -34,7 +34,7 @@ The playbook SHALL require supported Ubuntu and passwordless noninteractive sudo
 
 ### Requirement: Protected shared production configuration
 
-The playbook SHALL validate all required production variables before replacing an existing environment file. It SHALL atomically render `/srv/chalktalk/shared/production.env` owned by `ubuntu` with mode `0600` inside an owner-only `0700` directory, and SHALL suppress secret values from logs and diffs. It SHALL obtain secrets from the controller environment rather than command-line arguments or committed files, and render fixed `EMAIL_PROVIDER=resend` and `EMAIL_FROM=notifications@joinchalktalk.com` values.
+The playbook SHALL validate all required production variables before replacing an existing environment file. It SHALL atomically render `/srv/chalktalk/shared/production.env` owned by `ubuntu` with mode `0600` inside an owner-only `0700` directory, and SHALL suppress secret values from logs and diffs. It SHALL obtain secrets from the controller environment rather than command-line arguments or committed files.
 
 #### Scenario: Incomplete variables
 - **WHEN** a required variable is absent or invalid

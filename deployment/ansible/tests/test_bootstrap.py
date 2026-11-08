@@ -84,9 +84,8 @@ class BootstrapContractTest(unittest.TestCase):
 
     def test_private_shared_env_is_atomic_and_not_logged(self):
         play = yaml.safe_load((ANSIBLE / "bootstrap.yml").read_text())[0]
-        self.assertEqual(play["vars"]["bootstrap_environment"]["EMAIL_PROVIDER"], "resend")
-        self.assertEqual(play["vars"]["bootstrap_environment"]["EMAIL_FROM"],
-                         "notifications@joinchalktalk.com")
+        self.assertNotIn("EMAIL_PROVIDER", play["vars"]["bootstrap_environment"])
+        self.assertNotIn("EMAIL_FROM", play["vars"]["bootstrap_environment"])
         tasks = play["tasks"]
         shared = next(task for task in tasks if task.get("ansible.builtin.file", {}).get("path") == "/srv/chalktalk/shared")
         self.assertEqual(shared["ansible.builtin.file"]["mode"], "0700")
@@ -134,8 +133,8 @@ class BootstrapContractTest(unittest.TestCase):
                        "-e", f"output_path={target}"]
             first = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
             contents = target.read_text()
-            self.assertIn("EMAIL_PROVIDER='resend'", contents)
-            self.assertIn("EMAIL_FROM='notifications@joinchalktalk.com'", contents)
+            self.assertNotIn("EMAIL_PROVIDER=", contents)
+            self.assertNotIn("EMAIL_FROM=", contents)
             self.assertNotIn("fake-secret", first.stdout)
             second = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
             self.assertIn("changed=0", second.stdout)
@@ -155,8 +154,6 @@ class BootstrapContractTest(unittest.TestCase):
             )
             rendered = json.loads(result.stdout)["services"]["check"]["environment"]
             self.assertEqual(rendered["DOMAIN"], "joinchalktalk.com")
-            self.assertEqual(rendered["EMAIL_PROVIDER"], "resend")
-            self.assertEqual(rendered["EMAIL_FROM"], "notifications@joinchalktalk.com")
             # Compose's config model escapes literal dollars before container creation.
             self.assertEqual(rendered["S3_SECRET_ACCESS_KEY"], "fake'#$$value")
 

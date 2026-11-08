@@ -24,8 +24,6 @@
       S3_SECRET_ACCESS_KEY: "{{ bootstrap_s3_secret_access_key }}"
       AUTH_TOKEN_SECRET: "{{ bootstrap_auth_token_secret }}"
       RESEND_API_KEY: "{{ bootstrap_resend_api_key }}"
-      EMAIL_PROVIDER: resend
-      EMAIL_FROM: notifications@joinchalktalk.com
 
   pre_tasks:
     - name: Verify supported Ubuntu host
@@ -48,9 +46,7 @@
       ansible.builtin.apt:
         name:
           - ca-certificates
-          - curl
           - git
-          - python3-debian
           - ufw
         state: present
         update_cache: true
