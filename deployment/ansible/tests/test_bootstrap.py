@@ -1,6 +1,7 @@
 """Offline safety checks for the VM bootstrap; no host is modified."""
 
 from pathlib import Path
+import ast
 import importlib.util
 import json
 import os
@@ -9,6 +10,7 @@ import tempfile
 import unittest
 
 import yaml
+from jinja2 import Environment
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -29,7 +31,18 @@ class BootstrapContractTest(unittest.TestCase):
         jobs = workflow["jobs"]
         self.assertEqual(len(jobs), 1)
         job = next(iter(jobs.values()))
-        self.assertIn("refs/heads/main", job["if"])
+        expression = ast.parse(job["if"].replace("github.ref", "ref"), mode="eval")
+        allowed = (ast.Expression, ast.Compare, ast.BoolOp, ast.Name, ast.Load,
+                   ast.Constant, ast.Eq, ast.NotEq, ast.And, ast.Or)
+        self.assertTrue(all(isinstance(node, allowed) for node in ast.walk(expression)))
+        self.assertTrue(all(node.id == "ref" for node in ast.walk(expression)
+                            if isinstance(node, ast.Name)))
+        for ref, expected in (("refs/heads/main", True),
+                              ("refs/heads/feature", False),
+                              ("refs/tags/main", False)):
+            with self.subTest(ref=ref):
+                self.assertEqual(eval(compile(expression, "<workflow-if>", "eval"),
+                                      {"__builtins__": {}}, {"ref": ref}), expected)
         self.assertEqual(workflow["concurrency"]["cancel-in-progress"], "false")
         secret_step = job["steps"][-1]
         self.assertEqual(secret_step["env"]["SSH_PRIVATE_KEY"], "${{ secrets.SSH_PRIVATE_KEY }}")
@@ -53,15 +66,27 @@ class BootstrapContractTest(unittest.TestCase):
         tasks = play["tasks"]
         firewall = [(index, task["community.general.ufw"])
                     for index, task in enumerate(tasks) if "community.general.ufw" in task]
-        ssh_rule = next(index for index, rule in firewall
-                        if rule.get("proto") == "tcp" and "bootstrap_ssh_port" in rule.get("port", ""))
         enable = next(index for index, rule in firewall if rule.get("state") == "enabled")
-        self.assertLess(ssh_rule, enable)
+        renderer = Environment()
+        for port, variables in ((22, {}), (2222, {"ansible_port": 2222})):
+            with self.subTest(port=port):
+                bootstrap_port = renderer.from_string(
+                    play["vars"]["bootstrap_ssh_port"]
+                ).render(**variables)
+                matching_rules = [index for index, rule in firewall
+                                  if rule.get("proto") == "tcp" and rule.get("rule") == "allow"
+                                  and renderer.from_string(str(rule.get("port", ""))).render(
+                                      bootstrap_ssh_port=bootstrap_port) == str(port)]
+                self.assertTrue(matching_rules)
+                self.assertTrue(all(index < enable for index in matching_rules))
         self.assertIn(("443", "udp"), {(str(rule.get("port")), rule.get("proto")) for _, rule in firewall})
         self.assertTrue(any("ansible.builtin.wait_for_connection" in task for task in tasks[enable + 1:]))
 
     def test_private_shared_env_is_atomic_and_not_logged(self):
         play = yaml.safe_load((ANSIBLE / "bootstrap.yml").read_text())[0]
+        self.assertEqual(play["vars"]["bootstrap_environment"]["EMAIL_PROVIDER"], "resend")
+        self.assertEqual(play["vars"]["bootstrap_environment"]["EMAIL_FROM"],
+                         "notifications@joinchalktalk.com")
         tasks = play["tasks"]
         shared = next(task for task in tasks if task.get("ansible.builtin.file", {}).get("path") == "/srv/chalktalk/shared")
         self.assertEqual(shared["ansible.builtin.file"]["mode"], "0700")
@@ -109,6 +134,8 @@ class BootstrapContractTest(unittest.TestCase):
                        "-e", f"output_path={target}"]
             first = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
             contents = target.read_text()
+            self.assertIn("EMAIL_PROVIDER='resend'", contents)
+            self.assertIn("EMAIL_FROM='notifications@joinchalktalk.com'", contents)
             self.assertNotIn("fake-secret", first.stdout)
             second = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
             self.assertIn("changed=0", second.stdout)
@@ -128,6 +155,8 @@ class BootstrapContractTest(unittest.TestCase):
             )
             rendered = json.loads(result.stdout)["services"]["check"]["environment"]
             self.assertEqual(rendered["DOMAIN"], "joinchalktalk.com")
+            self.assertEqual(rendered["EMAIL_PROVIDER"], "resend")
+            self.assertEqual(rendered["EMAIL_FROM"], "notifications@joinchalktalk.com")
             # Compose's config model escapes literal dollars before container creation.
             self.assertEqual(rendered["S3_SECRET_ACCESS_KEY"], "fake'#$$value")
 
