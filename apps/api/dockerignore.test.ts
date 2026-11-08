@@ -30,7 +30,10 @@ describe("Docker build context policy", () => {
     try {
       mkdirSync(context);
       mkdirSync(output);
-      copyFileSync(resolve(process.cwd(), ".dockerignore"), join(context, ".dockerignore"));
+      copyFileSync(
+        resolve(process.cwd(), ".dockerignore"),
+        join(context, ".dockerignore"),
+      );
       writeFileSync(join(context, "Dockerfile"), "FROM scratch\nCOPY . /\n");
       for (const path of [...credentials, ...templates]) {
         const destination = join(context, path);
@@ -44,7 +47,8 @@ describe("Docker build context policy", () => {
         { stdio: "pipe" },
       );
 
-      for (const path of credentials) expect(existsSync(join(output, path))).toBe(false);
+      for (const path of credentials)
+        expect(existsSync(join(output, path))).toBe(false);
       for (const path of templates)
         expect(readFileSync(join(output, path), "utf8")).toBe(path);
     } finally {
