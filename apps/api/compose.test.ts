@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
+import { basename, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 15_000 });
 
 type ComposeService = {
   image?: string;
+  build?: { context: string; dockerfile: string };
   command?: string[] | string;
   profiles?: string[];
   environment?: Record<string, string>;
@@ -51,13 +53,142 @@ function renderCompose(
   };
 }
 
+function renderProductionCompose() {
+  const output = execFileSync(
+    "docker",
+    [
+      "compose",
+      "--env-file",
+      "deployment/production/.env.example",
+      "-f",
+      "deployment/production/compose.yml",
+      "config",
+      "--format",
+      "json",
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        COMPOSE_ENV_FILE: ".env.example",
+      },
+    },
+  );
+  return JSON.parse(output) as { services: Record<string, ComposeService> };
+}
+
 describe("default Compose object storage", () => {
+  it("resolves default and overridden environment files from the repository root", () => {
+    for (const envFile of [undefined, ".env.example"]) {
+      const output = execFileSync(
+        "docker",
+        [
+          "compose",
+          "--env-file",
+          ".env.example",
+          "--profile",
+          "app",
+          "config",
+          "--no-env-resolution",
+          "--format",
+          "json",
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: { ...process.env, COMPOSE_ENV_FILE: envFile ?? "" },
+        },
+      );
+      const configuration = JSON.parse(output) as {
+        services: Record<string, { env_file: Array<{ path: string }> }>;
+      };
+      for (const service of [
+        "migrate",
+        "api",
+        "worker",
+        "collaboration",
+        "seed-mock",
+        "web",
+      ])
+        expect(configuration.services[service].env_file).toEqual([
+          { path: resolve(process.cwd(), envFile ?? ".env") },
+        ]);
+    }
+  });
+
+  it("keeps checkout-derived project and volume names for local commands", () => {
+    for (const files of [[], ["-f", "docker-compose.yml"]]) {
+      const output = execFileSync(
+        "docker",
+        [
+          "compose",
+          "--env-file",
+          ".env.example",
+          ...files,
+          "config",
+          "--format",
+          "json",
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            COMPOSE_PROJECT_NAME: "",
+            COMPOSE_ENV_FILE: ".env.example",
+          },
+        },
+      );
+      const configuration = JSON.parse(output) as {
+        name: string;
+        volumes: Record<string, { name: string }>;
+      };
+      const project = basename(process.cwd()).toLowerCase();
+      expect(configuration.name).toBe(project);
+      expect(configuration.volumes["postgres-data"].name).toBe(
+        `${project}_postgres-data`,
+      );
+      expect(configuration.volumes["seaweedfs-data"].name).toBe(
+        `${project}_seaweedfs-data`,
+      );
+    }
+  });
+
+  it("provisions pgvector and runs its schema migration in the main local stack", () => {
+    const configuration = renderCompose(undefined, undefined, "app");
+    expect(configuration.services.postgres.image).toBe(
+      "pgvector/pgvector:pg17",
+    );
+    expect(configuration.services.migrate.command).toEqual([
+      "sh",
+      "-c",
+      "npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api",
+    ]);
+  });
+
+  it("uses named local Dockerfiles for each application process", () => {
+    const services = renderCompose(undefined, undefined, "app").services;
+    for (const [service, dockerfile] of Object.entries({
+      api: "Dockerfile.api",
+      migrate: "Dockerfile.api",
+      "seed-mock": "Dockerfile.api",
+      worker: "Dockerfile.worker",
+      collaboration: "Dockerfile.collaboration",
+      web: "Dockerfile.frontend",
+    })) {
+      expect(services[service].build).toMatchObject({
+        context: process.cwd(),
+        dockerfile: `deployment/local/${dockerfile}`,
+      });
+    }
+  });
+
   it("starts a pinned single-node SeaweedFS service with localhost S3 and a named data volume", () => {
     const configuration = renderCompose();
     const seaweedfs = configuration.services.seaweedfs;
 
     expect(Object.keys(configuration.services).sort()).toEqual([
-      "mailpit",
       "postgres",
       "seaweedfs",
     ]);
@@ -160,6 +291,8 @@ describe("application Compose worker", () => {
     );
     expect(worker.depends_on?.seaweedfs.condition).toBe("service_healthy");
     expect(worker.environment).toMatchObject({
+      EMAIL_PROVIDER: "resend",
+      NODE_ENV: "development",
       S3_ENDPOINT: "http://seaweedfs:8333",
       S3_BUCKET: "chalktalk-resources",
       S3_REGION: "us-east-1",
@@ -172,5 +305,26 @@ describe("application Compose worker", () => {
         target: "/app/node_modules",
       }),
     );
+  });
+});
+
+describe("production Compose", () => {
+  it("uses only application services with production validation and Resend", () => {
+    const services = renderProductionCompose().services;
+    expect(Object.keys(services).sort()).toEqual([
+      "api",
+      "collaboration",
+      "migrate",
+      "web",
+      "worker",
+    ]);
+    for (const name of ["api", "worker", "collaboration", "migrate"]) {
+      expect(services[name].environment).toMatchObject({
+        NODE_ENV: "production",
+      });
+      expect(services[name].environment).toHaveProperty("RESEND_API_KEY");
+    }
+    expect(services.web.environment).not.toHaveProperty("RESEND_API_KEY");
+    expect(services.api.ports).toBeUndefined();
   });
 });

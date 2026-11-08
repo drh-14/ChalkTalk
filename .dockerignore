@@ -1,5 +1,7 @@
 .cert
 .env
+deployment/local/.env
+deployment/production/.env
 .git
 .agents
 node_modules
