@@ -19,7 +19,7 @@ const integration = databaseUrl ? describe : describe.skip;
 const schema = `digest_process_${process.pid}_${Date.now()}`;
 const apiPath = fileURLToPath(new URL("../server.ts", import.meta.url));
 const workerPath = fileURLToPath(new URL("../jobs/main.ts", import.meta.url));
-const port = 30_000 + Math.floor(Math.random() * 20_000);
+let port: number;
 const courseId = uuidv7();
 const recipientId = uuidv7();
 let admin: Pool;
@@ -30,6 +30,20 @@ let storagePort: number;
 let smtpPort: number;
 const children: ChildProcess[] = [];
 const messages: string[] = [];
+
+/**
+ * Asks the OS for a free port. A random fixed range can collide with ports
+ * other test servers were given by listen(0) on the same runner.
+ */
+async function freePort(): Promise<number> {
+  const listener = createTcpServer();
+  await new Promise<void>((resolve) =>
+    listener.listen(0, "127.0.0.1", resolve),
+  );
+  const { port } = listener.address() as AddressInfo;
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
+  return port;
+}
 
 function start(path: string): ChildProcess {
   const child = spawn(process.execPath, ["--import", "tsx", path], {
@@ -64,6 +78,7 @@ async function waitFor(condition: () => Promise<boolean>): Promise<void> {
 
 integration("daily digest process separation", () => {
   beforeAll(async () => {
+    port = await freePort();
     storage = createHttpServer((request, response) => {
       if (request.method === "HEAD" && request.url === "/digest-test/")
         response.writeHead(200).end();

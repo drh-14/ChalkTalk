@@ -254,7 +254,8 @@ describe("plain text and Office extraction", () => {
   });
 });
 
-withTools("PDF and OCR extraction", () => {
+// Real Tesseract on a loaded CI runner can exceed Vitest's 5s default.
+withTools("PDF and OCR extraction", { timeout: 60_000 }, () => {
   it("uses the text layer without OCR when pages have text", async () => {
     const result = await extract("text.pdf", "application/pdf");
     expect(words(result.text)).toContain("eigenvalues of symmetric matrices");
