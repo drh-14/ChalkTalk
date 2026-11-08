@@ -1,0 +1,29 @@
+---
+- name: Exercise production env template without touching the VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    bootstrap_domain: "{{ lookup('ansible.builtin.env', 'DOMAIN') }}"
+    bootstrap_auth_token_secret: "{{ lookup('ansible.builtin.env', 'AUTH_TOKEN_SECRET') }}"
+    bootstrap_ssh_port: 22
+    bootstrap_environment:
+      DOMAIN: "{{ lookup('ansible.builtin.env', 'DOMAIN') }}"
+      DATABASE_URL: "{{ lookup('ansible.builtin.env', 'DATABASE_URL') }}"
+      S3_ENDPOINT: "{{ lookup('ansible.builtin.env', 'S3_ENDPOINT') }}"
+      S3_BUCKET: "{{ lookup('ansible.builtin.env', 'S3_BUCKET') }}"
+      S3_REGION: "{{ lookup('ansible.builtin.env', 'S3_REGION') }}"
+      S3_ACCESS_KEY_ID: "{{ lookup('ansible.builtin.env', 'S3_ACCESS_KEY_ID') }}"
+      S3_SECRET_ACCESS_KEY: "{{ lookup('ansible.builtin.env', 'S3_SECRET_ACCESS_KEY') }}"
+      AUTH_TOKEN_SECRET: "{{ lookup('ansible.builtin.env', 'AUTH_TOKEN_SECRET') }}"
+      RESEND_API_KEY: "{{ lookup('ansible.builtin.env', 'RESEND_API_KEY') }}"
+  pre_tasks:
+    - name: Validate fake production configuration
+      ansible.builtin.import_tasks: ../tasks/validate-env.yml
+  tasks:
+    - name: Render fake environment fixture
+      ansible.builtin.template:
+        src: "{{ lookup('ansible.builtin.env', 'CHALKTALK_ROOT') }}/deployment/ansible/templates/production.env.j2"
+        dest: "{{ output_path }}"
+        mode: "0600"
+      no_log: true
