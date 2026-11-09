@@ -20,7 +20,9 @@ export async function ensureStorageBucket(
     )
       throw error;
     if (!localFileStore)
-      throw new Error(`S3_BUCKET ${bucket} must exist before startup`);
+      throw new Error(
+        `SUPABASE_STORAGE_BUCKET ${bucket} must exist before startup`,
+      );
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
   }
 }

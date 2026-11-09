@@ -83,19 +83,29 @@ export function loadObjectStorageConfig(
   endpoint: string | undefined;
   client: S3ClientConfig;
 } {
-  const bucket = source.S3_BUCKET ?? "chalktalk-resources";
-  const region = source.S3_REGION ?? "us-east-1";
-  const endpoint = source.S3_ENDPOINT;
-  const accessKeyId = source.S3_ACCESS_KEY_ID;
-  const secretAccessKey = source.S3_SECRET_ACCESS_KEY;
   const production = productionMode(source);
+  const bucket = production
+    ? source.SUPABASE_STORAGE_BUCKET
+    : (source.S3_BUCKET ?? "chalktalk-resources");
+  const region = production
+    ? source.SUPABASE_STORAGE_REGION
+    : (source.S3_REGION ?? "us-east-1");
+  const endpoint = production
+    ? source.SUPABASE_STORAGE_ENDPOINT
+    : source.S3_ENDPOINT;
+  const accessKeyId = production
+    ? source.SUPABASE_STORAGE_ACCESS_KEY_ID
+    : source.S3_ACCESS_KEY_ID;
+  const secretAccessKey = production
+    ? source.SUPABASE_STORAGE_SECRET_ACCESS_KEY
+    : source.S3_SECRET_ACCESS_KEY;
   if (production) {
     for (const [name, value] of [
-      ["S3_ENDPOINT", endpoint],
-      ["S3_BUCKET", source.S3_BUCKET],
-      ["S3_REGION", source.S3_REGION],
-      ["S3_ACCESS_KEY_ID", accessKeyId],
-      ["S3_SECRET_ACCESS_KEY", secretAccessKey],
+      ["SUPABASE_STORAGE_ENDPOINT", endpoint],
+      ["SUPABASE_STORAGE_BUCKET", bucket],
+      ["SUPABASE_STORAGE_REGION", region],
+      ["SUPABASE_STORAGE_ACCESS_KEY_ID", accessKeyId],
+      ["SUPABASE_STORAGE_SECRET_ACCESS_KEY", secretAccessKey],
     ])
       if (!value?.trim())
         throw new Error(`${name} is required when NODE_ENV=production`);
@@ -104,7 +114,7 @@ export function loadObjectStorageConfig(
       parsed = new URL(endpoint!);
     } catch {
       throw new Error(
-        "S3_ENDPOINT must be an HTTPS URL when NODE_ENV=production",
+        "SUPABASE_STORAGE_ENDPOINT must be an HTTPS URL when NODE_ENV=production",
       );
     }
     const storageHost = /^([a-z0-9]{20})(?:\.storage)?\.supabase\.co$/.exec(
@@ -122,19 +132,25 @@ export function loadObjectStorageConfig(
       storageHost[1] !== supabaseDatabaseProjectRef(source.DATABASE_URL)
     )
       throw new Error(
-        "S3_ENDPOINT must be a same-project Supabase HTTPS S3 URL when NODE_ENV=production",
+        "SUPABASE_STORAGE_ENDPOINT must be a same-project Supabase HTTPS S3 URL when NODE_ENV=production",
       );
   }
   if (Boolean(accessKeyId) !== Boolean(secretAccessKey))
     throw new Error(
-      "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together",
+      `${production ? "SUPABASE_STORAGE_ACCESS_KEY_ID and SUPABASE_STORAGE_SECRET_ACCESS_KEY" : "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY"} must be set together`,
     );
-  if (!endpoint && (!source.S3_BUCKET || !source.S3_REGION))
+  if (!production && !endpoint && (!source.S3_BUCKET || !source.S3_REGION))
     throw new Error("S3_BUCKET and S3_REGION are required for managed S3");
   if (!bucket || !region)
-    throw new Error("S3_BUCKET and S3_REGION are required");
+    throw new Error(
+      production
+        ? "SUPABASE_STORAGE_BUCKET and SUPABASE_STORAGE_REGION are required"
+        : "S3_BUCKET and S3_REGION are required",
+    );
   if (endpoint && !["http:", "https:"].includes(new URL(endpoint).protocol))
-    throw new Error("S3_ENDPOINT must use HTTP or HTTPS");
+    throw new Error(
+      `${production ? "SUPABASE_STORAGE_ENDPOINT" : "S3_ENDPOINT"} must use HTTP or HTTPS`,
+    );
   return {
     bucket,
     endpoint,
