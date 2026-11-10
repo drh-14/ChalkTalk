@@ -35,7 +35,6 @@ services:
       retries: 12
 
   migrate:
-    profiles: ["app"]
     build: &api-development-build
       context: ../..
       dockerfile: deployment/local/Dockerfile.api
@@ -63,7 +62,6 @@ services:
         condition: service_healthy
 
   api:
-    profiles: ["app"]
     logging:
       driver: local
       options:
@@ -82,7 +80,7 @@ services:
     expose:
       - "3000"
     depends_on:
-      seed-mock:
+      migrate:
         condition: service_completed_successfully
       seaweedfs:
         condition: service_healthy
@@ -100,7 +98,6 @@ services:
       start_period: 10s
 
   worker:
-    profiles: ["app"]
     logging:
       driver: local
       options:
@@ -128,7 +125,6 @@ services:
         condition: service_healthy
 
   collaboration:
-    profiles: ["app"]
     logging:
       driver: local
       options:
@@ -152,23 +148,7 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  seed-mock:
-    profiles: ["app"]
-    build: *api-development-build
-    working_dir: /app
-    env_file:
-      - ../../${COMPOSE_ENV_FILE:-.env}
-    environment: *api-environment
-    command: npm run db:seed:mock
-    volumes:
-      - ../..:/app
-      - api-node-modules:/app/node_modules
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-
   web:
-    profiles: ["app"]
     build:
       context: ../..
       dockerfile: deployment/local/Dockerfile.frontend
@@ -208,7 +188,6 @@ services:
       start_period: 30s
 
   elasticsearch:
-    profiles: ["observability"]
     image: docker.elastic.co/elasticsearch/elasticsearch:8.17.6
     environment:
       discovery.type: single-node
@@ -227,7 +206,6 @@ services:
       retries: 30
 
   elasticsearch-init:
-    profiles: ["observability"]
     image: curlimages/curl:8.15.0
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -241,7 +219,6 @@ services:
         condition: service_healthy
 
   logstash:
-    profiles: ["observability"]
     image: docker.elastic.co/logstash/logstash:8.17.6
     environment:
       LS_JAVA_OPTS: "-Xms256m -Xmx256m"
@@ -256,7 +233,6 @@ services:
         condition: service_completed_successfully
 
   prometheus:
-    profiles: ["observability"]
     image: prom/prometheus:v3.3.1
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -278,7 +254,6 @@ services:
         condition: service_started
 
   grafana:
-    profiles: ["observability"]
     image: grafana/grafana:11.6.1
     entrypoint: ["/bin/sh", "-ec"]
     command:
