@@ -79,6 +79,8 @@ openssl rand -hex 32              # copy the output into AUTH_TOKEN_SECRET in .e
 
 Edit the ignored `.env` before starting. Replace `AUTH_TOKEN_SECRET`, `METRICS_TOKEN`, and `GRAFANA_ADMIN_PASSWORD` with separate random values, and configure `RESEND_API_KEY` with your team key. Real verification and notification emails will be sent from ChalkTalk's fixed sender. Set `DOMAIN` to the local hostname you will open (default `localhost`); Compose derives the frontend URLs. Use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
 
+If reusing an older `.env`, remove its `PORT` entry. Local Compose requires the API's internal port 3000 and rejects `PORT` before migrations; direct API and test runs can still override the port.
+
 ### 2. Start the local stack
 
 ```bash

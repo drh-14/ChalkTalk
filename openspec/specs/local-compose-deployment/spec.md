@@ -36,6 +36,8 @@ The local stack SHALL build the API, worker, collaboration server, and frontend 
 
 The canonical local environment template SHALL be `deployment/local/.env.example`, copied to the ignored repository-root `.env` before startup. It SHALL expose one `DOMAIN` hostname, not separate frontend-origin/base-URL or API-port settings. Local Compose SHALL derive the HTTPS frontend origin and base URL from `DOMAIN` and the web port. The API SHALL keep its internal port-3000 default and lower-level frontend URL overrides for direct tests and unusual deployments.
 
+Local Compose SHALL reject a legacy `PORT` entry in its environment file before running migrations, so its API, worker, and collaboration services cannot start with a port that disagrees with the local proxy and health checks. Direct API and test runs MAY still override `PORT`.
+
 #### Scenario: Default local host
 
 - **WHEN** a developer copies the canonical template and runs default Compose
