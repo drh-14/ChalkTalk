@@ -8,13 +8,7 @@ Provide a small, reliable local runtime foundation so later ChalkTalk capabiliti
 
 ### Requirement: Local development foundation
 
-The system SHALL provide documented commands to start the browser application, HTTP API, and local PostgreSQL service for development. The default Compose invocation SHALL start dependency services only. An opt-in `app` Compose profile SHALL start a hot-reloading browser application, a hot-reloading HTTP API, and an idempotent migration service; the API SHALL not be published directly to the host and SHALL start only after the migration service completes successfully.
-
-#### Scenario: Developer starts dependency services only
-
-- **WHEN** a developer runs `docker compose up -d` without the `app` profile
-- **THEN** PostgreSQL and SeaweedFS start
-- **AND** the migration, API, and browser application services do not start
+The system SHALL provide documented commands to start the browser application, HTTP API, and local PostgreSQL service for development. The API SHALL not be published directly to the host and SHALL start only after the migration service completes successfully. The default Compose service set is specified in [local-compose-deployment](../local-compose-deployment/spec.md).
 
 #### Scenario: Developer starts the local foundation
 
@@ -23,7 +17,7 @@ The system SHALL provide documented commands to start the browser application, H
 
 #### Scenario: Developer starts the complete containerized foundation
 
-- **WHEN** a developer follows the documented certificate and environment setup and runs `docker compose --profile app up --build`
+- **WHEN** a developer follows the documented certificate and environment setup and runs `docker compose up --build`
 - **THEN** PostgreSQL becomes healthy
 - **AND** migrations complete before the API starts
 - **AND** the browser application is available through HTTPS on the documented host port
@@ -31,7 +25,7 @@ The system SHALL provide documented commands to start the browser application, H
 
 #### Scenario: Dependencies change after a prior container start
 
-- **WHEN** a developer starts the `app` profile with an existing application dependency volume whose Node runtime or `package-lock.json` fingerprint differs from the current source
+- **WHEN** a developer starts the default stack with an existing application dependency volume whose Node runtime or `package-lock.json` fingerprint differs from the current source
 - **THEN** the affected application service refreshes that dependency volume before executing its command
 - **AND** the PostgreSQL data volume remains intact
 
@@ -85,7 +79,7 @@ The browser development server SHALL forward requests whose path begins with `/a
 
 ### Requirement: Dedicated background job process
 
-The system SHALL provide documented commands to start the browser, HTTP API, PostgreSQL, and a separate background job worker. The API SHALL not claim background jobs. The local `app` Compose profile SHALL start the worker automatically after migrations; the dependency-only profile SHALL not start it.
+The system SHALL provide documented commands to start the browser, HTTP API, PostgreSQL, and a separate background job worker. The API SHALL not claim background jobs. The default local Compose stack SHALL start the worker automatically after migrations.
 
 #### Scenario: API stays available without worker
 

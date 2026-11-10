@@ -82,11 +82,11 @@ When enabled, the API and dedicated worker SHALL each append sanitized NDJSON to
 - **WHEN** local Compose runs the API and worker
 - **THEN** each container's stdout log uses bounded local file rotation independent of the seven-day Elasticsearch and spool age limits
 
-### Requirement: Opt-in local monitoring page
+### Requirement: Default local monitoring page
 
-A local Compose observability profile SHALL run Prometheus, Grafana, Logstash, and Elasticsearch. Prometheus SHALL scrape the API and worker every 60 seconds. Only credential-protected Grafana SHALL publish a localhost-bound host port. Provisioned Grafana data sources and dashboards SHALL show traffic, errors, p50/p95/p99 latency, 200 ms compliance, worker outcomes and duration, scrape health, confirmed spool drops, capacity-evicted events with unknown delivery status, and searchable logs. No application monitoring page or alert delivery is included.
+The default local Compose stack SHALL run Prometheus, Grafana, Logstash, and Elasticsearch. Prometheus SHALL scrape the API and worker every 60 seconds. Only credential-protected Grafana SHALL publish a localhost-bound host port. Provisioned Grafana data sources and dashboards SHALL show traffic, errors, p50/p95/p99 latency, 200 ms compliance, worker outcomes and duration, scrape health, confirmed spool drops, capacity-evicted events with unknown delivery status, and searchable logs. No application monitoring page or alert delivery is included.
 
 #### Scenario: Operator dashboard
 
-- **WHEN** the opt-in profile is started with required credentials
+- **WHEN** the default local stack is started with required credentials
 - **THEN** an operator can open localhost Grafana and inspect provisioned metrics and logs
