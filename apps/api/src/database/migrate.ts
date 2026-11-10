@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Pool, PoolClient, QueryResult } from "pg";
 import * as Y from "yjs";
 import { loadEnvironment, requireDatabaseUrl } from "../config/environment.js";
@@ -160,7 +160,7 @@ async function main() {
 
 if (
   process.argv[1] &&
-  import.meta.url === new URL(`file://${process.argv[1]}`).href
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
   await main();
 }
