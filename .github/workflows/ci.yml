@@ -14,6 +14,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  supabase-integration:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install pinned dependencies
+        run: npm ci
+
+      - name: Start disposable local Supabase database and Storage
+        run: npx supabase start -x gotrue,realtime,imgproxy,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - name: Export local-only S3 credentials
+        run: |
+          s3_key_id=$(npx supabase status -o env | sed -n 's/^S3_PROTOCOL_ACCESS_KEY_ID=//p' | tr -d '"')
+          s3_secret=$(npx supabase status -o env | sed -n 's/^S3_PROTOCOL_ACCESS_KEY_SECRET=//p' | tr -d '"')
+          test -n "$s3_key_id" && test -n "$s3_secret"
+          echo "::add-mask::$s3_key_id"
+          echo "::add-mask::$s3_secret"
+          printf 'SUPABASE_S3_KEY_ID=%s\nSUPABASE_S3_SECRET=%s\n' "$s3_key_id" "$s3_secret" >> "$GITHUB_ENV"
+          echo 'SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres' >> "$GITHUB_ENV"
+
+      - name: Exercise real API, database, and private Storage
+        run: node tests/integration/supabase-ci.mjs
+
+      - name: Show isolated stack logs on failure
+        if: failure()
+        run: docker compose -f deployment/production/compose.ci.yml logs --no-color || true
+
+      - name: Remove isolated API and migration containers
+        if: always()
+        run: SUPABASE_S3_KEY_ID=cleanup SUPABASE_S3_SECRET=cleanup docker compose -f deployment/production/compose.ci.yml down --volumes --remove-orphans || true
+
+      - name: Remove disposable local Supabase stack and volumes
+        if: always()
+        run: npx supabase stop --no-backup || true
+
   verify:
     runs-on: ubuntu-26.04
 
@@ -67,6 +113,9 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Test production release script without VM secrets
+        run: python3 -m unittest discover -s deployment/production/tests -p 'test_*.py'
 
       - name: Build
         run: npm run build

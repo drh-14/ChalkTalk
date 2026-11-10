@@ -1,0 +1,41 @@
+project_id = "chalktalk-supabase-ci"
+
+[api]
+enabled = true
+port = 54321
+# ChalkTalk never serves its public tables through Supabase's Data API.
+auto_expose_new_tables = false
+
+[db]
+port = 54322
+major_version = 17
+
+[storage]
+enabled = true
+
+[storage.s3_protocol]
+enabled = true
+
+[storage.buckets.chalktalk-ci]
+public = false
+
+[auth]
+enabled = false
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[local_smtp]
+enabled = false
+
+[analytics]
+enabled = false
+
+[storage.analytics]
+enabled = false
+
+[storage.vector]
+enabled = false
