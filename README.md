@@ -79,7 +79,7 @@ openssl rand -hex 32              # copy the output into AUTH_TOKEN_SECRET in .e
 
 Edit the ignored `.env` before starting. At minimum, replace `AUTH_TOKEN_SECRET` with the generated value and configure `RESEND_API_KEY` with your team key. Real verification and notification emails will be sent from ChalkTalk's fixed sender. Keep `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` equal to the HTTPS URL you will open, and use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
 
-For a repeatable local demo without creating accounts by hand, optionally set `MOCK_DATA=true` and `AMS161_DEMO_INSTRUCTOR_PASSWORD` (12–128 characters) in `.env` **before the first start**. Leave `MOCK_DATA=false` for an empty installation. See [Demo data](#demo-data) below.
+To populate ChalkTalk with existing course content, import a Piazza class explicitly after creating your account. See [Importing a Piazza class](#importing-a-piazza-class) below.
 
 ### 2. Choose one run mode
 
@@ -89,7 +89,7 @@ For a repeatable local demo without creating accounts by hand, optionally set `M
 docker compose --profile app up --build --wait
 ```
 
-Compose starts PostgreSQL, SeaweedFS, a one-shot migration and optional seed, the API, background worker, collaboration server, and web client. The web client is [https://localhost:5173](https://localhost:5173). The first image build may take a few minutes. Re-running the command is safe: migrations are tracked and persistent data stays in named volumes. For foreground logs instead, omit `--wait`; inspect a service with `docker compose --profile app logs -f api` (or `web`, `worker`, `collaboration`, `migrate`).
+Compose starts PostgreSQL, SeaweedFS, a one-shot migration, the API, background worker, collaboration server, and web client. The web client is [https://localhost:5173](https://localhost:5173). The first image build may take a few minutes. Re-running the command is safe: migrations are tracked and persistent data stays in named volumes. For foreground logs instead, omit `--wait`; inspect a service with `docker compose --profile app logs -f api` (or `web`, `worker`, `collaboration`, `migrate`).
 
 **Services in Compose, application on your computer (fast edit loop):**
 
@@ -99,11 +99,10 @@ docker compose up -d
 set -a; source .env; set +a
 npm run db:migrate
 npm run migrate:semantic --workspace=@chalktalk/api
-# Optional, only when MOCK_DATA=true: npm run db:seed:mock
 npm run dev
 ```
 
-Here Compose starts only PostgreSQL and SeaweedFS. If you enabled mock data, run the commented seed command after migrations and before `npm run dev`. `npm run dev` starts Vite, the API, the worker, and the collaboration server together; use `npm run dev:web`, `dev:api`, `dev:worker`, or `dev:collab` to run one separately. The `source` command exports `.env` to migrations and all four local processes; run it again in a new terminal. Do **not** start the full Compose app profile simultaneously with `npm run dev`, or ports and workers will conflict.
+Here Compose starts only PostgreSQL and SeaweedFS. `npm run dev` starts Vite, the API, the worker, and the collaboration server together; use `npm run dev:web`, `dev:api`, `dev:worker`, or `dev:collab` to run one separately. The `source` command exports `.env` to migrations and all four local processes; run it again in a new terminal. Do **not** start the full Compose app profile simultaneously with `npm run dev`, or ports and workers will conflict.
 
 For resource text extraction in direct mode, the worker also needs Poppler's `pdfinfo`, `pdftotext` and `pdftoppm`, plus Tesseract and English language data on `PATH`. The Compose images include these tools. If a tool or English language data is missing at startup, the worker logs `resource_text_tools_unavailable` and leaves extraction jobs pending until a corrected worker restarts; other job lanes continue.
 
@@ -130,7 +129,6 @@ Copying `.env.example` provides the local defaults. The table identifies what to
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Direct mode uses local SeaweedFS at `127.0.0.1:8333`. Full Compose sets its internal endpoint and credentials from `SEAWEEDFS_ACCESS_KEY_ID` / `SEAWEEDFS_SECRET_ACCESS_KEY`; these are **local object-store keys**, not AWS keys. Keep the direct-mode S3 keys in sync if you change the SeaweedFS keys. |
 | `PORT`, `COLLABORATION_PORT`, `COLLABORATION_PUBLIC_URL`                            | Direct-mode API port (3000), WebSocket port (3100), and browser WebSocket URL. Full Compose sets its internal API port; the public WebSocket URL defaults to the frontend HTTPS host plus `/collaboration`.                                                                                               |
 | `VITE_TLS_KEY_PATH`, `VITE_TLS_CERT_PATH`                                           | Direct Vite TLS files generated above. Full Compose mounts `.cert/` and supplies container paths.                                                                                                                                                                                                         |
-| `MOCK_DATA`, `AMS161_DEMO_INSTRUCTOR_PASSWORD`, `AMS161_DEMO_STUDENT_PASSWORD`      | Optional local demo; `MOCK_DATA` defaults to `false`. The instructor password is required when true; the student password is optional. Both must be 12–128 characters.                                                                                                                                    |
 | `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`                        | Optional semantic search provider. Do not put the key in browser/Vite variables; private post text and search queries are sent to that provider. See [Optional semantic search](#optional-semantic-search).                                                                                               |
 | `METRICS_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`                           | Optional local monitoring. Set **different** random secrets for the token and Grafana password to enable the profile. Default Grafana host port is 3001.                                                                                                                                                  |
 | `COLLABORATION_IDLE_END_MINUTES`, `LOG_SPOOL_DIRECTORY`                             | Live-session idle timeout and observability log location. API rate limits are fixed in `apps/api/src/config/constants.ts` rather than set through environment variables.                                                                                                                                  |
@@ -143,22 +141,16 @@ For **real email delivery**, configure a sending-only `RESEND_API_KEY` for both 
 
 For a **manual live Resend acceptance check**, start a disposable PostgreSQL server bound to loopback and set `TEST_DATABASE_URL` to its administrative database. Set `RESEND_LIVE_CONFIRM=send-synthetic-mail`, `RESEND_LIVE_RECIPIENT` to the approved test inbox, and the normal Resend variables, then run `npm run test:email:live`. The command creates and removes its own uniquely named database, sends no more than twelve synthetic messages, and refuses a non-approved recipient, remote database, or mock Resend endpoint. This command is never part of regular CI; it checks provider acceptance, not inbox arrival. See [live validation design](documentation/design/2026-11-02-resend-live-validation.md).
 
-### Demo data
-
-With `MOCK_DATA=true` and `AMS161_DEMO_INSTRUCTOR_PASSWORD` set before a full-Compose start, the one-shot `seed-mock` service creates a local-only AMS161 course with instructor Maya Chen, a TA, students, questions, notes, answers, tags, and anonymous/pinned examples. Sign in as `maya.chen@ams161.mock.chalktalk.invalid` with the chosen instructor password. The course join code is `AMS16101`. `AMS161_DEMO_STUDENT_PASSWORD` optionally enables `riley.nguyen@ams161.mock.chalktalk.invalid`; other mock users receive discarded random passwords. Repeated runs do not reset credentials or overwrite user-edited content. Direct mode requires the explicit `npm run db:seed:mock` step above.
-
-The same step also loads two real Piazza classes, with Maya Chen as their instructor: **CSE 416-03 Software Engineering** (Fall 2026, from `database/fixtures/cse416-piazza-export.json`) and **CSE 214-01 Data Structures** (Fall 2024, from `database/fixtures/cse214-piazza-export.json`). Each is imported only while it is absent, so restarts keep your edits. To log in as their imported students and staff, also set `PIAZZA_DEMO_PASSWORD` (12–128 characters) before the first seed. To refresh a course from its fixture, run, for example, `npm run db:import:piazza -- --owner maya.chen@ams161.mock.chalktalk.invalid --from ../../database/fixtures/cse214-piazza-export.json`.
-
 ### Importing a Piazza class
 
-To demo ChalkTalk with a real course, copy a Piazza class you belong to into your local database:
+To populate ChalkTalk with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to:
 
 ```bash
-PIAZZA_EMAIL=you@school.edu PIAZZA_PASSWORD=... PIAZZA_DEMO_PASSWORD='local demo password' \
+PIAZZA_EMAIL=you@school.edu PIAZZA_PASSWORD=... \
   npm run db:import:piazza -- --owner you@school.edu --class "CSE 416" --save piazza-cse416.json
 ```
 
-The `--owner` ChalkTalk account must already exist and becomes the course instructor; your own Piazza posts are attributed to it. Every other Piazza author becomes a course member with their Piazza name and role (professor → instructor, TA, student) and a placeholder `@piazza.invalid` email. Set `PIAZZA_DEMO_PASSWORD` (12–128 characters) to log in as any of them; the command then prints each account's email. Without it they receive a discarded random password. Questions, notes, instructor and student answers, followups and replies, folders (as tags), pins, endorsements, and helpful votes are imported with their original timestamps. Piazza HTML becomes Markdown, and images and attachments stay linked to Piazza. Polls become notes without their options. Piazza hides anonymous authors from students, so those posts belong to one shared "Anonymous Piazza user". A student account also sees only its own private posts and cannot read the roster or emails.
+The `--owner` ChalkTalk account must already exist and becomes the course instructor; your own Piazza posts are attributed to it. Every other Piazza author becomes a course member with their Piazza name and role (professor → instructor, TA, student) and a placeholder `@piazza.invalid` email. These historical attribution accounts receive discarded random passwords; they are not shared demo logins. Questions, notes, instructor and student answers, followups and replies, folders (as tags), pins, endorsements, and helpful votes are imported with their original timestamps. Piazza HTML becomes Markdown, and images and attachments stay linked to Piazza. Polls become notes without their options. Piazza hides anonymous authors from students, so those posts belong to one shared "Anonymous Piazza user". A student account also sees only its own private posts and cannot read the roster or emails.
 
 The command fetches one request per second, so a large class takes several minutes. Run it again at any time: matching Piazza ids add new content and refresh edited content without duplicating anything, and content deleted in ChalkTalk stays deleted. `--save` keeps the fetched data, and `--from piazza-cse416.json` re-imports from that file without contacting Piazza. Piazza has no public API; this uses the internal API its own website calls, which may change without notice.
 
