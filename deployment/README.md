@@ -2,6 +2,6 @@
 
 - [Local development](local/README.md): PostgreSQL with pgvector and SeaweedFS in Docker Compose, with Resend HTTPS email. The root `docker compose` command remains available.
 - [Single-VM production](production/README.md): frontend, API, collaboration, and worker containers backed by Supabase PostgreSQL/Storage and Resend.
-- [VM bootstrap](ansible/README.md): manually triggered GitHub Actions and Ansible setup of the Ubuntu host, Docker, firewall, and protected production environment file.
+- [VM bootstrap setup](ansible/README.md)
 
-There is no custom production flag. The production images set `NODE_ENV=production`; local and production have separate Compose files. The bootstrap prepares the VM but does not deploy the application. A release workflow that checks out a commit, starts Compose, and runs live smoke tests is not yet included.
+There is no custom production flag. The production images set `NODE_ENV=production`; local and production have separate Compose files. See the linked guides for setup and deployment status.

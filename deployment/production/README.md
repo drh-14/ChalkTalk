@@ -26,7 +26,7 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 ## Prepare a pinned release
 
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
-2. Run the [VM bootstrap workflow](../ansible/README.md) from `main` after configuring the GitHub `production` environment. It installs Docker and writes `/srv/chalktalk/shared/production.env` with owner-only permissions. The workflow does **not** clone the repository, run migrations, or start the app. Do not copy secrets into a release checkout.
+2. Prepare the VM and shared env file using the [VM bootstrap guide](../ansible/README.md). Do not copy secrets into a release checkout.
 3. Until a release workflow is added, clone this repository into `/srv/chalktalk/releases/<commit-sha>` on the VM and check out that **explicit tested commit SHA**, not a moving branch. Record the SHA for rollback:
 
    ```sh
@@ -42,7 +42,7 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
    export COMPOSE_ENV_FILE=/srv/chalktalk/shared/production.env
    ```
 
-   Confirm the file exists and the Supabase project, private bucket, and Resend sender are ready before starting. The bootstrap guide lists the GitHub environment variables and secrets that populate this file.
+   Confirm the file exists and the Supabase project, private bucket, and Resend sender are ready before starting.
 
 4. Validate without starting containers:
 
@@ -75,7 +75,7 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 | `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random secret of at least 32 characters used to HMAC-hash and verify opaque authentication-related tokens. |
 | `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.    |
 
-In the GitHub `production` environment, `DOMAIN` and the Supabase Storage endpoint, bucket, and region are configuration variables; the remaining values in this table are secrets. The bootstrap workflow writes them to the protected shared env file.
+For the GitHub environment settings that populate the shared env file, see the [VM bootstrap guide](../ansible/README.md).
 
 The production images and Compose set `NODE_ENV=production`; there is no custom mode flag in the env file. Production accepts only the Supabase database hosts above and same-project S3 endpoints `https://<project-ref>.storage.supabase.co/storage/v1/s3` (preferred) or `https://<project-ref>.supabase.co/storage/v1/s3`, with no custom port, credentials, query, or fragment. It rejects missing or malformed managed values instead of falling back to a local endpoint or ambient S3 credentials; it also rejects SMTP selection. `RESEND_API_BASE_URL`, if set, must be the official `https://api.resend.com` origin; omit it for normal delivery. Remove any old `PROD`, `PRODUCTION`, `LOCAL_DATABASE`, or `LOCAL_FILE_STORE` settings. `TRUST_PROXY_HOPS=1` is set by Compose; Caddy must remain the **only public entry point**, or per-IP rate limits can trust a spoofed proxy header.
 
@@ -91,6 +91,6 @@ Production runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoin
 - Before launch, test authenticated signup, a post, a private resource upload/download/delete, a live collaboration session, and an accepted Resend message through the public domain. Confirm restricted files remain inaccessible to unauthorized users.
 - If Supabase DB or Storage is unavailable, expect API or worker failures; monitor logs and retry after service restoration. A failed migration must be repaired before starting the app.
 
-For updates, record the old SHA, check out the new tested SHA, verify backups, and rebuild/restart. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. A real VM and disposable Supabase-project smoke test must pass before placing non-test course data here.
+For updates, record the old SHA, check out the new tested SHA, verify backups, and rebuild/restart. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. Live VM and disposable Supabase-project smoke tests remain pending and must pass before placing non-test course data here.
 
 The API and worker images include qpdf, Poppler, Tesseract, and English OCR data. OCR settings are fixed in [`constants.ts`](../../apps/api/src/config/constants.ts); no OCR environment variables are required.
