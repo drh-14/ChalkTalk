@@ -1,0 +1,64 @@
+name: Bootstrap production VM
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chalktalk-production-vm-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out reviewed main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned Ansible tooling
+        run: |
+          python -m pip install -r deployment/ansible/requirements.txt
+          ansible-galaxy collection install -r deployment/ansible/collections/requirements.yml
+      - name: Configure pinned SSH and bootstrap VM
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          SUPABASE_STORAGE_ENDPOINT: ${{ vars.SUPABASE_STORAGE_ENDPOINT }}
+          SUPABASE_STORAGE_BUCKET: ${{ vars.SUPABASE_STORAGE_BUCKET }}
+          SUPABASE_STORAGE_REGION: ${{ vars.SUPABASE_STORAGE_REGION }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_STORAGE_ACCESS_KEY_ID: ${{ secrets.SUPABASE_STORAGE_ACCESS_KEY_ID }}
+          SUPABASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.SUPABASE_STORAGE_SECRET_ACCESS_KEY }}
+          AUTH_TOKEN_SECRET: ${{ secrets.AUTH_TOKEN_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo 'VM bootstrap may only run from main' >&2
+            exit 1
+          fi
+          python deployment/ansible/tests/validate_inputs.py
+          credential_dir="$(mktemp -d)"
+          trap 'rm -rf "$credential_dir"' EXIT
+          chmod 700 "$credential_dir"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$credential_dir/id_ed25519"
+          printf '%s\n' "$VM_KNOWN_HOSTS" > "$credential_dir/known_hosts"
+          chmod 600 "$credential_dir/id_ed25519" "$credential_dir/known_hosts"
+          printf '[chalktalk]\n%s ansible_user=ubuntu ansible_port=22\n' "$VM_HOST" > "$credential_dir/inventory"
+          chmod 600 "$credential_dir/inventory"
+          export ANSIBLE_HOST_KEY_CHECKING=True
+          export ANSIBLE_PRIVATE_KEY_FILE="$credential_dir/id_ed25519"
+          export ANSIBLE_SSH_COMMON_ARGS="-o StrictHostKeyChecking=yes -o UserKnownHostsFile=$credential_dir/known_hosts -o IdentitiesOnly=yes"
+          ansible-playbook -i "$credential_dir/inventory" deployment/ansible/bootstrap.yml
