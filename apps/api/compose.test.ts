@@ -323,6 +323,19 @@ describe("production Compose", () => {
         NODE_ENV: "production",
       });
       expect(services[name].environment).toHaveProperty("RESEND_API_KEY");
+      expect(services[name].environment).toMatchObject({
+        SUPABASE_STORAGE_ENDPOINT:
+          "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
+        SUPABASE_STORAGE_BUCKET: "chalktalk-resources",
+        SUPABASE_STORAGE_REGION: "us-east-1",
+      });
+      expect(services[name].environment).toHaveProperty(
+        "SUPABASE_STORAGE_ACCESS_KEY_ID",
+      );
+      expect(services[name].environment).toHaveProperty(
+        "SUPABASE_STORAGE_SECRET_ACCESS_KEY",
+      );
+      expect(services[name].environment).not.toHaveProperty("S3_ENDPOINT");
     }
     expect(services.web.environment).not.toHaveProperty("RESEND_API_KEY");
     expect(services.api.ports).toBeUndefined();

@@ -34,7 +34,9 @@ describe("object storage bucket startup", () => {
         "course-files",
         false,
       ),
-    ).rejects.toThrow("must exist before startup");
+    ).rejects.toThrow(
+      "SUPABASE_STORAGE_BUCKET course-files must exist before startup",
+    );
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0]?.[0]).toBeInstanceOf(HeadBucketCommand);
   });

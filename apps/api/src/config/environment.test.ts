@@ -336,23 +336,23 @@ describe("authentication environment", () => {
 });
 
 describe("object storage environment", () => {
-  it("requires explicit HTTPS S3 settings and credentials for managed storage", () => {
+  it("requires explicit Supabase Storage settings and credentials in production", () => {
     const managed = {
       NODE_ENV: "production",
-      S3_ENDPOINT:
+      SUPABASE_STORAGE_ENDPOINT:
         "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
       DATABASE_URL:
         "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require",
-      S3_BUCKET: "course-files",
-      S3_REGION: "us-east-1",
-      S3_ACCESS_KEY_ID: "server-only-key",
-      S3_SECRET_ACCESS_KEY: "server-only-secret",
+      SUPABASE_STORAGE_BUCKET: "course-files",
+      SUPABASE_STORAGE_REGION: "us-east-1",
+      SUPABASE_STORAGE_ACCESS_KEY_ID: "server-only-key",
+      SUPABASE_STORAGE_SECRET_ACCESS_KEY: "server-only-secret",
     };
     expect(loadObjectStorageConfig(managed)).toEqual({
       bucket: "course-files",
-      endpoint: managed.S3_ENDPOINT,
+      endpoint: managed.SUPABASE_STORAGE_ENDPOINT,
       client: {
-        endpoint: managed.S3_ENDPOINT,
+        endpoint: managed.SUPABASE_STORAGE_ENDPOINT,
         region: "us-east-1",
         forcePathStyle: true,
         credentials: {
@@ -361,12 +361,22 @@ describe("object storage environment", () => {
         },
       },
     });
+    expect(
+      loadObjectStorageConfig({
+        ...managed,
+        S3_ENDPOINT: "http://127.0.0.1:8333",
+        S3_BUCKET: "wrong-local-bucket",
+        S3_REGION: "wrong-local-region",
+        S3_ACCESS_KEY_ID: "wrong-local-key",
+        S3_SECRET_ACCESS_KEY: "wrong-local-secret",
+      }),
+    ).toEqual(loadObjectStorageConfig(managed));
     for (const missing of [
-      "S3_ENDPOINT",
-      "S3_BUCKET",
-      "S3_REGION",
-      "S3_ACCESS_KEY_ID",
-      "S3_SECRET_ACCESS_KEY",
+      "SUPABASE_STORAGE_ENDPOINT",
+      "SUPABASE_STORAGE_BUCKET",
+      "SUPABASE_STORAGE_REGION",
+      "SUPABASE_STORAGE_ACCESS_KEY_ID",
+      "SUPABASE_STORAGE_SECRET_ACCESS_KEY",
     ] as const)
       expect(() =>
         loadObjectStorageConfig({ ...managed, [missing]: undefined }),
@@ -385,12 +395,16 @@ describe("object storage environment", () => {
       "https://short.storage.supabase.co/storage/v1/s3",
     ])
       expect(() =>
-        loadObjectStorageConfig({ ...managed, S3_ENDPOINT: endpoint }),
-      ).toThrow("S3_ENDPOINT");
+        loadObjectStorageConfig({
+          ...managed,
+          SUPABASE_STORAGE_ENDPOINT: endpoint,
+        }),
+      ).toThrow("SUPABASE_STORAGE_ENDPOINT");
     expect(
       loadObjectStorageConfig({
         ...managed,
-        S3_ENDPOINT: "https://abcdefghijklmnopqrst.supabase.co/storage/v1/s3",
+        SUPABASE_STORAGE_ENDPOINT:
+          "https://abcdefghijklmnopqrst.supabase.co/storage/v1/s3",
       }).endpoint,
     ).toBe("https://abcdefghijklmnopqrst.supabase.co/storage/v1/s3");
     expect(() =>
@@ -402,7 +416,18 @@ describe("object storage environment", () => {
         DATABASE_URL:
           "postgresql://postgres.zzzzzzzzzzzzzzzzzzzz:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require",
       }),
-    ).toThrow("S3_ENDPOINT");
+    ).toThrow("SUPABASE_STORAGE_ENDPOINT");
+    expect(() =>
+      loadObjectStorageConfig({
+        NODE_ENV: "production",
+        DATABASE_URL: managed.DATABASE_URL,
+        S3_ENDPOINT: managed.SUPABASE_STORAGE_ENDPOINT,
+        S3_BUCKET: managed.SUPABASE_STORAGE_BUCKET,
+        S3_REGION: managed.SUPABASE_STORAGE_REGION,
+        S3_ACCESS_KEY_ID: managed.SUPABASE_STORAGE_ACCESS_KEY_ID,
+        S3_SECRET_ACCESS_KEY: managed.SUPABASE_STORAGE_SECRET_ACCESS_KEY,
+      }),
+    ).toThrow("SUPABASE_STORAGE_ENDPOINT");
   });
   it("uses the SDK credential chain for managed S3 without a custom endpoint", () => {
     expect(
