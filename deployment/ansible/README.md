@@ -20,7 +20,7 @@ Add these four unencrypted **production environment variables**:
 
 | Environment variable        | Purpose                                                     |
 | --------------------------- | ----------------------------------------------------------- |
-| `DOMAIN`                    | Public domain (for example `joinchalktalk.com`, no scheme). |
+| `DOMAIN`                    | Public DNS name (2+ labels; no scheme or trailing dot).     |
 | `SUPABASE_STORAGE_ENDPOINT` | Supabase Storage S3 endpoint URL.                           |
 | `SUPABASE_STORAGE_BUCKET`   | Name of the private Storage bucket.                         |
 | `SUPABASE_STORAGE_REGION`   | Supabase Storage S3 region.                                 |
@@ -34,9 +34,9 @@ For managed-service and sender prerequisites before deploying the app, follow th
 1. Confirm the `ubuntu` account can use `sudo -n true` and the configured SSH key on port 22. Have OVHcloud console access available in case host firewall settings need recovery. Confirm the OVHcloud network firewall also permits SSH TCP 22 and web traffic; it is separate from UFW. Bootstrap rejects existing UFW user rules other than global allows for TCP 22/80/443 and UDP 443; inspect `sudo ufw show added` and reconcile any other rules through the VM console before running it. Bootstrap does not delete existing rules.
 2. After merging this workflow to `main`, open **Actions → Bootstrap production VM → Run workflow** and select `main`. Other refs are rejected. The workflow validates required values and the pinned host-key entry before connecting; SSH verifies the VM's identity during connection.
 3. The playbook installs Git, UFW, Docker Engine and Compose plugin from Docker's signed Ubuntu repository; prepares `/srv/chalktalk/releases` and `/srv/chalktalk/shared`; allows SSH before enabling UFW; permits TCP 80/443 and UDP 443; verifies a fresh SSH connection, Docker/Compose, firewall and env-file permissions; and reports whether a reboot is pending. It does not reboot automatically.
-4. On success, `/srv/chalktalk/shared/production.env` is owned by `ubuntu`, mode `0600`, in an owner-only `0700` directory. The workflow renders it atomically from Actions secrets and variables, suppressing values in Ansible logs. Rerun bootstrap after rotating a secret; a separate app restart is still needed to consume it.
+4. On success, `/srv/chalktalk/shared/production.env` is owned by `ubuntu`, mode `0600`, in an owner-only `0700` directory. The workflow renders it atomically from Actions secrets and variables, suppressing values in Ansible logs. Rerun bootstrap after rotating a secret; it does not restart the app to consume the new value.
 
-A later release checkout should live under `/srv/chalktalk/releases`. For application deployment commands, see the [production deployment guide](../production/README.md).
+A later release checkout should live under `/srv/chalktalk/releases`. For application deployment commands, see the [production deployment guide](../production/README.md); when using bootstrap, replace its manual `deployment/production/.env` path with `/srv/chalktalk/shared/production.env` in each `--env-file` command. Bootstrap does not configure Compose to use this file automatically.
 
 Do **not** use unredacted `docker compose config` in logs: it can print secrets. Docker-published container ports may bypass UFW's host-input rules. The later deployment must ensure only the web gateway publishes TCP 80/443 and UDP 443; API and collaboration ports must not be published. The OVHcloud network firewall is an additional independent control.
 
