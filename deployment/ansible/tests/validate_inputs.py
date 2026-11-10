@@ -27,7 +27,7 @@ def validate(env: dict[str, str]) -> None:
     if len(env["AUTH_TOKEN_SECRET"]) < 32:
         raise ValueError("Session secret is too short")
     if (len(env["DOMAIN"]) > 253 or not re.fullmatch(
-            r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*",
+            r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
             env["DOMAIN"])):
         raise ValueError("Public domain is invalid")
     if any(("\n" in env[name] or "\r" in env[name] or "\\" in env[name]

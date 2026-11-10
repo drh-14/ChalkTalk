@@ -22,7 +22,7 @@ VALID_DOMAINS = (
     "a" * 63 + ".example", ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 61)),
 )
 INVALID_DOMAINS = (
-    "join..chalktalk.com", ".chalktalk.com", "joinchalktalk.com.",
+    "localhost", "join..chalktalk.com", ".chalktalk.com", "joinchalktalk.com.",
     "-join.chalktalk.com", "join-.chalktalk.com",
     "join.-chalktalk.com", "join.chalktalk-.com",
     "a" * 64 + ".example", ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 62)),
