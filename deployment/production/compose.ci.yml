@@ -1,0 +1,50 @@
+# CI-only integration stack. It never uses production Supabase or Resend credentials.
+name: chalktalk-supabase-ci
+
+x-api: &api
+  build:
+    context: ../..
+    dockerfile: deployment/production/Dockerfile.api
+  image: chalktalk-supabase-ci-api:local
+  extra_hosts:
+    - host.docker.internal:host-gateway
+  environment:
+    NODE_ENV: test
+    DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:54322/postgres
+    AUTH_TOKEN_SECRET: ci-only-auth-token-secret-at-least-32-characters
+    FRONTEND_ORIGINS: http://localhost:5173
+    FRONTEND_BASE_URL: http://localhost:5173
+    EMAIL_PROVIDER: resend
+    RESEND_API_KEY: re_ci_only_mock_key
+    RESEND_API_BASE_URL: http://host.docker.internal:3339
+    S3_ENDPOINT: http://host.docker.internal:54321/storage/v1/s3
+    S3_BUCKET: chalktalk-ci
+    S3_REGION: local
+    S3_ACCESS_KEY_ID: stub
+    S3_SECRET_ACCESS_KEY: ${SUPABASE_ANON_KEY:?Local Supabase anon key is required}
+
+services:
+  migrate:
+    <<: *api
+    command: [node, apps/api/dist/database/migrate.js]
+    restart: "no"
+
+  api:
+    <<: *api
+    command: [node, apps/api/dist/server.js]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports:
+      - 127.0.0.1:3300:3000
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s

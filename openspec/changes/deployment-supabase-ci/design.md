@@ -1,0 +1,3 @@
+# Design
+
+The CI job uses a pinned Supabase CLI package to start a local, isolated stack containing PostgreSQL and Storage, plus their minimum gateway/auth dependencies. Supabase's local S3 protocol uses a localhost endpoint, `local` region, `stub` access key, and the locally generated anon key. A CI-only Compose file runs the release API image and one-shot migration image against these local endpoints, without weakening the application's production Supabase hostname/TLS validation. The HTTP integration runner tests real authorization and object persistence through a loopback-bound API port. A finalizer collects logs, stops Compose, and removes the disposable Supabase data volumes. No hosted credentials are read.

@@ -25,14 +25,49 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 
 ## Prepare a pinned release
 
+After the VM bootstrap and production environment are prepared, a successful
+`main` push CI run automatically starts the [production deploy
+workflow](../../.github/workflows/deploy-production.yml). It accepts only the
+repository's current `main` SHA, checks that SHA again before changing the VM,
+and checks it out detached under `/srv/chalktalk/releases/<sha>`. Bootstrap and
+deploy share a GitHub Actions concurrency group; the VM also uses
+`/srv/chalktalk/shared/deploy.lock`. Production secrets stay in the bootstrap-
+managed `/srv/chalktalk/shared/production.env` file, which Compose uses as both
+its interpolation `--env-file` and service `COMPOSE_ENV_FILE`. Do not put a
+secret `.env` inside a release checkout.
+
+The deploy builds all four images before Compose starts them and forces Compose
+to recreate services for each new SHA, even if images and configuration have
+not changed. It verifies the migration exit status, API health,
+worker/collaboration process state, migration ledger, a temporary private
+Supabase Storage object write/read/delete, and one
+Resend-accepted synthetic email to `chalktalk602@gmail.com`. The runner then
+checks public HTTPS web and `/api/health`; only afterward does the VM write
+`/srv/chalktalk/shared/deployed.sha`. A repeated successful SHA skips provider
+smoke, including mail. An interrupted first run may retry the same Resend
+idempotency key for up to 24 hours; beyond that, a duplicate test mail is
+possible. The Storage object is deleted even on read failure; a cleanup failure
+fails deployment.
+
+If build, migration, startup, provider smoke, or public HTTPS fails, the workflow
+stops without marking the SHA successful. It retains old release checkouts but
+does **not** automatically restore containers or roll back the database; inspect
+Compose logs and migration state before manually recovering. The workflow
+requires the separate VM bootstrap to finish successfully and a valid production
+environment. Live VM/Supabase/Resend verification remains pending until
+bootstrap succeeds; local tests cannot substitute for that check.
+
+The following manual pinned-release procedure remains available for recovery:
+
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
 2. Clone this repository on the VM and check out an **explicit tested commit SHA**, not a moving branch: `git fetch origin && git checkout --detach <commit-sha>`. Record that SHA for rollback.
-3. `cp deployment/production/.env.example deployment/production/.env && chmod 600 deployment/production/.env`. Fill all placeholders. Generate an independent `AUTH_TOKEN_SECRET` (for example `openssl rand -hex 32`). `DOMAIN` has no scheme or trailing slash. Copy the exact Supabase connection values from its dashboard and URL-encode reserved password characters.
+3. On a bootstrapped VM, use `/srv/chalktalk/shared/production.env`, not a secret file in the release checkout. Confirm bootstrap has populated it from the production environment settings. `DOMAIN` has no scheme or trailing slash; the Supabase connection values must match its dashboard, with reserved password characters URL-encoded. For a standalone manual installation without bootstrap, prepare an owner-only environment file outside the checkout from [`.env.example`](.env.example), including an independent `AUTH_TOKEN_SECRET` (for example `openssl rand -hex 32`), and substitute its path in the commands below. Export that same path as `COMPOSE_ENV_FILE` so containers receive the environment file, not just Compose interpolation values.
 4. Validate without starting containers:
 
    ```sh
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml config --quiet
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml config --services
+   export COMPOSE_ENV_FILE=/srv/chalktalk/shared/production.env
+   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml config --quiet
+   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml config --services
    ```
 
    The expected services are `migrate`, `api`, `worker`, `collaboration`, and `web`. No PostgreSQL, SeaweedFS, SMTP, or Mailpit service should appear.
@@ -40,10 +75,10 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 5. Build all four production images and start the stack:
 
    ```sh
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml build web api collaboration worker
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml up -d
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml ps
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml logs --tail=100 migrate api web
+   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml build web api collaboration worker
+   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml up -d
+   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml ps
+   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml logs --tail=100 migrate api web
    curl -fsS https://YOUR_DOMAIN/api/health
    ```
 
@@ -67,12 +102,14 @@ If upgrading an earlier production env file, rename its five `S3_*` entries to t
 
 Production runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoint, or event spool, even if `METRICS_TOKEN` is accidentally set. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy.
 
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml restart api worker collaboration`
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.
+Run these commands from the pinned release checkout with `COMPOSE_ENV_FILE` exported to the same environment-file path used by `--env-file` above.
+
+- `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
+- `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml restart api worker collaboration`
+- `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.
 - Before launch, test authenticated signup, a post, a private resource upload/download/delete, a live collaboration session, and an accepted Resend message through the public domain. Confirm restricted files remain inaccessible to unauthorized users.
 - If Supabase DB or Storage is unavailable, expect API or worker failures; monitor logs and retry after service restoration. A failed migration must be repaired before starting the app.
 
-For updates, record the old SHA, check out the new tested SHA, verify backups, and rebuild/restart. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. A real VM and disposable Supabase-project smoke test must pass before placing non-test course data here.
+For automatic updates, verify backups before merging to `main` and record the previously deployed SHA for recovery. If you must recover manually, use the pinned-release procedure above; a later automatic run for a previously marked SHA checks the running release before skipping deployment and does not resend provider smoke. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. A real VM and disposable Supabase-project smoke test must pass before placing non-test course data here.
 
 The API and worker images include qpdf, Poppler, Tesseract, and English OCR data. OCR settings are fixed in [`constants.ts`](../../apps/api/src/config/constants.ts); no OCR environment variables are required.

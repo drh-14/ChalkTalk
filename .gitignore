@@ -156,3 +156,7 @@ vite.config.ts.timestamp-*
 
 # Saved Piazza exports contain real class data
 piazza-*.json
+
+# Python test caches
+__pycache__/
+*.pyc

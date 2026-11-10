@@ -1,0 +1,4 @@
+- [x] Test guard, stale/concurrent release, partial failure, smoke network-drop and cleanup behavior.
+- [x] Implement guarded workflow, serialized release script, and API-image smoke command.
+- [x] Document operation, manual recovery, and outstanding live VM checks.
+- [x] Run focused tests, build/lint/format, actionlint, and Compose validation. Publication is tracked by the repository gate after implementation.
