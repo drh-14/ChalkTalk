@@ -13,7 +13,7 @@ Create a GitHub Actions environment named **`production`** (Settings → Environ
 | `VM_KNOWN_HOSTS`                                                       | One independently verified SSH server host-key line. The first field must match `VM_HOST` for port 22, without `[host]:port` brackets. |
 | `DATABASE_URL`                                                         | Supabase direct or session-pooler PostgreSQL URL with explicit TLS mode.                                                               |
 | `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Supabase Storage server-side S3 credentials.                                                                                           |
-| `AUTH_TOKEN_SECRET`                                                    | Independent random signing secret of at least 32 characters.                                                                           |
+| `AUTH_TOKEN_SECRET`                                                    | Independent random secret of at least 32 characters used to HMAC-hash and verify opaque authentication-related tokens.                 |
 | `RESEND_API_KEY`                                                       | Sending-only Resend HTTPS key.                                                                                                         |
 
 Add these four unencrypted **production environment variables**:

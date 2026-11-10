@@ -72,7 +72,7 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 | `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.        |
 | `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with an explicit TLS mode.                  |
 | `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                    |
-| `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random session-signing secret (at least 32 characters). |
+| `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random secret of at least 32 characters used to HMAC-hash and verify opaque authentication-related tokens. |
 | `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.    |
 
 In the GitHub `production` environment, `DOMAIN` and the Supabase Storage endpoint, bucket, and region are configuration variables; the remaining values in this table are secrets. The bootstrap workflow writes them to the protected shared env file.
