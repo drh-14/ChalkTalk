@@ -12,7 +12,7 @@ import {
 import pg from "pg";
 
 const api = "http://127.0.0.1:3300";
-const origin = "http://localhost:5173";
+const origin = "https://localhost:5173";
 const compose = ["compose", "-f", "deployment/production/compose.ci.yml"];
 const required = ["SUPABASE_ANON_KEY", "SUPABASE_DB_URL"];
 for (const key of required) assert.ok(process.env[key], `${key} is required`);

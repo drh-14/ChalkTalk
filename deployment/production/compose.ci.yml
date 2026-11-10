@@ -12,8 +12,8 @@ x-api: &api
     NODE_ENV: test
     DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:54322/postgres
     AUTH_TOKEN_SECRET: ci-only-auth-token-secret-at-least-32-characters
-    FRONTEND_ORIGINS: http://localhost:5173
-    FRONTEND_BASE_URL: http://localhost:5173
+    FRONTEND_ORIGINS: https://localhost:5173
+    FRONTEND_BASE_URL: https://localhost:5173
     EMAIL_PROVIDER: resend
     RESEND_API_KEY: re_ci_only_mock_key
     RESEND_API_BASE_URL: http://host.docker.internal:3339
