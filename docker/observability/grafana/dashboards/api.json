@@ -290,7 +290,7 @@
     },
     {
       "id": 11,
-      "title": "Sanitized request logs (filter by Request ID)",
+      "title": "Sanitized API and worker logs",
       "type": "logs",
       "gridPos": {
         "h": 10,
@@ -299,21 +299,14 @@
         "y": 40
       },
       "datasource": {
-        "type": "elasticsearch",
+        "type": "loki",
         "uid": "chalktalk-logs"
       },
       "targets": [
         {
           "refId": "A",
-          "query": "*",
-          "alias": "Logs",
-          "metrics": [
-            {
-              "id": "1",
-              "type": "logs"
-            }
-          ],
-          "queryType": "logs"
+          "expr": "{service=~\"api|worker\"}",
+          "queryType": "range"
         }
       ]
     },
@@ -434,23 +427,8 @@
       "options": {}
     }
   ],
-  "tags": [
-    "chalktalk",
-    "api"
-  ],
+  "tags": ["chalktalk", "api"],
   "templating": {
-    "list": [
-      {
-        "name": "log_filters",
-        "label": "Filter logs (requestId)",
-        "type": "adhoc",
-        "hide": 0,
-        "datasource": {
-          "type": "elasticsearch",
-          "uid": "chalktalk-logs"
-        },
-        "filters": []
-      }
-    ]
+    "list": []
   }
 }

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 15_000 });
@@ -20,15 +20,15 @@ type ComposeService = {
 function renderCompose(
   credentials?: { accessKey: string; secretKey: string },
   ambientAws?: { accessKey?: string; secretKey?: string },
-  profile?: string,
 ) {
   const output = execFileSync(
     "docker",
     [
       "compose",
+      "-f",
+      "deployment/local/compose.yml",
       "--env-file",
-      ".env.example",
-      ...(profile ? ["--profile", profile] : []),
+      "deployment/local/.env.example",
       "config",
       "--format",
       "json",
@@ -38,12 +38,14 @@ function renderCompose(
       encoding: "utf8",
       env: {
         ...process.env,
-        COMPOSE_PROFILES: profile,
-        COMPOSE_ENV_FILE: ".env.example",
+        COMPOSE_ENV_FILE: "deployment/local/.env.example",
         SEAWEEDFS_ACCESS_KEY_ID: credentials?.accessKey ?? "",
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
         AWS_ACCESS_KEY_ID: ambientAws?.accessKey ?? "",
         AWS_SECRET_ACCESS_KEY: ambientAws?.secretKey ?? "",
+        MOCK_DATA: "true",
+        PIAZZA_DEMO_PASSWORD: "shared-demo-password",
+        AMS161_DEMO_PASSWORD: "shared-demo-password",
       },
     },
   );
@@ -79,16 +81,33 @@ function renderProductionCompose() {
 }
 
 describe("default Compose object storage", () => {
+  it("starts every local service without a profile", () => {
+    for (const service of Object.values(renderCompose().services))
+      expect(service.profiles).toBeUndefined();
+  });
+
+  it("does not pass ambient demo credentials to local services", () => {
+    for (const service of Object.values(renderCompose().services)) {
+      expect(service.environment ?? {}).not.toHaveProperty("MOCK_DATA");
+      expect(service.environment ?? {}).not.toHaveProperty(
+        "PIAZZA_DEMO_PASSWORD",
+      );
+      expect(service.environment ?? {}).not.toHaveProperty(
+        "AMS161_DEMO_PASSWORD",
+      );
+    }
+  });
+
   it("resolves default and overridden environment files from the repository root", () => {
-    for (const envFile of [undefined, ".env.example"]) {
+    for (const envFile of [undefined, "deployment/local/.env.example"]) {
       const output = execFileSync(
         "docker",
         [
           "compose",
+          "-f",
+          "deployment/local/compose.yml",
           "--env-file",
-          ".env.example",
-          "--profile",
-          "app",
+          "deployment/local/.env.example",
           "config",
           "--no-env-resolution",
           "--format",
@@ -108,7 +127,6 @@ describe("default Compose object storage", () => {
         "api",
         "worker",
         "collaboration",
-        "seed-mock",
         "web",
       ])
         expect(configuration.services[service].env_file).toEqual([
@@ -117,15 +135,16 @@ describe("default Compose object storage", () => {
     }
   });
 
-  it("keeps checkout-derived project and volume names for local commands", () => {
-    for (const files of [[], ["-f", "docker-compose.yml"]]) {
+  it("keeps the legacy chalktalk project and volume names", () => {
+    {
       const output = execFileSync(
         "docker",
         [
           "compose",
+          "-f",
+          "deployment/local/compose.yml",
           "--env-file",
-          ".env.example",
-          ...files,
+          "deployment/local/.env.example",
           "config",
           "--format",
           "json",
@@ -136,7 +155,7 @@ describe("default Compose object storage", () => {
           env: {
             ...process.env,
             COMPOSE_PROJECT_NAME: "",
-            COMPOSE_ENV_FILE: ".env.example",
+            COMPOSE_ENV_FILE: "deployment/local/.env.example",
           },
         },
       );
@@ -144,7 +163,7 @@ describe("default Compose object storage", () => {
         name: string;
         volumes: Record<string, { name: string }>;
       };
-      const project = basename(process.cwd()).toLowerCase();
+      const project = "chalktalk";
       expect(configuration.name).toBe(project);
       expect(configuration.volumes["postgres-data"].name).toBe(
         `${project}_postgres-data`,
@@ -156,7 +175,7 @@ describe("default Compose object storage", () => {
   });
 
   it("provisions pgvector and runs its schema migration in the main local stack", () => {
-    const configuration = renderCompose(undefined, undefined, "app");
+    const configuration = renderCompose();
     expect(configuration.services.postgres.image).toBe(
       "pgvector/pgvector:pg17",
     );
@@ -168,11 +187,10 @@ describe("default Compose object storage", () => {
   });
 
   it("uses named local Dockerfiles for each application process", () => {
-    const services = renderCompose(undefined, undefined, "app").services;
+    const services = renderCompose().services;
     for (const [service, dockerfile] of Object.entries({
       api: "Dockerfile.api",
       migrate: "Dockerfile.api",
-      "seed-mock": "Dockerfile.api",
       worker: "Dockerfile.worker",
       collaboration: "Dockerfile.collaboration",
       web: "Dockerfile.frontend",
@@ -189,8 +207,17 @@ describe("default Compose object storage", () => {
     const seaweedfs = configuration.services.seaweedfs;
 
     expect(Object.keys(configuration.services).sort()).toEqual([
+      "alloy",
+      "api",
+      "collaboration",
+      "grafana",
+      "loki",
+      "migrate",
       "postgres",
+      "prometheus",
       "seaweedfs",
+      "web",
+      "worker",
     ]);
     expect(seaweedfs.image).toBe("chrislusf/seaweedfs:4.48");
     expect(seaweedfs.command).toContain("mini");
@@ -227,7 +254,7 @@ describe("default Compose object storage", () => {
   });
 
   it("waits for authenticated S3 readiness before starting the API", () => {
-    const configuration = renderCompose(undefined, undefined, "app");
+    const configuration = renderCompose();
     expect(configuration.services.api.depends_on?.seaweedfs).toMatchObject({
       condition: "service_healthy",
     });
@@ -274,9 +301,8 @@ describe("default Compose object storage", () => {
 });
 
 describe("application Compose worker", () => {
-  it("runs only in the app profile, after migrations, with independent restart and dependencies", () => {
-    expect(renderCompose().services.worker).toBeUndefined();
-    const configuration = renderCompose(undefined, undefined, "app");
+  it("runs by default after migrations, with independent restart and dependencies", () => {
+    const configuration = renderCompose();
     const worker = configuration.services.worker;
     expect(worker).toBeDefined();
     expect(worker.command).toEqual([

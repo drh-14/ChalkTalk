@@ -1,0 +1,16 @@
+.cert
+.env
+deployment/local/.env
+deployment/production/.env
+.git
+.agents
+node_modules
+apps/*/node_modules
+apps/*/dist
+coverage
+*.log
+
+# Other checkout worktrees and browser output must not enter image layers.
+.worktrees
+test-results
+playwright-report

@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-chalktalk}
+
 services:
   postgres:
     image: pgvector/pgvector:pg17
@@ -35,7 +37,6 @@ services:
       retries: 12
 
   migrate:
-    profiles: ["app"]
     build: &api-development-build
       context: ../..
       dockerfile: deployment/local/Dockerfile.api
@@ -44,9 +45,10 @@ services:
       - ../../${COMPOSE_ENV_FILE:-.env}
     environment: &api-environment
       DATABASE_URL: postgresql://chalktalk:chalktalk@postgres:5432/chalktalk
+      FRONTEND_ORIGINS: https://${DOMAIN:-localhost}:${WEB_PORT:-5173}
+      FRONTEND_BASE_URL: https://${DOMAIN:-localhost}:${WEB_PORT:-5173}
       NODE_ENV: development
       EMAIL_PROVIDER: resend
-      PORT: "3000"
       S3_ENDPOINT: http://seaweedfs:8333
       S3_BUCKET: chalktalk-resources
       S3_REGION: us-east-1
@@ -63,7 +65,6 @@ services:
         condition: service_healthy
 
   api:
-    profiles: ["app"]
     logging:
       driver: local
       options:
@@ -82,7 +83,7 @@ services:
     expose:
       - "3000"
     depends_on:
-      seed-mock:
+      migrate:
         condition: service_completed_successfully
       seaweedfs:
         condition: service_healthy
@@ -100,7 +101,6 @@ services:
       start_period: 10s
 
   worker:
-    profiles: ["app"]
     logging:
       driver: local
       options:
@@ -128,7 +128,6 @@ services:
         condition: service_healthy
 
   collaboration:
-    profiles: ["app"]
     logging:
       driver: local
       options:
@@ -152,23 +151,7 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  seed-mock:
-    profiles: ["app"]
-    build: *api-development-build
-    working_dir: /app
-    env_file:
-      - ../../${COMPOSE_ENV_FILE:-.env}
-    environment: *api-environment
-    command: npm run db:seed:mock
-    volumes:
-      - ../..:/app
-      - api-node-modules:/app/node_modules
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-
   web:
-    profiles: ["app"]
     build:
       context: ../..
       dockerfile: deployment/local/Dockerfile.frontend
@@ -207,56 +190,38 @@ services:
       retries: 12
       start_period: 30s
 
-  elasticsearch:
-    profiles: ["observability"]
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.6
-    environment:
-      discovery.type: single-node
-      xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+  loki:
+    image: grafana/loki:3.5.3
+    command: ["-config.file=/etc/loki/loki.yml"]
     volumes:
-      - elasticsearch-data:/usr/share/elasticsearch/data
+      - ../../docker/observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
     healthcheck:
       test:
         [
-          "CMD-SHELL",
-          "curl -fsS http://localhost:9200/_cluster/health >/dev/null",
+          "CMD",
+          "/usr/bin/loki",
+          "-verify-config",
+          "-config.file=/etc/loki/loki.yml",
         ]
       interval: 10s
       timeout: 5s
-      retries: 30
+      retries: 12
 
-  elasticsearch-init:
-    profiles: ["observability"]
-    image: curlimages/curl:8.15.0
-    entrypoint: ["/bin/sh", "-ec"]
+  alloy:
+    image: grafana/alloy:v1.9.2
     command:
-      - |
-        curl -fsS -X PUT http://elasticsearch:9200/_ilm/policy/chalktalk-local-7d -H 'Content-Type: application/json' --data '{"policy":{"phases":{"delete":{"min_age":"7d","actions":{"delete":{}}}}}}'
-        curl -fsS -X PUT http://elasticsearch:9200/_index_template/chalktalk-logs -H 'Content-Type: application/json' --data-binary @/config/elasticsearch-template.json
+      ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
     volumes:
-      - ../../docker/observability/elasticsearch-template.json:/config/elasticsearch-template.json:ro
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-
-  logstash:
-    profiles: ["observability"]
-    image: docker.elastic.co/logstash/logstash:8.17.6
-    environment:
-      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
-    volumes:
-      - ../../docker/observability/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
-      - ../../docker/observability/logstash/pipeline.conf:/usr/share/logstash/pipeline/pipeline.conf:ro
+      - ../../docker/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - api-log-spool:/var/log/chalktalk-api:ro
       - worker-log-spool:/var/log/chalktalk-worker:ro
-      - logstash-data:/usr/share/logstash/data
+      - alloy-data:/var/lib/alloy/data
     depends_on:
-      elasticsearch-init:
-        condition: service_completed_successfully
+      loki:
+        condition: service_started
 
   prometheus:
-    profiles: ["observability"]
     image: prom/prometheus:v3.3.1
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -278,7 +243,6 @@ services:
         condition: service_started
 
   grafana:
-    profiles: ["observability"]
     image: grafana/grafana:11.6.1
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -298,7 +262,8 @@ services:
       - ../../docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
-      - elasticsearch-init
+      - loki
+      - alloy
 
 volumes:
   postgres-data:
@@ -311,5 +276,5 @@ volumes:
   worker-log-spool:
   prometheus-data:
   grafana-data:
-  elasticsearch-data:
-  logstash-data:
+  loki-data:
+  alloy-data:

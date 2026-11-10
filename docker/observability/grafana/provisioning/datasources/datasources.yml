@@ -8,13 +8,6 @@ datasources:
     isDefault: true
   - name: ChalkTalk Logs
     uid: chalktalk-logs
-    type: elasticsearch
+    type: loki
     access: proxy
-    url: http://elasticsearch:9200
-    database: chalktalk-logs-*
-    jsonData:
-      index: chalktalk-logs-*
-      timeField: "@timestamp"
-      logMessageField: event
-      logLevelField: level
-      esVersion: "8.0.0"
+    url: http://loki:3100

@@ -64,7 +64,7 @@ s3_request --output "$temporary_directory/actual" \
   "$endpoint/$bucket/$object"
 cmp "$temporary_directory/expected" "$temporary_directory/actual"
 
-docker compose restart seaweedfs >/dev/null
+docker compose -f deployment/local/compose.yml --env-file .env restart seaweedfs >/dev/null
 s3_request --output "$temporary_directory/after-restart" \
   "$endpoint/$bucket/$object"
 cmp "$temporary_directory/expected" "$temporary_directory/after-restart"

@@ -1,0 +1,36 @@
+local.file_match "api" {
+  path_targets = [{ __path__ = "/var/log/chalktalk-api/api/*.ndjson", service = "api" }]
+  sync_period = "10s"
+}
+
+local.file_match "worker" {
+  path_targets = [{ __path__ = "/var/log/chalktalk-worker/worker/*.ndjson", service = "worker" }]
+  sync_period = "10s"
+}
+
+loki.source.file "api" {
+  targets = local.file_match.api.targets
+  forward_to = [loki.process.sanitized.receiver]
+}
+
+loki.source.file "worker" {
+  targets = local.file_match.worker.targets
+  forward_to = [loki.process.sanitized.receiver]
+}
+
+loki.process "sanitized" {
+  stage.json {
+    expressions = { timestamp = "timestamp" }
+  }
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339Nano"
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
