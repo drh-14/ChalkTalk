@@ -9,3 +9,8 @@ apps/*/node_modules
 apps/*/dist
 coverage
 *.log
+
+# Other checkout worktrees and browser output must not enter image layers.
+.worktrees
+test-results
+playwright-report

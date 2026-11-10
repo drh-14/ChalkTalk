@@ -19,7 +19,7 @@ function segmentCreatedAt(file: string): number {
   return Number(path.basename(file).slice(0, 13));
 }
 
-// A single-process append-only transport. Logstash owns read checkpoints; this owns rotation and capacity.
+// A single-process append-only transport. Alloy owns read checkpoints; this owns rotation and capacity.
 export class LogSpool {
   private pending = Promise.resolve();
   private queued = 0;
@@ -140,7 +140,7 @@ export class LogSpool {
       const reason = total > this.maxBytes ? "capacity" : "age";
       if (reason === "age" && Date.now() - entry.createdAtMs <= this.maxAgeMs)
         continue;
-      // Never delete the active segment: it may be in use by Logstash's tail input.
+      // Never delete the active segment: it may be in use by Alloy's tail input.
       if (entry.file === this.current) {
         this.current = undefined;
         this.currentBytes = 0;
