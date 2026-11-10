@@ -26,13 +26,29 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 ## Prepare a pinned release
 
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
-2. Clone this repository on the VM and check out an **explicit tested commit SHA**, not a moving branch: `git fetch origin && git checkout --detach <commit-sha>`. Record that SHA for rollback.
-3. `cp deployment/production/.env.example deployment/production/.env && chmod 600 deployment/production/.env`. Fill all placeholders. Generate an independent `AUTH_TOKEN_SECRET` (for example `openssl rand -hex 32`). `DOMAIN` has no scheme or trailing slash. Copy the exact Supabase connection values from its dashboard and URL-encode reserved password characters.
+2. Run the [VM bootstrap workflow](../ansible/README.md) from `main` after configuring the GitHub `production` environment. It installs Docker and writes `/srv/chalktalk/shared/production.env` with owner-only permissions. The workflow does **not** clone the repository, run migrations, or start the app. Do not copy secrets into a release checkout.
+3. Until a release workflow is added, clone this repository into `/srv/chalktalk/releases/<commit-sha>` on the VM and check out that **explicit tested commit SHA**, not a moving branch. Record the SHA for rollback:
+
+   ```sh
+   RELEASE_SHA=YOUR_TESTED_FULL_COMMIT_SHA
+   git clone https://github.com/drh-14/ChalkTalk.git "/srv/chalktalk/releases/$RELEASE_SHA"
+   cd "/srv/chalktalk/releases/$RELEASE_SHA"
+   git checkout --detach "$RELEASE_SHA"
+   ```
+
+   Run the following commands from that checkout's repository root. In each new shell, set the shared env path for both Compose interpolation and its service `env_file`:
+
+   ```sh
+   export COMPOSE_ENV_FILE=/srv/chalktalk/shared/production.env
+   ```
+
+   Confirm the file exists and the Supabase project, private bucket, and Resend sender are ready before starting. The bootstrap guide lists the GitHub environment variables and secrets that populate this file.
+
 4. Validate without starting containers:
 
    ```sh
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml config --quiet
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml config --services
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml config --quiet
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml config --services
    ```
 
    The expected services are `migrate`, `api`, `worker`, `collaboration`, and `web`. No PostgreSQL, SeaweedFS, SMTP, or Mailpit service should appear.
@@ -40,10 +56,10 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 5. Build all four production images and start the stack:
 
    ```sh
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml build web api collaboration worker
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml up -d
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml ps
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml logs --tail=100 migrate api web
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml build web api collaboration worker
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml up -d
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml ps
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml logs --tail=100 migrate api web
    curl -fsS https://YOUR_DOMAIN/api/health
    ```
 
@@ -59,6 +75,8 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 | `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random session-signing secret (at least 32 characters). |
 | `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.    |
 
+In the GitHub `production` environment, `DOMAIN` and the Supabase Storage endpoint, bucket, and region are configuration variables; the remaining values in this table are secrets. The bootstrap workflow writes them to the protected shared env file.
+
 The production images and Compose set `NODE_ENV=production`; there is no custom mode flag in the env file. Production accepts only the Supabase database hosts above and same-project S3 endpoints `https://<project-ref>.storage.supabase.co/storage/v1/s3` (preferred) or `https://<project-ref>.supabase.co/storage/v1/s3`, with no custom port, credentials, query, or fragment. It rejects missing or malformed managed values instead of falling back to a local endpoint or ambient S3 credentials; it also rejects SMTP selection. `RESEND_API_BASE_URL`, if set, must be the official `https://api.resend.com` origin; omit it for normal delivery. Remove any old `PROD`, `PRODUCTION`, `LOCAL_DATABASE`, or `LOCAL_FILE_STORE` settings. `TRUST_PROXY_HOPS=1` is set by Compose; Caddy must remain the **only public entry point**, or per-IP rate limits can trust a spoofed proxy header.
 
 If upgrading an earlier production env file, rename its five `S3_*` entries to the corresponding `SUPABASE_STORAGE_*` entries before restarting. Production no longer reads the old names; local SeaweedFS still uses `S3_*`.
@@ -67,9 +85,9 @@ If upgrading an earlier production env file, rename its five `S3_*` entries to t
 
 Production runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoint, or event spool, even if `METRICS_TOKEN` is accidentally set. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy.
 
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml restart api worker collaboration`
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.
+- `docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
+- `docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml restart api worker collaboration`
+- `docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.
 - Before launch, test authenticated signup, a post, a private resource upload/download/delete, a live collaboration session, and an accepted Resend message through the public domain. Confirm restricted files remain inaccessible to unauthorized users.
 - If Supabase DB or Storage is unavailable, expect API or worker failures; monitor logs and retry after service restoration. A failed migration must be repaired before starting the app.
 
