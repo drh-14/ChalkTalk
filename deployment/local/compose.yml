@@ -197,14 +197,21 @@ services:
       - ../../docker/observability/loki/loki.yml:/etc/loki/loki.yml:ro
       - loki-data:/loki
     healthcheck:
-      test: ["CMD", "/usr/bin/loki", "-verify-config", "-config.file=/etc/loki/loki.yml"]
+      test:
+        [
+          "CMD",
+          "/usr/bin/loki",
+          "-verify-config",
+          "-config.file=/etc/loki/loki.yml",
+        ]
       interval: 10s
       timeout: 5s
       retries: 12
 
   alloy:
     image: grafana/alloy:v1.9.2
-    command: ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    command:
+      ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
     volumes:
       - ../../docker/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - api-log-spool:/var/log/chalktalk-api:ro
