@@ -44,7 +44,7 @@ The API records a request counter and histogram with fixed buckets including **0
 
 The dedicated worker records attempted runs and duration by fixed job kind and outcome. The API also exposes process/Node metrics and counters for spool write errors and events/segments discarded at capacity. Each metrics registry belongs to its own process, not PostgreSQL; counters reset on process restart and Prometheus handles their rate calculations.
 
-`/metrics` is registered in each process only when observability is enabled and requires an operator-only bearer token. A missing or invalid token receives no metric data. The API remains healthy when Prometheus is absent. In the full Compose app profile, neither API nor worker metrics has a host-published port and Prometheus reaches both over the private Compose network. The Grafana UI binds only to `127.0.0.1`; Prometheus, Logstash, and Elasticsearch expose no host ports. A developer running the API directly must still supply the token to scrape its local port.
+`/metrics` is registered in each process only when observability is enabled and requires an operator-only bearer token. A missing or invalid token receives no metric data. The API remains healthy when Prometheus is absent. In the local Compose stack, neither API nor worker metrics has a host-published port and Prometheus reaches both over the private Compose network. The Grafana UI binds only to `127.0.0.1`; Prometheus, Logstash, and Elasticsearch expose no host ports. A developer running the API directly must still supply the token to scrape its local port.
 
 ### Logging and privacy
 
