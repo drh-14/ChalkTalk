@@ -55,6 +55,18 @@ wait_log_count() {
     sleep 1
   done
 }
+spool_count() {
+  compose exec -T "$1" sh -c 'grep -R -F -h "$1" /var/log/chalktalk 2>/dev/null | wc -l' sh "$2"
+}
+wait_spool_count() {
+  expected=$3
+  count=0
+  until actual=$(spool_count "$1" "$2") && [ "$actual" -ge "$expected" ]; do
+    count=$((count + 1))
+    if [ "$count" -ge 90 ]; then echo "$1 event was not persisted within 90 seconds" >&2; exit 1; fi
+    sleep 1
+  done
+}
 
 count=0
 until metrics_check; do
@@ -86,9 +98,10 @@ wait_log_count worker worker_started 1
 # An unavailable collector must not block requests; persisted spool events catch up later.
 compose stop alloy
 queued=$(api_request)
+worker_events_before=$(spool_count worker '"event":"worker_started"')
 compose restart worker
-compose exec -T api grep -R -q "$queued" /var/log/chalktalk
-compose exec -T worker grep -R -q '"event":"worker_started"' /var/log/chalktalk
+wait_spool_count api "$queued" 1
+wait_spool_count worker '"event":"worker_started"' "$((worker_events_before + 1))"
 if [ "$(log_count api "$queued")" -ne 0 ]; then echo "Log arrived while Alloy was stopped" >&2; exit 1; fi
 compose start alloy
 wait_log_count api "$queued" 1
