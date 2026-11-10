@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuthService } from "../auth/service.js";
@@ -52,6 +56,65 @@ integration("Piazza import", () => {
       (await pool.query("SELECT count(*)::int AS n FROM courses")).rows[0].n,
     ).toBe(0);
   });
+
+  it("imports a saved class without accepting demo environment credentials", async () => {
+    const cliSchema = `${schema}_cli`;
+    const directory = mkdtempSync(join(tmpdir(), "chalktalk-piazza-import-"));
+    const fixturePath = join(directory, "class.json");
+    const cliPool = new Pool({
+      connectionString: url,
+      options: `--search_path="${cliSchema}"`,
+    });
+    try {
+      await admin.query(`CREATE SCHEMA "${cliSchema}"`);
+      await runMigrations(cliPool, getMigrationDirectory());
+      const org = await cliPool.query<{ id: string }>(
+        "INSERT INTO organizations (id,domain,name) VALUES (gen_random_uuid(),'piazza-import.test','Test') RETURNING id",
+      );
+      await cliPool.query(
+        "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES (gen_random_uuid(),$1,$2,'Owner','x')",
+        [org.rows[0]!.id, ownerEmail],
+      );
+      writeFileSync(fixturePath, JSON.stringify(piazzaFixture()));
+      const output = execFileSync(
+        "npm",
+        [
+          "run",
+          "db:import:piazza",
+          "--",
+          "--owner",
+          ownerEmail,
+          "--from",
+          fixturePath,
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            DATABASE_URL: url!,
+            PGOPTIONS: `-c search_path=${cliSchema}`,
+            PIAZZA_DEMO_PASSWORD: demoPassword,
+          },
+        },
+      );
+      expect(output).toContain('Imported "CSE 416 Software Engineering"');
+      const auth = new AuthService(
+        cliPool,
+        loadEnvironment({
+          AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+        }),
+        { send: async () => {} },
+      );
+      await expect(
+        auth.login(piazzaEmail("Sam Student", "stu1"), demoPassword),
+      ).rejects.toMatchObject({ status: 401 });
+    } finally {
+      await cliPool.end();
+      await admin.query(`DROP SCHEMA IF EXISTS "${cliSchema}" CASCADE`);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("creates the course, members, posts, answers and followups", async () => {
     const summary = await importPiazzaCourse(

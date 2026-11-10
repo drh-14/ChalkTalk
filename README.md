@@ -65,7 +65,7 @@ The Compose setup below is for **reproducible local development**. It includes h
 
 ## Start locally
 
-Run these commands from the repository root in a Bash-compatible shell (Windows users can use WSL). You need Docker with the Compose plugin (`docker compose`) and [`mkcert`](https://github.com/FiloSottile/mkcert#installation). Compose does not require Node.js on the host; the explicit Piazza import command and repository checks require an up-to-date Node.js **22** release and npm.
+Run these commands from the repository root in a Bash-compatible shell (Windows users can use WSL). You need Docker with the Compose plugin (`docker compose`) and [`mkcert`](https://github.com/FiloSottile/mkcert#installation). Compose and the explicit Piazza import do not require Node.js on the host; repository checks require an up-to-date Node.js **22** release and npm.
 
 ### 1. Create local configuration and HTTPS certificate
 
@@ -127,9 +127,12 @@ For a **manual live Resend acceptance check**, start a disposable PostgreSQL ser
 To populate a new installation with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to:
 
 ```bash
-PIAZZA_EMAIL=you@school.edu PIAZZA_PASSWORD=... \
-  npm run db:import:piazza -- --owner you@school.edu --class "CSE 416" --save piazza-cse416.json
+docker compose exec -T \
+  -e PIAZZA_EMAIL=you@school.edu -e PIAZZA_PASSWORD=... \
+  api npm run db:import:piazza -- --owner you@school.edu --class "CSE 416" --save piazza-cse416.json
 ```
+
+Run this after the stack is up. The API container already has the database connection and npm dependencies; `--save` writes into the repository's bind mount. To re-import a saved export, run `docker compose exec -T api npm run db:import:piazza -- --owner you@school.edu --from piazza-cse416.json`.
 
 The `--owner` ChalkTalk account must already exist and becomes the course instructor; your own Piazza posts are attributed to it. Every other Piazza author becomes a course member with their Piazza name and role (professor → instructor, TA, student) and a placeholder `@piazza.invalid` email. These historical attribution accounts receive discarded random passwords; they are not shared demo logins. Questions, notes, instructor and student answers, followups and replies, folders (as tags), pins, endorsements, and helpful votes are imported with their original timestamps. Piazza HTML becomes Markdown, and images and attachments stay linked to Piazza. Polls become notes without their options. Piazza hides anonymous authors from students, so those posts belong to one shared "Anonymous Piazza user". A student account also sees only its own private posts and cannot read the roster or emails.
 

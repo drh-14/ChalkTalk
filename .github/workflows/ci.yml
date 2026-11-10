@@ -96,7 +96,6 @@ jobs:
       - name: Validate default Compose configuration
         run: |
           sh docker/test-default-local-compose.sh
-          sh docker/test-no-demo-env.sh
           docker compose config --quiet
 
       - name: Start local Compose stack
