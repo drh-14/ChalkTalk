@@ -27,7 +27,7 @@ Add these four unencrypted **production environment variables**:
 
 To establish `VM_KNOWN_HOSTS`, compare the SSH server-key fingerprint against an independent trusted observation (for example the OVHcloud console). Only then place the corresponding public host key line in the environment secret. This key is the **server's** key, not the `ubuntu` login key. If host identity changes intentionally, reverify it before changing the variable.
 
-For managed-service and sender prerequisites before deploying the app, follow the [Compose deployment guide](../production/README.md). The playbook does not initialize Supabase or start the app.
+For managed-service and sender prerequisites before deploying the app, follow the [Compose deployment guide](../README.md). The playbook does not initialize Supabase or start the app.
 
 ## Run and inspect
 
@@ -36,7 +36,7 @@ For managed-service and sender prerequisites before deploying the app, follow th
 3. The playbook installs Git, UFW, Docker Engine and Compose plugin from Docker's signed Ubuntu repository; prepares `/srv/chalktalk/releases` and `/srv/chalktalk/shared`; allows SSH before enabling UFW; permits TCP 80/443 and UDP 443; verifies a fresh SSH connection, Docker/Compose, firewall and env-file permissions; and reports whether a reboot is pending. It does not reboot automatically.
 4. On success, `/srv/chalktalk/shared/production.env` is owned by `ubuntu`, mode `0600`, in an owner-only `0700` directory. The workflow renders it atomically from Actions secrets and variables, suppressing values in Ansible logs. Rerun bootstrap after rotating a secret; it does not restart the app to consume the new value.
 
-A later release checkout should live under `/srv/chalktalk/releases`. For application deployment commands, see the [production deployment guide](../production/README.md); when using bootstrap, replace its manual `deployment/production/.env` path with `/srv/chalktalk/shared/production.env` in each `--env-file` command. Bootstrap does not configure Compose to use this file automatically.
+A later release checkout should live under `/srv/chalktalk/releases`. For application deployment commands, see the [production deployment guide](../README.md); when using bootstrap, replace its manual `deployment/production/.env` path with `/srv/chalktalk/shared/production.env` in each `--env-file` command. Bootstrap does not configure Compose to use this file automatically.
 
 Do **not** use unredacted `docker compose config` in logs: it can print secrets. Docker-published container ports may bypass UFW's host-input rules. The later deployment must ensure only the web gateway publishes TCP 80/443 and UDP 443; API and collaboration ports must not be published. The OVHcloud network firewall is an additional independent control.
 
