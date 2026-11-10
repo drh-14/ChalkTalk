@@ -85,6 +85,32 @@ class BootstrapContractTest(unittest.TestCase):
         self.assertIn(("443", "udp"), {(str(rule.get("port")), rule.get("proto")) for _, rule in firewall})
         self.assertTrue(any("ansible.builtin.wait_for_connection" in task for task in tasks[enable + 1:]))
 
+    def test_firewall_preflight_rejects_conflicting_and_extra_rules(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "ufw"
+            binary.write_text("""#!/bin/sh
+printf '%s\\n' "Added user rules (see 'ufw status' for running firewall):"
+if [ -n "$UFW_TEST_RULES" ]; then
+    printf '%s\\n' "$UFW_TEST_RULES"
+fi
+""")
+            binary.chmod(0o755)
+            env = {**os.environ, "PATH": temporary + os.pathsep + os.environ["PATH"]}
+            command = ["ansible-playbook", "-i", "localhost,", str(ANSIBLE / "tests/check-firewall.yml")]
+            scenarios = (
+                ("", True),
+                ("ufw allow 22/tcp", True),
+                ("ufw allow 22/tcp\nufw allow 80/tcp\nufw allow 443/tcp\nufw allow 443/udp", True),
+                ("ufw deny 22/tcp\nufw allow 22/tcp", False),
+                ("ufw allow 3000/tcp", False),
+                ("ufw allow from 203.0.113.4 to any port 22 proto tcp", False),
+            )
+            for rules, accepted in scenarios:
+                with self.subTest(rules=rules):
+                    result = subprocess.run(command, env={**env, "UFW_TEST_RULES": rules},
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
+
     def test_private_shared_env_is_atomic_and_not_logged(self):
         play = yaml.safe_load((ANSIBLE / "bootstrap.yml").read_text())[0]
         self.assertNotIn("EMAIL_PROVIDER", play["vars"]["bootstrap_environment"])

@@ -1,0 +1,8 @@
+---
+- name: Exercise UFW rule preflight without touching the host firewall
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check mocked UFW rules
+      ansible.builtin.import_tasks: ../tasks/check-firewall-rules.yml

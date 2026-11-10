@@ -153,6 +153,10 @@
         mode: "0600"
       no_log: true
 
+    - name: Check existing firewall rules before changing them
+      become: true
+      ansible.builtin.import_tasks: tasks/check-firewall-rules.yml
+
     - name: Allow SSH before enabling firewall
       become: true
       community.general.ufw:
@@ -174,6 +178,10 @@
         rule: allow
         port: "443"
         proto: udp
+
+    - name: Check firewall rules before enabling firewall
+      become: true
+      ansible.builtin.import_tasks: tasks/check-firewall-rules.yml
 
     - name: Deny other incoming host traffic
       become: true
@@ -213,6 +221,10 @@
       ansible.builtin.command: ufw status
       register: bootstrap_ufw_status
       changed_when: false
+
+    - name: Check active firewall user rules
+      become: true
+      ansible.builtin.import_tasks: tasks/check-firewall-rules.yml
 
     - name: Verify firewall rules
       ansible.builtin.assert:
