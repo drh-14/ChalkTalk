@@ -1,6 +1,6 @@
 # API observability with Prometheus, Grafana, and Logstash
 
-Status: implemented locally
+Status: historical design, superseded for the current local log pipeline by [local observability](../api/observability.md) and the [current specification](../../openspec/specs/api-observability/spec.md). The Logstash/Elasticsearch and opt-in Compose details below describe the original implementation, not the current stack.
 Date: 2026-10-16
 
 ## Context
