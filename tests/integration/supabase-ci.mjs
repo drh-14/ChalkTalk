@@ -1,6 +1,7 @@
 /* global process, fetch, FormData, AbortSignal, Buffer, URL, Blob, console */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import {
@@ -101,12 +102,16 @@ async function main() {
     );
     stackStarted = true;
     runCompose("up", "--build", "--wait", "api");
+    const packagedMigrations = (await readdir("database/migrations"))
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
     const migrations = await pool.query(
-      "SELECT count(*)::integer AS count FROM schema_migrations",
+      "SELECT name FROM schema_migrations ORDER BY name",
     );
-    assert.ok(
-      migrations.rows[0].count >= 50,
-      "migration ledger must be populated",
+    assert.deepEqual(
+      migrations.rows.map((row) => row.name),
+      packagedMigrations,
+      "migration ledger must match packaged migrations",
     );
 
     async function createUser(name) {
