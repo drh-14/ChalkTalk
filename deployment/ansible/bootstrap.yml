@@ -23,6 +23,10 @@
       SUPABASE_STORAGE_SECRET_ACCESS_KEY: "{{ bootstrap_supabase_storage_secret_access_key }}"
       AUTH_TOKEN_SECRET: "{{ bootstrap_auth_token_secret }}"
       RESEND_API_KEY: "{{ bootstrap_resend_api_key }}"
+    bootstrap_environment_dest: /srv/chalktalk/shared/production.env
+    bootstrap_environment_owner: ubuntu
+    bootstrap_environment_group: ubuntu
+    bootstrap_environment_become: true
 
   pre_tasks:
     - name: Verify supported Ubuntu host
@@ -143,15 +147,8 @@
         group: ubuntu
         mode: "0700"
 
-    - name: Render production environment atomically
-      become: true
-      ansible.builtin.template:
-        src: templates/production.env.j2
-        dest: /srv/chalktalk/shared/production.env
-        owner: ubuntu
-        group: ubuntu
-        mode: "0600"
-      no_log: true
+    - name: Render production environment
+      ansible.builtin.import_tasks: tasks/render-env.yml
 
     - name: Check existing firewall rules before changing them
       become: true

@@ -4,6 +4,7 @@
   connection: local
   gather_facts: false
   vars:
+    bootstrap_environment_dest: "{{ output_path }}"
     bootstrap_domain: "{{ lookup('ansible.builtin.env', 'DOMAIN') }}"
     bootstrap_auth_token_secret: "{{ lookup('ansible.builtin.env', 'AUTH_TOKEN_SECRET') }}"
     bootstrap_environment:
@@ -19,10 +20,7 @@
   pre_tasks:
     - name: Validate fake production configuration
       ansible.builtin.import_tasks: ../tasks/validate-env.yml
+      when: validate_environment | default(true) | bool
   tasks:
     - name: Render fake environment fixture
-      ansible.builtin.template:
-        src: "{{ lookup('ansible.builtin.env', 'CHALKTALK_ROOT') }}/deployment/ansible/templates/production.env.j2"
-        dest: "{{ output_path }}"
-        mode: "0600"
-      no_log: true
+      ansible.builtin.import_tasks: ../tasks/render-env.yml

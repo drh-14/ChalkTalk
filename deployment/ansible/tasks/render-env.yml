@@ -1,0 +1,10 @@
+---
+- name: Render production environment atomically
+  become: "{{ bootstrap_environment_become | default(false) }}"
+  ansible.builtin.template:
+    src: ../templates/production.env.j2
+    dest: "{{ bootstrap_environment_dest }}"
+    owner: "{{ bootstrap_environment_owner | default(omit) }}"
+    group: "{{ bootstrap_environment_group | default(omit) }}"
+    mode: "0600"
+  no_log: true

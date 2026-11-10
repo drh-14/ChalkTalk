@@ -6,3 +6,7 @@
   tasks:
     - name: Check mocked UFW rules
       ansible.builtin.import_tasks: ../tasks/check-firewall-rules.yml
+    - name: Record permission to proceed with firewall changes
+      ansible.builtin.copy:
+        dest: "{{ preflight_passed_path }}"
+        content: permitted

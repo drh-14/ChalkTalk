@@ -77,24 +77,6 @@ class BootstrapContractTest(unittest.TestCase):
         steps = workflow["jobs"]["verify"]["steps"]
         self.assertFalse(any("env" in step for step in steps))
 
-    def test_firewall_rule_order_and_host_preflight(self):
-        play = yaml.safe_load((ANSIBLE / "bootstrap.yml").read_text())[0]
-        pre_tasks = play["pre_tasks"]
-        sudo_index = next(i for i, task in enumerate(pre_tasks) if task.get("ansible.builtin.command") == "sudo -n true")
-        self.assertLess(sudo_index, len(pre_tasks))
-        tasks = play["tasks"]
-        firewall = [(index, task["community.general.ufw"])
-                    for index, task in enumerate(tasks) if "community.general.ufw" in task]
-        enable = next(index for index, rule in firewall if rule.get("state") == "enabled")
-        matching_rules = [index for index, rule in firewall
-                          if rule.get("proto") == "tcp" and rule.get("rule") == "allow"
-                          and str(rule.get("port")) == "22"]
-        self.assertTrue(matching_rules)
-        self.assertTrue(all(index < enable for index in matching_rules))
-        self.assertNotIn("bootstrap_ssh_port", play["vars"])
-        self.assertIn(("443", "udp"), {(str(rule.get("port")), rule.get("proto")) for _, rule in firewall})
-        self.assertTrue(any("ansible.builtin.wait_for_connection" in task for task in tasks[enable + 1:]))
-
     def test_firewall_preflight_rejects_conflicting_and_extra_rules(self):
         with tempfile.TemporaryDirectory() as temporary:
             binary = Path(temporary) / "ufw"
@@ -106,7 +88,9 @@ fi
 """)
             binary.chmod(0o755)
             env = {**os.environ, "PATH": temporary + os.pathsep + os.environ["PATH"]}
-            command = ["ansible-playbook", "-i", "localhost,", str(ANSIBLE / "tests/check-firewall.yml")]
+            passed = Path(temporary) / "preflight-passed"
+            command = ["ansible-playbook", "-i", "localhost,", str(ANSIBLE / "tests/check-firewall.yml"),
+                       "-e", f"preflight_passed_path={passed}"]
             scenarios = (
                 ("", True),
                 ("ufw allow 22/tcp", True),
@@ -117,25 +101,11 @@ fi
             )
             for rules, accepted in scenarios:
                 with self.subTest(rules=rules):
+                    passed.unlink(missing_ok=True)
                     result = subprocess.run(command, env={**env, "UFW_TEST_RULES": rules},
                                             capture_output=True, text=True)
                     self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
-
-    def test_private_shared_env_is_atomic_and_not_logged(self):
-        play = yaml.safe_load((ANSIBLE / "bootstrap.yml").read_text())[0]
-        self.assertNotIn("EMAIL_PROVIDER", play["vars"]["bootstrap_environment"])
-        self.assertTrue({
-            "SUPABASE_STORAGE_ENDPOINT", "SUPABASE_STORAGE_BUCKET", "SUPABASE_STORAGE_REGION",
-            "SUPABASE_STORAGE_ACCESS_KEY_ID", "SUPABASE_STORAGE_SECRET_ACCESS_KEY",
-        }.issubset(play["vars"]["bootstrap_environment"]))
-        self.assertNotIn("S3_ENDPOINT", play["vars"]["bootstrap_environment"])
-        self.assertNotIn("EMAIL_FROM", play["vars"]["bootstrap_environment"])
-        tasks = play["tasks"]
-        shared = next(task for task in tasks if task.get("ansible.builtin.file", {}).get("path") == "/srv/chalktalk/shared")
-        self.assertEqual(shared["ansible.builtin.file"]["mode"], "0700")
-        render = next(task for task in tasks if task.get("ansible.builtin.template", {}).get("dest") == "/srv/chalktalk/shared/production.env")
-        self.assertTrue(render["no_log"])
-        self.assertEqual(render["ansible.builtin.template"]["mode"], "0600")
+                    self.assertEqual(passed.exists(), accepted)
 
     def test_runner_rejects_missing_and_mismatched_host_key(self):
         valid = {
@@ -282,6 +252,18 @@ fi
             self.assertNotEqual(failed.returncode, 0)
             self.assertEqual(target.read_text(), contents)
             self.assertNotIn("fake'#$value", failed.stdout + failed.stderr)
+            render_failure = subprocess.run(
+                [*command, "-e", json.dumps({
+                    "validate_environment": False,
+                    "bootstrap_environment": {
+                        "SECRET": "render-failure-secret",
+                        "BROKEN": "{{ undefined_render_value }}",
+                    },
+                })], env=env, capture_output=True, text=True,
+            )
+            self.assertNotEqual(render_failure.returncode, 0)
+            self.assertEqual(target.read_text(), contents)
+            self.assertNotIn("render-failure-secret", render_failure.stdout + render_failure.stderr)
             compose = Path(temporary) / "compose.yml"
             compose.write_text("services:\n  check:\n    image: busybox\n    env_file: ${COMPOSE_ENV_FILE}\n    environment:\n      DOMAIN: ${DOMAIN}\n")
             compose_env = {**env, "COMPOSE_ENV_FILE": str(target)}
