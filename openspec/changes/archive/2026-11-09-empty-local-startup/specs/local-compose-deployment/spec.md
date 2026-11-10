@@ -25,4 +25,3 @@ The local stack SHALL build the API, worker, collaboration server, and frontend 
 - **WHEN** the operator inspects the resolved default configuration
 - **THEN** each application process references its corresponding named Dockerfile
 - **AND** migration references the API Dockerfile
-

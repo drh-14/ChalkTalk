@@ -34,4 +34,3 @@
 
 **Reason**: A fresh local installation shall not import committed exports automatically.
 **Migration**: Run the Piazza import command against the course selected by the operator.
-
