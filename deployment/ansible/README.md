@@ -18,12 +18,12 @@ Create a GitHub Actions environment named **`production`** (Settings → Environ
 
 Add these four unencrypted **production environment variables**:
 
-| Environment variable        | Purpose                                                     |
-| --------------------------- | ----------------------------------------------------------- |
-| `DOMAIN`                    | Public DNS name (2+ labels; no scheme or trailing dot).     |
-| `SUPABASE_STORAGE_ENDPOINT` | Supabase Storage S3 endpoint URL.                           |
-| `SUPABASE_STORAGE_BUCKET`   | Name of the private Storage bucket.                         |
-| `SUPABASE_STORAGE_REGION`   | Supabase Storage S3 region.                                 |
+| Environment variable        | Purpose                                                 |
+| --------------------------- | ------------------------------------------------------- |
+| `DOMAIN`                    | Public DNS name (2+ labels; no scheme or trailing dot). |
+| `SUPABASE_STORAGE_ENDPOINT` | Supabase Storage S3 endpoint URL.                       |
+| `SUPABASE_STORAGE_BUCKET`   | Name of the private Storage bucket.                     |
+| `SUPABASE_STORAGE_REGION`   | Supabase Storage S3 region.                             |
 
 To establish `VM_KNOWN_HOSTS`, compare the SSH server-key fingerprint against an independent trusted observation (for example the OVHcloud console). Only then place the corresponding public host key line in the environment secret. This key is the **server's** key, not the `ubuntu` login key. If host identity changes intentionally, reverify it before changing the variable.
 
@@ -36,9 +36,9 @@ For managed-service and sender prerequisites before deploying the app, follow th
 3. The playbook installs Git, UFW, Docker Engine and Compose plugin from Docker's signed Ubuntu repository; prepares `/srv/chalktalk/releases` and `/srv/chalktalk/shared`; allows SSH before enabling UFW; permits TCP 80/443 and UDP 443; verifies a fresh SSH connection, Docker/Compose, firewall and env-file permissions; and reports whether a reboot is pending. It does not reboot automatically.
 4. On success, `/srv/chalktalk/shared/production.env` is owned by `ubuntu`, mode `0600`, in an owner-only `0700` directory. The workflow renders it atomically from Actions secrets and variables, suppressing values in Ansible logs. Rerun bootstrap after rotating a secret; it does not restart the app to consume the new value.
 
-A later release checkout should live under `/srv/chalktalk/releases`. For application deployment commands, see the [production deployment guide](../production/README.md); when using bootstrap, replace its manual `deployment/production/.env` path with `/srv/chalktalk/shared/production.env` in each `--env-file` command. Bootstrap does not configure Compose to use this file automatically.
+Successful CI for the current `main` commit now starts the automatic release workflow after bootstrap. For release behavior and manual recovery, see the [production deployment guide](../production/README.md). Bootstrap only prepares the shared environment file; the release workflow passes it to Compose for both interpolation and container configuration.
 
-Do **not** use unredacted `docker compose config` in logs: it can print secrets. Docker-published container ports may bypass UFW's host-input rules. The later deployment must ensure only the web gateway publishes TCP 80/443 and UDP 443; API and collaboration ports must not be published. The OVHcloud network firewall is an additional independent control.
+Do **not** use unredacted `docker compose config` in logs: it can print secrets. Docker-published container ports may bypass UFW's host-input rules. The production Compose stack publishes only the web gateway on TCP 80/443 and UDP 443; API and collaboration ports remain private. The OVHcloud network firewall is an additional independent control.
 
 ## Offline validation
 
