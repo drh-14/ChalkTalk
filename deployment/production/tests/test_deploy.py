@@ -41,15 +41,23 @@ esac
 echo "$RUN_ID docker $*" >> "$TEST_CALLS"
 case "$*" in
   *' build '* ) sleep "${SLOW_BUILD:-0}"; [ "$FAIL_BUILD" != 1 ] ;;
-  *' up -d --wait'* ) [ "$FAIL_UP" != 1 ] ;;
+  *' up -d --wait'* ) [ "$FAIL_UP" != 1 ] && printf '%s\n' "$DEPLOY_SHA" > "$ACTIVE_SHA_FILE" ;;
   *'smoke.js'* ) [ "$FAIL_SMOKE" != 1 ] ;;
   *' ps -aq migrate'*) echo migration-container ;;
+  *' ps -aq web'*) echo web-container ;;
+  *' ps -aq api'*) echo api-container ;;
   *' ps -aq worker'*) echo worker-container ;;
-  *' ps -aq collaboration'*) echo collab-container ;;
+  *' ps -aq collaboration'*) echo collaboration-container ;;
   *' ps' ) echo 'container status snapshot' ;;
+  *'inspect'*'config_files'*)
+    active="$(cat "$ACTIVE_SHA_FILE" 2>/dev/null)"
+    if [ -n "$MISMATCH_SERVICE" ]; then
+      case "$*" in *"$MISMATCH_SERVICE-container") active="$OTHER_SHA" ;; esac
+    fi
+    echo "$CHALKTALK_DEPLOY_ROOT/releases/$active/deployment/production/compose.yml running" ;;
   *'inspect'*'migration-container'*) [ "$FAIL_MIGRATION" = 1 ] && echo 'exited 1' || echo 'exited 0' ;;
   *'inspect'*'worker-container'*) [ "$FAIL_WORKER" = 1 ] && echo exited || echo running ;;
-  *'inspect'*'collab-container'*) [ "$FAIL_COLLABORATION" = 1 ] && echo exited || echo running ;;
+  *'inspect'*'collaboration-container'*) [ "$FAIL_COLLABORATION" = 1 ] && echo exited || echo running ;;
 esac
 """,
         )
@@ -61,6 +69,8 @@ esac
             "TEST_CALLS": str(self.log),
             "REMOTE_SHA": SHA,
             "OTHER_SHA": OTHER,
+            "DEPLOY_SHA": SHA,
+            "ACTIVE_SHA_FILE": str(self.root / "active.sha"),
             "RUN_ID": "single",
         }
 
@@ -92,7 +102,60 @@ esac
         self.assertEqual((self.root / "shared" / "deployed.sha").read_text().strip(), SHA)
         self.log.unlink()
         self.assertEqual(self.run_script("stage").returncode, 0)
-        self.assertNotIn("docker", self.calls())
+        self.assertNotIn(" up -d", self.calls())
+        self.assertNotIn("smoke.js", self.calls())
+
+    def test_stale_success_marker_restores_release_without_resending_email(self):
+        self.assertEqual(self.run_script("stage").returncode, 0)
+        self.assertEqual(self.run_script("finish").returncode, 0)
+        (self.root / "active.sha").write_text(OTHER)
+        self.log.unlink()
+
+        result = self.run_script("stage")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(" up -d --wait", self.calls())
+        self.assertNotIn("smoke.js", self.calls())
+        self.assertEqual((self.root / "shared" / "deployed.sha").read_text().strip(), SHA)
+        self.assertFalse((self.root / "shared" / "pending.sha").exists())
+        self.assertEqual(self.run_script("finish").returncode, 0)
+        self.assertEqual((self.root / "active.sha").read_text().strip(), SHA)
+
+    def test_failed_restore_preserves_previous_smoke_result(self):
+        self.assertEqual(self.run_script("stage").returncode, 0)
+        self.assertEqual(self.run_script("finish").returncode, 0)
+        (self.root / "active.sha").write_text(OTHER)
+        self.assertNotEqual(self.run_script("stage", FAIL_UP="1").returncode, 0)
+        self.assertEqual((self.root / "shared" / "deployed.sha").read_text().strip(), SHA)
+        self.log.unlink()
+        self.assertEqual(self.run_script("stage").returncode, 0)
+        self.assertNotIn("smoke.js", self.calls())
+
+    def test_finish_rejects_stale_success_or_pending_marker(self):
+        self.assertEqual(self.run_script("stage").returncode, 0)
+        (self.root / "active.sha").write_text(OTHER)
+        pending = self.run_script("finish")
+        self.assertNotEqual(pending.returncode, 0)
+        self.assertIn("Pending release is not running", pending.stderr)
+        self.assertFalse((self.root / "shared" / "deployed.sha").exists())
+
+        (self.root / "active.sha").write_text(SHA)
+        self.assertEqual(self.run_script("finish").returncode, 0)
+        (self.root / "active.sha").write_text(OTHER)
+        marked = self.run_script("finish")
+        self.assertNotEqual(marked.returncode, 0)
+        self.assertIn("Marked release is not running", marked.stderr)
+
+    def test_repeat_checks_each_running_service(self):
+        self.assertEqual(self.run_script("stage").returncode, 0)
+        self.assertEqual(self.run_script("finish").returncode, 0)
+        for service in ("web", "api", "worker", "collaboration"):
+            with self.subTest(service=service):
+                self.log.unlink(missing_ok=True)
+                result = self.run_script("stage", MISMATCH_SERVICE=service)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(" up -d --wait", self.calls())
+                self.assertNotIn("smoke.js", self.calls())
+                self.assertEqual(self.run_script("finish").returncode, 0)
 
     def test_stale_sha_never_mutates_compose(self):
         result = self.run_script("stage", REMOTE_SHA=OTHER)

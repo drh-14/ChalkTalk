@@ -27,21 +27,38 @@ assert_current_main
 release="$releases/$sha"
 export COMPOSE_ENV_FILE="$env_file"
 compose() { docker compose --env-file "$env_file" -f "$release/deployment/production/compose.yml" "$@"; }
+release_is_running() {
+  local service container_id container_state
+  for service in web api worker collaboration; do
+    container_id="$(compose ps -aq "$service")" || return 1
+    [[ -n "$container_id" ]] || return 1
+    container_state="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}} {{.State.Status}}' "$container_id")" || return 1
+    [[ "$container_state" == "$release/deployment/production/compose.yml running" ]] || return 1
+  done
+}
 
 if [[ "$phase" == finish ]]; then
-  if [[ -f "$shared/deployed.sha" && "$(cat "$shared/deployed.sha")" == "$sha" ]]; then exit 0; fi
+  if [[ -f "$shared/deployed.sha" && "$(cat "$shared/deployed.sha")" == "$sha" ]]; then
+    release_is_running || { echo 'Marked release is not running' >&2; exit 1; }
+    exit 0
+  fi
   [[ -f "$shared/pending.sha" && "$(cat "$shared/pending.sha")" == "$sha" ]] || {
     echo 'No successful pending release to mark' >&2; exit 1;
   }
+  release_is_running || { echo 'Pending release is not running' >&2; exit 1; }
   printf '%s\n' "$sha" > "$shared/deployed.sha.tmp"
   mv -f "$shared/deployed.sha.tmp" "$shared/deployed.sha"
   rm -f "$shared/pending.sha"
   exit 0
 fi
 
+skip_provider_smoke=false
 if [[ -f "$shared/deployed.sha" && "$(cat "$shared/deployed.sha")" == "$sha" ]]; then
-  echo 'Release already marked successful; provider smoke skipped'
-  exit 0
+  if release_is_running; then
+    echo 'Release already marked successful; provider smoke skipped'
+    exit 0
+  fi
+  skip_provider_smoke=true
 fi
 rm -f "$shared/pending.sha"
 if [[ ! -d "$release" ]]; then
@@ -94,8 +111,12 @@ for service in worker collaboration; do
   }
 done
 stage_phase='provider smoke'
-compose run --rm --no-deps api node apps/api/dist/deployment/smoke.js "$sha"
+if [[ "$skip_provider_smoke" == false ]]; then
+  compose run --rm --no-deps api node apps/api/dist/deployment/smoke.js "$sha"
+fi
 stage_phase='pending release marker'
-printf '%s\n' "$sha" > "$shared/pending.sha.tmp"
-mv -f "$shared/pending.sha.tmp" "$shared/pending.sha"
-echo 'Release started and provider smoke accepted; awaiting external HTTPS check'
+if [[ "$skip_provider_smoke" == false ]]; then
+  printf '%s\n' "$sha" > "$shared/pending.sha.tmp"
+  mv -f "$shared/pending.sha.tmp" "$shared/pending.sha"
+fi
+echo 'Release started; awaiting external HTTPS check'
