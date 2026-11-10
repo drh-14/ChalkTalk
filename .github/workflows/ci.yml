@@ -54,11 +54,11 @@ jobs:
 
       - name: Remove isolated API and migration containers
         if: always()
-        run: SUPABASE_S3_KEY_ID=cleanup SUPABASE_S3_SECRET=cleanup docker compose -f deployment/production/compose.ci.yml down --volumes --remove-orphans || true
+        run: SUPABASE_S3_KEY_ID=cleanup SUPABASE_S3_SECRET=cleanup docker compose -f deployment/production/compose.ci.yml down --volumes --remove-orphans
 
       - name: Remove disposable local Supabase stack and volumes
         if: always()
-        run: npx supabase stop --no-backup || true
+        run: npx supabase stop --no-backup
 
   verify:
     runs-on: ubuntu-26.04
