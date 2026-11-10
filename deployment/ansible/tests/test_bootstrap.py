@@ -93,8 +93,10 @@ fi
                        "-e", f"preflight_passed_path={passed}"]
             scenarios = (
                 ("", True),
+                ("(None)", True),
                 ("ufw allow 22/tcp", True),
                 ("ufw allow 22/tcp\nufw allow 80/tcp\nufw allow 443/tcp\nufw allow 443/udp", True),
+                ("(None)\nufw allow 22/tcp", False),
                 ("ufw deny 22/tcp\nufw allow 22/tcp", False),
                 ("ufw allow 3000/tcp", False),
                 ("ufw allow from 203.0.113.4 to any port 22 proto tcp", False),
