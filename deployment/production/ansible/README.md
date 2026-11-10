@@ -18,12 +18,12 @@ Create a GitHub Actions environment named **`production`** (Settings → Environ
 
 Add these four unencrypted **production environment variables**:
 
-| Environment variable        | Purpose                                                     |
-| --------------------------- | ----------------------------------------------------------- |
-| `DOMAIN`                    | Public DNS name (2+ labels; no scheme or trailing dot).     |
-| `SUPABASE_STORAGE_ENDPOINT` | Supabase Storage S3 endpoint URL.                           |
-| `SUPABASE_STORAGE_BUCKET`   | Name of the private Storage bucket.                         |
-| `SUPABASE_STORAGE_REGION`   | Supabase Storage S3 region.                                 |
+| Environment variable        | Purpose                                                 |
+| --------------------------- | ------------------------------------------------------- |
+| `DOMAIN`                    | Public DNS name (2+ labels; no scheme or trailing dot). |
+| `SUPABASE_STORAGE_ENDPOINT` | Supabase Storage S3 endpoint URL.                       |
+| `SUPABASE_STORAGE_BUCKET`   | Name of the private Storage bucket.                     |
+| `SUPABASE_STORAGE_REGION`   | Supabase Storage S3 region.                             |
 
 To establish `VM_KNOWN_HOSTS`, compare the SSH server-key fingerprint against an independent trusted observation (for example the OVHcloud console). Only then place the corresponding public host key line in the environment secret. This key is the **server's** key, not the `ubuntu` login key. If host identity changes intentionally, reverify it before changing the variable.
 
@@ -45,11 +45,11 @@ Do **not** use unredacted `docker compose config` in logs: it can print secrets.
 A separate, secret-free PR workflow runs these checks automatically. To reproduce on a trusted development machine with Python 3.12+, Docker Compose, and `actionlint`:
 
 ```sh
-python -m pip install -r deployment/ansible/requirements-dev.txt
-ansible-galaxy collection install -r deployment/ansible/collections/requirements.yml
-python -m unittest discover -s deployment/ansible/tests -v
-ansible-playbook -i 'chalktalk,' deployment/ansible/bootstrap.yml --syntax-check
-ansible-lint deployment/ansible/bootstrap.yml deployment/ansible/tests/render-env.yml
+python -m pip install -r deployment/production/ansible/requirements-dev.txt
+ansible-galaxy collection install -r deployment/production/ansible/collections/requirements.yml
+python -m unittest discover -s deployment/production/ansible/tests -v
+ansible-playbook -i 'chalktalk,' deployment/production/ansible/bootstrap.yml --syntax-check
+ansible-lint deployment/production/ansible/bootstrap.yml deployment/production/ansible/tests/render-env.yml
 actionlint .github/workflows/vm-bootstrap.yml .github/workflows/vm-bootstrap-verify.yml
 ```
 
