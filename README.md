@@ -143,7 +143,15 @@ For a **manual live Resend acceptance check**, start a disposable PostgreSQL ser
 
 ### Importing a Piazza class
 
-To populate ChalkTalk with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to:
+To populate ChalkTalk with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to. For the **full-Compose** run mode, run this from the repository root while the app is running:
+
+```bash
+PIAZZA_EMAIL=you@school.edu PIAZZA_PASSWORD='your Piazza password' \
+  docker compose --profile app exec -T -e PIAZZA_EMAIL -e PIAZZA_PASSWORD api \
+  npm run db:import:piazza -- --owner you@school.edu --class "CSE 416"
+```
+
+For **direct** mode, use the host npm command in a terminal where you have exported `.env` as shown above:
 
 ```bash
 PIAZZA_EMAIL=you@school.edu PIAZZA_PASSWORD=... \
