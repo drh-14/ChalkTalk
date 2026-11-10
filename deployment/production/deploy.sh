@@ -67,19 +67,34 @@ fi
 assert_current_main
 compose config --quiet
 compose build web api collaboration worker
+stage_phase='Compose startup'
+report_stage_exit() {
+  local status=$?
+  trap - EXIT
+  if (( status != 0 )); then
+    printf 'Release failed during %s; current container state follows:\n' "$stage_phase" >&2
+    compose ps >&2 || true
+  fi
+  exit "$status"
+}
+trap report_stage_exit EXIT
 compose up -d --wait --wait-timeout 240
 
+stage_phase='migration check'
 migrate_id="$(compose ps -aq migrate)"
 [[ -n "$migrate_id" && "$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$migrate_id")" == 'exited 0' ]] || {
   echo 'Migration did not complete successfully' >&2; exit 1;
 }
 for service in worker collaboration; do
+  stage_phase="$service check"
   container_id="$(compose ps -aq "$service")"
   [[ -n "$container_id" && "$(docker inspect --format '{{.State.Status}}' "$container_id")" == running ]] || {
     echo "$service is not running" >&2; exit 1;
   }
 done
+stage_phase='provider smoke'
 compose run --rm --no-deps api node apps/api/dist/deployment/smoke.js "$sha"
+stage_phase='pending release marker'
 printf '%s\n' "$sha" > "$shared/pending.sha.tmp"
 mv -f "$shared/pending.sha.tmp" "$shared/pending.sha"
 echo 'Release started and provider smoke accepted; awaiting external HTTPS check'

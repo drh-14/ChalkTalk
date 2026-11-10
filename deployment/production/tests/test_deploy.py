@@ -38,12 +38,15 @@ esac
 echo "$RUN_ID docker $*" >> "$TEST_CALLS"
 case "$*" in
   *' build '* ) sleep "${SLOW_BUILD:-0}"; [ "$FAIL_BUILD" != 1 ] ;;
+  *' up -d --wait'* ) [ "$FAIL_UP" != 1 ] ;;
   *'smoke.js'* ) [ "$FAIL_SMOKE" != 1 ] ;;
   *' ps -aq migrate'*) echo migration-container ;;
   *' ps -aq worker'*) echo worker-container ;;
   *' ps -aq collaboration'*) echo collab-container ;;
-  *'inspect'*'migration-container'*) echo 'exited 0' ;;
-  *'inspect'*) echo running ;;
+  *' ps' ) echo 'container status snapshot' ;;
+  *'inspect'*'migration-container'*) [ "$FAIL_MIGRATION" = 1 ] && echo 'exited 1' || echo 'exited 0' ;;
+  *'inspect'*'worker-container'*) [ "$FAIL_WORKER" = 1 ] && echo exited || echo running ;;
+  *'inspect'*'collab-container'*) [ "$FAIL_COLLABORATION" = 1 ] && echo exited || echo running ;;
 esac
 """,
         )
@@ -105,6 +108,24 @@ esac
         self.assertIn(" up -d --wait", self.calls())
         self.assertFalse((self.root / "shared" / "pending.sha").exists())
         self.assertFalse((self.root / "shared" / "deployed.sha").exists())
+
+    def test_post_start_failures_report_phase_and_container_state(self):
+        cases = (
+            ("FAIL_UP", "Compose startup"),
+            ("FAIL_MIGRATION", "migration check"),
+            ("FAIL_WORKER", "worker check"),
+            ("FAIL_COLLABORATION", "collaboration check"),
+            ("FAIL_SMOKE", "provider smoke"),
+        )
+        for failure, phase in cases:
+            with self.subTest(failure=failure):
+                self.log.unlink(missing_ok=True)
+                result = self.run_script("stage", **{failure: "1"})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"Release failed during {phase}", result.stderr)
+                self.assertIn("container status snapshot", result.stderr)
+                self.assertIn(" ps\n", self.calls())
+                self.assertFalse((self.root / "shared" / "pending.sha").exists())
 
     def test_main_advancing_after_stage_blocks_success_marker(self):
         self.assertEqual(self.run_script("stage").returncode, 0)
