@@ -59,7 +59,7 @@ To delete a post you can read, open its detail view and select **Delete post**. 
 
 The React/Vite client (`apps/web`) talks to the Express API (`apps/api`). PostgreSQL stores application data and background jobs; a separate worker sends mail and processes queued work. The API handles Threads WebSockets; a collaboration server handles live-session WebSockets. Uploaded files use S3-compatible storage (SeaweedFS locally). See the [architecture diagram](diagrams/architecture/architecture.svg), [design](documentation/design.md), [database reference](documentation/database.md), and [API reference](documentation/openapi.yaml). The [`documentation/api/`](documentation/api/) directory explains individual API areas.
 
-For the single-VM deployment with separate frontend, API, Hocuspocus, and worker images, managed Supabase PostgreSQL and Storage, and Resend HTTPS, see the [Compose deployment guide](deployment/production/README.md). The instructions below are for local development; they do not connect to Supabase.
+For the single-VM deployment with separate frontend, API, Hocuspocus, and worker images, managed Supabase PostgreSQL and Storage, and Resend HTTPS, see the [Compose deployment guide](deployment/production/README.md). For the separate, manual setup of the already-provisioned production VM, see the [VM bootstrap guide](deployment/ansible/README.md). The instructions below are for local development; they do not connect to Supabase.
 
 The Compose setup below is for **reproducible local development**. It includes hot-reloading servers, local data services, and real Resend HTTPS email. Do not expose it publicly without replacing those settings, TLS termination, storage, backups, and email configuration.
 

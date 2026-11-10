@@ -1,0 +1,259 @@
+---
+- name: Prepare ChalkTalk Ubuntu VM
+  hosts: chalktalk
+  gather_facts: true
+  become: false
+  vars:
+    bootstrap_domain: "{{ lookup('ansible.builtin.env', 'DOMAIN') }}"
+    bootstrap_database_url: "{{ lookup('ansible.builtin.env', 'DATABASE_URL') }}"
+    bootstrap_supabase_storage_endpoint: "{{ lookup('ansible.builtin.env', 'SUPABASE_STORAGE_ENDPOINT') }}"
+    bootstrap_supabase_storage_bucket: "{{ lookup('ansible.builtin.env', 'SUPABASE_STORAGE_BUCKET') }}"
+    bootstrap_supabase_storage_region: "{{ lookup('ansible.builtin.env', 'SUPABASE_STORAGE_REGION') }}"
+    bootstrap_supabase_storage_access_key_id: "{{ lookup('ansible.builtin.env', 'SUPABASE_STORAGE_ACCESS_KEY_ID') }}"
+    bootstrap_supabase_storage_secret_access_key: "{{ lookup('ansible.builtin.env', 'SUPABASE_STORAGE_SECRET_ACCESS_KEY') }}"
+    bootstrap_auth_token_secret: "{{ lookup('ansible.builtin.env', 'AUTH_TOKEN_SECRET') }}"
+    bootstrap_resend_api_key: "{{ lookup('ansible.builtin.env', 'RESEND_API_KEY') }}"
+    bootstrap_environment:
+      DOMAIN: "{{ bootstrap_domain }}"
+      DATABASE_URL: "{{ bootstrap_database_url }}"
+      SUPABASE_STORAGE_ENDPOINT: "{{ bootstrap_supabase_storage_endpoint }}"
+      SUPABASE_STORAGE_BUCKET: "{{ bootstrap_supabase_storage_bucket }}"
+      SUPABASE_STORAGE_REGION: "{{ bootstrap_supabase_storage_region }}"
+      SUPABASE_STORAGE_ACCESS_KEY_ID: "{{ bootstrap_supabase_storage_access_key_id }}"
+      SUPABASE_STORAGE_SECRET_ACCESS_KEY: "{{ bootstrap_supabase_storage_secret_access_key }}"
+      AUTH_TOKEN_SECRET: "{{ bootstrap_auth_token_secret }}"
+      RESEND_API_KEY: "{{ bootstrap_resend_api_key }}"
+
+  pre_tasks:
+    - name: Verify supported Ubuntu host
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_release in ['jammy', 'noble', 'resolute']
+        fail_msg: ChalkTalk bootstrap requires a supported Ubuntu LTS release.
+
+    - name: Verify non-interactive sudo
+      ansible.builtin.command: sudo -n true
+      changed_when: false
+
+    - name: Validate production configuration
+      ansible.builtin.import_tasks: tasks/validate-env.yml
+
+  tasks:
+    - name: Install host prerequisites
+      become: true
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - git
+          - ufw
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create Docker keyring directory
+      become: true
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install official Docker signing key
+      become: true
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Detect Debian package architecture
+      ansible.builtin.command: dpkg --print-architecture
+      register: docker_architecture
+      changed_when: false
+
+    - name: Configure official Docker Ubuntu repository
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          Types: deb
+          URIs: https://download.docker.com/linux/ubuntu
+          Suites: {{ ansible_distribution_release }}
+          Components: stable
+          Architectures: {{ docker_architecture.stdout }}
+          Signed-By: /etc/apt/keyrings/docker.asc
+      register: docker_repository
+
+    - name: Install Docker Engine and Compose plugin
+      become: true
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: "{{ docker_repository.changed }}"
+
+    - name: Start Docker service
+      become: true
+      ansible.builtin.service:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Permit ubuntu to manage Docker
+      become: true
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    - name: Create ChalkTalk root
+      become: true
+      ansible.builtin.file:
+        path: /srv/chalktalk
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0750"
+
+    - name: Create release directory
+      become: true
+      ansible.builtin.file:
+        path: /srv/chalktalk/releases
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0750"
+
+    - name: Create private shared directory
+      become: true
+      ansible.builtin.file:
+        path: /srv/chalktalk/shared
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0700"
+
+    - name: Render production environment atomically
+      become: true
+      ansible.builtin.template:
+        src: templates/production.env.j2
+        dest: /srv/chalktalk/shared/production.env
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+      no_log: true
+
+    - name: Allow SSH before enabling firewall
+      become: true
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+
+    - name: Allow HTTP and HTTPS
+      become: true
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: [80, 443]
+
+    - name: Allow HTTPS over UDP
+      become: true
+      community.general.ufw:
+        rule: allow
+        port: "443"
+        proto: udp
+
+    - name: Deny other incoming host traffic
+      become: true
+      community.general.ufw:
+        direction: incoming
+        policy: deny
+
+    - name: Allow outgoing host traffic
+      become: true
+      community.general.ufw:
+        direction: outgoing
+        policy: allow
+
+    - name: Enable firewall
+      become: true
+      community.general.ufw:
+        state: enabled
+
+    - name: Reopen SSH connection after firewall changes
+      ansible.builtin.meta: reset_connection
+
+    - name: Verify fresh SSH access
+      ansible.builtin.wait_for_connection:
+        timeout: 30
+
+    - name: Verify Docker Engine
+      become: true
+      ansible.builtin.command: docker info --format '{{ '{{' }}.ServerVersion{{ '}}' }}'
+      changed_when: false
+
+    - name: Verify Docker Compose plugin
+      ansible.builtin.command: docker compose version
+      changed_when: false
+
+    - name: Read firewall status
+      become: true
+      ansible.builtin.command: ufw status
+      register: bootstrap_ufw_status
+      changed_when: false
+
+    - name: Verify firewall rules
+      ansible.builtin.assert:
+        that:
+          - "'Status: active' in bootstrap_ufw_status.stdout"
+          - "bootstrap_ufw_status.stdout is search('(?m)^22/tcp\\s+ALLOW')"
+          - "bootstrap_ufw_status.stdout is search('(?m)^80/tcp\\s+ALLOW')"
+          - "bootstrap_ufw_status.stdout is search('(?m)^443/tcp\\s+ALLOW')"
+          - "bootstrap_ufw_status.stdout is search('(?m)^443/udp\\s+ALLOW')"
+        fail_msg: Host firewall or an expected port rule is missing.
+
+    - name: Read shared-directory metadata
+      become: true
+      ansible.builtin.stat:
+        path: /srv/chalktalk/shared
+      register: bootstrap_shared_stat
+
+    - name: Read production environment metadata
+      become: true
+      ansible.builtin.stat:
+        path: /srv/chalktalk/shared/production.env
+      register: bootstrap_env_stat
+      no_log: true
+
+    - name: Verify private production environment permissions
+      ansible.builtin.assert:
+        that:
+          - bootstrap_env_stat.stat.exists
+          - bootstrap_env_stat.stat.mode == '0600'
+          - bootstrap_env_stat.stat.pw_name == 'ubuntu'
+          - bootstrap_shared_stat.stat.mode == '0700'
+          - bootstrap_shared_stat.stat.pw_name == 'ubuntu'
+        fail_msg: Production environment file permissions are not private.
+      no_log: true
+
+    - name: Detect pending reboot
+      become: true
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: bootstrap_reboot_required
+
+    - name: Report reboot status without rebooting
+      ansible.builtin.debug:
+        msg: "VM bootstrap complete. Reboot required: {{ bootstrap_reboot_required.stat.exists }}. No release was deployed."
