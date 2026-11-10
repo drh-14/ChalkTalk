@@ -25,6 +25,38 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 
 ## Prepare a pinned release
 
+After the VM bootstrap and production environment are prepared, a successful
+`main` push CI run automatically starts the [production deploy
+workflow](../../.github/workflows/deploy-production.yml). It accepts only the
+repository's current `main` SHA, checks that SHA again before changing the VM,
+and checks it out detached under `/srv/chalktalk/releases/<sha>`. Bootstrap and
+deploy share a GitHub Actions concurrency group; the VM also uses
+`/srv/chalktalk/shared/deploy.lock`. Production secrets stay in the bootstrap-
+managed `/srv/chalktalk/shared/production.env` file, which Compose uses as both
+its interpolation `--env-file` and service `COMPOSE_ENV_FILE`. Do not put a
+secret `.env` inside a release checkout.
+
+The deploy builds all four images before Compose starts them. It verifies the
+migration exit status, API health, worker/collaboration process state, migration
+ledger, a temporary private Supabase Storage object write/read/delete, and one
+Resend-accepted synthetic email to `chalktalk602@gmail.com`. The runner then
+checks public HTTPS web and `/api/health`; only afterward does the VM write
+`/srv/chalktalk/shared/deployed.sha`. A repeated successful SHA skips provider
+smoke, including mail. An interrupted first run may retry the same Resend
+idempotency key for up to 24 hours; beyond that, a duplicate test mail is
+possible. The Storage object is deleted even on read failure; a cleanup failure
+fails deployment.
+
+If build, migration, startup, provider smoke, or public HTTPS fails, the workflow
+stops without marking the SHA successful. It retains old release checkouts but
+does **not** automatically restore containers or roll back the database; inspect
+Compose logs and migration state before manually recovering. The workflow
+requires the separate VM bootstrap to finish successfully and a valid production
+environment. This PR remains draft until a live VM/Supabase/Resend deployment is
+verified; local tests cannot substitute for that check.
+
+The following manual pinned-release procedure remains available for recovery:
+
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
 2. Clone this repository on the VM and check out an **explicit tested commit SHA**, not a moving branch: `git fetch origin && git checkout --detach <commit-sha>`. Record that SHA for rollback.
 3. `cp deployment/production/.env.example deployment/production/.env && chmod 600 deployment/production/.env`. Fill all placeholders. Generate an independent `AUTH_TOKEN_SECRET` (for example `openssl rand -hex 32`). `DOMAIN` has no scheme or trailing slash. Copy the exact Supabase connection values from its dashboard and URL-encode reserved password characters.

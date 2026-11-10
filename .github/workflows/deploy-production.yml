@@ -1,0 +1,121 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.current.outputs.sha }}
+    steps:
+      - name: Check out guard from current main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Require current main commit before production secrets
+        id: current
+        env:
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+          CI_EVENT: ${{ github.event.workflow_run.event }}
+          CI_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          CI_RUN_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          verified="$(bash deployment/production/guard.sh)"
+          printf 'sha=%s\n' "$verified" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: guard
+    if: needs.guard.result == 'success'
+    # Only trusted, current-main runs may enter the bootstrap/deploy queue.
+    concurrency:
+      group: chalktalk-production-vm
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact successful CI commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
+          persist-credentials: false
+      - name: Recheck current main before accessing SSH secrets
+        env:
+          CI_SHA: ${{ needs.guard.outputs.sha }}
+          CI_EVENT: ${{ github.event.workflow_run.event }}
+          CI_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          CI_RUN_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$CI_SHA" ]] || exit 1
+          bash deployment/production/guard.sh
+      - name: Deploy pinned release and run provider smoke
+        env:
+          CI_SHA: ${{ needs.guard.outputs.sha }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$CI_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$VM_HOST" =~ ^[a-zA-Z0-9.-]+$ ]] || exit 1
+          credential_dir="$(mktemp -d)"
+          trap 'rm -rf "$credential_dir"' EXIT
+          chmod 700 "$credential_dir"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$credential_dir/id_ed25519"
+          printf '%s\n' "$VM_KNOWN_HOSTS" > "$credential_dir/known_hosts"
+          chmod 600 "$credential_dir/id_ed25519" "$credential_dir/known_hosts"
+          ssh-keygen -F "$VM_HOST" -f "$credential_dir/known_hosts" >/dev/null
+          ssh -p 22 -i "$credential_dir/id_ed25519" \
+            -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=2 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$credential_dir/known_hosts" \
+            "ubuntu@$VM_HOST" "bash -s -- stage $CI_SHA" \
+            < deployment/production/deploy.sh
+      - name: Verify public HTTPS web and API
+        env:
+          DOMAIN: ${{ vars.DOMAIN }}
+        run: |
+          set -euo pipefail
+          [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]] || exit 1
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            --retry-delay 5 --max-time 20 --output /dev/null "https://$DOMAIN/"
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            --retry-delay 5 --max-time 20 "https://$DOMAIN/api/health"
+      - name: Mark release successful after external checks
+        env:
+          CI_SHA: ${{ needs.guard.outputs.sha }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          credential_dir="$(mktemp -d)"
+          trap 'rm -rf "$credential_dir"' EXIT
+          chmod 700 "$credential_dir"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$credential_dir/id_ed25519"
+          printf '%s\n' "$VM_KNOWN_HOSTS" > "$credential_dir/known_hosts"
+          chmod 600 "$credential_dir/id_ed25519" "$credential_dir/known_hosts"
+          ssh-keygen -F "$VM_HOST" -f "$credential_dir/known_hosts" >/dev/null
+          ssh -p 22 -i "$credential_dir/id_ed25519" \
+            -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=2 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$credential_dir/known_hosts" \
+            "ubuntu@$VM_HOST" "bash -s -- finish $CI_SHA" \
+            < deployment/production/deploy.sh
