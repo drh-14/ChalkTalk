@@ -182,7 +182,7 @@ describe("default Compose object storage", () => {
     expect(configuration.services.migrate.command).toEqual([
       "sh",
       "-c",
-      "npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api",
+      "if [ \"$${PORT+x}\" ]; then echo 'Local Compose: remove PORT from .env; the API uses internal port 3000.' >&2; exit 1; fi; npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api",
     ]);
   });
 
