@@ -27,7 +27,7 @@ The manual VM-bootstrap job SHALL bind to the GitHub Actions environment named `
 
 ### Requirement: Safe and idempotent host setup
 
-The playbook SHALL require supported Ubuntu and passwordless noninteractive sudo before host changes. It SHALL install Docker Engine, the Compose plugin, Git, and UFW; prepare separate release and shared secret directories; allow SSH TCP port 22 before enabling UFW; and allow TCP 80/443 and UDP 443. It SHALL not start application containers, migrate data, or change Supabase resources. Repeating a successful run SHALL preserve the same configuration.
+The playbook SHALL require supported Ubuntu and passwordless noninteractive sudo before host changes. It SHALL install Docker Engine, the Compose plugin, Git, and UFW; prepare separate release and shared secret directories; allow SSH TCP port 22 before enabling UFW; and allow TCP 80/443 and UDP 443. Before changing firewall rules and again before enabling UFW, it SHALL reject existing UFW user rules other than global allows for TCP 22/80/443 and UDP 443, without deleting any rules. It SHALL not start application containers, migrate data, or change Supabase resources. Repeating a successful run SHALL preserve the same configuration.
 
 #### Scenario: Unavailable privilege escalation
 
@@ -38,6 +38,11 @@ The playbook SHALL require supported Ubuntu and passwordless noninteractive sudo
 
 - **WHEN** the firewall is enabled
 - **THEN** SSH port 22 has already been allowed, and the workflow verifies a fresh SSH connection
+
+#### Scenario: Conflicting existing firewall rule
+
+- **WHEN** UFW has an existing deny, scoped allow, or allow for another port
+- **THEN** setup stops before changing firewall rules or enabling UFW and leaves reconciliation to the operator
 
 #### Scenario: Repeat setup
 
