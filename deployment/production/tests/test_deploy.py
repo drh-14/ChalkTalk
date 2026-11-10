@@ -25,7 +25,10 @@ class DeploymentScriptTest(unittest.TestCase):
             """#!/bin/sh
 echo "$RUN_ID git $*" >> "$TEST_CALLS"
 case "$*" in
-  'ls-remote '* ) printf '%s\trefs/heads/main\n' "$REMOTE_SHA" ;;
+  'ls-remote '* )
+    remote="$REMOTE_SHA"
+    if [ "$ADVANCE_MAIN_AFTER_BUILD" = 1 ] && [ "$(grep -c 'git ls-remote' "$TEST_CALLS")" -ge 3 ]; then remote="$OTHER_SHA"; fi
+    printf '%s\trefs/heads/main\n' "$remote" ;;
   'clone '* ) for last; do :; done; mkdir -p "$last" ;;
   *'rev-parse HEAD'*) echo "$REMOTE_SHA" ;;
   *'status --porcelain'*) : ;;
@@ -57,6 +60,7 @@ esac
             "CHALKTALK_DEPLOY_ROOT": str(self.root),
             "TEST_CALLS": str(self.log),
             "REMOTE_SHA": SHA,
+            "OTHER_SHA": OTHER,
             "RUN_ID": "single",
         }
 
@@ -99,6 +103,14 @@ esac
     def test_failed_build_stops_without_success_marker(self):
         result = self.run_script("stage", FAIL_BUILD="1")
         self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(" up -d", self.calls())
+        self.assertFalse((self.root / "shared" / "pending.sha").exists())
+
+    def test_main_advancing_during_build_never_starts_compose(self):
+        result = self.run_script("stage", ADVANCE_MAIN_AFTER_BUILD="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Stale deployment SHA", result.stderr)
+        self.assertIn(" build web api collaboration worker", self.calls())
         self.assertNotIn(" up -d", self.calls())
         self.assertFalse((self.root / "shared" / "pending.sha").exists())
 

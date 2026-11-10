@@ -67,6 +67,7 @@ fi
 assert_current_main
 compose config --quiet
 compose build web api collaboration worker
+assert_current_main
 stage_phase='Compose startup'
 report_stage_exit() {
   local status=$?
