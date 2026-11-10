@@ -34,6 +34,9 @@ function renderCompose(
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
         AWS_ACCESS_KEY_ID: ambientAws?.accessKey ?? "",
         AWS_SECRET_ACCESS_KEY: ambientAws?.secretKey ?? "",
+        MOCK_DATA: "true",
+        PIAZZA_DEMO_PASSWORD: "shared-demo-password",
+        AMS161_DEMO_PASSWORD: "shared-demo-password",
       },
     },
   );
@@ -69,6 +72,19 @@ function renderProductionCompose() {
 }
 
 describe("default Compose object storage", () => {
+  it("starts every local service without a profile", () => {
+    for (const service of Object.values(renderCompose().services))
+      expect(service.profiles).toBeUndefined();
+  });
+
+  it("does not pass ambient demo credentials to local services", () => {
+    for (const service of Object.values(renderCompose().services)) {
+      expect(service.environment).not.toHaveProperty("MOCK_DATA");
+      expect(service.environment).not.toHaveProperty("PIAZZA_DEMO_PASSWORD");
+      expect(service.environment).not.toHaveProperty("AMS161_DEMO_PASSWORD");
+    }
+  });
+
   it("resolves default and overridden environment files from the repository root", () => {
     for (const envFile of [undefined, ".env.example"]) {
       const output = execFileSync(
