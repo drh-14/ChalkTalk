@@ -17,6 +17,16 @@ SPEC = importlib.util.spec_from_file_location("validate_inputs", Path(__file__).
 validate_inputs = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(validate_inputs)
 ANSIBLE = ROOT / "deployment" / "ansible"
+VALID_DOMAINS = (
+    "joinchalktalk.com", "join-chalktalk.com", "xn--bcher-kva.example",
+    "a" * 63 + ".example", ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 61)),
+)
+INVALID_DOMAINS = (
+    "join..chalktalk.com", ".chalktalk.com", "joinchalktalk.com.",
+    "-join.chalktalk.com", "join-.chalktalk.com",
+    "join.-chalktalk.com", "join.chalktalk-.com",
+    "a" * 64 + ".example", ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 62)),
+)
 
 
 class BootstrapContractTest(unittest.TestCase):
@@ -165,12 +175,10 @@ fi
             "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "test", "AUTH_TOKEN_SECRET": "a" * 32,
             "RESEND_API_KEY": "test",
         }
-        for domain in ("joinchalktalk.com", "join-chalktalk.com", "xn--bcher-kva.example"):
+        for domain in VALID_DOMAINS:
             with self.subTest(domain=domain):
                 validate_inputs.validate({**valid, "DOMAIN": domain})
-        for domain in ("join..chalktalk.com", ".chalktalk.com", "joinchalktalk.com.",
-                       "-join.chalktalk.com", "join-.chalktalk.com",
-                       "join.-chalktalk.com", "join.chalktalk-.com"):
+        for domain in INVALID_DOMAINS:
             with self.subTest(domain=domain), self.assertRaisesRegex(ValueError, "domain is invalid"):
                 validate_inputs.validate({**valid, "DOMAIN": domain})
 
@@ -194,15 +202,13 @@ fi
             })
             command = ["ansible-playbook", "-i", "localhost,", str(ANSIBLE / "tests/render-env.yml"),
                        "-e", f"output_path={target}"]
-            for domain in ("join..chalktalk.com", ".chalktalk.com", "joinchalktalk.com.",
-                           "-join.chalktalk.com", "join-.chalktalk.com",
-                           "join.-chalktalk.com", "join.chalktalk-.com"):
+            for domain in INVALID_DOMAINS:
                 with self.subTest(domain=domain):
                     result = subprocess.run(command, env={**env, "DOMAIN": domain},
                                             capture_output=True, text=True)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(target.read_text(), "existing production config\n")
-            for domain in ("joinchalktalk.com", "join-chalktalk.com", "xn--bcher-kva.example"):
+            for domain in VALID_DOMAINS:
                 with self.subTest(domain=domain):
                     result = subprocess.run(command, env={**env, "DOMAIN": domain},
                                             capture_output=True, text=True)

@@ -26,7 +26,9 @@ def validate(env: dict[str, str]) -> None:
         raise ValueError("Pinned VM host key is malformed")
     if len(env["AUTH_TOKEN_SECRET"]) < 32:
         raise ValueError("Session secret is too short")
-    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*", env["DOMAIN"]):
+    if (len(env["DOMAIN"]) > 253 or not re.fullmatch(
+            r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*",
+            env["DOMAIN"])):
         raise ValueError("Public domain is invalid")
     if any(("\n" in env[name] or "\r" in env[name] or "\\" in env[name]
             or "${" in env[name] or "replace-with-" in env[name])
