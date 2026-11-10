@@ -68,6 +68,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test production release script without VM secrets
+        run: python3 -m unittest discover -s deployment/production/tests -p 'test_*.py'
+
       - name: Build
         run: npm run build
 
