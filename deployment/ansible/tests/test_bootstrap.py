@@ -155,6 +155,60 @@ fi
         with self.assertRaisesRegex(ValueError, "invalid"):
             validate_inputs.validate({**valid, "VM_HOST": "-bad-host"})
 
+    def test_runner_rejects_invalid_domain_labels(self):
+        valid = {
+            "SSH_PRIVATE_KEY": "test-private-key", "VM_HOST": "example.com",
+            "VM_KNOWN_HOSTS": "example.com ssh-ed25519 AAAA",
+            "DOMAIN": "joinchalktalk.com", "SUPABASE_STORAGE_ENDPOINT": "https://example.com",
+            "SUPABASE_STORAGE_BUCKET": "test", "SUPABASE_STORAGE_REGION": "us-east-1",
+            "DATABASE_URL": "postgres://test", "SUPABASE_STORAGE_ACCESS_KEY_ID": "test",
+            "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "test", "AUTH_TOKEN_SECRET": "a" * 32,
+            "RESEND_API_KEY": "test",
+        }
+        for domain in ("joinchalktalk.com", "join-chalktalk.com", "xn--bcher-kva.example"):
+            with self.subTest(domain=domain):
+                validate_inputs.validate({**valid, "DOMAIN": domain})
+        for domain in ("join..chalktalk.com", ".chalktalk.com", "joinchalktalk.com.",
+                       "-join.chalktalk.com", "join-.chalktalk.com",
+                       "join.-chalktalk.com", "join.chalktalk-.com"):
+            with self.subTest(domain=domain), self.assertRaisesRegex(ValueError, "domain is invalid"):
+                validate_inputs.validate({**valid, "DOMAIN": domain})
+
+    def test_ansible_rejects_invalid_domain_before_replacing_env(self):
+        env = {
+            **os.environ,
+            "DOMAIN": "joinchalktalk.com", "DATABASE_URL": "postgresql://test",
+            "SUPABASE_STORAGE_ENDPOINT": "https://example.com/storage/v1/s3",
+            "SUPABASE_STORAGE_BUCKET": "test", "SUPABASE_STORAGE_REGION": "us-east-1",
+            "SUPABASE_STORAGE_ACCESS_KEY_ID": "fake-access",
+            "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "fake-secret",
+            "AUTH_TOKEN_SECRET": "a" * 32, "RESEND_API_KEY": "fake-key",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "production.env"
+            target.write_text("existing production config\n")
+            env.update({
+                "CHALKTALK_ROOT": str(ROOT), "ANSIBLE_HOME": temporary,
+                "ANSIBLE_LOCAL_TEMP": str(Path(temporary) / "ansible-tmp"),
+                "ANSIBLE_REMOTE_TEMP": str(Path(temporary) / "remote-tmp"),
+            })
+            command = ["ansible-playbook", "-i", "localhost,", str(ANSIBLE / "tests/render-env.yml"),
+                       "-e", f"output_path={target}"]
+            for domain in ("join..chalktalk.com", ".chalktalk.com", "joinchalktalk.com.",
+                           "-join.chalktalk.com", "join-.chalktalk.com",
+                           "join.-chalktalk.com", "join.chalktalk-.com"):
+                with self.subTest(domain=domain):
+                    result = subprocess.run(command, env={**env, "DOMAIN": domain},
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(target.read_text(), "existing production config\n")
+            for domain in ("joinchalktalk.com", "join-chalktalk.com", "xn--bcher-kva.example"):
+                with self.subTest(domain=domain):
+                    result = subprocess.run(command, env={**env, "DOMAIN": domain},
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(f"DOMAIN='{domain}'", target.read_text())
+
     def test_workflow_shell_writes_fixed_port_inventory_without_contacting_vm(self):
         workflow = yaml.load(
             (ROOT / ".github/workflows/vm-bootstrap.yml").read_text(),

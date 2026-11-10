@@ -16,7 +16,7 @@
 - name: Validate domain and session secret
   ansible.builtin.assert:
     that:
-      - bootstrap_domain is match('^[A-Za-z0-9.-]+$')
+      - bootstrap_domain is match('^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$')
       - bootstrap_auth_token_secret | length >= 32
     fail_msg: Production domain or session secret is invalid.
   no_log: true
