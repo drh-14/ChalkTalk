@@ -1,14 +1,20 @@
 #!/bin/sh
 set -eu
 
-services=$(COMPOSE_ENV_FILE=.env.example docker compose config --services)
-for expected in postgres seaweedfs migrate api worker collaboration web elasticsearch elasticsearch-init logstash prometheus grafana; do
-  printf '%s\n' "$services" | grep -qx "$expected" || {
-    echo "Missing default local service: $expected" >&2
-    exit 1
-  }
-done
-if printf '%s\n' "$services" | grep -qx seed-mock; then
-  echo 'Default local stack must not auto-seed mock data' >&2
-  exit 1
-fi
+COMPOSE_ENV_FILE=.env.example docker compose --env-file .env.example config --format json | node -e '
+  let input = "";
+  process.stdin.on("data", (chunk) => input += chunk);
+  process.stdin.on("end", () => {
+    const services = JSON.parse(input).services;
+    const expected = [
+      "api", "collaboration", "elasticsearch", "elasticsearch-init",
+      "grafana", "logstash", "migrate", "postgres", "prometheus",
+      "seaweedfs", "web", "worker"
+    ];
+    if (JSON.stringify(Object.keys(services).sort()) !== JSON.stringify(expected) ||
+        Object.values(services).some((service) => service.profiles?.length)) {
+      console.error("Default local stack must include every service without profiles or seeding");
+      process.exitCode = 1;
+    }
+  });
+'
