@@ -1,0 +1,12 @@
+---
+- name: Exercise UFW rule preflight without touching the host firewall
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check mocked UFW rules
+      ansible.builtin.import_tasks: ../tasks/check-firewall-rules.yml
+    - name: Record permission to proceed with firewall changes
+      ansible.builtin.copy:
+        dest: "{{ preflight_passed_path }}"
+        content: permitted
