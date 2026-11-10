@@ -14,7 +14,11 @@ import pg from "pg";
 const api = "http://127.0.0.1:3300";
 const origin = "https://localhost:5173";
 const compose = ["compose", "-f", "deployment/production/compose.ci.yml"];
-const required = ["SUPABASE_ANON_KEY", "SUPABASE_DB_URL"];
+const required = [
+  "SUPABASE_S3_KEY_ID",
+  "SUPABASE_S3_SECRET",
+  "SUPABASE_DB_URL",
+];
 for (const key of required) assert.ok(process.env[key], `${key} is required`);
 
 function runCompose(...args) {
@@ -82,8 +86,8 @@ async function main() {
     region: "local",
     forcePathStyle: true,
     credentials: {
-      accessKeyId: "stub",
-      secretAccessKey: process.env.SUPABASE_ANON_KEY,
+      accessKeyId: process.env.SUPABASE_S3_KEY_ID,
+      secretAccessKey: process.env.SUPABASE_S3_SECRET,
     },
   });
   try {

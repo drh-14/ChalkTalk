@@ -35,12 +35,14 @@ jobs:
       - name: Start disposable local Supabase database and Storage
         run: npx supabase start -x gotrue,realtime,imgproxy,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
-      - name: Export local-only S3 credential
+      - name: Export local-only S3 credentials
         run: |
-          anon_key=$(npx supabase status -o env | sed -n 's/^ANON_KEY=//p' | tr -d '"')
-          test -n "$anon_key"
-          echo "::add-mask::$anon_key"
-          printf 'SUPABASE_ANON_KEY=%s\n' "$anon_key" >> "$GITHUB_ENV"
+          s3_key_id=$(npx supabase status -o env | sed -n 's/^S3_PROTOCOL_ACCESS_KEY_ID=//p' | tr -d '"')
+          s3_secret=$(npx supabase status -o env | sed -n 's/^S3_PROTOCOL_ACCESS_KEY_SECRET=//p' | tr -d '"')
+          test -n "$s3_key_id" && test -n "$s3_secret"
+          echo "::add-mask::$s3_key_id"
+          echo "::add-mask::$s3_secret"
+          printf 'SUPABASE_S3_KEY_ID=%s\nSUPABASE_S3_SECRET=%s\n' "$s3_key_id" "$s3_secret" >> "$GITHUB_ENV"
           echo 'SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres' >> "$GITHUB_ENV"
 
       - name: Exercise real API, database, and private Storage
@@ -52,7 +54,7 @@ jobs:
 
       - name: Remove isolated API and migration containers
         if: always()
-        run: docker compose -f deployment/production/compose.ci.yml down --volumes --remove-orphans || true
+        run: SUPABASE_S3_KEY_ID=cleanup SUPABASE_S3_SECRET=cleanup docker compose -f deployment/production/compose.ci.yml down --volumes --remove-orphans || true
 
       - name: Remove disposable local Supabase stack and volumes
         if: always()
