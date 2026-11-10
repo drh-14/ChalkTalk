@@ -98,6 +98,9 @@ jobs:
           sh docker/test-default-local-compose.sh
           docker compose -f deployment/local/compose.yml --env-file .env config --quiet
 
+      - name: Verify legacy PORT startup preflight
+        run: sh docker/test-local-legacy-port.sh
+
       - name: Start local Compose stack
         env:
           WEB_PORT: 5174
