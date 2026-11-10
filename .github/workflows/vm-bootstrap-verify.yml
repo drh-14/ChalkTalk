@@ -1,0 +1,47 @@
+name: Verify VM bootstrap
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/vm-bootstrap.yml
+      - .github/workflows/vm-bootstrap-verify.yml
+      - deployment/ansible/**
+      - openspec/changes/actions-ansible-vm-bootstrap/**
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install Ansible validation tools
+        run: |
+          python -m pip install -r deployment/ansible/requirements-dev.txt
+          ansible-galaxy collection install -r deployment/ansible/collections/requirements.yml
+      - name: Install checksum-verified actionlint
+        run: |
+          set -euo pipefail
+          curl -fsSLo actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          tar -xzf actionlint.tar.gz -C "$RUNNER_TEMP/actionlint" actionlint
+          rm actionlint.tar.gz
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
+      - name: Validate declarative files and offline behavior
+        run: |
+          set -euo pipefail
+          actionlint .github/workflows/vm-bootstrap.yml .github/workflows/vm-bootstrap-verify.yml
+          ansible-playbook -i 'chalktalk,' deployment/ansible/bootstrap.yml --syntax-check
+          ansible-lint deployment/ansible/bootstrap.yml deployment/ansible/tests/render-env.yml
+          docker compose version
+          python -m unittest discover -s deployment/ansible/tests -v

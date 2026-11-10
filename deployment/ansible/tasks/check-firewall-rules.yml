@@ -1,0 +1,14 @@
+---
+- name: Read configured UFW user rules
+  ansible.builtin.command: ufw show added
+  environment:
+    LC_ALL: C
+  register: bootstrap_ufw_added
+  changed_when: false
+
+- name: Reject unmanaged UFW user rules
+  ansible.builtin.assert:
+    that:
+      - bootstrap_ufw_added.stdout_lines[:1] == ["Added user rules (see 'ufw status' for running firewall):"]
+      - bootstrap_ufw_added.stdout_lines[1:] | difference(['ufw allow 22/tcp', 'ufw allow 80/tcp', 'ufw allow 443/tcp', 'ufw allow 443/udp']) | length == 0
+    fail_msg: Remove or reconcile existing UFW user rules through the VM console before running bootstrap.
