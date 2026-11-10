@@ -20,7 +20,11 @@ test("canonical local template resolves the default browser URL and internal API
       ],
       {
         cwd: new URL("../..", import.meta.url),
-        env: { ...process.env, COMPOSE_PROJECT_NAME: "" },
+        env: {
+          ...process.env,
+          COMPOSE_ENV_FILE: "deployment/local/.env.example",
+          COMPOSE_PROJECT_NAME: "",
+        },
         encoding: "utf8",
       },
     ),
@@ -95,7 +99,11 @@ test("canonical local Compose preserves the chalktalk project and accepts isolat
         ],
         {
           cwd: new URL("../..", import.meta.url),
-          env: { ...process.env, COMPOSE_PROJECT_NAME: project },
+          env: {
+            ...process.env,
+            COMPOSE_ENV_FILE: "deployment/local/.env.example",
+            COMPOSE_PROJECT_NAME: project,
+          },
           encoding: "utf8",
         },
       ),
