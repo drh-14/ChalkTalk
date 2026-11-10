@@ -1,6 +1,6 @@
 # Single-VM ChalkTalk deployment with Supabase
 
-This is a **runnable starting point**, not a production-readiness guarantee. It runs the frontend, Express API, Hocuspocus collaboration service, and worker as four separate production images on one Linux VM. Supabase hosts PostgreSQL and S3-compatible file storage; Resend sends mail via HTTPS. The root [`docker-compose.yml`](../../docker-compose.yml) remains the local development stack with PostgreSQL and SeaweedFS, with Resend HTTPS email.
+This is a **runnable starting point**, not a production-readiness guarantee. It runs the frontend, Express API, Hocuspocus collaboration service, and worker as four separate production images on one Linux VM. Supabase hosts PostgreSQL and S3-compatible file storage; Resend sends mail via HTTPS. The local development stack is [`deployment/local/compose.yml`](../local/compose.yml), with PostgreSQL, SeaweedFS, and Resend HTTPS email.
 
 ## Topology and images
 

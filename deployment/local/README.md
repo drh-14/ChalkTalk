@@ -1,8 +1,8 @@
 # Local development deployment
 
-Follow the [main README's local setup](../../README.md#start-locally) for the environment, certificate, single default startup command, and explicit Piazza import.
+Follow the [main README's local setup](../../README.md#start-locally): copy this directory's `.env.example` to the ignored repository-root `.env`, configure `DOMAIN` and credentials, generate the certificate, then use the single default startup command. Course population is an explicit Piazza import.
 
-The root Compose file includes this directory's `compose.yml` and retains the local named volumes.
+Run `docker compose -f deployment/local/compose.yml --env-file .env up --build --wait` from the repository root. The local Compose file preserves the existing `chalktalk` project and named volumes by default.
 
 The API and worker send real emails through Resend HTTPS; there is no Mailpit container. Do not use real recipients in automated tests. `RESEND_API_BASE_URL` may point to a mock origin for isolated tests, but normal development should omit it.
 

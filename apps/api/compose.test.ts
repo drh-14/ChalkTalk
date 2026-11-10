@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 15_000 });
@@ -23,13 +23,22 @@ function renderCompose(
 ) {
   const output = execFileSync(
     "docker",
-    ["compose", "--env-file", ".env.example", "config", "--format", "json"],
+    [
+      "compose",
+      "-f",
+      "deployment/local/compose.yml",
+      "--env-file",
+      "deployment/local/.env.example",
+      "config",
+      "--format",
+      "json",
+    ],
     {
       cwd: process.cwd(),
       encoding: "utf8",
       env: {
         ...process.env,
-        COMPOSE_ENV_FILE: ".env.example",
+        COMPOSE_ENV_FILE: "deployment/local/.env.example",
         SEAWEEDFS_ACCESS_KEY_ID: credentials?.accessKey ?? "",
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
         AWS_ACCESS_KEY_ID: ambientAws?.accessKey ?? "",
@@ -90,13 +99,15 @@ describe("default Compose object storage", () => {
   });
 
   it("resolves default and overridden environment files from the repository root", () => {
-    for (const envFile of [undefined, ".env.example"]) {
+    for (const envFile of [undefined, "deployment/local/.env.example"]) {
       const output = execFileSync(
         "docker",
         [
           "compose",
+          "-f",
+          "deployment/local/compose.yml",
           "--env-file",
-          ".env.example",
+          "deployment/local/.env.example",
           "config",
           "--no-env-resolution",
           "--format",
@@ -124,15 +135,16 @@ describe("default Compose object storage", () => {
     }
   });
 
-  it("keeps checkout-derived project and volume names for local commands", () => {
-    for (const files of [[], ["-f", "docker-compose.yml"]]) {
+  it("keeps the legacy chalktalk project and volume names", () => {
+    {
       const output = execFileSync(
         "docker",
         [
           "compose",
+          "-f",
+          "deployment/local/compose.yml",
           "--env-file",
-          ".env.example",
-          ...files,
+          "deployment/local/.env.example",
           "config",
           "--format",
           "json",
@@ -143,7 +155,7 @@ describe("default Compose object storage", () => {
           env: {
             ...process.env,
             COMPOSE_PROJECT_NAME: "",
-            COMPOSE_ENV_FILE: ".env.example",
+            COMPOSE_ENV_FILE: "deployment/local/.env.example",
           },
         },
       );
@@ -151,7 +163,7 @@ describe("default Compose object storage", () => {
         name: string;
         volumes: Record<string, { name: string }>;
       };
-      const project = basename(process.cwd()).toLowerCase();
+      const project = "chalktalk";
       expect(configuration.name).toBe(project);
       expect(configuration.volumes["postgres-data"].name).toBe(
         `${project}_postgres-data`,
@@ -195,12 +207,11 @@ describe("default Compose object storage", () => {
     const seaweedfs = configuration.services.seaweedfs;
 
     expect(Object.keys(configuration.services).sort()).toEqual([
+      "alloy",
       "api",
       "collaboration",
-      "elasticsearch",
-      "elasticsearch-init",
       "grafana",
-      "logstash",
+      "loki",
       "migrate",
       "postgres",
       "prometheus",

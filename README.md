@@ -70,22 +70,22 @@ Run these commands from the repository root in a Bash-compatible shell (Windows 
 ### 1. Create local configuration and HTTPS certificate
 
 ```bash
-cp .env.example .env
+cp deployment/local/.env.example .env
 mkcert -install                    # once per computer; installs a local trust root
 mkdir -p .cert
 mkcert -key-file .cert/localhost-key.pem -cert-file .cert/localhost.pem localhost
 openssl rand -hex 32              # copy the output into AUTH_TOKEN_SECRET in .env
 ```
 
-Edit the ignored `.env` before starting. Replace `AUTH_TOKEN_SECRET`, `METRICS_TOKEN`, and `GRAFANA_ADMIN_PASSWORD` with separate random values, and configure `RESEND_API_KEY` with your team key. Real verification and notification emails will be sent from ChalkTalk's fixed sender. Keep `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` equal to the HTTPS URL you will open, and use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
+Edit the ignored `.env` before starting. Replace `AUTH_TOKEN_SECRET`, `METRICS_TOKEN`, and `GRAFANA_ADMIN_PASSWORD` with separate random values, and configure `RESEND_API_KEY` with your team key. Real verification and notification emails will be sent from ChalkTalk's fixed sender. Set `DOMAIN` to the local hostname you will open (default `localhost`); Compose derives the frontend URLs. Use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
 
 ### 2. Start the local stack
 
 ```bash
-docker compose up --build --wait
+docker compose -f deployment/local/compose.yml --env-file .env up --build --wait
 ```
 
-This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, collaboration server, web client, Prometheus, Grafana, Elasticsearch, and Logstash. A new database has no users or courses. Create a course in the app or explicitly import one from Piazza; startup never loads sample data. The web client is [https://localhost:5173](https://localhost:5173). The first image build may take a few minutes. Re-running the command preserves named-volume data. For logs, run `docker compose logs -f api` (or another service).
+This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, collaboration server, web client, Prometheus, Grafana, Loki, and Alloy. A new database has no users or courses. Create a course in the app or explicitly import one from Piazza; startup never loads sample data. The web client is [https://localhost:5173](https://localhost:5173). The first image build may take a few minutes. Re-running the command preserves named-volume data. For logs, run `docker compose -f deployment/local/compose.yml --env-file .env logs -f api` (or another service).
 
 ### 3. Open the app and verify it
 
@@ -99,16 +99,16 @@ In full Compose mode, the API is not exposed on a host port; the web proxy expos
 
 ### Environment variables
 
-Copying `.env.example` provides the local defaults. The table identifies what to edit and which settings Compose deliberately overrides inside its containers.
+Copying `deployment/local/.env.example` provides the local defaults. The table identifies what to edit and which settings Compose deliberately overrides inside its containers.
 
 | Variable(s)                                                                         | Local purpose / required change                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `AUTH_TOKEN_SECRET`                                                                 | **Required:** replace the template with a random secret of at least 32 characters; used to HMAC-hash and verify opaque authentication-related tokens.                                                                                                                                                     |
-| `FRONTEND_ORIGINS`, `FRONTEND_BASE_URL`                                             | HTTPS browser origin(s) and canonical public URL. `FRONTEND_BASE_URL` must be one of `FRONTEND_ORIGINS`; defaults to `https://localhost:5173`. Update both if the host or `WEB_PORT` changes.                                                                                                             |
+| `DOMAIN`                                                                            | Local frontend hostname (default `localhost`). Compose derives `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` as `https://<DOMAIN>:<WEB_PORT>`; the API retains lower-level overrides for direct/test modes.                                                                                                  |
 | `DATABASE_URL`                                                                      | Local PostgreSQL connection. Compose overrides the hostname with its internal `postgres` service.                                                                                                                                                                                                         |
 | `EMAIL_PROVIDER`, `RESEND_API_KEY`, `RESEND_API_BASE_URL`                           | Local Compose selects Resend. Set a sending-only API key; the sender is fixed in code. `RESEND_API_BASE_URL` is only for isolated mocked-network tests. Production selects Resend through `NODE_ENV=production`.                                                                                          |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Direct mode uses local SeaweedFS at `127.0.0.1:8333`. Full Compose sets its internal endpoint and credentials from `SEAWEEDFS_ACCESS_KEY_ID` / `SEAWEEDFS_SECRET_ACCESS_KEY`; these are **local object-store keys**, not AWS keys. Keep the direct-mode S3 keys in sync if you change the SeaweedFS keys. |
-| `PORT`, `COLLABORATION_PORT`, `COLLABORATION_PUBLIC_URL`                            | Direct-mode API port (3000), WebSocket port (3100), and browser WebSocket URL. Full Compose sets its internal API port; the public WebSocket URL defaults to the frontend HTTPS host plus `/collaboration`.                                                                                               |
+| `COLLABORATION_PORT`, `COLLABORATION_PUBLIC_URL`                                    | Direct-mode WebSocket port (3100) and browser WebSocket URL. The API uses its internal default port 3000; the public WebSocket URL defaults to the frontend HTTPS host plus `/collaboration`.                                                                                                             |
 | `VITE_TLS_KEY_PATH`, `VITE_TLS_CERT_PATH`                                           | Direct Vite TLS files generated above. Full Compose mounts `.cert/` and supplies container paths.                                                                                                                                                                                                         |
 | `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`                        | Optional semantic search provider. Do not put the key in browser/Vite variables; private post text and search queries are sent to that provider. See [Optional semantic search](#optional-semantic-search).                                                                                               |
 | `METRICS_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`                           | Required local monitoring. Set **different** random secrets for the token and Grafana password. Default Grafana host port is 3001.                                                                                                                                                                        |
@@ -116,7 +116,7 @@ Copying `.env.example` provides the local defaults. The table identifies what to
 
 Resource OCR is limited to 200 PDF pages needing OCR per file and uses English Tesseract data, as fixed in `apps/api/src/config/constants.ts`; it does not use environment variables.
 
-`NODE_ENV=production` is set by the production images/Compose and is not a custom user mode flag. `WEB_PORT` is a Compose-only host-port override (default 5173), not an API variable. For local Compose, `COMPOSE_ENV_FILE` can point services to another env file relative to the repository root, but Compose variable interpolation also needs `docker compose --env-file <file>` or exported shell variables. Most teammates should simply use `.env`.
+`NODE_ENV=production` is set by the production images/Compose and is not a custom user mode flag. `WEB_PORT` is a Compose-only host-port override (default 5173), not an API variable. For local Compose, `COMPOSE_ENV_FILE` can point services to another env file relative to the repository root; pass the same file with Compose `--env-file` for interpolation. Most teammates should simply use `.env`.
 
 For **real email delivery**, configure a sending-only `RESEND_API_KEY` for both API and worker. The sender is fixed as `ChalkTalk <notifications@joinchalktalk.com>` in API constants. Local Compose selects `EMAIL_PROVIDER=resend`. Use `RESEND_API_BASE_URL` only for isolated mock tests; omit it for real Resend. Queued retries use a frozen payload and stable Resend idempotency key; Resend’s bounded key window does not guarantee exactly-once delivery after expiry. For opt-out timing during delivery, see [course email preferences](documentation/api/courses.md#courseEmailPreferences). Never commit or share provider credentials.
 
@@ -127,12 +127,12 @@ For a **manual live Resend acceptance check**, start a disposable PostgreSQL ser
 To populate a new installation with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to:
 
 ```bash
-docker compose exec -T \
+docker compose -f deployment/local/compose.yml --env-file .env exec -T \
   -e PIAZZA_EMAIL=you@school.edu -e PIAZZA_PASSWORD=... \
   api npm run db:import:piazza -- --owner you@school.edu --class "CSE 416" --save piazza-cse416.json
 ```
 
-Run this after the stack is up. The API container already has the database connection and npm dependencies; `--save` writes into the repository's bind mount. To re-import a saved export, run `docker compose exec -T api npm run db:import:piazza -- --owner you@school.edu --from piazza-cse416.json`.
+Run this after the stack is up. The API container already has the database connection and npm dependencies; `--save` writes into the repository's bind mount. To re-import a saved export, run `docker compose -f deployment/local/compose.yml --env-file .env exec -T api npm run db:import:piazza -- --owner you@school.edu --from piazza-cse416.json`.
 
 The `--owner` ChalkTalk account must already exist and becomes the course instructor; your own Piazza posts are attributed to it. Every other Piazza author becomes a course member with their Piazza name and role (professor → instructor, TA, student) and a placeholder `@piazza.invalid` email. These historical attribution accounts receive discarded random passwords; they are not shared demo logins. Questions, notes, instructor and student answers, followups and replies, folders (as tags), pins, endorsements, and helpful votes are imported with their original timestamps. Piazza HTML becomes Markdown, and images and attachments stay linked to Piazza. Polls become notes without their options. Piazza hides anonymous authors from students, so those posts belong to one shared "Anonymous Piazza user". A student account also sees only its own private posts and cannot read the roster or emails.
 
@@ -140,24 +140,24 @@ The command fetches one request per second, so a large class takes several minut
 
 ### Optional semantic search
 
-The main local Compose stack uses PostgreSQL with pgvector and runs the vector migration alongside ordinary migrations. No separate semantic-search Compose file is needed. Ordinary full-text and fuzzy search still works without an external service. To add semantic matching, set `EMBEDDING_API_KEY` for an OpenAI-compatible embeddings endpoint in the ignored `.env` (and optionally `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL`), then start the usual stack with `docker compose up --build --wait`.
+The main local Compose stack uses PostgreSQL with pgvector and runs the vector migration alongside ordinary migrations. No separate semantic-search Compose file is needed. Ordinary full-text and fuzzy search still works without an external service. To add semantic matching, set `EMBEDDING_API_KEY` for an OpenAI-compatible embeddings endpoint in the ignored `.env` (and optionally `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL`), then start the usual stack with `docker compose -f deployment/local/compose.yml --env-file .env up --build --wait`.
 
 If you have an existing populated local volume created with the earlier `postgres:17-alpine` image, back it up before switching images. Search falls back to lexical/fuzzy when the optional provider or key is unavailable. Production remains separately configured against Supabase and does not run the optional vector migration automatically.
 
 ### Local observability
 
-Prometheus, Grafana, Logstash, and Elasticsearch start with the rest of the local stack. Set `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` in `.env` to **different** outputs of `openssl rand -hex 32` before starting. Open Grafana at [http://127.0.0.1:3001](http://127.0.0.1:3001) and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD`. See the [observability reference](documentation/api/observability.md). Do not commit credentials or expose monitoring endpoints publicly.
+Prometheus, Grafana, Loki, and Alloy start with the rest of the local stack. Set `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` in `.env` to **different** outputs of `openssl rand -hex 32` before starting. Open Grafana at [http://127.0.0.1:3001](http://127.0.0.1:3001) and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD`. See the [observability reference](documentation/api/observability.md). Do not commit credentials or expose monitoring endpoints publicly.
 
 ### Stop, troubleshoot, and check changes
 
 ```bash
-docker compose ps                    # service status
-docker compose logs migrate          # migration failure details
-docker compose run --rm migrate      # rerun tracked migrations
-docker compose down                  # stop the stack; keep data
+docker compose -f deployment/local/compose.yml --env-file .env ps                    # service status
+docker compose -f deployment/local/compose.yml --env-file .env logs migrate          # migration failure details
+docker compose -f deployment/local/compose.yml --env-file .env run --rm migrate      # rerun tracked migrations
+docker compose -f deployment/local/compose.yml --env-file .env down                  # stop the stack; keep data
 ```
 
-`docker compose down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, confirm `mkcert -install` ran and `.cert/localhost.pem` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
+`docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, confirm `mkcert -install` ran and `.cert/localhost.pem` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
 
 Run the repository checks before submitting code:
 
