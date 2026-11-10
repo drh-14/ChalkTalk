@@ -96,7 +96,7 @@ report_stage_exit() {
   exit "$status"
 }
 trap report_stage_exit EXIT
-compose up -d --wait --wait-timeout 240
+compose up -d --wait --wait-timeout 240 --force-recreate
 
 stage_phase='migration check'
 migrate_id="$(compose ps -aq migrate)"

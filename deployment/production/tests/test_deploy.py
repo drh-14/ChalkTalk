@@ -41,7 +41,13 @@ esac
 echo "$RUN_ID docker $*" >> "$TEST_CALLS"
 case "$*" in
   *' build '* ) sleep "${SLOW_BUILD:-0}"; [ "$FAIL_BUILD" != 1 ] ;;
-  *' up -d --wait'* ) [ "$FAIL_UP" != 1 ] && printf '%s\n' "$DEPLOY_SHA" > "$ACTIVE_SHA_FILE" ;;
+  *' up -d --wait'* )
+    [ "$FAIL_UP" != 1 ] || exit 1
+    if [ "$UNCHANGED_COMPOSE" != 1 ] || [ ! -s "$ACTIVE_SHA_FILE" ]; then
+      printf '%s\n' "$DEPLOY_SHA" > "$ACTIVE_SHA_FILE"
+    else
+      case "$*" in *' --force-recreate'*) printf '%s\n' "$DEPLOY_SHA" > "$ACTIVE_SHA_FILE" ;; esac
+    fi ;;
   *'smoke.js'* ) [ "$FAIL_SMOKE" != 1 ] ;;
   *' ps -aq migrate'*) echo migration-container ;;
   *' ps -aq web'*) echo web-container ;;
@@ -119,6 +125,21 @@ esac
         self.assertFalse((self.root / "shared" / "pending.sha").exists())
         self.assertEqual(self.run_script("finish").returncode, 0)
         self.assertEqual((self.root / "active.sha").read_text().strip(), SHA)
+
+    def test_new_sha_recreates_unchanged_containers_before_finish(self):
+        (self.root / "active.sha").write_text(OTHER)
+
+        staged = self.run_script("stage", UNCHANGED_COMPOSE="1")
+        self.assertEqual(staged.returncode, 0, staged.stderr)
+        self.assertEqual((self.root / "active.sha").read_text().strip(), SHA)
+        self.assertEqual(self.run_script("finish").returncode, 0)
+        self.assertEqual((self.root / "shared" / "deployed.sha").read_text().strip(), SHA)
+
+        self.log.unlink()
+        repeated = self.run_script("stage", UNCHANGED_COMPOSE="1")
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertNotIn(" up -d", self.calls())
+        self.assertNotIn("smoke.js", self.calls())
 
     def test_failed_restore_preserves_previous_smoke_result(self):
         self.assertEqual(self.run_script("stage").returncode, 0)
