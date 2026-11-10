@@ -12,11 +12,11 @@ import unittest
 import yaml
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 SPEC = importlib.util.spec_from_file_location("validate_inputs", Path(__file__).with_name("validate_inputs.py"))
 validate_inputs = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(validate_inputs)
-ANSIBLE = ROOT / "deployment" / "ansible"
+ANSIBLE = ROOT / "deployment" / "production" / "ansible"
 VALID_DOMAINS = (
     "joinchalktalk.com", "join-chalktalk.com", "xn--bcher-kva.example",
     "a" * 63 + ".example", ".".join(("a" * 63, "b" * 63, "c" * 63, "d" * 61)),

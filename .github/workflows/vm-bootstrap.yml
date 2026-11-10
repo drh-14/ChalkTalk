@@ -27,8 +27,8 @@ jobs:
           python-version: "3.12"
       - name: Install pinned Ansible tooling
         run: |
-          python -m pip install -r deployment/ansible/requirements.txt
-          ansible-galaxy collection install -r deployment/ansible/collections/requirements.yml
+          python -m pip install -r deployment/production/ansible/requirements.txt
+          ansible-galaxy collection install -r deployment/production/ansible/collections/requirements.yml
       - name: Configure pinned SSH and bootstrap VM
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -49,7 +49,7 @@ jobs:
             echo 'VM bootstrap may only run from main' >&2
             exit 1
           fi
-          python deployment/ansible/tests/validate_inputs.py
+          python deployment/production/ansible/tests/validate_inputs.py
           credential_dir="$(mktemp -d)"
           trap 'rm -rf "$credential_dir"' EXIT
           chmod 700 "$credential_dir"
@@ -61,4 +61,4 @@ jobs:
           export ANSIBLE_HOST_KEY_CHECKING=True
           export ANSIBLE_PRIVATE_KEY_FILE="$credential_dir/id_ed25519"
           export ANSIBLE_SSH_COMMON_ARGS="-o StrictHostKeyChecking=yes -o UserKnownHostsFile=$credential_dir/known_hosts -o IdentitiesOnly=yes"
-          ansible-playbook -i "$credential_dir/inventory" deployment/ansible/bootstrap.yml
+          ansible-playbook -i "$credential_dir/inventory" deployment/production/ansible/bootstrap.yml
