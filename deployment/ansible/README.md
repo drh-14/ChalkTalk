@@ -36,7 +36,7 @@ For managed-service and sender prerequisites before deploying the app, follow th
 3. The playbook installs Git, UFW, Docker Engine and Compose plugin from Docker's signed Ubuntu repository; prepares `/srv/chalktalk/releases` and `/srv/chalktalk/shared`; allows SSH before enabling UFW; permits TCP 80/443 and UDP 443; verifies a fresh SSH connection, Docker/Compose, firewall and env-file permissions; and reports whether a reboot is pending. It does not reboot automatically.
 4. On success, `/srv/chalktalk/shared/production.env` is owned by `ubuntu`, mode `0600`, in an owner-only `0700` directory. The workflow renders it atomically from Actions secrets and variables, suppressing values in Ansible logs. Rerun bootstrap after rotating a secret; a separate app restart is still needed to consume it.
 
-A later release checkout should live under `/srv/chalktalk/releases`. For the shared-env Compose commands, see the [production deployment guide](../production/README.md).
+A later release checkout should live under `/srv/chalktalk/releases`. For application deployment commands, see the [production deployment guide](../production/README.md).
 
 Do **not** use unredacted `docker compose config` in logs: it can print secrets. Docker-published container ports may bypass UFW's host-input rules. The later deployment must ensure only the web gateway publishes TCP 80/443 and UDP 443; API and collaboration ports must not be published. The OVHcloud network firewall is an additional independent control.
 
