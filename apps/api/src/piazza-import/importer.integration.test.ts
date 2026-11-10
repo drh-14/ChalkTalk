@@ -102,7 +102,8 @@ integration("Piazza import", () => {
       const auth = new AuthService(
         cliPool,
         loadEnvironment({
-          AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+          AUTH_TOKEN_SECRET:
+            "a-secret-that-is-longer-than-thirty-two-characters",
         }),
         { send: async () => {} },
       );
