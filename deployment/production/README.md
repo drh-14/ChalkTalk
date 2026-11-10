@@ -26,13 +26,29 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 ## Prepare a pinned release
 
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
-2. Clone this repository on the VM and check out an **explicit tested commit SHA**, not a moving branch: `git fetch origin && git checkout --detach <commit-sha>`. Record that SHA for rollback.
-3. `cp deployment/production/.env.example deployment/production/.env && chmod 600 deployment/production/.env`. Fill all placeholders. Generate an independent `AUTH_TOKEN_SECRET` (for example `openssl rand -hex 32`). `DOMAIN` has no scheme or trailing slash. Copy the exact Supabase connection values from its dashboard and URL-encode reserved password characters.
+2. Ensure Docker Compose is available on the VM and a protected production env file exists at `/srv/chalktalk/shared/production.env`. Do not copy secrets into a release checkout.
+3. Until a release workflow is added, clone this repository into `/srv/chalktalk/releases/<commit-sha>` on the VM and check out that **explicit tested commit SHA**, not a moving branch. Record the SHA for rollback:
+
+   ```sh
+   RELEASE_SHA=YOUR_TESTED_FULL_COMMIT_SHA
+   git clone https://github.com/drh-14/ChalkTalk.git "/srv/chalktalk/releases/$RELEASE_SHA"
+   cd "/srv/chalktalk/releases/$RELEASE_SHA"
+   git checkout --detach "$RELEASE_SHA"
+   ```
+
+   Run the following commands from that checkout's repository root. In each new shell, set the shared env path for both Compose interpolation and its service `env_file`:
+
+   ```sh
+   export COMPOSE_ENV_FILE=/srv/chalktalk/shared/production.env
+   ```
+
+   Confirm the file exists and the Supabase project, private bucket, and Resend sender are ready before starting.
+
 4. Validate without starting containers:
 
    ```sh
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml config --quiet
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml config --services
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml config --quiet
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml config --services
    ```
 
    The expected services are `migrate`, `api`, `worker`, `collaboration`, and `web`. No PostgreSQL, SeaweedFS, SMTP, or Mailpit service should appear.
@@ -40,10 +56,10 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 5. Build all four production images and start the stack:
 
    ```sh
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml build web api collaboration worker
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml up -d
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml ps
-   docker compose --env-file deployment/production/.env -f deployment/production/compose.yml logs --tail=100 migrate api web
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml build web api collaboration worker
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml up -d
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml ps
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml logs --tail=100 migrate api web
    curl -fsS https://YOUR_DOMAIN/api/health
    ```
 
@@ -51,13 +67,15 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 
 ## Required environment
 
-| Variable                                                                                                                                                  | Purpose                                                             |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.        |
-| `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with an explicit TLS mode.                  |
-| `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                    |
-| `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random session-signing secret (at least 32 characters). |
-| `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.    |
+| Variable                                                                                                                                                  | Purpose                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.                                                           |
+| `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with an explicit TLS mode.                                                                     |
+| `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                                                                       |
+| `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random secret of at least 32 characters used to HMAC-hash and verify opaque authentication-related tokens. |
+| `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.                                                       |
+
+Keep the production env file outside release checkouts with access limited to the deployment account.
 
 The production images and Compose set `NODE_ENV=production`; there is no custom mode flag in the env file. Production accepts only the Supabase database hosts above and same-project S3 endpoints `https://<project-ref>.storage.supabase.co/storage/v1/s3` (preferred) or `https://<project-ref>.supabase.co/storage/v1/s3`, with no custom port, credentials, query, or fragment. It rejects missing or malformed managed values instead of falling back to a local endpoint or ambient S3 credentials; it also rejects SMTP selection. `RESEND_API_BASE_URL`, if set, must be the official `https://api.resend.com` origin; omit it for normal delivery. Remove any old `PROD`, `PRODUCTION`, `LOCAL_DATABASE`, or `LOCAL_FILE_STORE` settings. `TRUST_PROXY_HOPS=1` is set by Compose; Caddy must remain the **only public entry point**, or per-IP rate limits can trust a spoofed proxy header.
 
@@ -67,12 +85,12 @@ If upgrading an earlier production env file, rename its five `S3_*` entries to t
 
 Production runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoint, or event spool, even if `METRICS_TOKEN` is accidentally set. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy.
 
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml restart api worker collaboration`
-- `docker compose --env-file deployment/production/.env -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.
+- `docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
+- `docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml restart api worker collaboration`
+- `docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.
 - Before launch, test authenticated signup, a post, a private resource upload/download/delete, a live collaboration session, and an accepted Resend message through the public domain. Confirm restricted files remain inaccessible to unauthorized users.
 - If Supabase DB or Storage is unavailable, expect API or worker failures; monitor logs and retry after service restoration. A failed migration must be repaired before starting the app.
 
-For updates, record the old SHA, check out the new tested SHA, verify backups, and rebuild/restart. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. A real VM and disposable Supabase-project smoke test must pass before placing non-test course data here.
+For updates, record the old SHA, check out the new tested SHA, verify backups, and rebuild/restart. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. Live VM and disposable Supabase-project smoke tests remain pending and must pass before placing non-test course data here.
 
 The API and worker images include qpdf, Poppler, Tesseract, and English OCR data. OCR settings are fixed in [`constants.ts`](../../apps/api/src/config/constants.ts); no OCR environment variables are required.
