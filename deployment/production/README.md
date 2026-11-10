@@ -26,17 +26,17 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 ## Prepare a pinned release
 
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
-2. Ensure Docker Compose is available on the VM. Keep production secrets in `/srv/chalktalk/shared/production.env`, outside release checkouts.
+2. Keep production secrets in `/srv/chalktalk/shared/production.env`, outside release checkouts.
 3. Until a release workflow is added, clone this repository into `/srv/chalktalk/releases/<commit-sha>` on the VM and check out that **explicit tested commit SHA**, not a moving branch. Record the SHA for rollback:
 
    ```sh
    RELEASE_SHA=YOUR_TESTED_FULL_COMMIT_SHA
-   git clone https://github.com/drh-14/ChalkTalk.git "/srv/chalktalk/releases/$RELEASE_SHA"
+   mkdir -p /srv/chalktalk/releases && git clone https://github.com/drh-14/ChalkTalk.git "/srv/chalktalk/releases/$RELEASE_SHA"
    cd "/srv/chalktalk/releases/$RELEASE_SHA"
    git checkout --detach "$RELEASE_SHA"
    ```
 
-   On the first deployment only, create `/srv/chalktalk/shared` with access limited to the deployment account, copy `deployment/production/.env.example` to `/srv/chalktalk/shared/production.env`, restrict it with `chmod 600`, and fill every placeholder. Generate an independent `AUTH_TOKEN_SECRET` (for example, `openssl rand -hex 32`). `DOMAIN` has no scheme or trailing slash. Copy the exact Supabase connection values from its dashboard and URL-encode reserved password characters. Keep this shared file when creating later releases; do not overwrite it with the template.
+   On the first deployment only, run `install -D -m 600 deployment/production/.env.example /srv/chalktalk/shared/production.env` and fill every placeholder. Generate an independent `AUTH_TOKEN_SECRET` (for example, `openssl rand -hex 32`). `DOMAIN` has no scheme or trailing slash. Copy the exact Supabase connection values from its dashboard and URL-encode reserved password characters. Keep this shared file when creating later releases; do not overwrite it with the template.
 
    Run the following commands from that checkout's repository root. In each new shell, set the shared env path for both Compose interpolation and its service `env_file`:
 
