@@ -26,8 +26,8 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 ## Prepare a pinned release
 
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
-2. Keep production secrets in `/srv/chalktalk/shared/production.env`, outside release checkouts.
-3. Until a release workflow is added, clone this repository into `/srv/chalktalk/releases/<commit-sha>` on the VM and check out that **explicit tested commit SHA**, not a moving branch. Record the SHA for rollback:
+2. Keep production secrets in `/srv/chalktalk/shared/production.env`, outside release checkouts, with access limited to the deployment account.
+3. Until an automated release workflow is added, clone this repository into `/srv/chalktalk/releases/<commit-sha>` on the VM and check out that **explicit tested commit SHA**, not a moving branch. Record the SHA for rollback:
 
    ```sh
    RELEASE_SHA=YOUR_TESTED_FULL_COMMIT_SHA
@@ -76,8 +76,6 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 | `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                                                                       |
 | `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random secret of at least 32 characters used to HMAC-hash and verify opaque authentication-related tokens. |
 | `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.                                                       |
-
-Keep the production env file outside release checkouts with access limited to the deployment account.
 
 The production images and Compose set `NODE_ENV=production`; there is no custom mode flag in the env file. Production accepts only the Supabase database hosts above and same-project S3 endpoints `https://<project-ref>.storage.supabase.co/storage/v1/s3` (preferred) or `https://<project-ref>.supabase.co/storage/v1/s3`, with no custom port, credentials, query, or fragment. It rejects missing or malformed managed values instead of falling back to a local endpoint or ambient S3 credentials; it also rejects SMTP selection. `RESEND_API_BASE_URL`, if set, must be the official `https://api.resend.com` origin; omit it for normal delivery. Remove any old `PROD`, `PRODUCTION`, `LOCAL_DATABASE`, or `LOCAL_FILE_STORE` settings. `TRUST_PROXY_HOPS=1` is set by Compose; Caddy must remain the **only public entry point**, or per-IP rate limits can trust a spoofed proxy header.
 
