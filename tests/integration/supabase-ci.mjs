@@ -268,22 +268,22 @@ async function main() {
       );
     }
 
-    const storageContainer = execFileSync(
+    const storageGatewayContainer = execFileSync(
       "docker",
       [
         "ps",
         "--filter",
-        "name=supabase_storage_chalktalk-supabase-ci",
+        "name=supabase_kong_chalktalk-supabase-ci",
         "--format",
         "{{.ID}}",
       ],
       { encoding: "utf8" },
     ).trim();
     assert.ok(
-      storageContainer,
-      "local Supabase Storage container was not found",
+      storageGatewayContainer,
+      "local Supabase Storage gateway container was not found",
     );
-    execFileSync("docker", ["stop", "-t", "1", storageContainer]);
+    execFileSync("docker", ["stop", "-t", "1", storageGatewayContainer]);
     try {
       const outageUpload = new FormData();
       outageUpload.set(
@@ -313,7 +313,7 @@ async function main() {
         "storage outage must not commit a resource",
       );
     } finally {
-      execFileSync("docker", ["start", storageContainer]);
+      execFileSync("docker", ["start", storageGatewayContainer]);
     }
     console.log(
       "Supabase CI: migrations, private S3, real HTTP auth/course/resource, denial and outage checks passed",
