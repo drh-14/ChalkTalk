@@ -1,6 +1,6 @@
 # Automatic single-VM deployment
 
-Status: approved for implementation
+Status: implemented
 Date: 2026-11-10
 
 ## Context
@@ -37,10 +37,11 @@ sequenceDiagram
     VM->>VM: Build images using shared env
     VM->>Data: Run tracked migrations
     VM->>VM: Compose up and await health
-    Deploy->>VM: Check public HTTPS and services
     VM->>Data: Temporary object round-trip
     VM->>Mail: Send synthetic test email
-    VM-->>Deploy: Smoke result and release SHA
+    VM-->>Deploy: Provider smoke result
+    Deploy->>Deploy: Check public HTTPS web and API
+    Deploy->>VM: Mark release successful
 ```
 
 ## Alternatives rejected

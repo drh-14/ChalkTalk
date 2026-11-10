@@ -1,7 +1,7 @@
 # automatic-vm-deployment Specification
 
 ## Purpose
-TBD - created by archiving change automatic-vm-deployment. Update Purpose after archive.
+Define the trust, serialization, and verification requirements for automatic production releases from successful current-main CI runs.
 
 ## Requirements
 
