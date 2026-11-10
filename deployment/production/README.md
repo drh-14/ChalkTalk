@@ -26,7 +26,7 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 ## Prepare a pinned release
 
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
-2. Ensure Docker Compose is available on the VM and a protected production env file exists at `/srv/chalktalk/shared/production.env`. Do not copy secrets into a release checkout.
+2. Ensure Docker Compose is available on the VM. Keep production secrets in `/srv/chalktalk/shared/production.env`, outside release checkouts.
 3. Until a release workflow is added, clone this repository into `/srv/chalktalk/releases/<commit-sha>` on the VM and check out that **explicit tested commit SHA**, not a moving branch. Record the SHA for rollback:
 
    ```sh
@@ -35,6 +35,8 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
    cd "/srv/chalktalk/releases/$RELEASE_SHA"
    git checkout --detach "$RELEASE_SHA"
    ```
+
+   On the first deployment only, create `/srv/chalktalk/shared` with access limited to the deployment account, copy `deployment/production/.env.example` to `/srv/chalktalk/shared/production.env`, restrict it with `chmod 600`, and fill every placeholder. Generate an independent `AUTH_TOKEN_SECRET` (for example, `openssl rand -hex 32`). `DOMAIN` has no scheme or trailing slash. Copy the exact Supabase connection values from its dashboard and URL-encode reserved password characters. Keep this shared file when creating later releases; do not overwrite it with the template.
 
    Run the following commands from that checkout's repository root. In each new shell, set the shared env path for both Compose interpolation and its service `env_file`:
 
@@ -91,6 +93,6 @@ Production runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoin
 - Before launch, test authenticated signup, a post, a private resource upload/download/delete, a live collaboration session, and an accepted Resend message through the public domain. Confirm restricted files remain inaccessible to unauthorized users.
 - If Supabase DB or Storage is unavailable, expect API or worker failures; monitor logs and retry after service restoration. A failed migration must be repaired before starting the app.
 
-For updates, record the old SHA, check out the new tested SHA, verify backups, and rebuild/restart. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. Live VM and disposable Supabase-project smoke tests remain pending and must pass before placing non-test course data here.
+For updates, record the old SHA and verify backups. Repeat step 3 with the new tested SHA to create a new `/srv/chalktalk/releases/<commit-sha>` checkout; do not change the SHA checked out in the old release directory. From the new checkout, repeat steps 4 and 5 using the existing shared env file. Schema migrations may not be reversible; reverting code alone is not a reliable database rollback. Supabase does not eliminate the need for backup/restore planning. Live VM and disposable Supabase-project smoke tests remain pending and must pass before placing non-test course data here.
 
 The API and worker images include qpdf, Poppler, Tesseract, and English OCR data. OCR settings are fixed in [`constants.ts`](../../apps/api/src/config/constants.ts); no OCR environment variables are required.
