@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Run after `docker compose --profile app --profile observability up --build --wait`.
+# Run after `docker compose up --build --wait`.
 node --test docker/observability/grafana/dashboards/api.test.mjs
-compose() { docker compose --profile app --profile observability "$@"; }
+compose() { docker compose "$@"; }
 api_request() {
   compose exec -T api node -e '
     fetch("http://localhost:3000/api/v1/never-a-real-route?private=do-not-log-this", {

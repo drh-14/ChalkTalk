@@ -20,25 +20,15 @@ type ComposeService = {
 function renderCompose(
   credentials?: { accessKey: string; secretKey: string },
   ambientAws?: { accessKey?: string; secretKey?: string },
-  profile?: string,
 ) {
   const output = execFileSync(
     "docker",
-    [
-      "compose",
-      "--env-file",
-      ".env.example",
-      ...(profile ? ["--profile", profile] : []),
-      "config",
-      "--format",
-      "json",
-    ],
+    ["compose", "--env-file", ".env.example", "config", "--format", "json"],
     {
       cwd: process.cwd(),
       encoding: "utf8",
       env: {
         ...process.env,
-        COMPOSE_PROFILES: profile,
         COMPOSE_ENV_FILE: ".env.example",
         SEAWEEDFS_ACCESS_KEY_ID: credentials?.accessKey ?? "",
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
@@ -87,8 +77,6 @@ describe("default Compose object storage", () => {
           "compose",
           "--env-file",
           ".env.example",
-          "--profile",
-          "app",
           "config",
           "--no-env-resolution",
           "--format",
@@ -108,7 +96,6 @@ describe("default Compose object storage", () => {
         "api",
         "worker",
         "collaboration",
-        "seed-mock",
         "web",
       ])
         expect(configuration.services[service].env_file).toEqual([
@@ -156,7 +143,7 @@ describe("default Compose object storage", () => {
   });
 
   it("provisions pgvector and runs its schema migration in the main local stack", () => {
-    const configuration = renderCompose(undefined, undefined, "app");
+    const configuration = renderCompose();
     expect(configuration.services.postgres.image).toBe(
       "pgvector/pgvector:pg17",
     );
@@ -168,11 +155,10 @@ describe("default Compose object storage", () => {
   });
 
   it("uses named local Dockerfiles for each application process", () => {
-    const services = renderCompose(undefined, undefined, "app").services;
+    const services = renderCompose().services;
     for (const [service, dockerfile] of Object.entries({
       api: "Dockerfile.api",
       migrate: "Dockerfile.api",
-      "seed-mock": "Dockerfile.api",
       worker: "Dockerfile.worker",
       collaboration: "Dockerfile.collaboration",
       web: "Dockerfile.frontend",
@@ -189,8 +175,18 @@ describe("default Compose object storage", () => {
     const seaweedfs = configuration.services.seaweedfs;
 
     expect(Object.keys(configuration.services).sort()).toEqual([
+      "api",
+      "collaboration",
+      "elasticsearch",
+      "elasticsearch-init",
+      "grafana",
+      "logstash",
+      "migrate",
       "postgres",
+      "prometheus",
       "seaweedfs",
+      "web",
+      "worker",
     ]);
     expect(seaweedfs.image).toBe("chrislusf/seaweedfs:4.48");
     expect(seaweedfs.command).toContain("mini");
@@ -227,7 +223,7 @@ describe("default Compose object storage", () => {
   });
 
   it("waits for authenticated S3 readiness before starting the API", () => {
-    const configuration = renderCompose(undefined, undefined, "app");
+    const configuration = renderCompose();
     expect(configuration.services.api.depends_on?.seaweedfs).toMatchObject({
       condition: "service_healthy",
     });
@@ -274,9 +270,8 @@ describe("default Compose object storage", () => {
 });
 
 describe("application Compose worker", () => {
-  it("runs only in the app profile, after migrations, with independent restart and dependencies", () => {
-    expect(renderCompose().services.worker).toBeUndefined();
-    const configuration = renderCompose(undefined, undefined, "app");
+  it("runs by default after migrations, with independent restart and dependencies", () => {
+    const configuration = renderCompose();
     const worker = configuration.services.worker;
     expect(worker).toBeDefined();
     expect(worker.command).toEqual([
