@@ -79,9 +79,13 @@ describe("default Compose object storage", () => {
 
   it("does not pass ambient demo credentials to local services", () => {
     for (const service of Object.values(renderCompose().services)) {
-      expect(service.environment).not.toHaveProperty("MOCK_DATA");
-      expect(service.environment).not.toHaveProperty("PIAZZA_DEMO_PASSWORD");
-      expect(service.environment).not.toHaveProperty("AMS161_DEMO_PASSWORD");
+      expect(service.environment ?? {}).not.toHaveProperty("MOCK_DATA");
+      expect(service.environment ?? {}).not.toHaveProperty(
+        "PIAZZA_DEMO_PASSWORD",
+      );
+      expect(service.environment ?? {}).not.toHaveProperty(
+        "AMS161_DEMO_PASSWORD",
+      );
     }
   });
 
