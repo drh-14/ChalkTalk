@@ -24,6 +24,7 @@
       AUTH_TOKEN_SECRET: "{{ bootstrap_auth_token_secret }}"
       RESEND_API_KEY: "{{ bootstrap_resend_api_key }}"
     bootstrap_environment_dest: /srv/chalktalk/shared/production.env
+    bootstrap_environment_template: "{{ playbook_dir }}/templates/production.env.j2"
     bootstrap_environment_owner: ubuntu
     bootstrap_environment_group: ubuntu
     bootstrap_environment_become: true

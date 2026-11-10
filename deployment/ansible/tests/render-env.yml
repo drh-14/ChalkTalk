@@ -5,6 +5,7 @@
   gather_facts: false
   vars:
     bootstrap_environment_dest: "{{ output_path }}"
+    bootstrap_environment_template: "{{ playbook_dir }}/../templates/production.env.j2"
     bootstrap_domain: "{{ lookup('ansible.builtin.env', 'DOMAIN') }}"
     bootstrap_auth_token_secret: "{{ lookup('ansible.builtin.env', 'AUTH_TOKEN_SECRET') }}"
     bootstrap_environment:
