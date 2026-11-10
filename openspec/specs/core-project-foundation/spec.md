@@ -17,7 +17,7 @@ The system SHALL provide documented commands to start the browser application, H
 
 #### Scenario: Developer starts the complete containerized foundation
 
-- **WHEN** a developer follows the documented certificate and environment setup and runs `docker compose up --build`
+- **WHEN** a developer follows the documented certificate and environment setup and runs `docker compose -f deployment/local/compose.yml --env-file .env up --build`
 - **THEN** PostgreSQL becomes healthy
 - **AND** migrations complete before the API starts
 - **AND** the browser application is available through HTTPS on the documented host port
