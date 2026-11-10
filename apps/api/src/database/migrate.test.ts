@@ -1,6 +1,8 @@
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getMigrationDirectory, runMigrations } from "./migrate.js";
@@ -17,6 +19,32 @@ describe("getMigrationDirectory", () => {
     return expect(
       access(join(getMigrationDirectory(), "001_create_migration_ledger.sql")),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("migration CLI", () => {
+  it("runs when invoked with a relative path", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "-e",
+        "process.argv[1] = 'apps/api/src/database/migrate.ts'; await import('./apps/api/src/database/migrate.ts')",
+      ],
+      {
+        cwd: fileURLToPath(new URL("../../../../", import.meta.url)),
+        env: {
+          NODE_ENV: "test",
+          AUTH_TOKEN_SECRET: "invalid",
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "AUTH_TOKEN_SECRET must contain at least 32 characters",
+    );
   });
 });
 
