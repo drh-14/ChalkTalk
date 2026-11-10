@@ -67,13 +67,13 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 
 ## Required environment
 
-| Variable                                                                                                                                                  | Purpose                                                             |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.        |
-| `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with an explicit TLS mode.                  |
-| `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                    |
+| Variable                                                                                                                                                  | Purpose                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.                                                           |
+| `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with an explicit TLS mode.                                                                     |
+| `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                                                                       |
 | `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random secret of at least 32 characters used to HMAC-hash and verify opaque authentication-related tokens. |
-| `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.    |
+| `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.                                                       |
 
 For the GitHub environment settings that populate the shared env file, see the [VM bootstrap guide](../ansible/README.md).
 
