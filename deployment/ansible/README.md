@@ -18,12 +18,12 @@ Create a GitHub Actions environment named **`production`** (Settings → Environ
 
 Add these four unencrypted **production environment variables**:
 
-| Environment variable        | Purpose                                                     |
-| --------------------------- | ----------------------------------------------------------- |
-| `DOMAIN`                    | Public DNS name (2+ labels; no scheme or trailing dot).     |
-| `SUPABASE_STORAGE_ENDPOINT` | Supabase Storage S3 endpoint URL.                           |
-| `SUPABASE_STORAGE_BUCKET`   | Name of the private Storage bucket.                         |
-| `SUPABASE_STORAGE_REGION`   | Supabase Storage S3 region.                                 |
+| Environment variable        | Purpose                                                 |
+| --------------------------- | ------------------------------------------------------- |
+| `DOMAIN`                    | Public DNS name (2+ labels; no scheme or trailing dot). |
+| `SUPABASE_STORAGE_ENDPOINT` | Supabase Storage S3 endpoint URL.                       |
+| `SUPABASE_STORAGE_BUCKET`   | Name of the private Storage bucket.                     |
+| `SUPABASE_STORAGE_REGION`   | Supabase Storage S3 region.                             |
 
 To establish `VM_KNOWN_HOSTS`, compare the SSH server-key fingerprint against an independent trusted observation (for example the OVHcloud console). Only then place the corresponding public host key line in the environment secret. This key is the **server's** key, not the `ubuntu` login key. If host identity changes intentionally, reverify it before changing the variable.
 

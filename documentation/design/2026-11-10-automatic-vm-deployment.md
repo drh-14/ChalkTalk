@@ -71,7 +71,3 @@ In-place Compose recreation can cause brief downtime. On-VM builds consume VM CP
 ## Reversibility
 
 Workflow triggering and smoke scope are cheap to revise. Supabase schema migrations and data writes are the one-way door: preserve backups and inspect migration compatibility before merging a release. Retain at least the prior source checkout for operator-led recovery, but do not promise that checking out old code reverses the schema.
-
-## Open questions
-
-None that change the deployment architecture. Implementation planning should determine exact command packaging and test seams while preserving the security and failure contracts above.
