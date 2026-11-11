@@ -5,7 +5,7 @@ Date: 2026-11-10
 
 ## Context
 
-The local stack currently exposes Vite over HTTPS and delegates API and collaboration routing to Vite. Production instead exposes Caddy, which routes `/api/health`, `/api/*`, and `/collaboration` before serving the frontend. This difference makes local testing less representative of production. The requested parity is **routing parity**, not automatic scaling of Compose containers.
+The local stack previously exposed Vite over HTTPS and delegated API and collaboration routing to Vite. Production instead exposed Caddy, which routed `/api/health`, `/api/*`, and `/collaboration` before serving the frontend. This difference made local testing less representative of production. The requested parity was **routing parity**, not automatic scaling of Compose containers.
 
 The existing local browser URL, `https://localhost:5173` by default, and the `WEB_PORT` override used by CI must continue to work. Local development must retain Vite hot-module replacement. The user chose Caddy-managed local certificates instead of the existing mkcert certificate setup. This change must not alter production routing or application data.
 

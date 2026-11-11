@@ -88,14 +88,7 @@ This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, c
 
 ### 3. Trust the local HTTPS certificate and open the app
 
-Caddy generates its local certificate and CA automatically on the first startup; no host certificate generation is needed. Export **only the public root certificate** from the running gateway:
-
-```bash
-docker compose -f deployment/local/compose.yml --env-file .env cp \
-  gateway:/data/caddy/pki/authorities/local/root.crt /tmp/chalktalk-local-root.crt
-```
-
-Trust `/tmp/chalktalk-local-root.crt` in your OS/browser trust store once per machine (for example, on macOS, open it in Keychain Access and set it to **Always Trust**; on Linux, follow your distribution's CA-import procedure). Do not copy `root.key` or any private Caddy volume data to the host. Keep the Caddy data volume across restarts; deleting it rotates the CA and requires a new trust step. You can remove the exported `.crt` after trusting it. Until the root is trusted, the browser displays a certificate warning—do not disable TLS verification in the app.
+Caddy generates certificates automatically. Before opening the app, follow the one-time [public-root trust step](deployment/local/README.md#local-https); no host certificate generation is needed.
 
 | Local endpoint                                   | Purpose                                            |
 | ------------------------------------------------ | -------------------------------------------------- |
@@ -164,7 +157,7 @@ docker compose -f deployment/local/compose.yml --env-file .env run --rm migrate 
 docker compose -f deployment/local/compose.yml --env-file .env down                  # stop the stack; keep data
 ```
 
-`docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, export and trust Caddy’s public local root certificate as described above; confirm `DOMAIN` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
+`docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**, including Caddy's local CA; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, follow the [local HTTPS trust instructions](deployment/local/README.md#local-https) and confirm `DOMAIN` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
 
 Run the repository checks before submitting code:
 

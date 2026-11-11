@@ -17,11 +17,11 @@ The system SHALL provide documented commands to start the browser application, H
 
 #### Scenario: Developer starts the complete containerized foundation
 
-- **WHEN** a developer follows the documented certificate and environment setup and runs `docker compose -f deployment/local/compose.yml --env-file .env up --build`
+- **WHEN** a developer follows the documented environment setup and runs `docker compose -f deployment/local/compose.yml --env-file .env up --build`
 - **THEN** PostgreSQL becomes healthy
 - **AND** migrations complete before the API starts
 - **AND** the browser application is available through HTTPS on the documented host port
-- **AND** the API is reachable only through the browser application's `/api` proxy
+- **AND** the API is reachable from the browser through the local gateway's `/api` route, as specified in [local-compose-deployment](../local-compose-deployment/spec.md)
 
 #### Scenario: Dependencies change after a prior container start
 
@@ -32,8 +32,8 @@ The system SHALL provide documented commands to start the browser application, H
 #### Scenario: Browser application restarts after dependency repair
 
 - **WHEN** the browser application's dependency volume is refreshed after a prior container start
-- **THEN** its Compose health check remains unhealthy until HTTPS `/api/health` is successfully proxied to the internal API
-- **AND** automation can wait for that health condition before exercising the browser endpoint
+- **THEN** its Compose health check remains unhealthy until the private HTTP Vite server responds successfully
+- **AND** automation can wait for the gateway health condition before exercising the browser endpoint
 
 ### Requirement: API health status
 
@@ -72,10 +72,7 @@ The browser development server SHALL forward requests whose path begins with `/a
 - **WHEN** the browser application requests an `/api` path through its development server without a configured proxy override
 - **THEN** the request is forwarded to the host-local HTTP API without requiring a separate browser origin configuration
 
-#### Scenario: Browser client calls the API during containerized development
-
-- **WHEN** the browser application requests an `/api` path through the containerized development server with its configured proxy override
-- **THEN** the request is forwarded to the internal HTTP API service without exposing that service directly to the host
+Containerized browser routing is specified in [local-compose-deployment](../local-compose-deployment/spec.md).
 
 ### Requirement: Dedicated background job process
 
