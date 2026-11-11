@@ -34,7 +34,7 @@ RETURNING id
 
 `$2` is the sessions this server has connections for. It sends `session_ended` for each, reusing the lifecycle path, which persists any loaded document and closes nothing, since nobody is connected. Sessions in `ending` are left to the end handshake. The idle period comes from `COLLABORATION_IDLE_END_MINUTES` (1 to 10,080, default 120). Each ended session increments `sessions_ended_total{reason="idle"}`.
 
-*Alternative:* the job worker could end idle sessions. Only the collaboration server knows who is connected, so the worker would need the same `last_active_at` and could still race a connection that is opening.
+_Alternative:_ the job worker could end idle sessions. Only the collaboration server knows who is connected, so the worker would need the same `last_active_at` and could still race a connection that is opening.
 
 ### D3. A shared fixed-window limiter
 

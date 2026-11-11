@@ -34,11 +34,11 @@ flowchart LR
 
 ## Technology choices
 
-| Concern | Choice | Why | Runner-up |
-| --- | --- | --- | --- |
-| Local edge | Existing production Caddy family, with a local-specific config | Exercises equivalent routing and TLS termination without adding a new proxy technology | Reusing the production Caddyfile verbatim cannot serve Vite/HMR instead of static files |
-| Frontend development | Existing Vite server behind Caddy | Preserves source mounts and hot reload | Static production build slows the edit/test loop |
-| Local TLS | Caddy `tls internal` with persistent CA state | Generates certificates automatically at Compose startup; only a one-time host trust step remains | Reusing mkcert files retains a separate certificate-generation step |
+| Concern              | Choice                                                         | Why                                                                                              | Runner-up                                                                               |
+| -------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Local edge           | Existing production Caddy family, with a local-specific config | Exercises equivalent routing and TLS termination without adding a new proxy technology           | Reusing the production Caddyfile verbatim cannot serve Vite/HMR instead of static files |
+| Frontend development | Existing Vite server behind Caddy                              | Preserves source mounts and hot reload                                                           | Static production build slows the edit/test loop                                        |
+| Local TLS            | Caddy `tls internal` with persistent CA state                  | Generates certificates automatically at Compose startup; only a one-time host trust step remains | Reusing mkcert files retains a separate certificate-generation step                     |
 
 No new persistence service, external dependency, or public API is introduced. The existing Caddy and Vite versions are reused; their versions should remain governed by the repository's image and package pins.
 
