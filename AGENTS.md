@@ -21,6 +21,12 @@ An explicit user request to skip or use delegation overrides the default thresho
 5. Publish or update a pull request in **draft** mode. If a publication tool opens it as ready, convert it to draft immediately. Keep it in draft until the user explicitly asks to mark it ready for review.
 6. Deliver **one commit per pull request**. Squash the scoped work and any no-mistakes fix commits into a single commit before handoff. When updating an existing PR after a squash, use a lease-protected force push, then verify the PR contains exactly one commit and that checks pass on its final head.
 
+## Pull request presentation
+
+- Title: use `type(scope): imperative summary` (for example, `fix(statistics): include imported history in course totals`). Use a scope when it helps identify the affected feature; omit it for a cross-cutting change. Choose the type that describes the change (`feat`, `fix`, `docs`, `refactor`, `test`, or `chore`). Describe the outcome rather than the workflow or another PR.
+- Description: write for a reviewer of this PR. Include **Intent** (the user-visible goal), **What Changed** (the scoped implementation), **Risk Assessment** (material behavior, security, or deployment risks), and **Testing** (checks actually run, their results, and any unverified scenarios). Link browser screenshots as PR attachments where UI behavior changed. Identify a stacked base or dependency when present, without claiming the change is already on `main`.
+- Before handoff, update the description to match the final commit and CI results. State pending checks or known limitations plainly, and preserve any pipeline details appended by the no-mistakes gate.
+
 ## Specification-driven tests
 
 When changing API or database behavior, derive tests from the applicable API and database references: `documentation/api/`, `documentation/openapi.yaml`, and `documentation/database.md`. At the appropriate public seam, cover the documented success response, headers, error cases, authentication and validation rules, lifecycle behavior, and persistence constraints affected by the change.
