@@ -210,6 +210,7 @@ describe("default Compose object storage", () => {
       "alloy",
       "api",
       "collaboration",
+      "gateway",
       "grafana",
       "loki",
       "migrate",

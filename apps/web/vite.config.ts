@@ -66,6 +66,8 @@ export function createViteConfig(
 ): UserConfig {
   const key = environment.VITE_TLS_KEY_PATH;
   const cert = environment.VITE_TLS_CERT_PATH;
+  const gatewayDomain = environment.VITE_GATEWAY_DOMAIN;
+  const gatewayPort = environment.VITE_GATEWAY_PORT;
   return {
     plugins: [react(), excalidrawAssets()],
     resolve: {
@@ -77,6 +79,15 @@ export function createViteConfig(
       ],
     },
     server: {
+      allowedHosts: gatewayDomain ? [gatewayDomain] : undefined,
+      hmr:
+        gatewayDomain && gatewayPort
+          ? {
+              protocol: "wss",
+              host: gatewayDomain,
+              clientPort: Number(gatewayPort),
+            }
+          : undefined,
       https:
         key && cert
           ? { key: readFileSync(key), cert: readFileSync(cert) }
