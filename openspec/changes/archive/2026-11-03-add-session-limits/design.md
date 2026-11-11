@@ -49,7 +49,7 @@ Limits come from `apps/api/src/config/constants.ts` through the service's option
 
 `createCollaborationServer` takes an optional observability token. When it is set, the server builds its own `prom-client` registry with default process metrics and the series in the spec, and answers `GET /metrics` in Hocuspocus's `onRequest` hook, comparing the bearer token in constant time, as `createObservability` does. Gauges are computed at scrape time from `hocuspocus.documents`. `persist` times stores, `beforeSync` rejections increment `rejected_updates_total`, and every server-initiated close increments `closes_total{reason}`.
 
-Prometheus gains the job `chalktalk-collaboration` → `collaboration:3100`. The API dashboard gains a "Live sessions" row with connections, documents, store latency p95, and closes by reason. `docker/test-observability.sh` checks the endpoint's token handling.
+Prometheus gains the job `chalktalk-collaboration` → `collaboration:3100`. The API dashboard gains a "Live sessions" row with connections, documents, store latency p95, and closes by reason. `deployment/local/tests/test-observability.sh` checks the endpoint's token handling.
 
 ## Risks / Trade-offs
 

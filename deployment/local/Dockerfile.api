@@ -11,7 +11,7 @@ RUN npm ci
 
 COPY . .
 
-COPY docker/ensure-node-modules.sh /usr/local/bin/ensure-node-modules
+COPY deployment/local/ensure-node-modules.sh /usr/local/bin/ensure-node-modules
 RUN chmod +x /usr/local/bin/ensure-node-modules
 
 ENTRYPOINT ["/usr/local/bin/ensure-node-modules"]

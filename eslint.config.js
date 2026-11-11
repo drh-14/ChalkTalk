@@ -29,7 +29,7 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
-    files: ["docker/observability/**/*.test.mjs"],
+    files: ["deployment/local/tests/**/*.test.mjs"],
     languageOptions: { globals: globals.node },
   },
 );

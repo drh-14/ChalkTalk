@@ -1,6 +1,6 @@
 # Single-VM ChalkTalk deployment with Supabase
 
-This is a **runnable starting point**, not a production-readiness guarantee. It runs the frontend, Express API, Hocuspocus collaboration service, and worker as four separate production images on one Linux VM. Supabase hosts PostgreSQL and S3-compatible file storage; Resend sends mail via HTTPS. The root [`docker-compose.yml`](../../docker-compose.yml) remains the local development stack with PostgreSQL and SeaweedFS, with Resend HTTPS email.
+This is a **runnable starting point**, not a production-readiness guarantee. It runs the frontend, Express API, Hocuspocus collaboration service, and worker as four separate production images on one Linux VM. Supabase hosts PostgreSQL and S3-compatible file storage; Resend sends mail via HTTPS. The local development stack is [`deployment/local/compose.yml`](../local/compose.yml), with PostgreSQL, SeaweedFS, and Resend HTTPS email.
 
 ## Topology and images
 
@@ -86,13 +86,13 @@ The following manual pinned-release procedure remains available for recovery:
 
 ## Required environment
 
-| Variable                                                                                                                                                  | Purpose                                                             |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.        |
-| `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with an explicit TLS mode.                  |
-| `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                    |
-| `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random session-signing secret (at least 32 characters). |
-| `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.    |
+| Variable                                                                                                                                                  | Purpose                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.                                      |
+| `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with an explicit TLS mode.                                                |
+| `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                                                  |
+| `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random secret for HMAC-hashing opaque authentication tokens (at least 32 characters). |
+| `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.                                  |
 
 The production images and Compose set `NODE_ENV=production`; there is no custom mode flag in the env file. Production accepts only the Supabase database hosts above and same-project S3 endpoints `https://<project-ref>.storage.supabase.co/storage/v1/s3` (preferred) or `https://<project-ref>.supabase.co/storage/v1/s3`, with no custom port, credentials, query, or fragment. It rejects missing or malformed managed values instead of falling back to a local endpoint or ambient S3 credentials; it also rejects SMTP selection. `RESEND_API_BASE_URL`, if set, must be the official `https://api.resend.com` origin; omit it for normal delivery. Remove any old `PROD`, `PRODUCTION`, `LOCAL_DATABASE`, or `LOCAL_FILE_STORE` settings. `TRUST_PROXY_HOPS=1` is set by Compose; Caddy must remain the **only public entry point**, or per-IP rate limits can trust a spoofed proxy header.
 

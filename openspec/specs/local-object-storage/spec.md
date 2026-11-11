@@ -8,7 +8,7 @@ Provide a persistent local S3-compatible object store for development and future
 
 ### Requirement: Local SeaweedFS service
 
-The default development Docker Compose startup SHALL use `deployment/local/` and run SeaweedFS with a host-accessible S3 endpoint on `127.0.0.1:8333`. The root `docker compose` command SHALL remain usable and preserve existing local volumes.
+The default development Docker Compose startup SHALL use `docker compose -f deployment/local/compose.yml --env-file .env up --build --wait` from the repository root and run SeaweedFS with a host-accessible S3 endpoint on `127.0.0.1:8333`. The local Compose project SHALL preserve existing local volumes.
 
 #### Scenario: Developer starts default Compose services
 
