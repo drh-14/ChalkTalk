@@ -1,0 +1,4 @@
+- [x] Add red tests for the CI runner's success, denial, failure and cleanup behavior.
+- [x] Pin Supabase CLI/config and add CI-only API/migrate Compose integration job.
+- [x] Run the actual disposable local stack and HTTP integration runner in GitHub Actions.
+- [x] Validate lint/format/build/OpenSpec/actionlint/Compose and the required GitHub Actions integration job.
