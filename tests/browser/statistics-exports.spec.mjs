@@ -63,6 +63,16 @@ async function open(page) {
           courseId: "course-1",
           period: url.searchParams.get("period"),
           dailyActivity: [
+            ...(url.searchParams.get("period") === "course_to_date"
+              ? [
+                  {
+                    date: "2026-09-02",
+                    questionsCreated: 1,
+                    answersCreated: 1,
+                    postsViewed: 0,
+                  },
+                ]
+              : []),
             {
               date: "2026-10-21",
               questionsCreated: 1,
@@ -118,7 +128,7 @@ async function open(page) {
       return route.fulfill({
         status: 200,
         contentType: "text/csv; charset=utf-8",
-        body: "date,questions_created,answers_created,posts_viewed\r\n2026-10-21,1,0,2\r\n",
+        body: `date,questions_created,answers_created,posts_viewed\r\n${url.searchParams.get("period") === "course_to_date" ? "2026-09-02,1,1,0\r\n" : ""}2026-10-21,1,0,2\r\n`,
       });
     }
     if (url.pathname === "/api/v1/courses/course-1/threads/unread-count")
@@ -172,5 +182,34 @@ test("selected-period CSV download and retained statistics on failure", async ({
   await page.screenshot({
     path: resolve(evidence, "export-error.png"),
     fullPage: true,
+  });
+});
+
+test("course-to-date view and daily download show imported pre-creation activity", async ({
+  page,
+}) => {
+  const downloads = await open(page);
+  await page.getByLabel("Period").selectOption("course_to_date");
+  await expect(
+    page.getByRole("img", { name: /2026-09-02: 1 questions, 1 answers/ }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: resolve(evidence, "imported-course-to-date.png"),
+    fullPage: true,
+  });
+  const downloadPromise = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Download daily activity CSV" })
+    .click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe(
+    "chalktalk-course-1-course_to_date-daily.csv",
+  );
+  expect(await readFile(await download.path(), "utf8")).toContain(
+    "2026-09-02,1,1,0",
+  );
+  expect(downloads.at(-1)).toEqual({
+    kind: "daily",
+    period: "course_to_date",
   });
 });

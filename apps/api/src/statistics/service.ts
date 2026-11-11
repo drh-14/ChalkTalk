@@ -84,21 +84,51 @@ export class StatisticsService {
     return membership.created_at;
   }
 
-  private window(period: StatisticsPeriod, courseCreatedAt: Date): Window {
+  private async window(
+    courseId: string,
+    period: StatisticsPeriod,
+    courseCreatedAt: Date,
+    includeDates = true,
+  ): Promise<Window> {
     const end = new Date();
     const today = new Date(`${dateKey(end)}T00:00:00.000Z`);
+    let firstAt = courseCreatedAt;
+    if (period === "course_to_date") {
+      const history = await this.query<{ first_at: Date | null }>(
+        `SELECT LEAST(
+          (SELECT min(created_at) FROM posts WHERE course_id=$1 AND type='question'),
+          (SELECT min(created_at) FROM answers WHERE course_id=$1),
+          (SELECT min(created_on::timestamp AT TIME ZONE 'UTC') FROM question_creation_daily_counts WHERE course_id=$1),
+          (SELECT min(contributed_at) FROM answer_contribution_events WHERE course_id=$1),
+          (SELECT min(viewed_at) FROM post_view_events WHERE course_id=$1),
+          (SELECT min(endorsed_at) FROM answer_endorsement_events WHERE course_id=$1)
+        ) AS first_at`,
+        [courseId],
+      );
+      const earliest = history.rows[0]?.first_at;
+      if (earliest && earliest < firstAt) firstAt = earliest;
+    }
     const start =
       period === "course_to_date"
-        ? new Date(`${dateKey(courseCreatedAt)}T00:00:00.000Z`)
+        ? new Date(`${dateKey(firstAt)}T00:00:00.000Z`)
         : new Date(today.getTime() - (period === "7d" ? 6 : 29) * 86400000);
     const dates: string[] = [];
-    for (let time = start.getTime(); time <= today.getTime(); time += 86400000)
-      dates.push(dateKey(new Date(time)));
+    if (includeDates)
+      for (
+        let time = start.getTime();
+        time <= today.getTime();
+        time += 86400000
+      )
+        dates.push(dateKey(new Date(time)));
     return { start, end, dates };
   }
 
   async summary(courseId: string, userId: string, period: StatisticsPeriod) {
-    const window = this.window(period, await this.authorized(courseId, userId));
+    const window = await this.window(
+      courseId,
+      period,
+      await this.authorized(courseId, userId),
+    );
     const [posts, answers, views, response] = await Promise.all([
       this.query<{ date: string; count: number }>(
         "SELECT (created_at AT TIME ZONE 'UTC')::date::text AS date,count(*)::int AS count FROM posts WHERE course_id=$1 AND type='question' AND created_at >= $2 AND created_at <= $3 GROUP BY 1",
@@ -275,7 +305,12 @@ export class StatisticsService {
     limit: number,
     cursor?: string,
   ) {
-    const window = this.window(period, await this.authorized(courseId, userId));
+    const window = await this.window(
+      courseId,
+      period,
+      await this.authorized(courseId, userId),
+      false,
+    );
     let afterId: string | null = null;
     if (cursor !== undefined) {
       if (
@@ -360,7 +395,12 @@ export class StatisticsService {
     userId: string,
     period: StatisticsPeriod,
   ) {
-    const window = this.window(period, await this.authorized(courseId, userId));
+    const window = await this.window(
+      courseId,
+      period,
+      await this.authorized(courseId, userId),
+      false,
+    );
     const result = await this.query<{
       id: string;
       display_name: string;
