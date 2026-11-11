@@ -36,6 +36,11 @@ managed `/srv/chalktalk/shared/production.env` file, which Compose uses as both
 its interpolation `--env-file` and service `COMPOSE_ENV_FILE`. Do not put a
 secret `.env` inside a release checkout.
 
+Before deploying these images, update the existing GitHub `production`
+environment's `DATABASE_URL` secret to use `sslmode=verify-full` and rerun
+bootstrap to refresh `/srv/chalktalk/shared/production.env`. An old
+`sslmode=require` value will fail production startup.
+
 The deploy builds all four images before Compose starts them and forces Compose
 to recreate services for each new SHA, even if images and configuration have
 not changed. It verifies the migration exit status, API health,
@@ -61,7 +66,7 @@ The following manual pinned-release procedure remains available for recovery:
 
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
 2. Clone this repository on the VM and check out an **explicit tested commit SHA**, not a moving branch: `git fetch origin && git checkout --detach <commit-sha>`. Record that SHA for rollback.
-3. On a bootstrapped VM, use `/srv/chalktalk/shared/production.env`, not a secret file in the release checkout. Confirm bootstrap has populated it from the production environment settings. Update the GitHub `production` environment's `DATABASE_URL` secret from any `sslmode=require` URL to `sslmode=verify-full`, then rerun bootstrap so this shared file contains the new value **before deploying these images**. `DOMAIN` has no scheme or trailing slash; the Supabase connection values must match its dashboard, with reserved password characters URL-encoded. For a standalone manual installation without bootstrap, prepare an owner-only environment file outside the checkout from [`.env.example`](.env.example), including an independent `AUTH_TOKEN_SECRET` (for example `openssl rand -hex 32`), and substitute its path in the commands below. Export that same path as `COMPOSE_ENV_FILE` so containers receive the environment file, not just Compose interpolation values.
+3. On a bootstrapped VM, use `/srv/chalktalk/shared/production.env`, not a secret file in the release checkout. Confirm bootstrap has populated it from the production environment settings, following the prerequisite above. `DOMAIN` has no scheme or trailing slash; the Supabase connection values must match its dashboard, with reserved password characters URL-encoded. For a standalone manual installation without bootstrap, prepare an owner-only environment file outside the checkout from [`.env.example`](.env.example), including an independent `AUTH_TOKEN_SECRET` (for example `openssl rand -hex 32`), and substitute its path in the commands below. Export that same path as `COMPOSE_ENV_FILE` so containers receive the environment file, not just Compose interpolation values.
 4. Validate without starting containers:
 
    ```sh
