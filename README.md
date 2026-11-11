@@ -73,11 +73,17 @@ Run these commands from the repository root in a Bash-compatible shell (Windows 
 cp deployment/local/.env.example .env
 mkcert -install                    # once per computer; installs a local trust root
 mkdir -p .cert
-mkcert -key-file .cert/localhost-key.pem -cert-file .cert/localhost.pem localhost
 openssl rand -hex 32              # copy the output into AUTH_TOKEN_SECRET in .env
 ```
 
-Edit the ignored `.env` before starting. Replace `AUTH_TOKEN_SECRET`, `METRICS_TOKEN`, and `GRAFANA_ADMIN_PASSWORD` with separate random values, and configure `RESEND_API_KEY` with your team key. Real verification and notification emails will be sent from ChalkTalk's fixed sender. Set `DOMAIN` to the local hostname you will open (default `localhost`); Compose derives the frontend URLs. Use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
+Edit the ignored `.env` before generating the certificate or starting Compose. Replace `AUTH_TOKEN_SECRET`, `METRICS_TOKEN`, and `GRAFANA_ADMIN_PASSWORD` with separate random values, and configure `RESEND_API_KEY` with your team key. Real verification and notification emails will be sent from ChalkTalk's fixed sender. Set `DOMAIN` to the local hostname you will open (default `localhost`); keep it as an unquoted hostname in `.env`. Compose derives the frontend URLs. Then generate a certificate for that hostname:
+
+```bash
+DOMAIN=$(sed -n 's/^DOMAIN=//p' .env)
+mkcert -key-file .cert/localhost-key.pem -cert-file .cert/localhost.pem "$DOMAIN"
+```
+
+Use a valid `.edu` address (including valid subdomains) for signup. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` and `.cert/` are ignored by Git; never commit them.
 
 If reusing an older `.env`, remove its `PORT` entry. Local Compose requires the API's internal port 3000 and rejects `PORT` before migrations; direct API and test runs can still override the port.
 
@@ -87,16 +93,16 @@ If reusing an older `.env`, remove its `PORT` entry. Local Compose requires the 
 docker compose -f deployment/local/compose.yml --env-file .env up --build --wait
 ```
 
-This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, collaboration server, web client, Prometheus, Grafana, Loki, and Alloy. A new database has no users or courses. Create a course in the app or explicitly import one from Piazza; startup never loads sample data. The web client is [https://localhost:5173](https://localhost:5173). The first image build may take a few minutes. Re-running the command preserves named-volume data. For logs, run `docker compose -f deployment/local/compose.yml --env-file .env logs -f api` (or another service).
+This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, collaboration server, web client, Prometheus, Grafana, Loki, and Alloy. A new database has no users or courses. Create a course in the app or explicitly import one from Piazza; startup never loads sample data. With the default `DOMAIN` and `WEB_PORT`, the web client is [https://localhost:5173](https://localhost:5173); otherwise use `https://<DOMAIN>:<WEB_PORT>` with the values from `.env`. The first image build may take a few minutes. Re-running the command preserves named-volume data. For logs, run `docker compose -f deployment/local/compose.yml --env-file .env logs -f api` (or another service).
 
 ### 3. Open the app and verify it
 
 | Local endpoint                                   | Purpose                                           |
 | ------------------------------------------------ | ------------------------------------------------- |
-| [https://localhost:5173](https://localhost:5173) | Web app; Vite proxies `/api` and `/collaboration` |
+| [https://localhost:5173](https://localhost:5173) | Web app with default `DOMAIN` and `WEB_PORT`; Vite proxies `/api` and `/collaboration` |
 | `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store              |
 
-The API is not exposed on a host port; the web proxy exposes its health route at `https://localhost:5173/api/health`. Sign up using a valid `.edu` email address, then follow the verification link delivered to your inbox through Resend. The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
+The API is not exposed on a host port; the web proxy exposes its health route at `https://localhost:5173/api/health` with the defaults. Sign up using a valid `.edu` email address, then follow the verification link delivered to your inbox through Resend. The collaboration WebSocket is reached through `wss://localhost:5173/collaboration` with the defaults. Replace `localhost:5173` in these URLs with your chosen `DOMAIN:WEB_PORT` if changed.
 
 ### Environment variables
 
@@ -162,7 +168,7 @@ docker compose -f deployment/local/compose.yml --env-file .env run --rm migrate 
 docker compose -f deployment/local/compose.yml --env-file .env down                  # stop the stack; keep data
 ```
 
-`docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, confirm `mkcert -install` ran and `.cert/localhost.pem` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
+`docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, confirm `mkcert -install` ran and `.cert/localhost.pem` covers the `DOMAIN` hostname you opened (the filenames remain unchanged for a custom domain). If API startup fails, inspect `migrate` and `api` logs before deleting data.
 
 Run the repository checks before submitting code:
 
