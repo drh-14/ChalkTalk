@@ -4,15 +4,15 @@ This is a **runnable starting point**, not a production-readiness guarantee. It 
 
 ## Topology and images
 
-| Container       | Dockerfile                                       | Role                                                                                                   |
-| --------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `web`           | `deployment/production/Dockerfile.frontend`      | Builds Vite assets and serves them through Caddy; the only published ports are TCP 80/443 and UDP 443. |
-| `api`           | `deployment/production/Dockerfile.api`           | Express API, Threads WebSockets, and authorized file access; includes PDF validation and OCR tools.    |
-| `collaboration` | `deployment/production/Dockerfile.collaboration` | Hocuspocus live-session WebSockets.                                                                    |
-| `worker`        | `deployment/production/Dockerfile.worker`        | Durable jobs, digests, notifications, resource text extraction/OCR, and file cleanup.                  |
-| `migrate`       | Reuses the API image                             | One-shot SQL schema migrations; must finish before app processes start.                                |
+| Container       | Dockerfile                                       | Role                                                                                                       |
+| --------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `web`           | `deployment/production/Dockerfile.frontend`      | Builds Vite assets and serves them through Caddy; publishes the only public ports, TCP 80/443 and UDP 443. |
+| `api`           | `deployment/production/Dockerfile.api`           | Express API, Threads WebSockets, and authorized file access; includes PDF validation and OCR tools.        |
+| `collaboration` | `deployment/production/Dockerfile.collaboration` | Hocuspocus live-session WebSockets.                                                                        |
+| `worker`        | `deployment/production/Dockerfile.worker`        | Durable jobs, digests, notifications, resource text extraction/OCR, and file cleanup.                      |
+| `migrate`       | Reuses the API image                             | One-shot SQL schema migrations; must finish before app processes start.                                    |
 
-Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hocuspocus, so browser cookies and WebSockets use the same HTTPS origin. API, worker, collaboration, and migration have outbound access to Supabase and Resend; none publishes a host port. The frontend image receives only `DOMAIN`, never database or S3 credentials.
+Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hocuspocus, so browser cookies and WebSockets use the same HTTPS origin. API, worker, collaboration, and migration have outbound access to Supabase and Resend; none publishes a host port. The frontend image receives only `DOMAIN`, never database or S3 credentials. Prometheus, Loki, and Alloy stay on the internal Compose network; Grafana publishes only `127.0.0.1:3001` for SSH forwarding.
 
 ## Prepare managed services
 
@@ -41,10 +41,12 @@ environment's `DATABASE_URL` secret to use `sslmode=verify-full` and rerun
 bootstrap to refresh `/srv/chalktalk/shared/production.env`. An old
 `sslmode=require` value will fail production startup.
 
+Set the independent `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` secrets in the GitHub `production` environment and **rerun the manual VM bootstrap after its secret-plumbing PR merges, before deploying this dashboard release**. Bootstrap renders the token into `/srv/chalktalk/shared/production.env` and the password into the separate mode-`0600` `/srv/chalktalk/shared/grafana.env`. Only Grafana loads the latter file. Production Compose fails rather than starting with missing values. Do not print either file or paste either secret into a workflow log.
+
 The deploy builds all four images before Compose starts them and forces Compose
 to recreate services for each new SHA, even if images and configuration have
 not changed. It verifies the migration exit status, API health,
-worker/collaboration process state, migration ledger, a temporary private
+worker/collaboration and monitoring process state, migration ledger, a temporary private
 Supabase Storage object write/read/delete, and one
 Resend-accepted synthetic email to `chalktalk602@gmail.com`. The runner then
 checks public HTTPS web and `/api/health`; only afterward does the VM write
@@ -66,24 +68,25 @@ The following manual pinned-release procedure remains available for recovery:
 
 1. Point your domain's A/AAAA records at the VM. Allow inbound TCP 80/443 and UDP 443; allow outbound HTTPS, DNS, and PostgreSQL to Supabase. Do **not** publish API, Hocuspocus, or database ports.
 2. Clone this repository on the VM and check out an **explicit tested commit SHA**, not a moving branch: `git fetch origin && git checkout --detach <commit-sha>`. Record that SHA for rollback.
-3. On a bootstrapped VM, use `/srv/chalktalk/shared/production.env`, not a secret file in the release checkout. Confirm bootstrap has populated it from the production environment settings, following the prerequisite above. `DOMAIN` has no scheme or trailing slash; the Supabase connection values must match its dashboard, with reserved password characters URL-encoded. For a standalone manual installation without bootstrap, prepare an owner-only environment file outside the checkout from [`.env.example`](.env.example), including an independent `AUTH_TOKEN_SECRET` (for example `openssl rand -hex 32`), and substitute its path in the commands below. Export that same path as `COMPOSE_ENV_FILE` so containers receive the environment file, not just Compose interpolation values.
+3. On a bootstrapped VM, use `/srv/chalktalk/shared/production.env` and the separate `/srv/chalktalk/shared/grafana.env`, not secret files in the release checkout. Confirm bootstrap has populated both from the production environment settings, following the prerequisite above. `DOMAIN` has no scheme or trailing slash; the Supabase connection values must match its dashboard, with reserved password characters URL-encoded. For a standalone manual installation without bootstrap, prepare an owner-only environment file outside the checkout from [`.env.example`](.env.example), including independent `AUTH_TOKEN_SECRET` and `METRICS_TOKEN` values (for example, generate each with `openssl rand -hex 32`). Prepare a second owner-only file from [`grafana.env.example`](grafana.env.example) containing only `GRAFANA_ADMIN_PASSWORD`, also randomly generated. Substitute both paths in the commands below: export the first as `COMPOSE_ENV_FILE` so application containers receive it, and the second as `GRAFANA_ENV_FILE` so only Grafana receives the password.
 4. Validate without starting containers:
 
    ```sh
    export COMPOSE_ENV_FILE=/srv/chalktalk/shared/production.env
-   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml config --quiet
-   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml config --services
+   export GRAFANA_ENV_FILE=/srv/chalktalk/shared/grafana.env
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml config --quiet
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml config --services
    ```
 
-   The expected services are `migrate`, `api`, `worker`, `collaboration`, and `web`. No PostgreSQL, SeaweedFS, SMTP, or Mailpit service should appear.
+   The expected services are `migrate`, `api`, `worker`, `collaboration`, `web`, `prometheus`, `loki`, `alloy`, and `grafana`. No PostgreSQL, SeaweedFS, SMTP, or Mailpit service should appear. Confirm Docker Engine is version 28 or newer with `docker version --format '{{.Server.Version}}'` before the manual `up`; the automatic deploy script enforces this because older releases can expose loopback-published ports to hosts on the same network.
 
 5. Build all four production images and start the stack:
 
    ```sh
-   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml build web api collaboration worker
-   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml up -d
-   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml ps
-   docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml logs --tail=100 migrate api web
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml build web api collaboration worker
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml up -d
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml ps
+   docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml logs --tail=100 migrate api web
    curl -fsS https://YOUR_DOMAIN/api/health
    ```
 
@@ -91,13 +94,15 @@ The following manual pinned-release procedure remains available for recovery:
 
 ## Required environment
 
-| Variable                                                                                                                                                  | Purpose                                                                                           |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.                                      |
-| `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with exactly one `sslmode=verify-full`.                                   |
-| `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                                                  |
-| `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random secret for HMAC-hashing opaque authentication tokens (at least 32 characters). |
-| `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.                                  |
+| Variable                                                                                                                                                  | Purpose                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `DOMAIN`                                                                                                                                                  | Public HTTPS origin, including API and collaboration routes.                                        |
+| `DATABASE_URL`                                                                                                                                            | Supabase PostgreSQL URL with exactly one `sslmode=verify-full`.                                     |
+| `SUPABASE_STORAGE_ENDPOINT`, `SUPABASE_STORAGE_BUCKET`, `SUPABASE_STORAGE_REGION`, `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Private Supabase Storage S3-compatible settings.                                                    |
+| `AUTH_TOKEN_SECRET`                                                                                                                                       | Independent random secret for HMAC-hashing opaque authentication tokens (at least 32 characters).   |
+| `RESEND_API_KEY`                                                                                                                                          | Resend HTTPS sending-only key; sender is fixed in API constants.                                    |
+| `METRICS_TOKEN`                                                                                                                                           | Independent random token (at least 32 characters) for private Prometheus scrapes.                   |
+| `GRAFANA_ADMIN_PASSWORD`                                                                                                                                  | Independent random Grafana admin login password (at least 32 characters), in Grafana-only env file. |
 
 The production images and Compose set `NODE_ENV=production`; there is no custom mode flag in the env file. Production accepts only the Supabase database hosts above and same-project S3 endpoints `https://<project-ref>.storage.supabase.co/storage/v1/s3` (preferred) or `https://<project-ref>.supabase.co/storage/v1/s3`, with no custom port, credentials, query, or fragment. It rejects missing or malformed managed values instead of falling back to a local endpoint or ambient S3 credentials; it also rejects SMTP selection. `RESEND_API_BASE_URL`, if set, must be the official `https://api.resend.com` origin; omit it for normal delivery. Remove any old `PROD`, `PRODUCTION`, `LOCAL_DATABASE`, or `LOCAL_FILE_STORE` settings. `TRUST_PROXY_HOPS=1` is set by Compose; Caddy must remain the **only public entry point**, or per-IP rate limits can trust a spoofed proxy header.
 
@@ -105,13 +110,23 @@ If upgrading an earlier production env file, rename its five `S3_*` entries to t
 
 ## Operate and verify
 
-The current production Compose stack runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoint, or event spool. Staging observability secrets through [VM bootstrap](ansible/README.md) does not enable monitoring on its own. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy.
+Production runs Prometheus, Loki, Alloy, and Grafana with persistent named volumes. Prometheus scrapes token-protected API, worker, and collaboration metrics. Alloy reads only sanitized API/worker NDJSON spools, without Docker-socket access; raw Caddy and collaboration logs stay in bounded Docker stdout. Grafana has no public Caddy route. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy. Loki retains logs for seven days and Prometheus retains metrics for fifteen days. Loki's age limit does **not** cap bytes, so monitor free disk space on the VM.
+
+To open Grafana, run this on your own computer, keeping the SSH session open:
+
+```sh
+ssh -N -L 3001:127.0.0.1:3001 ubuntu@YOUR_VM_HOST
+```
+
+Then visit `http://127.0.0.1:3001` and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD` from the production secrets. The tunnel uses the existing SSH port 22; do not open port 3001 in UFW or the OVHcloud network firewall. Prometheus and Loki have no host-published ports.
+
+`GRAFANA_ADMIN_PASSWORD` initializes the admin login only when the `grafana-data` volume is fresh. Once Grafana has started, its account database persists in that volume: changing the GitHub secret, rerunning bootstrap to rerender `grafana.env`, or recreating the container alone does **not** rotate the login. To rotate it, while signed in over the SSH tunnel, use **Profile → Change password** in Grafana to set a new strong password. Update the GitHub `production` environment secret `GRAFANA_ADMIN_PASSWORD` to that same value, then rerun the manual VM bootstrap to refresh the private `grafana.env`. Over the tunnel, sign out and verify that the old password fails and the new password succeeds. Do not put either password on a shell command line or in logs.
 
 Run these commands from the pinned release checkout with `COMPOSE_ENV_FILE` exported to the same environment-file path used by `--env-file` above.
 
 - `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
 - `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml restart api worker collaboration`
-- `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.
+- `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml down` stops the stack. The managed data persists in Supabase; named volumes retain Caddy certificates, telemetry, and log-spool state. Do not run `down -v` unless you intend to remove those volumes.
 - Before launch, test authenticated signup, a post, a private resource upload/download/delete, a live collaboration session, and an accepted Resend message through the public domain. Confirm restricted files remain inaccessible to unauthorized users.
 - If Supabase DB or Storage is unavailable, expect API or worker failures; monitor logs and retry after service restoration. A failed migration must be repaired before starting the app.
 

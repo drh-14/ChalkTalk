@@ -297,7 +297,9 @@ export function loadEnvironment(
     throw new Error("AUTH_TOKEN_SECRET must contain at least 32 characters");
   }
 
-  const observabilityEnabled = !production && Boolean(source.METRICS_TOKEN);
+  const observabilityEnabled = production || Boolean(source.METRICS_TOKEN);
+  if (production && !source.METRICS_TOKEN)
+    throw new Error("METRICS_TOKEN is required when NODE_ENV=production");
   if (observabilityEnabled && source.METRICS_TOKEN!.length < 32)
     throw new Error(
       "METRICS_TOKEN must contain at least 32 characters when observability is enabled",

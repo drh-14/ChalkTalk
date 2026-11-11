@@ -24,6 +24,12 @@ jobs:
       - name: Verify production Node images load the pinned Supabase CA
         run: bash deployment/production/tests/verify-ca-images.sh
 
+      - name: Verify private production observability topology
+        run: node --test deployment/production/tests/observability.test.mjs
+
+      - name: Verify running production monitoring services
+        run: node --test deployment/production/tests/observability.runtime.test.mjs
+
   supabase-integration:
     runs-on: ubuntu-26.04
     timeout-minutes: 35

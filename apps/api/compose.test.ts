@@ -74,6 +74,10 @@ function renderProductionCompose() {
       env: {
         ...process.env,
         COMPOSE_ENV_FILE: ".env.example",
+        GRAFANA_ENV_FILE: resolve(
+          process.cwd(),
+          "deployment/production/grafana.env.example",
+        ),
       },
     },
   );
@@ -336,12 +340,16 @@ describe("application Compose worker", () => {
 });
 
 describe("production Compose", () => {
-  it("uses only application services with production validation and Resend", () => {
+  it("uses application and private monitoring services with production validation and Resend", () => {
     const services = renderProductionCompose().services;
     expect(Object.keys(services).sort()).toEqual([
+      "alloy",
       "api",
       "collaboration",
+      "grafana",
+      "loki",
       "migrate",
+      "prometheus",
       "web",
       "worker",
     ]);
@@ -365,6 +373,13 @@ describe("production Compose", () => {
       expect(services[name].environment).not.toHaveProperty("S3_ENDPOINT");
     }
     expect(services.web.environment).not.toHaveProperty("RESEND_API_KEY");
+    for (const name of ["migrate", "api", "worker", "collaboration"])
+      expect(services[name].environment).not.toHaveProperty(
+        "GRAFANA_ADMIN_PASSWORD",
+      );
+    expect(services.grafana.environment).toHaveProperty(
+      "GRAFANA_ADMIN_PASSWORD",
+    );
     expect(services.api.ports).toBeUndefined();
   });
 });
