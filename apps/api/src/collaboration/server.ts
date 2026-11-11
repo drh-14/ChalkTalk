@@ -8,6 +8,8 @@ import {
   collectDefaultMetrics,
 } from "@prometheus-io/client";
 import { authorized } from "../observability/index.js";
+import { instrumentPool } from "../database/pool.js";
+import { registerDatabaseMetrics } from "../database/metrics.js";
 import * as Y from "yjs";
 import {
   COLLABORATION_EVENTS_CHANNEL,
@@ -107,6 +109,7 @@ async function boundedQuery<Row extends pg.QueryResultRow = pg.QueryResultRow>(
 export function createCollaborationServer(options: CollaborationServerOptions) {
   const { pool } = options;
   const metrics = createMetrics(() => server.hocuspocus.documents);
+  if (options.metricsToken) instrumentPool(pool, metrics.databaseObserver);
   const persisting = new Map<string, Promise<void>>();
   const failedStores = new Set<string>();
   const processingConnections = new Map<string, Map<string, Connection>>();
@@ -828,6 +831,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
 function createMetrics(documents: () => Map<string, Document>) {
   const registry = new Registry();
   collectDefaultMetrics({ register: registry });
+  const databaseObserver = registerDatabaseMetrics(registry);
   new Gauge({
     name: "chalktalk_collaboration_connections",
     help: "Clients connected to live sessions",
@@ -849,6 +853,7 @@ function createMetrics(documents: () => Map<string, Document>) {
   });
   return {
     registry,
+    databaseObserver,
     storeDuration: new Histogram({
       name: "chalktalk_collaboration_store_duration_seconds",
       help: "Time to persist a live session document",
