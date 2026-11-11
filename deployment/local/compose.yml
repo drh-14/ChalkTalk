@@ -203,7 +203,6 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
-      - caddy-config:/config
     depends_on:
       web:
         condition: service_healthy
@@ -304,7 +303,6 @@ volumes:
   collaboration-node-modules:
   web-node-modules:
   caddy-data:
-  caddy-config:
   api-log-spool:
   worker-log-spool:
   prometheus-data:
