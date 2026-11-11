@@ -98,6 +98,11 @@ jobs:
           sh deployment/local/tests/test-default-local-compose.sh
           docker compose -f deployment/local/compose.yml --env-file .env config --quiet
 
+      - name: Install browser-test dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium --only-shell
+
       - name: Verify legacy PORT startup preflight
         run: sh deployment/local/tests/test-local-legacy-port.sh
 
@@ -122,11 +127,6 @@ jobs:
         env:
           WEB_PORT: 5174
         run: sh deployment/local/tests/test-caddy-gateway.sh
-
-      - name: Install browser-test dependencies
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium --only-shell
 
       - name: Verify local gateway in a real browser
         env:
