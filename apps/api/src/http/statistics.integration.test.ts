@@ -18,6 +18,7 @@ const ids = {
   course: uuidv7(),
   otherCourse: uuidv7(),
   exportCourse: uuidv7(),
+  importedCourse: uuidv7(),
   student: uuidv7(),
   quiet: uuidv7(),
   staff: uuidv7(),
@@ -95,6 +96,14 @@ integration("course statistics API", () => {
         ids.otherCourse,
         ids.exportCourse,
       ],
+    );
+    await pool.query(
+      "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,'Imported Calculus','DEFGHIJK')",
+      [ids.importedCourse, ids.org, ids.staff],
+    );
+    await pool.query(
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'ta')",
+      [ids.importedCourse, ids.student, ids.staff],
     );
   });
   afterAll(async () => {
@@ -358,6 +367,144 @@ integration("course statistics API", () => {
       expect(student.status).toBe(403);
       expect(student.body.error.code).toBe("permission_denied");
     }
+  });
+
+  it("includes imported pre-creation history consistently in course-to-date summary, roster, and CSVs", async () => {
+    const courseId = ids.importedCourse;
+    const base = `/api/v1/courses/${courseId}/statistics`;
+    const retainedDay = new Date(Date.now() - 100 * 86400000);
+    const questionAt = new Date(retainedDay.getTime() + 86400000);
+    const answerAt = new Date(questionAt.getTime() + 3600000);
+    const endorsementAt = new Date(answerAt.getTime() + 3600000);
+    const retainedDate = retainedDay.toISOString().slice(0, 10);
+    const questionDate = questionAt.toISOString().slice(0, 10);
+    const postId = uuidv7();
+    const answerId = uuidv7();
+    await pool.query(
+      "INSERT INTO question_creation_daily_counts (course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1),($1,$2,$4,1)",
+      [courseId, ids.student, retainedDate, questionDate],
+    );
+    await pool.query(
+      "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown,created_at) VALUES ($1,$2,$3,'question','Imported question','Body',$4)",
+      [postId, courseId, ids.student, questionAt],
+    );
+    await pool.query(
+      "INSERT INTO answers (id,course_id,post_id,kind,body_markdown,created_at,created_by_user_id,edit_role_floor) VALUES ($1,$2,$3,'student','Imported answer',$4,$5,'student')",
+      [answerId, courseId, postId, answerAt, ids.student],
+    );
+    await pool.query(
+      "INSERT INTO answer_contribution_events (course_id,answer_id,user_id,contributed_at) VALUES ($1,$2,$3,$4)",
+      [courseId, answerId, ids.student, answerAt],
+    );
+    await pool.query(
+      "INSERT INTO answer_endorsement_events (course_id,answer_id,endorsed_by_user_id,endorsed_at) VALUES ($1,$2,$3,$4)",
+      [courseId, answerId, ids.staff, endorsementAt],
+    );
+    await pool.query(
+      "INSERT INTO post_view_events (id,course_id,post_id,user_id,viewed_at,viewed_on) VALUES ($1,$2,$3,$4,$5,$6)",
+      [uuidv7(), courseId, postId, ids.student, answerAt, questionDate],
+    );
+
+    const summary = await read(ids.staff, `${base}?period=course_to_date`);
+    expect(summary.status).toBe(200);
+    expect(summary.body.data.dailyActivity[0]).toEqual({
+      date: retainedDate,
+      questionsCreated: 0,
+      answersCreated: 0,
+      postsViewed: 0,
+    });
+    expect(summary.body.data.dailyActivity).toContainEqual({
+      date: questionDate,
+      questionsCreated: 1,
+      answersCreated: 1,
+      postsViewed: 1,
+    });
+    expect(summary.body.data.dailyActivity).toHaveLength(101);
+    expect(summary.body.data.postsViewed).toBe(1);
+    expect(summary.body.data.averageResponseTimeSeconds).toBe(3600);
+
+    const students = await read(
+      ids.staff,
+      `${base}/students?period=course_to_date`,
+    );
+    expect(students.status).toBe(200);
+    expect(students.body.data).toContainEqual({
+      user: { id: ids.student, displayName: "Student" },
+      questionsCreated: 2,
+      answersContributed: 1,
+      postsViewed: 1,
+    });
+    const daily = await read(
+      ids.staff,
+      `${base}/export/daily?period=course_to_date`,
+    );
+    expect(daily.status).toBe(200);
+    expect(daily.text).toContain(`${retainedDate},0,0,0\r\n`);
+    expect(daily.text).toContain(`${questionDate},1,1,1\r\n`);
+    expect(daily.text.trimEnd().split("\r\n")).toHaveLength(102);
+    const roster = await read(
+      ids.staff,
+      `${base}/export/students?period=course_to_date`,
+    );
+    expect(roster.status).toBe(200);
+    expect(roster.text).toContain(`${ids.student},Student,2,1,1\r\n`);
+
+    for (const period of ["7d", "30d"] as const) {
+      const fixed = await read(ids.staff, `${base}?period=${period}`);
+      expect(fixed.status).toBe(200);
+      expect(fixed.body.data.dailyActivity).toHaveLength(
+        period === "7d" ? 7 : 30,
+      );
+      expect(fixed.body.data.postsViewed).toBe(0);
+      expect(fixed.body.data.averageResponseTimeSeconds).toBeNull();
+      const fixedStudent = await read(
+        ids.staff,
+        `${base}/students?period=${period}`,
+      );
+      expect(fixedStudent.body.data[0]).toMatchObject({
+        questionsCreated: 0,
+        answersContributed: 0,
+        postsViewed: 0,
+      });
+    }
+    expect(
+      (await read(ids.student, `${base}?period=course_to_date`)).status,
+    ).toBe(403);
+  });
+
+  it("serves a multi-year imported course-to-date range without changing the roster contract", async () => {
+    const courseId = uuidv7();
+    const retainedDate = new Date(Date.now() - 6 * 365 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    await pool.query(
+      "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,'Long history','EFGHIJKL')",
+      [courseId, ids.org, ids.staff],
+    );
+    await pool.query(
+      "INSERT INTO course_memberships (course_id,user_id,role) VALUES ($1,$2,'student'),($1,$3,'ta')",
+      [courseId, ids.student, ids.staff],
+    );
+    await pool.query(
+      "INSERT INTO question_creation_daily_counts (course_id,user_id,created_on,question_count) VALUES ($1,$2,$3,1)",
+      [courseId, ids.student, retainedDate],
+    );
+    const base = `/api/v1/courses/${courseId}/statistics`;
+    const summary = await read(ids.staff, `${base}?period=course_to_date`);
+    expect(summary.status).toBe(200);
+    expect(summary.body.data.dailyActivity[0].date).toBe(retainedDate);
+    expect(summary.body.data.dailyActivity.length).toBeGreaterThan(2000);
+    const students = await read(
+      ids.staff,
+      `${base}/students?period=course_to_date`,
+    );
+    expect(students.status).toBe(200);
+    expect(students.body.data).toContainEqual({
+      user: { id: ids.student, displayName: "Student" },
+      questionsCreated: 1,
+      answersContributed: 0,
+      postsViewed: 0,
+    });
   });
 
   it("keeps first endorsement response time after an answer is edited", async () => {

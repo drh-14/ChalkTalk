@@ -6578,7 +6578,9 @@ paths:
         response time includes questions that first received an endorsed answer during
         the selected period and measures the elapsed time from question creation to
         creation of that first-endorsed answer. Recorded views are deduplicated by
-        member, post, and UTC date; view history begins at deployment.
+        member, post, and UTC date; view history begins at deployment. The
+        course_to_date period starts on the earlier UTC date of course creation
+        or the earliest retained statistics-bearing activity, including imports.
       operationId: getCourseStatistics
       security:
         - session_cookie: []
@@ -6713,6 +6715,7 @@ paths:
       tags:
         - Statistics
       summary: Download zero-filled UTC daily statistics as CSV.
+      description: The course_to_date export includes retained imported activity before course creation and matches the JSON summary's UTC date range.
       operationId: exportDailyStatistics
       security:
         - session_cookie: []
@@ -6787,6 +6790,7 @@ paths:
       tags:
         - Statistics
       summary: Download the complete current-student roster and statistics as CSV.
+      description: The course_to_date export includes retained imported attribution before course creation and matches the JSON student statistics period.
       operationId: exportStudentStatistics
       security:
         - session_cookie: []
@@ -7036,7 +7040,8 @@ paths:
         List each student's question, answer, and post-view activity during
         the selected period. An answer contribution counts once per distinct answer
         with a recorded contribution event. Answer creation and content-changing
-        edits record contribution events; a no-op edit does not.
+        edits record contribution events; a no-op edit does not. The course_to_date
+        period includes retained imported activity before course creation.
       operationId: listStudentStatistics
       security:
         - session_cookie: []

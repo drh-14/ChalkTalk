@@ -24,7 +24,7 @@ Retrieves daily activity, recorded post views, and endorsed-answer response time
 
 #### Query parameters
 
-`period` (enum: 7d, 30d, course_to_date, optional; default 30d, values 7d, 30d, course_to_date): Aggregation period.
+`period` (enum: 7d, 30d, course_to_date, optional; default 30d, values 7d, 30d, course_to_date): Aggregation period. `course_to_date` starts on the earlier UTC date of course creation or the earliest retained statistics-bearing activity, so imported history predating course creation is included.
 
 #### Request body
 
@@ -316,6 +316,8 @@ The `hours` example is shortened; each response holds 7 lists of 24 counts.
 
 Lists current student members, including those with zero activity, and their question, answer, and recorded post-view activity during the selected period. Question counts survive later post soft deletion through a per-student UTC-day count with no post link. Active questions at deployment are backfilled; questions deleted before deployment are not reconstructed. Account deletion removes that user's question buckets. An answer contribution counts once per distinct answer with a recorded contribution event during the period. Answer creation and content-changing edits record contribution events; a no-op edit does not. Historical activity remains in course totals after membership or role changes but does not create a roster row.
 
+For `course_to_date`, the period includes retained imported activity on UTC dates before the ChalkTalk course was created.
+
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
 **Access:** Instructor or TA.
@@ -434,6 +436,8 @@ curl --request GET '/api/v1/courses/course_123/statistics/students' \
 
 Downloads the selected period's zero-filled UTC daily activity as a server-generated CSV. Counts follow the course summary above, including activity retained after later soft deletion.
 
+For `course_to_date`, the CSV uses the same historical start date as the JSON course summary, including imported activity before course creation.
+
 **Authentication:** Session cookie. **Access:** Current instructor or TA.
 
 **Query:** `period` (`7d`, `30d`, or `course_to_date`; optional, defaults to `30d`).
@@ -451,6 +455,8 @@ The UTF-8 CSV uses CRLF records and columns `date,questions_created,answers_crea
 ### **`GET /api/v1/courses/{courseId}/statistics/export/students`**
 
 Downloads the complete current non-deleted student roster and selected-period activity as a server-generated CSV. It is not limited by the browser's loaded pages. Current students with zero activity are included; historical activity and privacy rules follow the student statistics endpoint above.
+
+For `course_to_date`, historical imported question and answer attribution predating course creation is included for current students.
 
 **Authentication:** Session cookie. **Access:** Current instructor or TA.
 

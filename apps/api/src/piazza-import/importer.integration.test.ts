@@ -4,6 +4,7 @@ import { AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { PostService } from "../posts/service.js";
+import { StatisticsService } from "../statistics/service.js";
 import { convertExport } from "./convert.js";
 import { piazzaFixture } from "./fixture.js";
 import { importPiazzaCourse, piazzaEmail } from "./importer.js";
@@ -185,6 +186,18 @@ integration("Piazza import", () => {
       [summary.courseId],
     );
     expect(stats.rows[0]).toEqual({ questions: 2, contributions: 3 });
+    const importedStatistics = await new StatisticsService(pool).summary(
+      summary.courseId,
+      ownerId,
+      "course_to_date",
+    );
+    expect(importedStatistics.dailyActivity[0]?.date).toBe("2026-09-02");
+    expect(importedStatistics.dailyActivity).toContainEqual({
+      date: "2026-09-02",
+      questionsCreated: 1,
+      answersCreated: 2,
+      postsViewed: 0,
+    });
   });
 
   it("lets imported people log in only with the demo password", async () => {
