@@ -95,26 +95,25 @@ This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, c
 | ------------------------------------------------ | ------------------------------------------------- |
 | [https://localhost:5173](https://localhost:5173) | Web app; Vite proxies `/api` and `/collaboration` |
 | `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store              |
-| `http://localhost:3000/health`                   | API health, **direct application mode only**      |
 
-In full Compose mode, the API is not exposed on a host port; the web proxy exposes its health route at `https://localhost:5173/api/health`. Sign up using a valid `.edu` email address, then follow the verification link delivered to your inbox through Resend. The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
+The API is not exposed on a host port; the web proxy exposes its health route at `https://localhost:5173/api/health`. Sign up using a valid `.edu` email address, then follow the verification link delivered to your inbox through Resend. The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
 
 ### Environment variables
 
 Copying `deployment/local/.env.example` provides the local defaults. The table identifies what to edit and which settings Compose deliberately overrides inside its containers.
 
-| Variable(s)                                                                         | Local purpose / required change                                                                                                                                                                                                                                                                           |
-| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AUTH_TOKEN_SECRET`                                                                 | **Required:** replace the template with a random secret of at least 32 characters; used to HMAC-hash and verify opaque authentication-related tokens.                                                                                                                                                     |
-| `DOMAIN`                                                                            | Local frontend hostname (default `localhost`). Compose derives `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` as `https://<DOMAIN>:<WEB_PORT>`; the API retains lower-level overrides for direct/test modes.                                                                                                  |
-| `DATABASE_URL`                                                                      | Local PostgreSQL connection. Compose overrides the hostname with its internal `postgres` service.                                                                                                                                                                                                         |
-| `EMAIL_PROVIDER`, `RESEND_API_KEY`, `RESEND_API_BASE_URL`                           | Local Compose selects Resend. Set a sending-only API key; the sender is fixed in code. `RESEND_API_BASE_URL` is only for isolated mocked-network tests. Production selects Resend through `NODE_ENV=production`.                                                                                          |
-| `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Direct mode uses local SeaweedFS at `127.0.0.1:8333`. Full Compose sets its internal endpoint and credentials from `SEAWEEDFS_ACCESS_KEY_ID` / `SEAWEEDFS_SECRET_ACCESS_KEY`; these are **local object-store keys**, not AWS keys. Keep the direct-mode S3 keys in sync if you change the SeaweedFS keys. |
-| `COLLABORATION_PORT`, `COLLABORATION_PUBLIC_URL`                                    | Direct-mode WebSocket port (3100) and browser WebSocket URL. The API uses its internal default port 3000; the public WebSocket URL defaults to the frontend HTTPS host plus `/collaboration`.                                                                                                             |
-| `VITE_TLS_KEY_PATH`, `VITE_TLS_CERT_PATH`                                           | Direct Vite TLS files generated above. Full Compose mounts `.cert/` and supplies container paths.                                                                                                                                                                                                         |
-| `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`                        | Optional semantic search provider. Do not put the key in browser/Vite variables; private post text and search queries are sent to that provider. See [Optional semantic search](#optional-semantic-search).                                                                                               |
-| `METRICS_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`                           | Required local monitoring. Set **different** random secrets for the token and Grafana password. Default Grafana host port is 3001.                                                                                                                                                                        |
-| `COLLABORATION_IDLE_END_MINUTES`, `LOG_SPOOL_DIRECTORY`                             | Live-session idle timeout and observability log location. API rate limits are fixed in `apps/api/src/config/constants.ts` rather than set through environment variables.                                                                                                                                  |
+| Variable(s)                                                                         | Local purpose / required change                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AUTH_TOKEN_SECRET`                                                                 | **Required:** replace the template with a random secret of at least 32 characters; used to HMAC-hash and verify opaque authentication-related tokens.                                                                                                |
+| `DOMAIN`                                                                            | Local frontend hostname (default `localhost`). Compose derives `FRONTEND_ORIGINS` and `FRONTEND_BASE_URL` as `https://<DOMAIN>:<WEB_PORT>`; the API retains lower-level overrides for direct/test modes.                                             |
+| `DATABASE_URL`                                                                      | Local PostgreSQL connection. Compose overrides the hostname with its internal `postgres` service.                                                                                                                                                    |
+| `EMAIL_PROVIDER`, `RESEND_API_KEY`, `RESEND_API_BASE_URL`                           | Local Compose selects Resend. Set a sending-only API key; the sender is fixed in code. `RESEND_API_BASE_URL` is only for isolated mocked-network tests. Production selects Resend through `NODE_ENV=production`.                                     |
+| `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Compose uses SeaweedFS internally and reads its local credentials from `SEAWEEDFS_ACCESS_KEY_ID` / `SEAWEEDFS_SECRET_ACCESS_KEY`. The host-facing `S3_ENDPOINT` in `.env` is for local tooling; these are **local object-store keys**, not AWS keys. |
+| `COLLABORATION_PORT`, `COLLABORATION_PUBLIC_URL`                                    | Collaboration's internal WebSocket port (3100) and browser WebSocket URL. The API uses its internal default port 3000; the public WebSocket URL defaults to the frontend HTTPS host plus `/collaboration`.                                           |
+| `VITE_TLS_KEY_PATH`, `VITE_TLS_CERT_PATH`                                           | Vite TLS files generated above; Compose mounts `.cert/` and supplies container paths.                                                                                                                                                                |
+| `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`                        | Optional semantic search provider. Do not put the key in browser/Vite variables; private post text and search queries are sent to that provider. See [Optional semantic search](#optional-semantic-search).                                          |
+| `METRICS_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`                           | Required local monitoring. Set **different** random secrets for the token and Grafana password. Default Grafana host port is 3001.                                                                                                                   |
+| `COLLABORATION_IDLE_END_MINUTES`, `LOG_SPOOL_DIRECTORY`                             | Live-session idle timeout and observability log location. API rate limits are fixed in `apps/api/src/config/constants.ts` rather than set through environment variables.                                                                             |
 
 Resource OCR is limited to 200 PDF pages needing OCR per file and uses English Tesseract data, as fixed in `apps/api/src/config/constants.ts`; it does not use environment variables.
 
@@ -126,12 +125,16 @@ For a **manual live Resend acceptance check**, start a disposable PostgreSQL ser
 
 ### Importing a Piazza class
 
-To populate a new installation with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to:
+To populate a new installation with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to. Enter the Piazza password without putting it in shell history:
 
 ```bash
+export PIAZZA_EMAIL=you@school.edu
+read -rsp 'Piazza password: ' PIAZZA_PASSWORD; printf '\n'
+export PIAZZA_PASSWORD
 docker compose -f deployment/local/compose.yml --env-file .env exec -T \
-  -e PIAZZA_EMAIL=you@school.edu -e PIAZZA_PASSWORD=... \
-  api npm run db:import:piazza -- --owner you@school.edu --class "CSE 416" --save piazza-cse416.json
+  -e PIAZZA_EMAIL -e PIAZZA_PASSWORD api \
+  npm run db:import:piazza -- --owner "$PIAZZA_EMAIL" --class "CSE 416" --save piazza-cse416.json
+unset PIAZZA_PASSWORD
 ```
 
 Run this after the stack is up. The API container already has the database connection and npm dependencies; `--save` writes into the repository's bind mount. To re-import a saved export, run `docker compose -f deployment/local/compose.yml --env-file .env exec -T api npm run db:import:piazza -- --owner you@school.edu --from piazza-cse416.json`.
