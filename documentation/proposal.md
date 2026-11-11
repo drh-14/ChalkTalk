@@ -46,7 +46,7 @@ ChalkTalk's complexity comes from four areas of engineering difficulty.
 
 - **Search and retrieval**: Keyword matching alone is insufficient at scale; search must reliably surface existing answers and related questions in a large, growing course, addressing one of the most consistently reported failures of existing platforms.
 
-- **Document processing**: Course resources such as lecture notes and slides must be processed so that specific sections are individually searchable and directly referenceable, not just uploaded as opaque attachments.
+- **Document processing**: Course resources such as lecture notes and slides are processed for whole-file text search, with relevant excerpts in results, rather than treated as opaque attachments.
 
 - **Knowledge surfacing over time**: The system must track engagement and content changes to identify information that matters as a course progresses.
 
