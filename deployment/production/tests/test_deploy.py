@@ -126,6 +126,7 @@ esac
         self.assertEqual((self.root / "shared" / "pending.sha").read_text().strip(), SHA)
         self.assertIn("Release started", result.stdout)
         self.assertEqual(self.run_script("finish").returncode, 0)
+        self.assertEqual((self.root / "shared" / "deployed.sha").read_text().strip(), SHA)
 
     def test_stale_success_marker_restores_release_without_resending_email(self):
         self.assertEqual(self.run_script("stage").returncode, 0)
