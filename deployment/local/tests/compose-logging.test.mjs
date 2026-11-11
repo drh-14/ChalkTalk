@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import process from "node:process";
+import { URL } from "node:url";
 import { test } from "node:test";
 
 const config = JSON.parse(
@@ -16,7 +18,7 @@ const config = JSON.parse(
       "json",
     ],
     {
-      cwd: new URL("../..", import.meta.url),
+      cwd: new URL("../../..", import.meta.url),
       env: {
         ...process.env,
         COMPOSE_ENV_FILE: "deployment/local/.env.example",
@@ -72,7 +74,7 @@ test("Grafana queries Loki logs and keeps the existing dashboard UID", async () 
   const { readFileSync } = await import("node:fs");
   const dashboard = JSON.parse(
     readFileSync(
-      new URL("./grafana/dashboards/api.json", import.meta.url),
+      new URL("../observability/grafana/dashboards/api.json", import.meta.url),
       "utf8",
     ),
   );

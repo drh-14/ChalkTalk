@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { test } from "node:test";
 
 const series = [
@@ -32,7 +32,10 @@ const series = [
 
 test("dashboard PromQL computes completed-request indicators", async () => {
   const dashboard = JSON.parse(
-    readFileSync(new URL("./api.json", import.meta.url), "utf8"),
+    readFileSync(
+      new URL("../observability/grafana/dashboards/api.json", import.meta.url),
+      "utf8",
+    ),
   );
   const panels = new Map(dashboard.panels.map((panel) => [panel.id, panel]));
   const expected = new Map([
