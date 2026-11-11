@@ -18,17 +18,21 @@ test("local HTTPS gateway serves the login page, API health, and Vite HMR WSS", 
       body: '{"error":"unauthorized"}',
     }),
   );
-  const sockets = [];
-  page.on("websocket", (socket) => sockets.push(socket.url()));
+  const gatewayWebSocketOrigin = new URL(
+    gateway.replace(/^https:/, "wss:"),
+  ).origin;
+  const connectedSockets = new Set();
+  page.on("websocket", (socket) => {
+    if (new URL(socket.url()).origin !== gatewayWebSocketOrigin) return;
+    socket.on("framereceived", ({ payload }) => {
+      if (payload === '{"type":"connected"}') connectedSockets.add(socket.url());
+    });
+  });
   await page.goto(gateway);
   await expect(
     page.getByRole("heading", { name: "Sign in to ChalkTalk" }),
   ).toBeVisible();
-  await expect
-    .poll(() =>
-      sockets.some((url) => url.startsWith(gateway.replace(/^https:/, "wss:"))),
-    )
-    .toBe(true);
+  await expect.poll(() => connectedSockets.size).toBeGreaterThan(0);
   const health = await page.request.get(`${gateway}/api/health`);
   expect(health.status()).toBe(200);
   expect(await health.json()).toEqual({ status: "ok" });
