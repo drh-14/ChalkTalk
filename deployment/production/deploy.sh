@@ -112,7 +112,7 @@ for service in worker collaboration; do
 done
 stage_phase='provider smoke'
 if [[ "$skip_provider_smoke" == false ]]; then
-  compose run --rm --no-deps api node apps/api/dist/deployment/smoke.js "$sha"
+  compose run --rm --no-deps api node apps/api/dist/deployment/smoke.js "$sha" < /dev/null
 fi
 stage_phase='pending release marker'
 if [[ "$skip_provider_smoke" == false ]]; then
