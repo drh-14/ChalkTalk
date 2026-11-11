@@ -65,7 +65,7 @@ describe("authentication environment", () => {
         ...base,
         NODE_ENV: "production",
         DATABASE_URL:
-          "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=require",
+          "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
         RESEND_API_KEY: "re_test",
         EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
       }).production,
@@ -112,7 +112,7 @@ describe("authentication environment", () => {
         }),
       ).toThrow("DATABASE_URL");
   });
-  it("requires one TLS-enforcing sslmode for managed database connections", () => {
+  it("requires one hostname-verifying sslmode for managed database connections", () => {
     const databaseUrl =
       "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk";
     const production = {
@@ -126,8 +126,10 @@ describe("authentication environment", () => {
       "?sslmode=disable",
       "?sslmode=allow",
       "?sslmode=prefer",
-      "?sslmode=require&sslmode=disable",
-      "?sslmode=disable&sslmode=require",
+      "?sslmode=require",
+      "?sslmode=verify-ca",
+      "?sslmode=verify-full&sslmode=disable",
+      "?sslmode=disable&sslmode=verify-full",
     ])
       expect(() =>
         loadEnvironment({
@@ -136,17 +138,38 @@ describe("authentication environment", () => {
         }),
       ).toThrow("sslmode");
 
-    for (const sslmode of ["require", "verify-ca", "verify-full"])
-      expect(
-        loadEnvironment({
-          ...production,
-          DATABASE_URL: `${databaseUrl}?sslmode=${sslmode}`,
-        }).databaseUrl,
-      ).toBe(`${databaseUrl}?sslmode=${sslmode}`);
+    expect(
+      loadEnvironment({
+        ...production,
+        DATABASE_URL: `${databaseUrl}?sslmode=verify-full`,
+      }).databaseUrl,
+    ).toBe(`${databaseUrl}?sslmode=verify-full`);
 
     expect(
       loadEnvironment({ ...base, DATABASE_URL: databaseUrl }).databaseUrl,
     ).toBe(databaseUrl);
+  });
+  it("requires hostname-verifying TLS for production Supabase connections", () => {
+    const databaseUrl =
+      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres";
+    for (const mode of ["require", "verify-ca"]) {
+      expect(() =>
+        loadEnvironment({
+          ...base,
+          NODE_ENV: "production",
+          RESEND_API_KEY: "re_test",
+          DATABASE_URL: `${databaseUrl}?sslmode=${mode}`,
+        }),
+      ).toThrow("sslmode=verify-full");
+    }
+    expect(
+      loadEnvironment({
+        ...base,
+        NODE_ENV: "production",
+        RESEND_API_KEY: "re_test",
+        DATABASE_URL: `${databaseUrl}?sslmode=verify-full`,
+      }).databaseUrl,
+    ).toBe(`${databaseUrl}?sslmode=verify-full`);
   });
   it("accepts only Supabase direct and session-pooler database destinations", () => {
     const production = {
@@ -156,26 +179,26 @@ describe("authentication environment", () => {
       EMAIL_FROM: "sender@example.edu",
     };
     for (const databaseUrl of [
-      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=verify-full",
       "postgresql://custom_role:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=verify-full",
-      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require",
-      "postgresql://custom_role.abcdefghijklmnopqrst:secret@aws-12-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-ca",
+      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full",
+      "postgresql://custom_role.abcdefghijklmnopqrst:secret@aws-12-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-full",
     ])
       expect(
         loadEnvironment({ ...production, DATABASE_URL: databaseUrl })
           .databaseUrl,
       ).toBe(databaseUrl);
     for (const databaseUrl of [
-      "postgresql://postgres:secret@db.example.com:5432/postgres?sslmode=require",
-      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co.evil.test:5432/postgres?sslmode=require",
-      "postgresql://postgres:secret@db.short.supabase.co:5432/postgres?sslmode=require",
-      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:6543/postgres?sslmode=require",
-      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co/postgres?sslmode=require",
-      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require&host=evil.test",
-      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require",
-      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com.evil.test:5432/postgres?sslmode=require",
-      "postgresql://postgres.otherprojectxxxxxxxx:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require#fragment",
-      "postgresql://postgres:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require",
+      "postgresql://postgres:secret@db.example.com:5432/postgres?sslmode=verify-full",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co.evil.test:5432/postgres?sslmode=verify-full",
+      "postgresql://postgres:secret@db.short.supabase.co:5432/postgres?sslmode=verify-full",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:6543/postgres?sslmode=verify-full",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co/postgres?sslmode=verify-full",
+      "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=verify-full&host=evil.test",
+      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=verify-full",
+      "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com.evil.test:5432/postgres?sslmode=verify-full",
+      "postgresql://postgres.otherprojectxxxxxxxx:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full#fragment",
+      "postgresql://postgres:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full",
     ])
       expect(() =>
         loadEnvironment({ ...production, DATABASE_URL: databaseUrl }),
@@ -190,7 +213,7 @@ describe("authentication environment", () => {
       ...base,
       NODE_ENV: "production",
       DATABASE_URL:
-        "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=require",
+        "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
     };
     expect(() => loadEnvironment(production)).toThrow("RESEND_API_KEY");
     expect(
@@ -267,7 +290,7 @@ describe("authentication environment", () => {
       ...base,
       NODE_ENV: "production",
       DATABASE_URL:
-        "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=require",
+        "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
       RESEND_API_KEY: "re_test",
       EMAIL_FROM: "ChalkTalk <noreply@joinchalktalk.com>",
     };
@@ -342,7 +365,7 @@ describe("object storage environment", () => {
       SUPABASE_STORAGE_ENDPOINT:
         "https://abcdefghijklmnopqrst.storage.supabase.co/storage/v1/s3",
       DATABASE_URL:
-        "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=require",
+        "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=verify-full",
       SUPABASE_STORAGE_BUCKET: "course-files",
       SUPABASE_STORAGE_REGION: "us-east-1",
       SUPABASE_STORAGE_ACCESS_KEY_ID: "server-only-key",
@@ -414,7 +437,7 @@ describe("object storage environment", () => {
       loadObjectStorageConfig({
         ...managed,
         DATABASE_URL:
-          "postgresql://postgres.zzzzzzzzzzzzzzzzzzzz:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require",
+          "postgresql://postgres.zzzzzzzzzzzzzzzzzzzz:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full",
       }),
     ).toThrow("SUPABASE_STORAGE_ENDPOINT");
     expect(() =>
@@ -511,7 +534,7 @@ describe("observability environment", () => {
       ...base,
       NODE_ENV: "production",
       DATABASE_URL:
-        "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=require",
+        "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
       RESEND_API_KEY: "re_test",
       METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
       LOG_SPOOL_DIRECTORY: "/var/log/chalktalk",
