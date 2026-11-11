@@ -56,7 +56,12 @@ services:
       S3_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       LOG_SPOOL_DIRECTORY: /var/log/chalktalk
-    command: ["sh", "-c", "if [ \"$${PORT+x}\" ]; then echo 'Local Compose: remove PORT from .env; the API uses internal port 3000.' >&2; exit 1; fi; npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api"]
+    command:
+      [
+        "sh",
+        "-c",
+        'if [ "$${PORT+x}" ]; then echo ''Local Compose: remove PORT from .env; the API uses internal port 3000.'' >&2; exit 1; fi; npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api',
+      ]
     volumes:
       - ../..:/app
       - api-node-modules:/app/node_modules
@@ -194,7 +199,7 @@ services:
     image: grafana/loki:3.5.3
     command: ["-config.file=/etc/loki/loki.yml"]
     volumes:
-      - ../../docker/observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - ./observability/loki/loki.yml:/etc/loki/loki.yml:ro
       - loki-data:/loki
     healthcheck:
       test:
@@ -213,7 +218,7 @@ services:
     command:
       ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
     volumes:
-      - ../../docker/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - api-log-spool:/var/log/chalktalk-api:ro
       - worker-log-spool:/var/log/chalktalk-worker:ro
       - alloy-data:/var/lib/alloy/data
@@ -232,7 +237,7 @@ services:
     environment:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     volumes:
-      - ../../docker/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     depends_on:
       api:
@@ -258,8 +263,8 @@ services:
       - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
-      - ../../docker/observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ../../docker/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
       - loki

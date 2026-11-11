@@ -95,11 +95,11 @@ jobs:
 
       - name: Validate default Compose configuration
         run: |
-          sh docker/test-default-local-compose.sh
+          sh deployment/local/tests/test-default-local-compose.sh
           docker compose -f deployment/local/compose.yml --env-file .env config --quiet
 
       - name: Verify legacy PORT startup preflight
-        run: sh docker/test-local-legacy-port.sh
+        run: sh deployment/local/tests/test-local-legacy-port.sh
 
       - name: Start local Compose stack
         env:
@@ -125,7 +125,7 @@ jobs:
           done
 
       - name: Verify SeaweedFS object storage
-        run: sh docker/test-seaweedfs-s3.sh
+        run: sh deployment/local/tests/test-seaweedfs-s3.sh
 
       - name: Verify course and discussion file APIs against PostgreSQL and SeaweedFS
         run: |
@@ -179,7 +179,7 @@ jobs:
         run: docker compose -f deployment/local/compose.yml --env-file .env up --build --wait --wait-timeout 240 --quiet-pull
 
       - name: Exercise protected metrics, backlog recovery, and log privacy
-        run: sh docker/test-observability.sh
+        run: sh deployment/local/tests/test-observability.sh
 
       - name: Collect service logs
         if: failure()

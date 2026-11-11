@@ -2,7 +2,7 @@
 set -eu
 
 # Run after `docker compose -f deployment/local/compose.yml --env-file .env up --build --wait` with a fresh local stack.
-node --test docker/observability/grafana/dashboards/api.test.mjs docker/observability/compose-logging.test.mjs
+node --test deployment/local/tests/api-dashboard.test.mjs deployment/local/tests/compose-logging.test.mjs
 compose() { docker compose -f deployment/local/compose.yml --env-file .env "$@"; }
 api_request() {
   compose exec -T api node -e '
