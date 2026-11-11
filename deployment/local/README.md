@@ -2,6 +2,8 @@
 
 Run these commands from the repository root in a Bash-compatible shell (Windows users can use WSL). You need Docker with the Compose plugin (`docker compose`). Compose and the explicit Piazza import do not require Node.js on the host; repository checks require an up-to-date Node.js **22** release and npm.
 
+This local development Compose stack is **not for public deployment**: its Caddy gateway may bind to all host interfaces, and its database and storage use development credentials. The GitHub production workflow uses [`deployment/production/compose.yml`](../production/compose.yml) instead.
+
 ## 1. Create local configuration
 
 ```bash
