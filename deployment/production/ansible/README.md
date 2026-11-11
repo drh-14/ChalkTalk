@@ -15,6 +15,8 @@ Create a GitHub Actions environment named **`production`** (Settings → Environ
 | `SUPABASE_STORAGE_ACCESS_KEY_ID`, `SUPABASE_STORAGE_SECRET_ACCESS_KEY` | Supabase Storage server-side S3 credentials.                                                                                           |
 | `AUTH_TOKEN_SECRET`                                                    | Independent random secret of at least 32 characters used to HMAC-hash and verify opaque authentication-related tokens.                 |
 | `RESEND_API_KEY`                                                       | Sending-only Resend HTTPS key.                                                                                                         |
+| `METRICS_TOKEN`                                                        | Independent random token of at least 32 characters for protected Prometheus scrapes. Generate with `openssl rand -hex 32`.             |
+| `GRAFANA_ADMIN_PASSWORD`                                               | Independent random Grafana login password of at least 32 characters. Generate with `openssl rand -hex 32`.                             |
 
 Add these four unencrypted **production environment variables**:
 
@@ -35,6 +37,8 @@ For managed-service and sender prerequisites before deploying the app, follow th
 2. After merging this workflow to `main`, open **Actions → Bootstrap production VM → Run workflow** and select `main`. Other refs are rejected. The workflow validates required values and the pinned host-key entry before connecting; SSH verifies the VM's identity during connection.
 3. The playbook installs Git, UFW, Docker Engine and Compose plugin from Docker's signed Ubuntu repository; prepares `/srv/chalktalk/releases` and `/srv/chalktalk/shared`; allows SSH before enabling UFW; permits TCP 80/443 and UDP 443; verifies a fresh SSH connection, Docker/Compose, firewall and env-file permissions; and reports whether a reboot is pending. It does not reboot automatically.
 4. On success, `/srv/chalktalk/shared/production.env` is owned by `ubuntu`, mode `0600`, in an owner-only `0700` directory. The workflow renders it atomically from Actions secrets and variables, suppressing values in Ansible logs. Rerun bootstrap after rotating a secret; it does not restart the app to consume the new value.
+
+The observability secrets are staged by bootstrap but are not used until the separate production dashboard release. Set both new `production` environment secrets and rerun this manual workflow before that release is merged; otherwise its automatic deploy would lack the required values.
 
 Successful CI for the current `main` commit now starts the automatic release workflow after bootstrap. For release behavior and manual recovery, see the [production deployment guide](../README.md). Bootstrap only prepares the shared environment file; the release workflow passes it to Compose for both interpolation and container configuration.
 
