@@ -173,7 +173,9 @@ fi
         }
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "production.env"
+            grafana_target = Path(temporary) / "grafana.env"
             target.write_text("existing production config\n")
+            grafana_target.write_text("existing Grafana config\n")
             env.update({
                 "CHALKTALK_ROOT": str(ROOT), "ANSIBLE_HOME": temporary,
                 "ANSIBLE_LOCAL_TEMP": str(Path(temporary) / "ansible-tmp"),
@@ -187,6 +189,7 @@ fi
                                             capture_output=True, text=True)
                     self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(target.read_text(), "existing production config\n")
+                    self.assertEqual(grafana_target.read_text(), "existing Grafana config\n")
             for domain in VALID_DOMAINS:
                 with self.subTest(domain=domain):
                     result = subprocess.run(command, env={**env, "DOMAIN": domain},
@@ -244,6 +247,7 @@ fi
         }
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "production.env"
+            grafana_target = Path(temporary) / "grafana.env"
             env["CHALKTALK_ROOT"] = str(ROOT)
             env["ANSIBLE_HOME"] = temporary
             env["ANSIBLE_LOCAL_TEMP"] = str(Path(temporary) / "ansible-tmp")
@@ -252,19 +256,26 @@ fi
                        "-e", f"output_path={target}"]
             first = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
             contents = target.read_text()
+            grafana_contents = grafana_target.read_text()
             self.assertNotIn("EMAIL_PROVIDER=", contents)
             self.assertNotIn("EMAIL_FROM=", contents)
             self.assertIn("METRICS_TOKEN='" + "m" * 64 + "'", contents)
-            self.assertIn("GRAFANA_ADMIN_PASSWORD='" + "g" * 64 + "'", contents)
+            self.assertNotIn("GRAFANA_ADMIN_PASSWORD=", contents)
+            self.assertEqual(grafana_contents.splitlines()[1:], ["GRAFANA_ADMIN_PASSWORD='" + "g" * 64 + "'"])
+            self.assertNotIn("METRICS_TOKEN=", grafana_contents)
             self.assertNotIn("fake-secret", first.stdout)
+            self.assertNotIn("g" * 64, first.stdout + first.stderr)
             second = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
             self.assertIn("changed=0", second.stdout)
             self.assertEqual(target.read_text(), contents)
+            self.assertEqual(grafana_target.read_text(), grafana_contents)
             self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(grafana_target.stat().st_mode & 0o777, 0o600)
             missing_env = {**env, "DATABASE_URL": ""}
             failed = subprocess.run(command, env=missing_env, capture_output=True, text=True)
             self.assertNotEqual(failed.returncode, 0)
             self.assertEqual(target.read_text(), contents)
+            self.assertEqual(grafana_target.read_text(), grafana_contents)
             self.assertNotIn("fake'#$value", failed.stdout + failed.stderr)
             for name in ("METRICS_TOKEN", "GRAFANA_ADMIN_PASSWORD"):
                 with self.subTest(invalid_secret=name):
@@ -276,7 +287,9 @@ fi
                     )
                     self.assertNotEqual(failed.returncode, 0)
                     self.assertEqual(target.read_text(), contents)
+                    self.assertEqual(grafana_target.read_text(), grafana_contents)
                     self.assertNotIn("fake'#$value", failed.stdout + failed.stderr)
+                    self.assertNotIn("g" * 64, failed.stdout + failed.stderr)
             render_failure = subprocess.run(
                 [*command, "-e", json.dumps({
                     "validate_environment": False,
@@ -288,6 +301,7 @@ fi
             )
             self.assertNotEqual(render_failure.returncode, 0)
             self.assertEqual(target.read_text(), contents)
+            self.assertEqual(grafana_target.read_text(), grafana_contents)
             self.assertNotIn("render-failure-secret", render_failure.stdout + render_failure.stderr)
             compose = Path(temporary) / "compose.yml"
             compose.write_text("services:\n  check:\n    image: busybox\n    env_file: ${COMPOSE_ENV_FILE}\n    environment:\n      DOMAIN: ${DOMAIN}\n")
@@ -305,6 +319,7 @@ fi
                 "SUPABASE_STORAGE_ACCESS_KEY_ID", "SUPABASE_STORAGE_SECRET_ACCESS_KEY",
             }.issubset(rendered))
             self.assertFalse(any(key.startswith("S3_") for key in rendered))
+            self.assertNotIn("GRAFANA_ADMIN_PASSWORD", rendered)
 
 
 if __name__ == "__main__":

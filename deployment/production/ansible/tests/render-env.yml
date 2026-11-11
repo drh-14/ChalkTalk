@@ -21,6 +21,7 @@
       AUTH_TOKEN_SECRET: "{{ lookup('ansible.builtin.env', 'AUTH_TOKEN_SECRET') }}"
       RESEND_API_KEY: "{{ lookup('ansible.builtin.env', 'RESEND_API_KEY') }}"
       METRICS_TOKEN: "{{ bootstrap_metrics_token }}"
+    bootstrap_grafana_environment:
       GRAFANA_ADMIN_PASSWORD: "{{ bootstrap_grafana_admin_password }}"
   pre_tasks:
     - name: Validate fake production configuration
@@ -29,3 +30,9 @@
   tasks:
     - name: Render fake environment fixture
       ansible.builtin.import_tasks: ../tasks/render-env.yml
+
+    - name: Render fake Grafana environment fixture
+      ansible.builtin.import_tasks: ../tasks/render-env.yml
+      vars:
+        bootstrap_environment: "{{ bootstrap_grafana_environment }}"
+        bootstrap_environment_dest: "{{ output_path | dirname }}/grafana.env"

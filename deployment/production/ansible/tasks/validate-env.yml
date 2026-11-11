@@ -10,7 +10,7 @@
       - "'${' not in item.value"
       - "'\\\\' not in item.value"
     fail_msg: A required production environment value is missing or invalid.
-  loop: "{{ bootstrap_environment | dict2items }}"
+  loop: "{{ (bootstrap_environment | combine(bootstrap_grafana_environment)) | dict2items }}"
   no_log: true
 
 - name: Validate domain and session secret
