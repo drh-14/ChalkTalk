@@ -33,7 +33,10 @@ const series = [
 test("dashboard PromQL computes completed-request indicators", async () => {
   const dashboard = JSON.parse(
     readFileSync(
-      new URL("../../observability/grafana/dashboards/api.json", import.meta.url),
+      new URL(
+        "../../observability/grafana/dashboards/api.json",
+        import.meta.url,
+      ),
       "utf8",
     ),
   );
