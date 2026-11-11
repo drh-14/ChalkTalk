@@ -40,6 +40,7 @@ esac
             """#!/bin/sh
 echo "$RUN_ID docker $*" >> "$TEST_CALLS"
 case "$*" in
+  *'version --format'* ) echo "$DOCKER_VERSION" ;;
   *' build '* ) sleep "${SLOW_BUILD:-0}"; [ "$FAIL_BUILD" != 1 ] ;;
   *' up -d --wait'* )
     [ "$FAIL_UP" != 1 ] || exit 1
@@ -56,6 +57,10 @@ case "$*" in
   *' ps -aq api'*) echo api-container ;;
   *' ps -aq worker'*) echo worker-container ;;
   *' ps -aq collaboration'*) echo collaboration-container ;;
+  *' ps -aq grafana'*) echo grafana-container ;;
+  *' ps -aq prometheus'*) echo prometheus-container ;;
+  *' ps -aq loki'*) echo loki-container ;;
+  *' ps -aq alloy'*) echo alloy-container ;;
   *' ps' ) echo 'container status snapshot' ;;
   *'inspect'*'config_files'*)
     active="$(cat "$ACTIVE_SHA_FILE" 2>/dev/null)"
@@ -66,6 +71,7 @@ case "$*" in
   *'inspect'*'migration-container'*) [ "$FAIL_MIGRATION" = 1 ] && echo 'exited 1' || echo 'exited 0' ;;
   *'inspect'*'worker-container'*) [ "$FAIL_WORKER" = 1 ] && echo exited || echo running ;;
   *'inspect'*'collaboration-container'*) [ "$FAIL_COLLABORATION" = 1 ] && echo exited || echo running ;;
+  *'inspect'*'-container'*) echo running ;;
 esac
 """,
         )
@@ -80,6 +86,7 @@ esac
             "DEPLOY_SHA": SHA,
             "ACTIVE_SHA_FILE": str(self.root / "active.sha"),
             "RUN_ID": "single",
+            "DOCKER_VERSION": "28.1.0",
         }
 
     def write_executable(self, name, body):
@@ -112,6 +119,15 @@ esac
         self.assertEqual(self.run_script("stage").returncode, 0)
         self.assertNotIn(" up -d", self.calls())
         self.assertNotIn("smoke.js", self.calls())
+
+    def test_rejects_docker_before_28_prior_to_compose_start(self):
+        failed = self.run_script("stage", DOCKER_VERSION="27.5.1")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("Docker Engine 28", failed.stderr)
+        self.assertNotIn(" up -d", self.calls())
+        self.log.unlink()
+        passed = self.run_script("stage", DOCKER_VERSION="28.0.0")
+        self.assertEqual(passed.returncode, 0, passed.stderr)
 
     def test_streamed_stage_preserves_script_after_interactive_smoke(self):
         result = subprocess.run(
@@ -186,7 +202,7 @@ esac
     def test_repeat_checks_each_running_service(self):
         self.assertEqual(self.run_script("stage").returncode, 0)
         self.assertEqual(self.run_script("finish").returncode, 0)
-        for service in ("web", "api", "worker", "collaboration"):
+        for service in ("web", "api", "worker", "collaboration", "grafana", "prometheus", "loki", "alloy"):
             with self.subTest(service=service):
                 self.log.unlink(missing_ok=True)
                 result = self.run_script("stage", MISMATCH_SERVICE=service)

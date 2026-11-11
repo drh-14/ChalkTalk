@@ -8,6 +8,11 @@ const base = {
   FRONTEND_BASE_URL: "https://app.example.edu",
 };
 
+const productionMonitoring = {
+  METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+  LOG_SPOOL_DIRECTORY: "/var/log/chalktalk",
+};
+
 describe("authentication environment", () => {
   it("uses fixed rate limits even when legacy environment values are overridden", () => {
     const environment = loadEnvironment({
@@ -68,6 +73,7 @@ describe("authentication environment", () => {
           "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
         RESEND_API_KEY: "re_test",
         EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+        ...productionMonitoring,
       }).production,
     ).toBe(true);
     for (const value of ["FALSE", "1", "yes", "", " true "])
@@ -120,6 +126,7 @@ describe("authentication environment", () => {
       NODE_ENV: "production",
       RESEND_API_KEY: "re_test",
       EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+      ...productionMonitoring,
     };
     for (const suffix of [
       "",
@@ -168,6 +175,7 @@ describe("authentication environment", () => {
         NODE_ENV: "production",
         RESEND_API_KEY: "re_test",
         DATABASE_URL: `${databaseUrl}?sslmode=verify-full`,
+        ...productionMonitoring,
       }).databaseUrl,
     ).toBe(`${databaseUrl}?sslmode=verify-full`);
   });
@@ -177,6 +185,7 @@ describe("authentication environment", () => {
       NODE_ENV: "production",
       RESEND_API_KEY: "re_test",
       EMAIL_FROM: "sender@example.edu",
+      ...productionMonitoring,
     };
     for (const databaseUrl of [
       "postgresql://postgres:secret@db.abcdefghijklmnopqrst.supabase.co:5432/postgres?sslmode=verify-full",
@@ -217,7 +226,11 @@ describe("authentication environment", () => {
     };
     expect(() => loadEnvironment(production)).toThrow("RESEND_API_KEY");
     expect(
-      loadEnvironment({ ...production, RESEND_API_KEY: "re_test" }).email,
+      loadEnvironment({
+        ...production,
+        RESEND_API_KEY: "re_test",
+        ...productionMonitoring,
+      }).email,
     ).toMatchObject({
       provider: "resend",
       from: "ChalkTalk <notifications@joinchalktalk.com>",
@@ -230,6 +243,7 @@ describe("authentication environment", () => {
         ...production,
         RESEND_API_KEY: "re_test",
         EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+        ...productionMonitoring,
       }).email.provider,
     ).toBe("resend");
     expect(() =>
@@ -293,6 +307,7 @@ describe("authentication environment", () => {
         "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
       RESEND_API_KEY: "re_test",
       EMAIL_FROM: "ChalkTalk <noreply@joinchalktalk.com>",
+      ...productionMonitoring,
     };
     expect(
       loadEnvironment({
@@ -529,20 +544,33 @@ describe("observability environment", () => {
     });
   });
 
-  it("keeps production monitoring disabled even if a token is supplied", () => {
-    const environment = loadEnvironment({
+  it("requires protected monitoring configuration in production", () => {
+    const production = {
       ...base,
       NODE_ENV: "production",
       DATABASE_URL:
         "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
       RESEND_API_KEY: "re_test",
+    };
+    expect(() => loadEnvironment(production)).toThrow("METRICS_TOKEN");
+    expect(() =>
+      loadEnvironment({ ...production, METRICS_TOKEN: "short" }),
+    ).toThrow("METRICS_TOKEN");
+    expect(() =>
+      loadEnvironment({
+        ...production,
+        METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+      }),
+    ).toThrow("LOG_SPOOL_DIRECTORY");
+    const environment = loadEnvironment({
+      ...production,
       METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
       LOG_SPOOL_DIRECTORY: "/var/log/chalktalk",
     });
     expect(environment.observability).toEqual({
-      enabled: false,
-      metricsToken: undefined,
-      spoolDirectory: undefined,
+      enabled: true,
+      metricsToken: "a-separate-operator-token-at-least-32-chars",
+      spoolDirectory: "/var/log/chalktalk",
     });
   });
 });
