@@ -13,6 +13,8 @@
     bootstrap_supabase_storage_secret_access_key: "{{ lookup('ansible.builtin.env', 'SUPABASE_STORAGE_SECRET_ACCESS_KEY') }}"
     bootstrap_auth_token_secret: "{{ lookup('ansible.builtin.env', 'AUTH_TOKEN_SECRET') }}"
     bootstrap_resend_api_key: "{{ lookup('ansible.builtin.env', 'RESEND_API_KEY') }}"
+    bootstrap_metrics_token: "{{ lookup('ansible.builtin.env', 'METRICS_TOKEN') }}"
+    bootstrap_grafana_admin_password: "{{ lookup('ansible.builtin.env', 'GRAFANA_ADMIN_PASSWORD') }}"
     bootstrap_environment:
       DOMAIN: "{{ bootstrap_domain }}"
       DATABASE_URL: "{{ bootstrap_database_url }}"
@@ -23,6 +25,9 @@
       SUPABASE_STORAGE_SECRET_ACCESS_KEY: "{{ bootstrap_supabase_storage_secret_access_key }}"
       AUTH_TOKEN_SECRET: "{{ bootstrap_auth_token_secret }}"
       RESEND_API_KEY: "{{ bootstrap_resend_api_key }}"
+      METRICS_TOKEN: "{{ bootstrap_metrics_token }}"
+    bootstrap_grafana_environment:
+      GRAFANA_ADMIN_PASSWORD: "{{ bootstrap_grafana_admin_password }}"
     bootstrap_environment_dest: /srv/chalktalk/shared/production.env
     bootstrap_environment_template: "{{ playbook_dir }}/templates/production.env.j2"
     bootstrap_environment_owner: ubuntu
@@ -151,6 +156,12 @@
     - name: Render production environment
       ansible.builtin.import_tasks: tasks/render-env.yml
 
+    - name: Render Grafana environment
+      ansible.builtin.import_tasks: tasks/render-env.yml
+      vars:
+        bootstrap_environment: "{{ bootstrap_grafana_environment }}"
+        bootstrap_environment_dest: /srv/chalktalk/shared/grafana.env
+
     - name: Check existing firewall rules before changing them
       become: true
       ansible.builtin.import_tasks: tasks/check-firewall-rules.yml
@@ -247,12 +258,22 @@
       register: bootstrap_env_stat
       no_log: true
 
+    - name: Read Grafana environment metadata
+      become: true
+      ansible.builtin.stat:
+        path: /srv/chalktalk/shared/grafana.env
+      register: bootstrap_grafana_env_stat
+      no_log: true
+
     - name: Verify private production environment permissions
       ansible.builtin.assert:
         that:
           - bootstrap_env_stat.stat.exists
           - bootstrap_env_stat.stat.mode == '0600'
           - bootstrap_env_stat.stat.pw_name == 'ubuntu'
+          - bootstrap_grafana_env_stat.stat.exists
+          - bootstrap_grafana_env_stat.stat.mode == '0600'
+          - bootstrap_grafana_env_stat.stat.pw_name == 'ubuntu'
           - bootstrap_shared_stat.stat.mode == '0700'
           - bootstrap_shared_stat.stat.pw_name == 'ubuntu'
         fail_msg: Production environment file permissions are not private.
