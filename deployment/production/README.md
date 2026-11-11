@@ -4,13 +4,13 @@ This is a **runnable starting point**, not a production-readiness guarantee. It 
 
 ## Topology and images
 
-| Container       | Dockerfile                                       | Role                                                                                                   |
-| --------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `web`           | `deployment/production/Dockerfile.frontend`      | Builds Vite assets and serves them through Caddy; the only published ports are TCP 80/443 and UDP 443. |
-| `api`           | `deployment/production/Dockerfile.api`           | Express API, Threads WebSockets, and authorized file access; includes PDF validation and OCR tools.    |
-| `collaboration` | `deployment/production/Dockerfile.collaboration` | Hocuspocus live-session WebSockets.                                                                    |
-| `worker`        | `deployment/production/Dockerfile.worker`        | Durable jobs, digests, notifications, resource text extraction/OCR, and file cleanup.                  |
-| `migrate`       | Reuses the API image                             | One-shot SQL schema migrations; must finish before app processes start.                                |
+| Container       | Dockerfile                                       | Role                                                                                                       |
+| --------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `web`           | `deployment/production/Dockerfile.frontend`      | Builds Vite assets and serves them through Caddy; publishes the only public ports, TCP 80/443 and UDP 443. |
+| `api`           | `deployment/production/Dockerfile.api`           | Express API, Threads WebSockets, and authorized file access; includes PDF validation and OCR tools.        |
+| `collaboration` | `deployment/production/Dockerfile.collaboration` | Hocuspocus live-session WebSockets.                                                                        |
+| `worker`        | `deployment/production/Dockerfile.worker`        | Durable jobs, digests, notifications, resource text extraction/OCR, and file cleanup.                      |
+| `migrate`       | Reuses the API image                             | One-shot SQL schema migrations; must finish before app processes start.                                    |
 
 Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hocuspocus, so browser cookies and WebSockets use the same HTTPS origin. API, worker, collaboration, and migration have outbound access to Supabase and Resend; none publishes a host port. The frontend image receives only `DOMAIN`, never database or S3 credentials. Prometheus, Loki, and Alloy stay on the internal Compose network; Grafana publishes only `127.0.0.1:3001` for SSH forwarding.
 
@@ -46,7 +46,7 @@ Set the independent `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` secrets in the 
 The deploy builds all four images before Compose starts them and forces Compose
 to recreate services for each new SHA, even if images and configuration have
 not changed. It verifies the migration exit status, API health,
-worker/collaboration process state, migration ledger, a temporary private
+worker/collaboration and monitoring process state, migration ledger, a temporary private
 Supabase Storage object write/read/delete, and one
 Resend-accepted synthetic email to `chalktalk602@gmail.com`. The runner then
 checks public HTTPS web and `/api/health`; only afterward does the VM write
@@ -126,7 +126,7 @@ Run these commands from the pinned release checkout with `COMPOSE_ENV_FILE` expo
 
 - `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml logs -f --tail=100 api worker collaboration web`
 - `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml restart api worker collaboration`
-- `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml down` stops the app. The managed data persists in Supabase; Caddy's named volumes retain certificates. Do not run `down -v` unless you intend to remove those certificate volumes.
+- `docker compose --env-file /srv/chalktalk/shared/production.env -f deployment/production/compose.yml down` stops the stack. The managed data persists in Supabase; named volumes retain Caddy certificates, telemetry, and log-spool state. Do not run `down -v` unless you intend to remove those volumes.
 - Before launch, test authenticated signup, a post, a private resource upload/download/delete, a live collaboration session, and an accepted Resend message through the public domain. Confirm restricted files remain inaccessible to unauthorized users.
 - If Supabase DB or Storage is unavailable, expect API or worker failures; monitor logs and retry after service restoration. A failed migration must be repaired before starting the app.
 
