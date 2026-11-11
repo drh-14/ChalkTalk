@@ -58,7 +58,7 @@ class BootstrapContractTest(unittest.TestCase):
         self.assertEqual(secret_step["env"]["SSH_PRIVATE_KEY"], "${{ secrets.SSH_PRIVATE_KEY }}")
         self.assertEqual(secret_step["env"]["DATABASE_URL"], "${{ secrets.DATABASE_URL }}")
         self.assertEqual(secret_step["env"]["SUPABASE_STORAGE_ACCESS_KEY_ID"], "${{ secrets.SUPABASE_STORAGE_ACCESS_KEY_ID }}")
-        for name in ("VM_HOST", "VM_KNOWN_HOSTS", "SUPABASE_STORAGE_SECRET_ACCESS_KEY", "AUTH_TOKEN_SECRET", "RESEND_API_KEY"):
+        for name in ("VM_HOST", "VM_KNOWN_HOSTS", "SUPABASE_STORAGE_SECRET_ACCESS_KEY", "AUTH_TOKEN_SECRET", "RESEND_API_KEY", "METRICS_TOKEN", "GRAFANA_ADMIN_PASSWORD"):
             with self.subTest(secret=name):
                 self.assertEqual(secret_step["env"][name], "${{ secrets." + name + " }}")
         for name in ("DOMAIN", "SUPABASE_STORAGE_ENDPOINT", "SUPABASE_STORAGE_BUCKET", "SUPABASE_STORAGE_REGION"):
@@ -118,9 +118,10 @@ fi
             "DATABASE_URL": "postgres://test", "SUPABASE_STORAGE_ACCESS_KEY_ID": "test",
             "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "test", "AUTH_TOKEN_SECRET": "a" * 32,
             "RESEND_API_KEY": "test",
+            "METRICS_TOKEN": "m" * 64, "GRAFANA_ADMIN_PASSWORD": "g" * 64,
         }
         validate_inputs.validate(valid)
-        for missing in ("DATABASE_URL", "SSH_PRIVATE_KEY", "VM_KNOWN_HOSTS", "SUPABASE_STORAGE_ACCESS_KEY_ID"):
+        for missing in ("DATABASE_URL", "SSH_PRIVATE_KEY", "VM_KNOWN_HOSTS", "SUPABASE_STORAGE_ACCESS_KEY_ID", "METRICS_TOKEN", "GRAFANA_ADMIN_PASSWORD"):
             with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "incomplete"):
                 validate_inputs.validate({key: value for key, value in valid.items() if key != missing})
         with self.assertRaisesRegex(ValueError, "incomplete"):
@@ -136,6 +137,10 @@ fi
             validate_inputs.validate({**valid, "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "unsafe\\suffix"})
         with self.assertRaisesRegex(ValueError, "invalid"):
             validate_inputs.validate({**valid, "VM_HOST": "-bad-host"})
+        with self.assertRaisesRegex(ValueError, "too short"):
+            validate_inputs.validate({**valid, "METRICS_TOKEN": "short"})
+        with self.assertRaisesRegex(ValueError, "too short"):
+            validate_inputs.validate({**valid, "GRAFANA_ADMIN_PASSWORD": "short"})
 
     def test_runner_rejects_invalid_domain_labels(self):
         valid = {
@@ -146,6 +151,7 @@ fi
             "DATABASE_URL": "postgres://test", "SUPABASE_STORAGE_ACCESS_KEY_ID": "test",
             "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "test", "AUTH_TOKEN_SECRET": "a" * 32,
             "RESEND_API_KEY": "test",
+            "METRICS_TOKEN": "m" * 64, "GRAFANA_ADMIN_PASSWORD": "g" * 64,
         }
         for domain in VALID_DOMAINS:
             with self.subTest(domain=domain):
@@ -163,6 +169,7 @@ fi
             "SUPABASE_STORAGE_ACCESS_KEY_ID": "fake-access",
             "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "fake-secret",
             "AUTH_TOKEN_SECRET": "a" * 32, "RESEND_API_KEY": "fake-key",
+            "METRICS_TOKEN": "m" * 64, "GRAFANA_ADMIN_PASSWORD": "g" * 64,
         }
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "production.env"
@@ -216,6 +223,8 @@ fi
                 "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "fake-secret",
                 "AUTH_TOKEN_SECRET": "a" * 32,
                 "RESEND_API_KEY": "fake-key",
+                "METRICS_TOKEN": "m" * 64,
+                "GRAFANA_ADMIN_PASSWORD": "g" * 64,
             }
             result = subprocess.run(["bash", "-e", "-c", script], cwd=ROOT,
                                     env=env, capture_output=True, text=True)
@@ -231,6 +240,7 @@ fi
             "SUPABASE_STORAGE_ENDPOINT": "https://example.com/storage/v1/s3", "SUPABASE_STORAGE_BUCKET": "test", "SUPABASE_STORAGE_REGION": "us-east-1",
             "SUPABASE_STORAGE_ACCESS_KEY_ID": "fake-access", "SUPABASE_STORAGE_SECRET_ACCESS_KEY": "fake'#$value",
             "AUTH_TOKEN_SECRET": "a" * 32, "RESEND_API_KEY": "fake-key",
+            "METRICS_TOKEN": "m" * 64, "GRAFANA_ADMIN_PASSWORD": "g" * 64,
         }
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "production.env"
@@ -244,6 +254,8 @@ fi
             contents = target.read_text()
             self.assertNotIn("EMAIL_PROVIDER=", contents)
             self.assertNotIn("EMAIL_FROM=", contents)
+            self.assertIn("METRICS_TOKEN='" + "m" * 64 + "'", contents)
+            self.assertIn("GRAFANA_ADMIN_PASSWORD='" + "g" * 64 + "'", contents)
             self.assertNotIn("fake-secret", first.stdout)
             second = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
             self.assertIn("changed=0", second.stdout)
@@ -254,6 +266,17 @@ fi
             self.assertNotEqual(failed.returncode, 0)
             self.assertEqual(target.read_text(), contents)
             self.assertNotIn("fake'#$value", failed.stdout + failed.stderr)
+            for name in ("METRICS_TOKEN", "GRAFANA_ADMIN_PASSWORD"):
+                with self.subTest(invalid_secret=name):
+                    failed = subprocess.run(
+                        command,
+                        env={**env, name: "short"},
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertEqual(target.read_text(), contents)
+                    self.assertNotIn("fake'#$value", failed.stdout + failed.stderr)
             render_failure = subprocess.run(
                 [*command, "-e", json.dumps({
                     "validate_environment": False,
