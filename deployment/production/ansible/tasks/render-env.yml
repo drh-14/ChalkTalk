@@ -1,5 +1,5 @@
 ---
-- name: Render production environment atomically
+- name: Render private environment atomically
   become: "{{ bootstrap_environment_become | default(false) }}"
   ansible.builtin.template:
     src: "{{ bootstrap_environment_template }}"

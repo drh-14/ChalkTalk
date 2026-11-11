@@ -10,7 +10,7 @@ def validate(env: dict[str, str]) -> None:
         "SSH_PRIVATE_KEY", "VM_HOST", "VM_KNOWN_HOSTS",
         "DOMAIN", "SUPABASE_STORAGE_ENDPOINT", "SUPABASE_STORAGE_BUCKET", "SUPABASE_STORAGE_REGION", "DATABASE_URL",
         "SUPABASE_STORAGE_ACCESS_KEY_ID", "SUPABASE_STORAGE_SECRET_ACCESS_KEY", "AUTH_TOKEN_SECRET",
-        "RESEND_API_KEY",
+        "RESEND_API_KEY", "METRICS_TOKEN", "GRAFANA_ADMIN_PASSWORD",
     )
     if any(not env.get(name) for name in required):
         raise ValueError("VM bootstrap configuration is incomplete")
@@ -26,6 +26,10 @@ def validate(env: dict[str, str]) -> None:
         raise ValueError("Pinned VM host key is malformed")
     if len(env["AUTH_TOKEN_SECRET"]) < 32:
         raise ValueError("Session secret is too short")
+    if len(env["METRICS_TOKEN"]) < 32:
+        raise ValueError("Metrics token is too short")
+    if len(env["GRAFANA_ADMIN_PASSWORD"]) < 32:
+        raise ValueError("Grafana admin password is too short")
     if (len(env["DOMAIN"]) > 253 or not re.fullmatch(
             r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
             env["DOMAIN"])):
