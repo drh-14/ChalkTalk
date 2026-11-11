@@ -106,3 +106,104 @@ test("dashboard PromQL computes completed-request indicators", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("dashboard PromQL computes database wait, query, and failure indicators", async () => {
+  const dashboard = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../observability/grafana/dashboards/api.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const panels = new Map(dashboard.panels.map((panel) => [panel.id, panel]));
+  const series = [
+    ...[
+      ["0.05", 2],
+      ["0.1", 6],
+      ["0.2", 9],
+      ["+Inf", 9],
+    ].map(([le, value]) => [
+      `chalktalk_db_query_duration_seconds_bucket{job="api",outcome="succeeded",le="${le}"}`,
+      value,
+    ]),
+    ...[
+      ["0.01", 2],
+      ["0.05", 7],
+      ["0.1", 9],
+      ["+Inf", 9],
+    ].map(([le, value]) => [
+      `chalktalk_db_pool_acquire_duration_seconds_bucket{job="api",outcome="succeeded",le="${le}"}`,
+      value,
+    ]),
+    [
+      'chalktalk_db_query_duration_seconds_count{job="api",outcome="succeeded"}',
+      9,
+    ],
+    [
+      'chalktalk_db_query_duration_seconds_count{job="api",outcome="failed"}',
+      1,
+    ],
+  ];
+  const expected = new Map([
+    [16, 0.08125],
+    [17, 0.185],
+    [18, 0.03],
+    [19, 0.08875],
+    [20, 10 / 60],
+    [21, 0.1],
+  ]);
+  const fixture = [
+    "rule_files: []",
+    "evaluation_interval: 1m",
+    "tests:",
+    "  - interval: 1m",
+    "    input_series:",
+    ...series.flatMap(([name, increment]) => [
+      `      - series: '${name}'`,
+      `        values: '0+${increment}x6'`,
+    ]),
+    "    promql_expr_test:",
+    ...Array.from(expected, ([id, value]) => {
+      const expression = panels.get(id)?.targets[0]?.expr;
+      assert.equal(typeof expression, "string", `Missing panel ${id}`);
+      return [
+        `      - expr: ${JSON.stringify(`abs((${expression}) - ${value}) < bool 1e-10`)}`,
+        "        eval_time: 6m",
+        "        exp_samples:",
+        "          - labels: '{job=\"api\"}'",
+        "            value: 1",
+      ];
+    }).flat(),
+  ].join("\n");
+  const directory = await mkdtemp(
+    join(dirname(fileURLToPath(import.meta.url)), ".db-promql-test-"),
+  );
+  try {
+    await chmod(directory, 0o755);
+    await writeFile(join(directory, "test.yml"), fixture);
+    execFileSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--mount",
+        `type=bind,source=${directory},target=/fixture,readonly`,
+        "--entrypoint",
+        "/bin/promtool",
+        "prom/prometheus:v3.3.1",
+        "test",
+        "rules",
+        "/fixture/test.yml",
+      ],
+      { encoding: "utf8" },
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

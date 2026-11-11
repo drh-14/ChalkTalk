@@ -2,7 +2,7 @@
   "uid": "chalktalk-api",
   "title": "ChalkTalk API observability",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": false,
   "refresh": "1m",
   "time": {
@@ -422,6 +422,180 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 16,
+      "title": "p50 database query duration",
+      "type": "timeseries",
+      "description": "Client-observed time includes transport, PostgreSQL execution, locks, and client queueing; it does not isolate network or server time.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 66
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket{outcome=\"succeeded\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 17,
+      "title": "p95 database query duration",
+      "type": "timeseries",
+      "description": "Client-observed time includes transport, PostgreSQL execution, locks, and client queueing; it does not isolate network or server time.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 66
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket{outcome=\"succeeded\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 18,
+      "title": "p50 database pool wait",
+      "type": "timeseries",
+      "description": "Time to check out a pooled client, including contention and new connection setup.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 74
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket{outcome=\"succeeded\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 19,
+      "title": "p95 database pool wait",
+      "type": "timeseries",
+      "description": "Time to check out a pooled client, including contention and new connection setup.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 74
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket{outcome=\"succeeded\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 20,
+      "title": "Database queries / second",
+      "type": "timeseries",
+      "description": "Client-observed query attempts by API, worker, and collaboration process.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 82
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m]))",
+          "refId": "A",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 21,
+      "title": "Failed database query fraction",
+      "type": "timeseries",
+      "description": "Failed query attempts divided by all query attempts for each process.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 82
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (job) (rate(chalktalk_db_query_duration_seconds_count{outcome=\"failed\"}[5m])) / clamp_min(sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m])), 0.000001)",
+          "refId": "A",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
         }
       },
       "options": {}

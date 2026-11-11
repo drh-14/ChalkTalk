@@ -39,7 +39,10 @@ const observability = environment.observability.enabled
       },
     })
   : undefined;
-const pool = createPool(requireDatabaseUrl(environment));
+const pool = createPool(
+  requireDatabaseUrl(environment),
+  observability?.databaseObserver,
+);
 const embeddingConfig = readEmbeddingConfig();
 const semantic = embeddingConfig
   ? new SemanticIndex(

@@ -8,6 +8,7 @@ import {
   Registry,
 } from "@prometheus-io/client";
 import pino from "pino";
+import { registerDatabaseMetrics } from "../database/metrics.js";
 import { LogSpool, type LogSpoolOptions } from "./spool.js";
 
 type SystemEvent =
@@ -126,6 +127,7 @@ export function createObservability(options: ObservabilityOptions) {
     throw new Error("METRICS_TOKEN must be at least 32 characters");
   const registry = new Registry();
   collectDefaultMetrics({ register: registry });
+  const databaseObserver = registerDatabaseMetrics(registry);
   const requests = new Counter({
     name: "chalktalk_http_requests_total",
     help: "Completed and aborted API requests",
@@ -270,6 +272,7 @@ export function createObservability(options: ObservabilityOptions) {
       .catch(() => response.status(503).end());
   };
   return {
+    databaseObserver,
     requestMiddleware,
     metricsHandler,
     recordJobStart(kind: JobKind) {
