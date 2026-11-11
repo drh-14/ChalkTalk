@@ -48,7 +48,9 @@ case "$*" in
     else
       case "$*" in *' --force-recreate'*) printf '%s\n' "$DEPLOY_SHA" > "$ACTIVE_SHA_FILE" ;; esac
     fi ;;
-  *'smoke.js'* ) [ "$FAIL_SMOKE" != 1 ] ;;
+  *'smoke.js'* )
+    if [ "$DRAIN_SMOKE_STDIN" = 1 ]; then cat >/dev/null; fi
+    [ "$FAIL_SMOKE" != 1 ] ;;
   *' ps -aq migrate'*) echo migration-container ;;
   *' ps -aq web'*) echo web-container ;;
   *' ps -aq api'*) echo api-container ;;
@@ -110,6 +112,20 @@ esac
         self.assertEqual(self.run_script("stage").returncode, 0)
         self.assertNotIn(" up -d", self.calls())
         self.assertNotIn("smoke.js", self.calls())
+
+    def test_streamed_stage_preserves_script_after_interactive_smoke(self):
+        result = subprocess.run(
+            ["bash", "-s", "--", "stage", SHA],
+            input=SCRIPT.read_text(),
+            capture_output=True,
+            text=True,
+            env={**self.env, "DRAIN_SMOKE_STDIN": "1"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("smoke.js", self.calls())
+        self.assertEqual((self.root / "shared" / "pending.sha").read_text().strip(), SHA)
+        self.assertIn("Release started", result.stdout)
+        self.assertEqual(self.run_script("finish").returncode, 0)
 
     def test_stale_success_marker_restores_release_without_resending_email(self):
         self.assertEqual(self.run_script("stage").returncode, 0)
