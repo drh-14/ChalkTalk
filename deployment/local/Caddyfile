@@ -1,0 +1,22 @@
+{$DOMAIN}:443 {
+	tls internal
+	encode zstd gzip
+
+	@apiHealth path /api/health
+	handle @apiHealth {
+		rewrite * /health
+		reverse_proxy api:3000
+	}
+
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	handle /collaboration {
+		reverse_proxy collaboration:3100
+	}
+
+	handle {
+		reverse_proxy web:5173
+	}
+}
