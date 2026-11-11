@@ -63,10 +63,10 @@ function supabaseDatabaseProjectRef(value: string | undefined): string {
   if (
     sslModes.length !== 1 ||
     [...url.searchParams.keys()].some((key) => key !== "sslmode") ||
-    !["require", "verify-ca", "verify-full"].includes(sslModes[0])
+    sslModes[0] !== "verify-full"
   )
     throw new Error(
-      "DATABASE_URL must specify sslmode=require, verify-ca, or verify-full when NODE_ENV=production",
+      "DATABASE_URL must specify sslmode=verify-full when NODE_ENV=production",
     );
   return direct ? direct[1] : poolerUsername![2];
 }

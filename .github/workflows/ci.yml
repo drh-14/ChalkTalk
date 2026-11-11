@@ -14,6 +14,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  production-ca-trust:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Verify production Node images load the pinned Supabase CA
+        run: bash deployment/production/tests/verify-ca-images.sh
+
   supabase-integration:
     runs-on: ubuntu-26.04
     timeout-minutes: 35
