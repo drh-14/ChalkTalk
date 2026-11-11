@@ -56,7 +56,12 @@ services:
       S3_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
       METRICS_TOKEN: ${METRICS_TOKEN:-}
       LOG_SPOOL_DIRECTORY: /var/log/chalktalk
-    command: ["sh", "-c", "if [ \"$${PORT+x}\" ]; then echo 'Local Compose: remove PORT from .env; the API uses internal port 3000.' >&2; exit 1; fi; npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api"]
+    command:
+      [
+        "sh",
+        "-c",
+        'if [ "$${PORT+x}" ]; then echo ''Local Compose: remove PORT from .env; the API uses internal port 3000.'' >&2; exit 1; fi; npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api',
+      ]
     volumes:
       - ../..:/app
       - api-node-modules:/app/node_modules
