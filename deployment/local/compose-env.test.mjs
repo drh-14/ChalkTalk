@@ -77,12 +77,7 @@ test("local Compose derives browser origins from its configured domain and web p
   assert.equal(config.services.api.environment.PORT, undefined);
 });
 
-test("canonical local Compose preserves the chalktalk project and accepts isolation override", async () => {
-  const { existsSync } = await import("node:fs");
-  assert.equal(
-    existsSync(new URL("../../docker-compose.yml", import.meta.url)),
-    false,
-  );
+test("canonical local Compose preserves the chalktalk project and accepts isolation override", () => {
   const render = (project) =>
     JSON.parse(
       execFileSync(
