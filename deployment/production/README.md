@@ -105,7 +105,7 @@ If upgrading an earlier production env file, rename its five `S3_*` entries to t
 
 ## Operate and verify
 
-Production runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoint, or event spool, even if `METRICS_TOKEN` is accidentally set. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy.
+The current production Compose stack runs no Prometheus, Grafana, Logstash, Elasticsearch, metrics endpoint, or event spool. Staging observability secrets through [VM bootstrap](ansible/README.md) does not enable monitoring on its own. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy.
 
 Run these commands from the pinned release checkout with `COMPOSE_ENV_FILE` exported to the same environment-file path used by `--env-file` above.
 
