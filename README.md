@@ -97,10 +97,10 @@ This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, c
 
 ### 3. Open the app and verify it
 
-| Local endpoint                                   | Purpose                                           |
-| ------------------------------------------------ | ------------------------------------------------- |
+| Local endpoint                                   | Purpose                                                                                |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------- |
 | [https://localhost:5173](https://localhost:5173) | Web app with default `DOMAIN` and `WEB_PORT`; Vite proxies `/api` and `/collaboration` |
-| `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store              |
+| `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store                                                   |
 
 The API is not exposed on a host port; the web proxy exposes its health route at `https://localhost:5173/api/health` with the defaults. Sign up using a valid `.edu` email address, then follow the verification link delivered to your inbox through Resend. The collaboration WebSocket is reached through `wss://localhost:5173/collaboration` with the defaults. Replace `localhost:5173` in these URLs with your chosen `DOMAIN:WEB_PORT` if changed.
 
