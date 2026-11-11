@@ -196,7 +196,7 @@ test("dashboard PromQL computes database wait, query, and failure indicators", a
     }).flat(),
     "  - interval: 1m",
     "    input_series:",
-    "      - series: 'chalktalk_db_query_duration_seconds_count{job=\"worker\",outcome=\"succeeded\"}'",
+    '      - series: \'chalktalk_db_query_duration_seconds_count{job="worker",outcome="succeeded"}\'',
     "        values: '0+9x6'",
     "    promql_expr_test:",
     `      - expr: ${JSON.stringify(panels.get(21)?.targets[0]?.expr)}`,
