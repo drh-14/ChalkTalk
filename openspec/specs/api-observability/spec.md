@@ -146,7 +146,7 @@ The API, worker, and collaboration processes SHALL expose separate Prometheus hi
 
 ### Requirement: Database latency dashboard
 
-Grafana SHALL show p50/p95 client-observed query and acquisition duration by process, plus query and failed-query rates. The dashboard and operator documentation SHALL distinguish client-observed query duration from PostgreSQL server execution and geographic network latency.
+Grafana SHALL show p50/p95 client-observed query and acquisition duration by process, plus database attempt rate and failure fraction. Attempts SHALL count executed queries and failed pool acquisitions, without double-counting successful acquisitions. The dashboard and operator documentation SHALL distinguish client-observed query duration from PostgreSQL server execution and geographic network latency.
 
 #### Scenario: Operator diagnoses latency
 

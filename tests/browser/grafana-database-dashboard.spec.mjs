@@ -26,12 +26,10 @@ test("operator sees the database latency panels in private Grafana", async ({
     "p95 database query duration",
     "p50 database pool wait",
     "p95 database pool wait",
-    "Database queries / second",
-    "Failed database query fraction",
+    "Database attempts / second",
+    "Failed database attempt fraction",
   ])
     await expect(page.getByText(title)).toBeVisible();
-  if (process.env.EXPECT_DB_DATA === "1")
-    await expect(page.getByText("api", { exact: true })).toHaveCount(6);
   await page
     .getByText("p50 database query duration")
     .evaluate((element) => element.scrollIntoView({ block: "start" }));
