@@ -48,6 +48,7 @@ services:
       FRONTEND_ORIGINS: https://${DOMAIN:-localhost}:${WEB_PORT:-5173}
       FRONTEND_BASE_URL: https://${DOMAIN:-localhost}:${WEB_PORT:-5173}
       NODE_ENV: development
+      TRUST_PROXY_HOPS: "1"
       EMAIL_PROVIDER: resend
       S3_ENDPOINT: http://seaweedfs:8333
       S3_BUCKET: chalktalk-resources
@@ -166,34 +167,58 @@ services:
     environment:
       VITE_API_PROXY_TARGET: http://api:3000
       VITE_COLLABORATION_PROXY_TARGET: ws://collaboration:3100
-      VITE_TLS_KEY_PATH: /certificates/localhost-key.pem
-      VITE_TLS_CERT_PATH: /certificates/localhost.pem
+      VITE_TLS_KEY_PATH: ""
+      VITE_TLS_CERT_PATH: ""
+      VITE_GATEWAY_DOMAIN: ${DOMAIN:-localhost}
+      VITE_GATEWAY_PORT: ${WEB_PORT:-5173}
       VITE_USE_POLLING: "true"
     command: npm run dev --workspace=@chalktalk/web -- --host 0.0.0.0
     volumes:
       - ../..:/app
       - web-node-modules:/app/node_modules
-      - ../../.cert:/certificates:ro
-    ports:
-      - "${WEB_PORT:-5173}:5173"
+    expose:
+      - "5173"
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      # The CI certificate is intentionally self-signed. Limit TLS verification
-      # bypassing to this internal readiness probe; browser traffic still uses
-      # the mounted mkcert certificate.
       test:
         [
           "CMD",
           "node",
           "-e",
-          "const https = require('node:https'); const request = https.get('https://localhost:5173/api/health', { rejectUnauthorized: false }, (response) => { response.resume(); response.on('end', () => process.exit(response.statusCode === 200 ? 0 : 1)); }); request.on('error', () => process.exit(1));",
+          "fetch('http://localhost:5173/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
         ]
       interval: 5s
       timeout: 5s
       retries: 12
       start_period: 30s
+
+  gateway:
+    image: caddy:2.10-alpine
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "${WEB_PORT:-5173}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:2019/config/",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   loki:
     image: grafana/loki:3.5.3
@@ -277,6 +302,7 @@ volumes:
   worker-node-modules:
   collaboration-node-modules:
   web-node-modules:
+  caddy-data:
   api-log-spool:
   worker-log-spool:
   prometheus-data:

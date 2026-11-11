@@ -86,6 +86,23 @@ describe("Vite development configuration", () => {
     });
   });
 
+  it("uses private HTTP Vite with a narrow gateway host and external WSS HMR", () => {
+    const configuration = createViteConfig({
+      VITE_GATEWAY_DOMAIN: "local.example.edu",
+      VITE_GATEWAY_PORT: "5188",
+      VITE_TLS_KEY_PATH: "",
+      VITE_TLS_CERT_PATH: "",
+    });
+
+    expect(configuration.server?.https).toBeUndefined();
+    expect(configuration.server?.allowedHosts).toEqual(["local.example.edu"]);
+    expect(configuration.server?.hmr).toMatchObject({
+      protocol: "wss",
+      host: "local.example.edu",
+      clientPort: 5188,
+    });
+  });
+
   it("serves Excalidraw fonts from this origin and copies them into the build", async () => {
     const plugin = excalidrawAssets();
     expect(createViteConfig({}).plugins?.flat()).toContainEqual(

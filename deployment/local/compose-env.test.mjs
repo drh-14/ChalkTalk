@@ -77,12 +77,7 @@ test("local Compose derives browser origins from its configured domain and web p
   assert.equal(config.services.api.environment.PORT, undefined);
 });
 
-test("canonical local Compose preserves the chalktalk project and accepts isolation override", async () => {
-  const { existsSync } = await import("node:fs");
-  assert.equal(
-    existsSync(new URL("../../docker-compose.yml", import.meta.url)),
-    false,
-  );
+test("canonical local Compose preserves the chalktalk project and accepts isolation override", () => {
   const render = (project) =>
     JSON.parse(
       execFileSync(
@@ -110,4 +105,47 @@ test("canonical local Compose preserves the chalktalk project and accepts isolat
     );
   assert.equal(render("").name, "chalktalk");
   assert.equal(render("chalktalk_loki_test").name, "chalktalk_loki_test");
+});
+
+test("Caddy is the sole published app ingress and Vite stays private HTTP", () => {
+  const config = JSON.parse(
+    execFileSync(
+      "docker",
+      [
+        "compose",
+        "-f",
+        "deployment/local/compose.yml",
+        "--env-file",
+        "deployment/local/.env.example",
+        "config",
+        "--format",
+        "json",
+      ],
+      {
+        cwd: new URL("../..", import.meta.url),
+        env: {
+          ...process.env,
+          COMPOSE_ENV_FILE: "deployment/local/.env.example",
+          WEB_PORT: "5188",
+          DOMAIN: "local.example.edu",
+        },
+        encoding: "utf8",
+      },
+    ),
+  );
+  assert.deepEqual(
+    config.services.gateway.ports.map((port) => port.published),
+    ["5188"],
+  );
+  assert.equal(config.services.web.ports, undefined);
+  assert.equal(config.services.web.environment.VITE_TLS_KEY_PATH, "");
+  assert.equal(config.services.web.environment.VITE_TLS_CERT_PATH, "");
+  assert.equal(
+    config.services.web.environment.VITE_GATEWAY_DOMAIN,
+    "local.example.edu",
+  );
+  assert.equal(config.services.api.environment.TRUST_PROXY_HOPS, "1");
+  assert.ok(
+    config.services.gateway.volumes.some((volume) => volume.target === "/data"),
+  );
 });
