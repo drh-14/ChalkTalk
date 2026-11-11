@@ -8,7 +8,7 @@ Provides local operators with API and background-job latency, reliability, and p
 
 ### Requirement: Request metrics and protected scrape
 
-The API SHALL expose Prometheus request counts and duration histograms using only bounded method, matched route template, status class, and outcome labels. Buckets SHALL include 0.2 seconds. The metrics endpoint SHALL exist only when a valid `METRICS_TOKEN` is configured and SHALL require that bearer token; health and scrape traffic SHALL not distort application latency.
+The API SHALL expose Prometheus request counts and duration histograms using only bounded method, matched route template, status class, and outcome labels. Buckets SHALL include 0.2 seconds. The metrics endpoint SHALL exist only when a valid `METRICS_TOKEN` and spool directory are configured and SHALL require that bearer token; health and scrape traffic SHALL not distort application latency. Production SHALL require those settings before serving work.
 
 #### Scenario: Authenticated scrape
 
@@ -17,7 +17,7 @@ The API SHALL expose Prometheus request counts and duration histograms using onl
 
 #### Scenario: Unauthorized or disabled scrape
 
-- **WHEN** the token is absent or invalid, or observability is disabled
+- **WHEN** the token is absent or invalid, or observability is disabled locally
 - **THEN** no metrics are disclosed
 
 #### Scenario: Sensitive or unmatched path
@@ -32,13 +32,18 @@ The API SHALL expose Prometheus request counts and duration histograms using onl
 
 #### Scenario: No token in production
 
-- **WHEN** production starts without a metrics token
-- **THEN** its API and worker do not expose a metrics endpoint or event spool
+- **WHEN** a production API, worker, or collaboration process starts without a valid metrics token or required spool directory
+- **THEN** startup fails before serving work
 
 #### Scenario: Production monitoring remains off
 
-- **WHEN** production receives a metrics token by mistake
-- **THEN** its API and worker still do not expose a metrics endpoint or event spool
+- **WHEN** a production process receives an invalid metrics token or lacks its required spool directory
+- **THEN** startup fails rather than exposing partially configured monitoring
+
+#### Scenario: Protected production monitoring
+
+- **WHEN** production starts with valid monitoring configuration
+- **THEN** metrics and sanitized event spooling are enabled without publishing the metrics endpoints publicly
 
 ### Requirement: Background-job metrics
 
@@ -90,3 +95,27 @@ The default local Compose stack SHALL run Prometheus, Grafana, Alloy, and Loki. 
 
 - **WHEN** the default local stack is started with required credentials
 - **THEN** an operator can open localhost Grafana and inspect provisioned metrics and logs
+
+### Requirement: Private production monitoring dashboard
+
+The production Compose stack SHALL run Prometheus, Loki, Alloy, and Grafana. Prometheus SHALL collect protected application metrics. Alloy SHALL ingest only sanitized API and worker spools without Docker socket access. Grafana SHALL load its administrator password from a separate private environment file that no application process receives. Only Grafana SHALL publish a loopback-bound host port; the monitoring stack SHALL have no public Caddy route. Loki SHALL retain logs for seven days and Prometheus SHALL retain metrics for fifteen days.
+
+#### Scenario: Operator connects through SSH
+
+- **WHEN** an operator forwards the VM's loopback Grafana port over SSH and signs in
+- **THEN** provisioned dashboards and searchable sanitized logs are available
+
+#### Scenario: Public or unauthorized access
+
+- **WHEN** a remote client requests the Grafana port directly or a caller scrapes metrics without the token
+- **THEN** telemetry is not disclosed
+
+#### Scenario: Grafana password isolation
+
+- **WHEN** production Compose creates the application and monitoring services
+- **THEN** only Grafana receives the administrator password from its private environment file
+
+#### Scenario: Collector outage
+
+- **WHEN** Alloy or Loki is unavailable
+- **THEN** application requests continue and surviving bounded spooled events can be replayed when the collector recovers

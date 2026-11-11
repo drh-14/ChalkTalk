@@ -20,6 +20,8 @@ x-app-environment: &app-environment
     FRONTEND_BASE_URL: https://${DOMAIN:?Set DOMAIN in /srv/chalktalk/shared/production.env}
     COLLABORATION_PUBLIC_URL: wss://${DOMAIN:?Set DOMAIN in /srv/chalktalk/shared/production.env}/collaboration
     TRUST_PROXY_HOPS: "1"
+    METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN in /srv/chalktalk/shared/production.env}
+    LOG_SPOOL_DIRECTORY: /var/log/chalktalk
 
 x-bounded-logs: &bounded-logs
   driver: json-file
@@ -45,6 +47,8 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [edge]
+    volumes:
+      - api-log-spool:/var/log/chalktalk
     healthcheck:
       test:
         [
@@ -68,6 +72,8 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [edge]
+    volumes:
+      - worker-log-spool:/var/log/chalktalk
     logging: *bounded-logs
 
   collaboration:
@@ -101,9 +107,99 @@ services:
     networks: [edge]
     logging: *bounded-logs
 
+  loki:
+    image: grafana/loki:3.5.3
+    command: ["-config.file=/etc/loki/loki.yml"]
+    restart: unless-stopped
+    volumes:
+      - ../observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    networks: [edge]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/usr/bin/loki",
+          "-verify-config",
+          "-config.file=/etc/loki/loki.yml",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging: *bounded-logs
+
+  alloy:
+    image: grafana/alloy:v1.9.2
+    command:
+      ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    restart: unless-stopped
+    volumes:
+      - ../observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - api-log-spool:/var/log/chalktalk-api:ro
+      - worker-log-spool:/var/log/chalktalk-worker:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      loki: { condition: service_started }
+    networks: [edge]
+    logging: *bounded-logs
+
+  prometheus:
+    image: prom/prometheus:v3.3.1
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        test -n "$${METRICS_TOKEN}" || { echo 'METRICS_TOKEN is required' >&2; exit 1; }
+        printf '%s' "$${METRICS_TOKEN}" > /tmp/metrics-token
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=15d
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN in /srv/chalktalk/shared/production.env}
+    restart: unless-stopped
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      api: { condition: service_healthy }
+      worker: { condition: service_started }
+      collaboration: { condition: service_started }
+    networks: [edge]
+    logging: *bounded-logs
+
+  grafana:
+    image: grafana/grafana:11.6.1
+    env_file: ${GRAFANA_ENV_FILE:-/srv/chalktalk/shared/grafana.env}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        test -n "$${GRAFANA_ADMIN_PASSWORD}" || { echo 'GRAFANA_ADMIN_PASSWORD is required' >&2; exit 1; }
+        export GF_SECURITY_ADMIN_PASSWORD="$${GRAFANA_ADMIN_PASSWORD}"
+        exec /run.sh
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_PLUGINS_DISABLE_PLUGINS: grafana-lokiexplore-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+      - alloy
+    networks: [edge]
+    logging: *bounded-logs
+
 networks:
   edge: {}
 
 volumes:
   caddy-data: {}
   caddy-config: {}
+  api-log-spool: {}
+  worker-log-spool: {}
+  loki-data: {}
+  alloy-data: {}
+  prometheus-data: {}
+  grafana-data: {}

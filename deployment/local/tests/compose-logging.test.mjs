@@ -74,7 +74,7 @@ test("Grafana queries Loki logs and keeps the existing dashboard UID", async () 
   const { readFileSync } = await import("node:fs");
   const dashboard = JSON.parse(
     readFileSync(
-      new URL("../observability/grafana/dashboards/api.json", import.meta.url),
+      new URL("../../observability/grafana/dashboards/api.json", import.meta.url),
       "utf8",
     ),
   );

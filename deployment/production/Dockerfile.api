@@ -16,6 +16,7 @@ RUN chmod 0755 /etc/chalktalk
 ENV NODE_EXTRA_CA_CERTS=/etc/chalktalk/supabase-root-2021.crt
 RUN node -e "new (require('node:crypto').X509Certificate)(require('node:fs').readFileSync(process.env.NODE_EXTRA_CA_CERTS))"
 RUN apt-get update && apt-get install -y --no-install-recommends qpdf poppler-utils tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
+RUN install -d -o node -g node -m 0750 /var/log/chalktalk
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json /app/package-lock.json ./

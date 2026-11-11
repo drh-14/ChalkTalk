@@ -224,7 +224,7 @@ services:
     image: grafana/loki:3.5.3
     command: ["-config.file=/etc/loki/loki.yml"]
     volumes:
-      - ./observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - ../observability/loki/loki.yml:/etc/loki/loki.yml:ro
       - loki-data:/loki
     healthcheck:
       test:
@@ -243,7 +243,7 @@ services:
     command:
       ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
     volumes:
-      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ../observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - api-log-spool:/var/log/chalktalk-api:ro
       - worker-log-spool:/var/log/chalktalk-worker:ro
       - alloy-data:/var/lib/alloy/data
@@ -262,7 +262,7 @@ services:
     environment:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     volumes:
-      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     depends_on:
       api:
@@ -288,8 +288,8 @@ services:
       - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
       - loki
