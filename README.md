@@ -61,7 +61,7 @@ The React/Vite client (`apps/web`) talks to the Express API (`apps/api`). Postgr
 
 For the single-VM deployment with separate frontend, API, Hocuspocus, and worker images, managed Supabase PostgreSQL and Storage, and Resend HTTPS, see the [Compose deployment guide](deployment/production/README.md). The instructions below are for local development; they do not connect to Supabase.
 
-The Compose setup below is for **reproducible local development**. It includes hot-reloading servers, local data services, and real Resend HTTPS email. Do not expose it publicly without replacing those settings, TLS termination, storage, backups, and email configuration.
+The Compose setup below is for **reproducible local development**. It includes hot-reloading servers, local data services, and real Resend HTTPS email. Although Caddy terminates HTTPS, do not expose this stack publicly without reviewing its development settings, certificate trust, storage, backups, and email configuration.
 
 ## Start locally
 
