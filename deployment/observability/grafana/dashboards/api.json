@@ -443,7 +443,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket{outcome=\"succeeded\"}[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
           "refId": "A",
           "legendFormat": "{{job}}"
         }
@@ -472,7 +472,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket{outcome=\"succeeded\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
           "refId": "A",
           "legendFormat": "{{job}}"
         }
@@ -501,7 +501,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket{outcome=\"succeeded\"}[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
           "refId": "A",
           "legendFormat": "{{job}}"
         }
@@ -530,7 +530,7 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket{outcome=\"succeeded\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
           "refId": "A",
           "legendFormat": "{{job}}"
         }
@@ -588,7 +588,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (job) (rate(chalktalk_db_query_duration_seconds_count{outcome=\"failed\"}[5m])) / clamp_min(sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m])), 0.000001)",
+          "expr": "(sum by (job) (rate(chalktalk_db_query_duration_seconds_count{outcome=\"failed\"}[5m])) or (0 * sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m])))) / clamp_min(sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m])), 0.000001)",
           "refId": "A",
           "legendFormat": "{{job}}"
         }

@@ -129,12 +129,30 @@ test("dashboard PromQL computes database wait, query, and failure indicators", a
       value,
     ]),
     ...[
+      ["0.05", 0],
+      ["0.1", 0],
+      ["0.2", 1],
+      ["+Inf", 1],
+    ].map(([le, value]) => [
+      `chalktalk_db_query_duration_seconds_bucket{job="api",outcome="failed",le="${le}"}`,
+      value,
+    ]),
+    ...[
       ["0.01", 2],
       ["0.05", 7],
       ["0.1", 9],
       ["+Inf", 9],
     ].map(([le, value]) => [
       `chalktalk_db_pool_acquire_duration_seconds_bucket{job="api",outcome="succeeded",le="${le}"}`,
+      value,
+    ]),
+    ...[
+      ["0.01", 0],
+      ["0.05", 0],
+      ["0.1", 1],
+      ["+Inf", 1],
+    ].map(([le, value]) => [
+      `chalktalk_db_pool_acquire_duration_seconds_bucket{job="api",outcome="failed",le="${le}"}`,
       value,
     ]),
     [
@@ -147,10 +165,10 @@ test("dashboard PromQL computes database wait, query, and failure indicators", a
     ],
   ];
   const expected = new Map([
-    [16, 0.08125],
-    [17, 0.185],
-    [18, 0.03],
-    [19, 0.08875],
+    [16, 0.0875],
+    [17, 0.1875],
+    [18, 0.034],
+    [19, 0.05 + (2.5 / 3) * 0.05],
     [20, 10 / 60],
     [21, 0.1],
   ]);
@@ -176,6 +194,16 @@ test("dashboard PromQL computes database wait, query, and failure indicators", a
         "            value: 1",
       ];
     }).flat(),
+    "  - interval: 1m",
+    "    input_series:",
+    "      - series: 'chalktalk_db_query_duration_seconds_count{job=\"worker\",outcome=\"succeeded\"}'",
+    "        values: '0+9x6'",
+    "    promql_expr_test:",
+    `      - expr: ${JSON.stringify(panels.get(21)?.targets[0]?.expr)}`,
+    "        eval_time: 6m",
+    "        exp_samples:",
+    "          - labels: '{job=\"worker\"}'",
+    "            value: 0",
   ].join("\n");
   const directory = await mkdtemp(
     join(dirname(fileURLToPath(import.meta.url)), ".db-promql-test-"),
