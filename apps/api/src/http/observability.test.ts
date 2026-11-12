@@ -186,6 +186,38 @@ describe("API observability", () => {
     expect((await request(createApp()).get("/metrics")).status).toBe(404);
   });
 
+  it("serves database timings only through authorized API and worker scrapes", async () => {
+    const observability = createObservability({
+      token: "test-operator-token-long-enough!",
+      stdout: () => {},
+    });
+    instances.push(observability);
+    observability.databaseObserver("acquire", "succeeded", 0.02);
+    observability.databaseObserver("query", "failed", 0.08);
+    for (const app of [
+      createApp({
+        observability,
+        environment: loadEnvironment({
+          AUTH_TOKEN_SECRET:
+            "unit-test-auth-secret-more-than-thirty-two-characters",
+        }),
+      }),
+      createWorkerMetricsApp(observability),
+    ]) {
+      expect((await request(app).get("/metrics")).status).toBe(401);
+      const scrape = await request(app)
+        .get("/metrics")
+        .set("Authorization", "Bearer test-operator-token-long-enough!");
+      expect(scrape.status).toBe(200);
+      expect(scrape.text).toContain(
+        'chalktalk_db_pool_acquire_duration_seconds_count{outcome="succeeded"} 1',
+      );
+      expect(scrape.text).toContain(
+        'chalktalk_db_query_duration_seconds_count{outcome="failed"} 1',
+      );
+    }
+  });
+
   it("allows only the configured bearer token to scrape and never uses raw URLs as labels", async () => {
     const { app } = fixture();
     await request(app).get("/api/v1/secret-123?email=private@example.edu");
