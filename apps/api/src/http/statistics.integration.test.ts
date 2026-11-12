@@ -373,6 +373,7 @@ integration("course statistics API", () => {
     const courseId = ids.importedCourse;
     const base = `/api/v1/courses/${courseId}/statistics`;
     const retainedDay = new Date(Date.now() - 100 * 86400000);
+    retainedDay.setUTCHours(0, 0, 0, 0);
     const questionAt = new Date(retainedDay.getTime() + 86400000);
     const answerAt = new Date(questionAt.getTime() + 3600000);
     const endorsementAt = new Date(answerAt.getTime() + 3600000);
