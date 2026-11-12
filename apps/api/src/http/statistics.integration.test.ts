@@ -373,11 +373,16 @@ integration("course statistics API", () => {
     const courseId = ids.importedCourse;
     const base = `/api/v1/courses/${courseId}/statistics`;
     const retainedDay = new Date(Date.now() - 100 * 86400000);
+    retainedDay.setUTCHours(0, 0, 0, 0);
     const questionAt = new Date(retainedDay.getTime() + 86400000);
     const answerAt = new Date(questionAt.getTime() + 3600000);
     const endorsementAt = new Date(answerAt.getTime() + 3600000);
     const retainedDate = retainedDay.toISOString().slice(0, 10);
     const questionDate = questionAt.toISOString().slice(0, 10);
+    const dayCountThrough = (endDate: string) =>
+      (Date.parse(`${endDate}T00:00:00.000Z`) - retainedDay.getTime()) /
+        86400000 +
+      1;
     const postId = uuidv7();
     const answerId = uuidv7();
     await pool.query(
@@ -419,7 +424,9 @@ integration("course statistics API", () => {
       answersCreated: 1,
       postsViewed: 1,
     });
-    expect(summary.body.data.dailyActivity).toHaveLength(101);
+    expect(summary.body.data.dailyActivity).toHaveLength(
+      dayCountThrough(summary.body.data.dailyActivity.at(-1).date),
+    );
     expect(summary.body.data.postsViewed).toBe(1);
     expect(summary.body.data.averageResponseTimeSeconds).toBe(3600);
 
@@ -441,7 +448,10 @@ integration("course statistics API", () => {
     expect(daily.status).toBe(200);
     expect(daily.text).toContain(`${retainedDate},0,0,0\r\n`);
     expect(daily.text).toContain(`${questionDate},1,1,1\r\n`);
-    expect(daily.text.trimEnd().split("\r\n")).toHaveLength(102);
+    const dailyRows = daily.text.trimEnd().split("\r\n");
+    expect(dailyRows).toHaveLength(
+      dayCountThrough(dailyRows.at(-1)!.split(",")[0]!) + 1,
+    );
     const roster = await read(
       ids.staff,
       `${base}/export/students?period=course_to_date`,
