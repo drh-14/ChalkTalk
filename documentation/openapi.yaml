@@ -309,8 +309,8 @@ paths:
   "/metrics":
     get:
       tags: [Observability]
-      summary: Scrape local API and job metrics
-      description: Available only when local observability is enabled. Outside the /api/v1 browser API; requests require an operator bearer token. No user session or CORS access.
+      summary: Scrape API application and database metrics
+      description: Available only when observability is enabled. Outside the /api/v1 browser API; requests require an operator bearer token. No user session or CORS access.
       operationId: scrapeMetrics
       servers:
         - url: "/"

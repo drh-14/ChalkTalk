@@ -549,8 +549,13 @@ integration("collaboration server", () => {
         "chalktalk_collaboration_rejected_updates_total",
         "chalktalk_collaboration_closes_total",
         "chalktalk_collaboration_sessions_ended_total",
+        "chalktalk_db_pool_acquire_duration_seconds",
+        "chalktalk_db_query_duration_seconds",
       ])
         expect(text).toContain(`# TYPE ${series}`);
+      expect(text).toMatch(
+        /chalktalk_db_query_duration_seconds_count\{outcome="succeeded"\} [1-9]/,
+      );
       expect(text).toMatch(/^chalktalk_collaboration_connections [1-9]/m);
       expect(text).toMatch(
         /^chalktalk_collaboration_rejected_updates_total [1-9]/m,
