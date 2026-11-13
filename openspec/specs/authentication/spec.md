@@ -8,21 +8,21 @@ Provide verified account identity and secure browser authentication so later Cha
 
 ### Requirement: Verified account creation
 
-The system SHALL require a valid, unexpired, single-use email-verification token before creating an account. It SHALL accept verification requests and token-backed account creation only for normalized ASCII addresses of at most 254 characters whose syntactically valid domain ends exactly in `.edu`, including subdomains, without a deployment-specific allowlist. It SHALL create or locate the organization for the exact verified domain, create the user, and consume the token atomically. A rejected token SHALL not create a user or consume the token.
+The system SHALL require a valid, unexpired, single-use email-verification token before creating an account. It SHALL accept verification requests and token-backed account creation for normalized ASCII addresses of at most 254 characters with a 1–64-character ASCII dot-atom local part and syntactically valid DNS domain, regardless of domain suffix. It SHALL create or locate the organization for the exact verified domain, create the user, and consume the token atomically. A rejected token SHALL not create a user or consume the token.
 
-#### Scenario: Verify an academic email
+#### Scenario: Verify an email at any domain
 
-- **WHEN** a client requests verification for a valid mixed-case address under a `.edu` domain or subdomain
-- **THEN** the server normalizes it and sends verification without requiring a configured school domain
+- **WHEN** a client requests verification for a valid mixed-case address under a `.edu` domain, subdomain, or public-provider domain
+- **THEN** the server normalizes it and sends verification without requiring an academic suffix
 
-#### Scenario: Reject a nonacademic domain
+#### Scenario: Reject malformed syntax at a nonacademic domain
 
-- **WHEN** a client requests verification for a syntactically valid email whose domain does not end exactly in `.edu`
-- **THEN** the server returns `422 email_domain_not_allowed` without sending mail or persisting a verification token
+- **WHEN** a client requests verification for an email with a nonacademic domain and malformed local-part or DNS syntax
+- **THEN** the server returns `422 validation_failed` without sending mail or persisting a verification token
 
 #### Scenario: Enforce the 254-character mailbox limit
 
-- **WHEN** a client requests verification for a valid 254-character normalized ASCII `.edu` email, or for an otherwise valid 255-character address
+- **WHEN** a client requests verification for a valid 254-character normalized ASCII email, or for an otherwise valid 255-character address
 - **THEN** the server accepts the 254-character address and returns `422 validation_failed` for the 255-character address without sending mail or persisting a verification token
 
 #### Scenario: Reject malformed email syntax
@@ -35,14 +35,14 @@ The system SHALL require a valid, unexpired, single-use email-verification token
 - **WHEN** a previously issued verification token with malformed email syntax, including a local part outside the 1–64-character ASCII dot-atom form, or invalid DNS labels is submitted for account creation or an email change
 - **THEN** the server returns `422 validation_failed` without creating or changing a user or consuming the token
 
-#### Scenario: Reject a legacy nonacademic verification token
+#### Scenario: Reject a malformed legacy nonacademic verification token
 
-- **WHEN** a previously issued non-`.edu` verification token is submitted to create an account
-- **THEN** the server returns `422 email_domain_not_allowed` without creating a user, organization, or consuming the token
+- **WHEN** a previously issued non-`.edu` verification token with malformed email syntax is submitted to create an account
+- **THEN** the server returns `422 validation_failed` without creating a user, organization, or consuming the token
 
 #### Scenario: Create an account from a verified email
 
-- **WHEN** a client submits a valid `.edu` verification token, password, and display name
+- **WHEN** a client submits a valid verification token from any email domain, password, and display name
 - **THEN** the system creates the user and returns `201 Created` without returning the password
 
 #### Scenario: Reuse a verification token
@@ -54,6 +54,11 @@ The system SHALL require a valid, unexpired, single-use email-verification token
 
 - **WHEN** an existing non-`.edu` user whose previously accepted local part contains consecutive dots logs in or requests a password reset
 - **THEN** historical email normalization finds the account and allows both flows, while a new verification request for that address returns `422 validation_failed`
+
+#### Scenario: Share an organization at a public email domain
+
+- **WHEN** two users register verified addresses at the same public email domain
+- **THEN** both are associated with the same exact-domain organization and can access its organization-level course listing under existing authorization rules
 
 ### Requirement: Browser session authentication
 
@@ -85,7 +90,7 @@ The system SHALL support reading the current session, signing out, changing a pa
 
 ### Requirement: Profile and account deletion
 
-The system SHALL allow an authenticated user to update their display name and verified same-school `.edu` email with optimistic concurrency. An email-change token for a different domain or non-`.edu` address SHALL fail with `422 email_domain_not_allowed` without consuming the token or changing the user. Existing non-`.edu` users SHALL retain login and password-reset access. It SHALL require the current password for account deletion and reject deletion when the user is the final instructor of a course.
+The system SHALL allow an authenticated user to update their display name and verified email within their current exact domain with optimistic concurrency. An email-change token for a different domain SHALL fail with `422 email_domain_not_allowed` without consuming the token or changing the user. It SHALL require the current password for account deletion and reject deletion when the user is the final instructor of a course.
 
 #### Scenario: Update a display name with a current ETag
 
@@ -96,6 +101,16 @@ The system SHALL allow an authenticated user to update their display name and ve
 
 - **WHEN** an authenticated user attempts account deletion while they are the sole instructor of a course
 - **THEN** the system returns `409 Conflict` and preserves the account and session
+
+#### Scenario: Change an email within a nonacademic domain
+
+- **WHEN** an authenticated user provides a valid verified replacement address at their current non-`.edu` domain with a matching `If-Match` value
+- **THEN** the system updates the email while preserving the organization
+
+#### Scenario: Reject a cross-domain email change
+
+- **WHEN** a user provides a valid verified replacement address at another domain
+- **THEN** the system returns `422 email_domain_not_allowed` without changing the account or consuming the proof
 
 ### Requirement: Local development parity
 
@@ -221,14 +236,19 @@ The HTTP API SHALL ignore forwarded client-IP headers by default. When deploymen
 - **WHEN** one-hop trust is enabled and Caddy forwards a client's IP
 - **THEN** the forwarded client IP is used for the per-IP limit key
 
-### Requirement: Signup form domain validation
+### Requirement: Signup form email validation
 
-The system SHALL reject a non-`.edu` or malformed-domain signup address in the browser before requesting verification, show an accessible error, and leave login and password reset unrestricted by this client-side rule.
+The system SHALL accept a syntactically valid signup address at any domain and reject malformed or overlong addresses in the browser before requesting verification, show an accessible error, and leave login and password reset unrestricted by this client-side rule.
 
 #### Scenario: Invalid signup address
 
-- **WHEN** a user submits a non-`.edu` signup email
+- **WHEN** a user submits a malformed signup email
 - **THEN** the form shows an alert and sends no verification request
+
+#### Scenario: Submit a nonacademic signup email
+
+- **WHEN** a user submits a valid non-`.edu` signup email
+- **THEN** the form requests verification and shows its normal confirmation
 
 ### Requirement: Stable authentication and collaboration rate limits
 

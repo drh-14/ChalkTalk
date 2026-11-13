@@ -212,11 +212,6 @@ function SignupRequestForm({
       setNotice(undefined);
       return;
     }
-    if (!domain.endsWith(".edu")) {
-      setError("Use an email address with a .edu domain.");
-      setNotice(undefined);
-      return;
-    }
     setPending(true);
     setError(undefined);
     try {
@@ -231,8 +226,8 @@ function SignupRequestForm({
   return (
     <form className="auth-form" onSubmit={submit} noValidate>
       <div className="form-heading">
-        <span>Join your campus</span>
-        <h2>Verify your school email</h2>
+        <span>Create an account</span>
+        <h2>Verify your email</h2>
         <p>We’ll send a secure link to start your account.</p>
       </div>
       <AuthMessage error={error} notice={notice} />
@@ -295,7 +290,7 @@ function ResetRequestForm({
       <div className="form-heading">
         <span>Account recovery</span>
         <h2>Reset your password</h2>
-        <p>Enter your school email and we’ll help you get back in.</p>
+        <p>Enter your email and we’ll help you get back in.</p>
       </div>
       <AuthMessage error={error} notice={notice} />
       <label>
@@ -381,8 +376,8 @@ function Landing({
           )}
         </div>
         <p className="privacy-note">
-          Your account is tied to your school email. We never share it with
-          classmates.
+          Your email domain determines your organization. Other users with the
+          same domain can see its course listing.
         </p>
       </section>
     </main>

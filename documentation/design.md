@@ -8,7 +8,7 @@ This document describes the implemented product and the approved single-VM deplo
 
 ## Identity, courses, and access
 
-A user registers with a verified `.edu` address, display name, and password. The school domain determines the user's organization; changing an address requires verification within the same domain. Password reset and account deletion are supported. Account deletion revokes sessions and removes identifying profile data while preserving course contributions with a deleted-user identity. See [authentication](api/auth.md) and [identity visibility](api/identity-visibility.md).
+A user registers with any verified, syntactically valid email address, display name, and password. The exact email domain determines the user's organization, including at public email providers; unrelated users at the same domain therefore share organization-level course listings. Changing an address requires verification within the same domain. Password reset and account deletion are supported. Account deletion revokes sessions and removes identifying profile data while preserving course contributions with a deleted-user identity. See [authentication](api/auth.md) and [identity visibility](api/identity-visibility.md).
 
 An instructor creates a course. Students join through the supported enrollment flow; instructors manage membership and roles. A course can be archived, making its discussion and live editing read-only, or deleted with its course-owned data. Each operation checks current course membership and role. Instructors control whether future anonymous contributions, private posts, and followup resolution are allowed; those switches apply to future content. See [courses](api/courses.md) and [memberships](api/course-memberships.md).
 

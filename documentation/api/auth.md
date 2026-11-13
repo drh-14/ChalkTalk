@@ -6,7 +6,7 @@ All browser requests originate from a deployment-configured HTTPS frontend origi
 
 ### **`POST /api/v1/account-verification-requests`**
 
-Requests verification of an account email before account creation or a same-school email change. The server normalizes the email and requires a total normalized ASCII email length of at most 254 characters, a 1–64-character ASCII dot-atom local part (nonempty RFC atext segments separated by single dots) and a valid email domain ending exactly in `.edu` (including subdomains). For every request with an eligible `.edu` domain, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits are fixed at five requests per normalized email per hour and 100 requests per source IP per hour. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+Requests verification of an account email before account creation or a same-domain email change. The server normalizes the email and requires a total normalized ASCII email length of at most 254 characters, a 1–64-character ASCII dot-atom local part (nonempty RFC atext segments separated by single dots) and a syntactically valid DNS domain, regardless of suffix. For every syntactically valid request, it returns the same `202 Accepted` response whether the address is new, already registered, or cannot receive mail. If delivery is appropriate, the email contains a deployment-configured HTTPS link to the web client; clients cannot supply a redirect destination. Its cryptographically random opaque verification token expires after 30 minutes, is single-use, and is stored only in hashed form. The latest request invalidates any earlier unused verification token for the same normalized email. Rate limits are fixed at five requests per normalized email per hour and 100 requests per source IP per hour. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
 
 **Authentication:** None.
 
@@ -36,7 +36,7 @@ None.
 
 ##### `AccountVerificationRequest` (required)
 
-`email` (string, required): Email address to verify before account creation or a same-school account email change.
+`email` (string, required): Email address to verify before account creation or a same-domain account email change.
 
 #### Multipart parts
 
@@ -83,8 +83,6 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 ##### `422 Unprocessable Content`
 
-`email_domain_not_allowed`: The syntactically valid normalized email domain does not end exactly in `.edu`.
-
 `validation_failed`: The normalized email exceeds 254 characters or is syntactically malformed (for example, `.student@school.edu`, `student.@school.edu`, `student..name@school.edu`, `student,admin@school.edu`, a local part longer than 64 characters, a quoted or non-ASCII local part, `student@.edu`, or `student@bad-.edu`).
 
 ##### `429 Too Many Requests`
@@ -105,7 +103,7 @@ curl --request POST '/api/v1/account-verification-requests' \
 
 ### **`POST /api/v1/users`**
 
-Creates an account from a verified email token. The server hashes the supplied opaque token to locate a valid, unexpired proof, derives the normalized verified email from that proof, rechecks its valid `.edu` domain, and never accepts an email separately. It atomically creates the account, finds or creates the organization for the canonical school domain, assigns it directly through `users.organization_id`, and consumes the single-use proof. ChalkTalk has no organization-membership table. A failed transaction consumes nothing. The password is accepted only at this boundary and is never returned. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
+Creates an account from a verified email token. The server hashes the supplied opaque token to locate a valid, unexpired proof, derives the normalized verified email from that proof, rechecks its valid email syntax and DNS domain, and never accepts an email separately. It atomically creates the account, finds or creates the organization for the exact normalized email domain, assigns it directly through `users.organization_id`, and consumes the single-use proof. ChalkTalk has no organization-membership table. This also groups unrelated users at a public provider such as `gmail.com` into the same organization and exposes organization-level course listings to them. A failed transaction consumes nothing. The password is accepted only at this boundary and is never returned. A matching `Idempotency-Key` retry returns the original result, while reuse with a different request body returns `409 idempotency_key_reused`.
 
 **Authentication:** None.
 
@@ -217,8 +215,6 @@ curl --request POST '/api/v1/users' \
 ##### `422 Unprocessable Content`
 
 `verification_token_invalid`: The verification token is invalid, expired, or superseded by a later request.
-
-`email_domain_not_allowed`: The syntactically valid verified email in the token does not have a `.edu` domain.
 
 `validation_failed`: The verified email in the token exceeds 254 normalized ASCII characters or has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or invalid DNS labels.
 
@@ -649,7 +645,7 @@ curl --request GET '/api/v1/users/me' \
 
 ### **`PATCH /api/v1/users/me`**
 
-Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have a valid `.edu` domain matching the account's current canonical school domain exactly. The server updates the account and consumes the proof atomically; its direct organization association and course memberships do not change. A failed transaction consumes nothing.
+Updates the authenticated user’s account profile. At least one field is required. When `emailVerificationToken` is supplied, the server hashes it to locate a valid, unexpired proof and derives the replacement email from that proof. The replacement email must have a valid domain matching the account's current exact email domain. The server updates the account and consumes the proof atomically; its direct organization association and course memberships do not change. A failed transaction consumes nothing.
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
@@ -685,7 +681,7 @@ None.
 
 `displayName` (string, optional): Replacement visible name.
 
-`emailVerificationToken` (string, optional): Single-use token proving control of a replacement email address in the account's current school domain.
+`emailVerificationToken` (string, optional): Single-use token proving control of a replacement email address in the account's current email domain.
 
 `notificationEmails` is no longer accepted; use [per-course email preferences](courses.md#courseEmailPreferences). Supplying it returns `422 validation_failed`.
 
@@ -770,7 +766,7 @@ curl --request PATCH '/api/v1/users/me' \
 
 ##### `422 Unprocessable Content`
 
-`email_domain_not_allowed`: The syntactically valid replacement email is not in the account's current canonical `.edu` school domain.
+`email_domain_not_allowed`: The syntactically valid replacement email is not in the account's current exact email domain.
 
 `validation_failed`: No valid editable field was supplied, or the replacement email exceeds 254 normalized ASCII characters or has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form, or invalid DNS labels.
 
@@ -903,7 +899,7 @@ curl --request PATCH '/api/v1/users/me/password' \
 
 ### **`POST /api/v1/password-reset-requests`**
 
-Requests a password-reset email. Previously registered non-`.edu` addresses remain eligible. For a syntactically valid request, the server returns `202 Accepted` no sooner than one second after processing begins, whether or not the email exists or delivery succeeds, preventing account discovery through either status or timing. For an existing account, delivery is attempted for at most 750 milliseconds; a failure or timeout is intentionally not reported to the caller.
+Requests a password-reset email. For a syntactically valid request, the server returns `202 Accepted` no sooner than one second after processing begins, whether or not the email exists or delivery succeeds, preventing account discovery through either status or timing. For an existing account, delivery is attempted for at most 750 milliseconds; a failure or timeout is intentionally not reported to the caller.
 
 **Authentication:** None.
 
