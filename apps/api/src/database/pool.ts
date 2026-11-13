@@ -1,4 +1,8 @@
 import { Pool, type PoolClient } from "pg";
+import {
+  captureRequestDatabaseTiming,
+  recordRequestDatabaseTiming,
+} from "./request-timing.js";
 
 export type DatabaseTimingObserver = (
   kind: "acquire" | "query",
@@ -39,9 +43,12 @@ export function instrumentPool(
     kind: "acquire" | "query",
     outcome: "succeeded" | "failed",
     started: bigint,
+    requestTiming: ReturnType<typeof captureRequestDatabaseTiming>,
   ) => {
     try {
-      state.observer(kind, outcome, elapsedSeconds(started));
+      const seconds = elapsedSeconds(started);
+      recordRequestDatabaseTiming(requestTiming, kind, seconds);
+      state.observer(kind, outcome, seconds);
     } catch {
       // Telemetry must not change a database operation's result or error.
     }
@@ -55,11 +62,12 @@ export function instrumentPool(
     ) => unknown;
     client.query = ((...args: unknown[]) => {
       const started = process.hrtime.bigint();
+      const requestTiming = captureRequestDatabaseTiming();
       let recorded = false;
       const record = (outcome: "succeeded" | "failed") => {
         if (recorded) return;
         recorded = true;
-        observe("query", outcome, started);
+        observe("query", outcome, started, requestTiming);
       };
       const callbackIndex = args.length - 1;
       const callback = args[callbackIndex];
@@ -113,20 +121,26 @@ export function instrumentPool(
     ) => void,
   ) => {
     const started = process.hrtime.bigint();
+    const requestTiming = captureRequestDatabaseTiming();
     if (callback) {
       return originalConnect((error, client, release) => {
-        observe("acquire", error ? "failed" : "succeeded", started);
+        observe(
+          "acquire",
+          error ? "failed" : "succeeded",
+          started,
+          requestTiming,
+        );
         if (client) instrumentClient(client);
         callback(error, client, release);
       });
     }
     return (originalConnect() as Promise<PoolClient>).then(
       (client) => {
-        observe("acquire", "succeeded", started);
+        observe("acquire", "succeeded", started, requestTiming);
         return instrumentClient(client);
       },
       (error) => {
-        observe("acquire", "failed", started);
+        observe("acquire", "failed", started, requestTiming);
         throw error;
       },
     );

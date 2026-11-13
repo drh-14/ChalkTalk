@@ -68,7 +68,7 @@
     },
     {
       "id": 3,
-      "title": "p50 request latency",
+      "title": "p50 API and database latency",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -83,7 +83,18 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{outcome=\"completed\"}[5m])))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "API request"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
+          "refId": "B",
+          "legendFormat": "DB query ({{job}})"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
+          "refId": "C",
+          "legendFormat": "DB pool wait ({{job}})"
         }
       ],
       "fieldConfig": {
@@ -91,11 +102,12 @@
           "unit": "s"
         }
       },
-      "options": {}
+      "options": {},
+      "description": "Compares independent latency percentiles over the same five-minute window. Client-observed query duration includes transport, PostgreSQL execution, locks, and client queueing. Pool wait measures connection acquisition."
     },
     {
       "id": 4,
-      "title": "p95 request latency",
+      "title": "p95 API and database latency",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -110,7 +122,18 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{outcome=\"completed\"}[5m])))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "API request"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
+          "refId": "B",
+          "legendFormat": "DB query ({{job}})"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
+          "refId": "C",
+          "legendFormat": "DB pool wait ({{job}})"
         }
       ],
       "fieldConfig": {
@@ -118,7 +141,8 @@
           "unit": "s"
         }
       },
-      "options": {}
+      "options": {},
+      "description": "Compares independent latency percentiles over the same five-minute window. Client-observed query duration includes transport, PostgreSQL execution, locks, and client queueing. Pool wait measures connection acquisition."
     },
     {
       "id": 5,
@@ -184,7 +208,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 40
       },
       "datasource": {
         "type": "prometheus",
@@ -211,7 +235,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 40
       },
       "datasource": {
         "type": "prometheus",
@@ -238,7 +262,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 32
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",
@@ -265,7 +289,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 32
+        "y": 48
       },
       "datasource": {
         "type": "prometheus",
@@ -296,7 +320,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 40
+        "y": 56
       },
       "datasource": {
         "type": "loki",
@@ -318,7 +342,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 50
+        "y": 66
       },
       "datasource": {
         "type": "prometheus",
@@ -349,7 +373,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 50
+        "y": 66
       },
       "datasource": {
         "type": "prometheus",
@@ -376,7 +400,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 58
+        "y": 74
       },
       "datasource": {
         "type": "prometheus",
@@ -403,7 +427,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 58
+        "y": 74
       },
       "datasource": {
         "type": "prometheus",
@@ -422,122 +446,6 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short"
-        }
-      },
-      "options": {}
-    },
-    {
-      "id": 16,
-      "title": "p50 database query duration",
-      "type": "timeseries",
-      "description": "Client-observed time includes transport, PostgreSQL execution, locks, and client queueing; it does not isolate network or server time.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 66
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "chalktalk-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
-          "refId": "A",
-          "legendFormat": "{{job}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        }
-      },
-      "options": {}
-    },
-    {
-      "id": 17,
-      "title": "p95 database query duration",
-      "type": "timeseries",
-      "description": "Client-observed time includes transport, PostgreSQL execution, locks, and client queueing; it does not isolate network or server time.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 66
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "chalktalk-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
-          "refId": "A",
-          "legendFormat": "{{job}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        }
-      },
-      "options": {}
-    },
-    {
-      "id": 18,
-      "title": "p50 database pool wait",
-      "type": "timeseries",
-      "description": "Time to check out a pooled client, including contention and new connection setup.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 74
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "chalktalk-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
-          "refId": "A",
-          "legendFormat": "{{job}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        }
-      },
-      "options": {}
-    },
-    {
-      "id": 19,
-      "title": "p95 database pool wait",
-      "type": "timeseries",
-      "description": "Time to check out a pooled client, including contention and new connection setup.",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 74
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "chalktalk-prometheus"
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
-          "refId": "A",
-          "legendFormat": "{{job}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
         }
       },
       "options": {}
@@ -596,6 +504,198 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 22,
+      "title": "Login latency",
+      "type": "timeseries",
+      "description": "Completed HTTP requests only. DB query and pool totals sum all instrumented operations during each request, including failed operations and zero-work requests. Concurrent operations may overlap, so totals can exceed HTTP wall-clock latency. Query time is client-observed, not PostgreSQL server time or the HTTP critical path.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"POST\",route=\"/api/v1/sessions\",outcome=\"completed\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "Login HTTP p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"POST\",route=\"/api/v1/sessions\",outcome=\"completed\"}[5m])))",
+          "refId": "B",
+          "legendFormat": "Login HTTP p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"login\",outcome=\"completed\"}[5m])))",
+          "refId": "C",
+          "legendFormat": "Login DB query total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"login\",outcome=\"completed\"}[5m])))",
+          "refId": "D",
+          "legendFormat": "Login DB query total p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"login\",outcome=\"completed\"}[5m])))",
+          "refId": "E",
+          "legendFormat": "Login DB pool total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"login\",outcome=\"completed\"}[5m])))",
+          "refId": "F",
+          "legendFormat": "Login DB pool total p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 23,
+      "title": "Course creation latency",
+      "type": "timeseries",
+      "description": "Completed HTTP requests only. DB query and pool totals sum all instrumented operations during each request, including failed operations and zero-work requests. Concurrent operations may overlap, so totals can exceed HTTP wall-clock latency. Query time is client-observed, not PostgreSQL server time or the HTTP critical path.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"POST\",route=\"/api/v1/organizations/:organizationId/courses\",outcome=\"completed\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "Course create HTTP p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"POST\",route=\"/api/v1/organizations/:organizationId/courses\",outcome=\"completed\"}[5m])))",
+          "refId": "B",
+          "legendFormat": "Course create HTTP p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"course_create\",outcome=\"completed\"}[5m])))",
+          "refId": "C",
+          "legendFormat": "Course create DB query total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"course_create\",outcome=\"completed\"}[5m])))",
+          "refId": "D",
+          "legendFormat": "Course create DB query total p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"course_create\",outcome=\"completed\"}[5m])))",
+          "refId": "E",
+          "legendFormat": "Course create DB pool total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"course_create\",outcome=\"completed\"}[5m])))",
+          "refId": "F",
+          "legendFormat": "Course create DB pool total p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 24,
+      "title": "Notification fetching latency",
+      "type": "timeseries",
+      "description": "Completed HTTP requests only. DB query and pool totals sum all instrumented operations during each request, including failed operations and zero-work requests. Concurrent operations may overlap, so totals can exceed HTTP wall-clock latency. Query time is client-observed, not PostgreSQL server time or the HTTP critical path.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/v1/users/me/notifications\",outcome=\"completed\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "Notification list HTTP p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/v1/users/me/notifications\",outcome=\"completed\"}[5m])))",
+          "refId": "B",
+          "legendFormat": "Notification list HTTP p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"notifications_list\",outcome=\"completed\"}[5m])))",
+          "refId": "C",
+          "legendFormat": "Notification list DB query total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"notifications_list\",outcome=\"completed\"}[5m])))",
+          "refId": "D",
+          "legendFormat": "Notification list DB query total p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"notifications_list\",outcome=\"completed\"}[5m])))",
+          "refId": "E",
+          "legendFormat": "Notification list DB pool total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"notifications_list\",outcome=\"completed\"}[5m])))",
+          "refId": "F",
+          "legendFormat": "Notification list DB pool total p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/v1/users/me/notifications/unread-count\",outcome=\"completed\"}[5m])))",
+          "refId": "G",
+          "legendFormat": "Unread count HTTP p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/v1/users/me/notifications/unread-count\",outcome=\"completed\"}[5m])))",
+          "refId": "H",
+          "legendFormat": "Unread count HTTP p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"notifications_unread_count\",outcome=\"completed\"}[5m])))",
+          "refId": "I",
+          "legendFormat": "Unread count DB query total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"notifications_unread_count\",outcome=\"completed\"}[5m])))",
+          "refId": "J",
+          "legendFormat": "Unread count DB query total p95"
+        },
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"notifications_unread_count\",outcome=\"completed\"}[5m])))",
+          "refId": "K",
+          "legendFormat": "Unread count DB pool total p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"notifications_unread_count\",outcome=\"completed\"}[5m])))",
+          "refId": "L",
+          "legendFormat": "Unread count DB pool total p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
         }
       },
       "options": {}

@@ -1049,6 +1049,33 @@ export function createApp(
     next();
   });
   if (observability) app.use(observability.requestMiddleware);
+  if (observability) {
+    app.post(
+      "/api/v1/sessions",
+      observability.endpointRequestMiddleware("login"),
+    );
+    app.post(
+      "/api/v1/organizations/:organizationId/courses",
+      observability.endpointRequestMiddleware("course_create"),
+    );
+    const notificationsList =
+      observability.endpointRequestMiddleware("notifications_list");
+    app.get("/api/v1/users/me/notifications", (request, response, next) =>
+      request.method === "GET"
+        ? notificationsList(request, response, next)
+        : next(),
+    );
+    const notificationsUnreadCount = observability.endpointRequestMiddleware(
+      "notifications_unread_count",
+    );
+    app.get(
+      "/api/v1/users/me/notifications/unread-count",
+      (request, response, next) =>
+        request.method === "GET"
+          ? notificationsUnreadCount(request, response, next)
+          : next(),
+    );
+  }
   app.use(express.json({ limit: "128kb" }));
   if (observability) app.get("/metrics", observability.metricsHandler);
   app.get("/health", (_request, response) =>
