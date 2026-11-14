@@ -23,6 +23,8 @@ import {
 } from "./client.js";
 import "./styles.css";
 import { ResourceExtractedText } from "./extracted-text.js";
+import { navigate } from "../app/routes.js";
+import { isPdf, viewerPath } from "../slides/client.js";
 const message = (e: unknown) =>
   e instanceof Error
     ? e.message
@@ -738,18 +740,11 @@ function ResourcesContent({ courseId, canUpload, csrfToken, staff }: Props) {
             <ul className="course-files-list">
               {results.map(({ resource, match }) => (
                 <li key={resource.id}>
-                  <a
-                    href={
-                      resource.kind === "upload"
-                        ? filePath(courseId, resource)
-                        : resource.url
-                    }
-                    {...(resource.kind === "link"
-                      ? { target: "_blank", rel: "noopener noreferrer" }
-                      : {})}
-                  >
-                    {resource.title ?? resource.fileName}
-                  </a>
+                  <ResourceTitle
+                    courseId={courseId}
+                    item={resource}
+                    name={resource.title ?? resource.fileName ?? ""}
+                  />
                   <div className="course-file-meta">
                     <span>
                       {sections.find((s) => s.id === resource.sectionId)
@@ -1075,14 +1070,7 @@ function ResourceRow({
   const name = item.title ?? item.fileName ?? "";
   return (
     <>
-      <a
-        href={item.kind === "upload" ? filePath(courseId, item) : item.url}
-        {...(item.kind === "link"
-          ? { target: "_blank", rel: "noopener noreferrer" }
-          : {})}
-      >
-        {name}
-      </a>
+      <ResourceTitle courseId={courseId} item={item} name={name} />
       <div className="course-file-meta">
         <span>{item.kind === "upload" ? item.fileName : "External link"}</span>
         {item.kind === "upload" && (
@@ -1237,5 +1225,61 @@ function ResourceRow({
           </button>
         ))}
     </>
+  );
+}
+
+/**
+ * A resource title: PDFs open in the in-app viewer with a separate Download
+ * link, other uploads download, and links open in a new tab.
+ */
+function ResourceTitle({
+  courseId,
+  item,
+  name,
+}: {
+  courseId: string;
+  item: Resource;
+  name: string;
+}) {
+  if (isPdf(item)) {
+    const path = viewerPath(courseId, item.id);
+    return (
+      <span className="resource-title-row">
+        <a
+          href={path}
+          onClick={(event) => {
+            if (
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            )
+              return;
+            event.preventDefault();
+            navigate(path);
+          }}
+        >
+          {name}
+        </a>
+        <a
+          className="resource-download"
+          href={filePath(courseId, item)}
+          aria-label={`Download ${name}`}
+        >
+          Download
+        </a>
+      </span>
+    );
+  }
+  return (
+    <a
+      href={item.kind === "upload" ? filePath(courseId, item) : item.url}
+      {...(item.kind === "link"
+        ? { target: "_blank", rel: "noopener noreferrer" }
+        : {})}
+    >
+      {name}
+    </a>
   );
 }

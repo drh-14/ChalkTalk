@@ -1,3 +1,5 @@
+import { navigate } from "../app/routes.js";
+import { viewerPath } from "../slides/client.js";
 import { ProgressLabel } from "./progress.js";
 import { useTextProgress } from "./use-progress.js";
 import { SearchablePdfView } from "./searchable-pdf.js";
@@ -12,6 +14,8 @@ export function ResourceExtractedText({
   mediaType,
   csrfToken,
   resource,
+  embedded = false,
+  visible = true,
 }: {
   courseId: string;
   resourceId: string;
@@ -19,8 +23,10 @@ export function ResourceExtractedText({
   mediaType?: string;
   csrfToken: string;
   resource?: Resource;
+  embedded?: boolean;
+  visible?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(embedded);
   const [cycle, setCycle] = useState(0);
   const [data, setData] = useState<ExtractedText>();
   const [error, setError] = useState<string>();
@@ -30,7 +36,7 @@ export function ResourceExtractedText({
   const [downloadUrl, setDownloadUrl] = useState<string>();
   const state = useTextProgress(
     resource,
-    expanded && layout !== "pdf" && data?.status === "pending",
+    expanded && visible && layout !== "pdf" && data?.status === "pending",
   );
   const readyFetched = useRef(false);
   useEffect(() => {
@@ -79,7 +85,7 @@ export function ResourceExtractedText({
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
   useEffect(() => {
-    if (!expanded || pdfLayout) return;
+    if (!expanded || !visible || pdfLayout) return;
     const controller = new AbortController();
     setLoading(true);
     setData(undefined);
@@ -100,15 +106,23 @@ export function ResourceExtractedText({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [courseId, resourceId, expanded, cycle, pdfLayout]);
+  }, [courseId, resourceId, expanded, visible, cycle, pdfLayout]);
   function close() {
     readyFetched.current = false;
     setExpanded(false);
     trigger.current?.focus();
   }
+  if (mediaType === "application/pdf" && !embedded) {
+    const path = `${viewerPath(courseId, resourceId)}?panel=text`;
+    return <a className="button secondary resource-action" href={path} onClick={(event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault(); navigate(path);
+    }}>View extracted text</a>;
+  }
   return (
-    <div className="resource-extracted-text">
-      <button
+    <div className={`resource-extracted-text${embedded ? " embedded" : ""}`}>
+
+      {!embedded && <button
         ref={trigger}
         type="button"
         className="button secondary resource-action"
@@ -117,7 +131,7 @@ export function ResourceExtractedText({
         onClick={() => (expanded ? close() : setExpanded(true))}
       >
         {expanded ? "Hide extracted text" : "View extracted text"}
-      </button>
+      </button>}
       {expanded && !state.inaccessible && (
         <section
           id={id}
@@ -135,7 +149,7 @@ export function ResourceExtractedText({
               >
                 <option value="readable">Readable paragraphs</option>
                 <option value="original">Original line breaks</option>
-                {mediaType === "application/pdf" && (
+                {mediaType === "application/pdf" && !embedded && (
                   <option value="pdf">Searchable PDF</option>
                 )}
               </select>
@@ -150,13 +164,13 @@ export function ResourceExtractedText({
                   Download .txt
                 </a>
               )}
-              <button
+              {!embedded && <button
                 type="button"
                 className="button secondary resource-action"
                 onClick={close}
               >
                 Close extracted text
-              </button>
+              </button>}
             </div>
           </div>
           {layout === "pdf" ? (

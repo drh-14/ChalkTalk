@@ -10,6 +10,7 @@ export type RouteName =
   | "post"
   | "course-settings"
   | "course-resources"
+  | "course-resource-view"
   | "course-threads"
   | "course-collaboration"
   | "course-statistics"
@@ -38,6 +39,11 @@ export type Route = {
   sessionId?: string;
   threadId?: string;
   conversationId?: string;
+  /** The PDF resource open in the viewer. */
+  resourceId?: string;
+  /** The viewer's requested page. */
+  page?: number;
+  panel?: "text";
   query?: string;
   filters?: FeedFilters;
 };
@@ -137,6 +143,8 @@ export function routeForPath(pathname: string): RouteName {
     return "course-statistics";
   if (/^\/courses\/[^/]+\/settings$/.test(pathname)) return "course-settings";
   if (/^\/courses\/[^/]+\/resources$/.test(pathname)) return "course-resources";
+  if (/^\/courses\/[^/]+\/resources\/[^/]+\/view$/.test(pathname))
+    return "course-resource-view";
   if (/^\/courses\/[^/]+$/.test(pathname)) return "course";
   switch (pathname) {
     case "/verify-email":
@@ -161,6 +169,19 @@ export function routeFromLocation(location: URL): Route {
   const parts = location.pathname.split("/");
   const courseId = parts[2];
   if (name === "course-session") return { name, courseId, sessionId: parts[4] };
+  if (name === "course-resource-view") {
+    // The viewer opens on ?page= and selects the anchored post in ?post=.
+    const page = Number(location.searchParams.get("page"));
+    const postId = location.searchParams.get("post");
+    return {
+      name,
+      courseId,
+      resourceId: parts[4],
+      ...(location.searchParams.get("panel") === "text" ? {panel: "text" as const} : {}),
+      ...(Number.isInteger(page) && page >= 1 ? { page } : {}),
+      ...(postId && UUID_PATTERN.test(postId) ? { postId } : {}),
+    };
+  }
   if (name === "course-threads")
     return {
       name,
