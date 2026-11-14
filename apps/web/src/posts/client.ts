@@ -57,6 +57,8 @@ export type Post = {
   following?: boolean;
   /** Whether the post changed since the viewer last opened it. */
   unread?: boolean;
+  /** The course PDF area the post asks about, when anchored to slides. */
+  anchor?: PostAnchor | null;
   /** Present on polls. */
   options?: PollOption[];
   totalVotes?: number;
@@ -80,6 +82,25 @@ export type MergedPost = {
   version: number;
 };
 export type PostRedirect = { redirectToPostId: string };
+/** A box on a page, as fractions of the page as displayed. */
+export type AnchorBox = { x: number; y: number; width: number; height: number };
+export type PostAnchorInput = {
+  resourceId: string;
+  fileId: string;
+  page: number;
+  box: AnchorBox;
+};
+/** Where an anchored post points, as the reader may see it. */
+export type PostAnchor =
+  | {
+      page: number;
+      box: AnchorBox;
+      status: "current" | "earlier_version";
+      resourceId: string;
+      fileId: string;
+      resourceTitle: string;
+    }
+  | { page: number; box: AnchorBox; status: "unavailable" };
 export type CreatePostInput = {
   type: "question" | "note" | "poll";
   title: string;
@@ -96,6 +117,7 @@ export type CreatePostInput = {
   announcement?: boolean;
   private?: boolean;
   draftVersion?: number;
+  anchor?: PostAnchorInput;
 };
 export type PostDraftContent = {
   type: "question" | "note" | "poll";
