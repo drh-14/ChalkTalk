@@ -9,6 +9,10 @@ import {
 } from "@prometheus-io/client";
 import pino from "pino";
 import { registerDatabaseMetrics } from "../database/metrics.js";
+import {
+  endpointRequestMiddleware as createEndpointRequestMiddleware,
+  type EndpointOperation,
+} from "../database/request-timing.js";
 import { LogSpool, type LogSpoolOptions } from "./spool.js";
 
 type SystemEvent =
@@ -128,6 +132,26 @@ export function createObservability(options: ObservabilityOptions) {
   const registry = new Registry();
   collectDefaultMetrics({ register: registry });
   const databaseObserver = registerDatabaseMetrics(registry);
+  const requestQueryTotal = new Histogram({
+    name: "chalktalk_request_db_query_total_duration_seconds",
+    help: "Sum of client-observed database query durations per selected HTTP request",
+    labelNames: ["operation", "outcome"] as const,
+    buckets: [
+      0, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8, 30,
+      60,
+    ],
+    registers: [registry],
+  });
+  const requestPoolTotal = new Histogram({
+    name: "chalktalk_request_db_pool_acquire_total_duration_seconds",
+    help: "Sum of database pool-acquisition durations per selected HTTP request",
+    labelNames: ["operation", "outcome"] as const,
+    buckets: [
+      0, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8, 30,
+      60,
+    ],
+    registers: [registry],
+  });
   const requests = new Counter({
     name: "chalktalk_http_requests_total",
     help: "Completed and aborted API requests",
@@ -273,6 +297,16 @@ export function createObservability(options: ObservabilityOptions) {
   };
   return {
     databaseObserver,
+    endpointRequestMiddleware(operation: EndpointOperation) {
+      return createEndpointRequestMiddleware(
+        operation,
+        (key, outcome, timing) => {
+          const labels = { operation: key, outcome };
+          requestQueryTotal.observe(labels, timing.querySeconds);
+          requestPoolTotal.observe(labels, timing.acquireSeconds);
+        },
+      );
+    },
     requestMiddleware,
     metricsHandler,
     recordJobStart(kind: JobKind) {
