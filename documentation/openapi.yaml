@@ -8312,6 +8312,98 @@ paths:
           content:
             application/json:
               schema: { "$ref": "#/components/schemas/Error" }
+  "/courses/{courseId}/resources/{resourceId}/questions":
+    get:
+      tags:
+        - Resources
+      summary: List the questions anchored to a course PDF
+      description:
+        List the readable posts anchored to the current file of a PDF resource,
+        by page and then creation time, for the in-app viewer's markers and page
+        panel. Private posts appear only to their author and staff; deleted posts
+        and confirmed duplicates are excluded.
+      operationId: listResourceQuestions
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/CourseId"
+        - name: resourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List the questions anchored to a course PDF completed successfully.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ResourceQuestionList"
+              example:
+                resourceId: 019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a8b
+                fileId: 019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a8c
+                data:
+                  - id: 019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a90
+                    type: question
+                    title: Why is the rotation left-heavy?
+                    page: 14
+                    box: { x: 0.1, y: 0.2, width: 0.4, height: 0.3 }
+                    answered: true
+                    unresolvedFollowups: 0
+                    unread: false
+                    createdAt: "2026-11-06T14:30:00Z"
+                earlierVersionCount: 2
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                invalid_request:
+                  summary: Query is invalid
+                  value:
+                    error:
+                      code: invalid_request
+                      message: Query is invalid
+                      requestId: req_listResourceQuestions
+                      details: []
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                authentication_required:
+                  summary: Authentication is missing or invalid.
+                  value:
+                    error:
+                      code: authentication_required
+                      message: Authentication is missing or invalid.
+                      requestId: req_listResourceQuestions
+                      details: []
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              examples:
+                not_found:
+                  summary: The resource is missing, hidden, or not a PDF.
+                  value:
+                    error:
+                      code: not_found
+                      message: The resource is missing, hidden, or not a PDF.
+                      requestId: req_listResourceQuestions
+                      details: []
   "/courses/{courseId}/resources/{resourceId}/searchable-pdf":
     parameters:
       - "$ref": "#/components/parameters/CourseId"
@@ -14159,6 +14251,11 @@ components:
     QuestionPost:
       type: object
       properties:
+        anchor:
+          oneOf:
+            - "$ref": "#/components/schemas/PostAnchor"
+            - type: "null"
+          description: The course PDF area the post asks about, or null.
         deleted:
           type: boolean
           const: false
@@ -14310,11 +14407,17 @@ components:
         - createdAt
         - updatedAt
         - version
+        - anchor
         - answered
         - unresolvedFollowups
     NotePost:
       type: object
       properties:
+        anchor:
+          oneOf:
+            - "$ref": "#/components/schemas/PostAnchor"
+            - type: "null"
+          description: The course PDF area the post asks about, or null.
         deleted:
           type: boolean
           const: false
@@ -14459,9 +14562,15 @@ components:
         - createdAt
         - updatedAt
         - version
+        - anchor
     PollPost:
       type: object
       properties:
+        anchor:
+          oneOf:
+            - "$ref": "#/components/schemas/PostAnchor"
+            - type: "null"
+          description: The course PDF area the post asks about, or null.
         deleted:
           type: boolean
           const: false
@@ -14637,6 +14746,7 @@ components:
         - createdAt
         - updatedAt
         - version
+        - anchor
         - options
         - selectionMode
         - maxSelections
@@ -16797,9 +16907,142 @@ components:
       additionalProperties: false
       required:
         - role
+    PostAnchorInput:
+      type: object
+      additionalProperties: false
+      required: [resourceId, fileId, page, box]
+      description:
+        Questions and notes only, never announcements. Anchors the post to an
+        area of a page of a course PDF; fixed for the post's lifetime.
+      properties:
+        resourceId:
+          type: string
+          format: uuid
+          description: A live upload resource the author can read whose current file is a PDF.
+        fileId:
+          type: string
+          format: uuid
+          description: The resource's current file; otherwise 409 resource_changed.
+        page:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        box:
+          type: object
+          additionalProperties: false
+          required: [x, y, width, height]
+          description:
+            The area as fractions of the page as displayed. x + width and
+            y + height are at most 1.
+          properties:
+            x: { type: number, minimum: 0, maximum: 1 }
+            y: { type: number, minimum: 0, maximum: 1 }
+            width: { type: number, minimum: 0.01, maximum: 1 }
+            height: { type: number, minimum: 0.01, maximum: 1 }
+    PostAnchor:
+      type: object
+      additionalProperties: false
+      required: [page, box, status]
+      description:
+        Where an anchored post points. resourceId, fileId, and resourceTitle are
+        present for current and earlier_version, and omitted for unavailable.
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        box:
+          type: object
+          additionalProperties: false
+          required: [x, y, width, height]
+          description:
+            The area as fractions of the page as displayed. x + width and
+            y + height are at most 1.
+          properties:
+            x: { type: number, minimum: 0, maximum: 1 }
+            y: { type: number, minimum: 0, maximum: 1 }
+            width: { type: number, minimum: 0.01, maximum: 1 }
+            height: { type: number, minimum: 0.01, maximum: 1 }
+        status:
+          type: string
+          enum: [current, earlier_version, unavailable]
+          description:
+            current when the anchored file is still the resource's file;
+            earlier_version after the resource was given another file;
+            unavailable when the resource is deleted or hidden from the viewer.
+        resourceId:
+          type: string
+          format: uuid
+        fileId:
+          type: string
+          format: uuid
+        resourceTitle:
+          type: string
+    ResourceQuestionList:
+      type: object
+      additionalProperties: false
+      required: [resourceId, fileId, data, earlierVersionCount]
+      properties:
+        resourceId:
+          type: string
+          format: uuid
+        fileId:
+          type: string
+          format: uuid
+          description: The resource's current file, which new anchors must name.
+        data:
+          type: array
+          maxItems: 500
+          description: Readable anchored posts on the current file, by page, then creation.
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, type, title, page, box, unread, createdAt]
+            properties:
+              id:
+                type: string
+                format: uuid
+              type:
+                type: string
+                enum: [question, note]
+              title:
+                type: string
+              page:
+                type: integer
+                minimum: 1
+              box:
+                type: object
+                additionalProperties: false
+                required: [x, y, width, height]
+                description:
+                  The area as fractions of the page as displayed. x + width and
+                  y + height are at most 1.
+                properties:
+                  x: { type: number, minimum: 0, maximum: 1 }
+                  y: { type: number, minimum: 0, maximum: 1 }
+                  width: { type: number, minimum: 0.01, maximum: 1 }
+                  height: { type: number, minimum: 0.01, maximum: 1 }
+              answered:
+                type: boolean
+                description: Questions only.
+              unresolvedFollowups:
+                type: integer
+                minimum: 0
+                description: Questions only.
+              unread:
+                type: boolean
+              createdAt:
+                type: string
+                format: date-time
+        earlierVersionCount:
+          type: integer
+          minimum: 0
+          description: Readable posts anchored to files the resource used before.
     CreateQuestionPostRequest:
       type: object
       properties:
+        anchor:
+          "$ref": "#/components/schemas/PostAnchorInput"
         type:
           type: string
           const: question
@@ -16847,6 +17090,8 @@ components:
     CreateNotePostRequest:
       type: object
       properties:
+        anchor:
+          "$ref": "#/components/schemas/PostAnchorInput"
         type:
           type: string
           const: note

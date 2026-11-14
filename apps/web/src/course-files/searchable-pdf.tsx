@@ -127,7 +127,7 @@ export function SearchablePdfView({
           />
           <p className="resource-searchable-note">
             This searchable copy may have less zoom detail. The original PDF is
-            still available from the file title.
+            still available using Download.
           </p>
         </>
       )}
