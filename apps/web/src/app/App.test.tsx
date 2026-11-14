@@ -1612,7 +1612,7 @@ describe("ChalkTalk auth entry", () => {
     );
 
     expect((await screen.findByRole("status")).textContent).toContain(
-      "Check your inbox",
+      "If this address is eligible for a new account",
     );
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/v1/account-verification-requests",
@@ -1644,7 +1644,7 @@ describe("ChalkTalk auth entry", () => {
       screen.getByRole("button", { name: "Send verification link" }),
     );
     expect((await screen.findByRole("status")).textContent).toContain(
-      "Check your inbox",
+      "If this address is eligible for a new account",
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenLastCalledWith(
@@ -1672,6 +1672,35 @@ describe("ChalkTalk auth entry", () => {
       "254 characters or fewer",
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers sign-in and reset guidance after the generic signup confirmation", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(unauthenticatedResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("link", { name: "Create an account" }),
+    );
+    await user.type(
+      screen.getByLabelText("Email address"),
+      "known@example.com",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Send verification link" }),
+    );
+
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "If this address is eligible",
+    );
+    expect(screen.getByRole("link", { name: "Sign in" })).toBeTruthy();
+    await user.click(screen.getByRole("link", { name: "Reset password" }));
+    expect(
+      screen.getByRole("heading", { name: "Reset your password" }),
+    ).toBeTruthy();
   });
 
   it("rejects an overlong signup local part before sending", async () => {

@@ -338,8 +338,10 @@ paths:
         Request account email verification before account creation or a same-domain
         email change. The server requires a normalized ASCII address of at most 254 characters
         with a 1–64-character dot-atom local part and a syntactically valid DNS domain,
-        regardless of suffix, and returns the same response for every valid request. If delivery
-        is appropriate, it sends a deployment-configured HTTPS link to the web client
+        regardless of suffix, and returns the same 202 response for successful requests
+        after a minimum of two seconds. For an address belonging to an active account,
+        it issues no verification token and sends no signup-verification mail. Otherwise,
+        it sends a deployment-configured HTTPS link to the web client
         containing a 30-minute, single-use opaque token; clients cannot supply a redirect
         destination. Tokens are stored only as hashes, and the latest request invalidates
         earlier unused tokens for the same normalized email. Rate limits are fixed;

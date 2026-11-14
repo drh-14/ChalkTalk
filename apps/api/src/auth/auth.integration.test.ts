@@ -196,7 +196,12 @@ integrationTest("AuthService PostgreSQL integration", () => {
       FRONTEND_BASE_URL: "https://app.example.edu",
     });
     emailSender = new RecordingEmailSender();
-    service = new AuthService(pool, environment, emailSender);
+    service = new AuthService(
+      pool,
+      environment,
+      emailSender,
+      new FakeResetTiming(),
+    );
   });
 
   afterAll(async () => {
@@ -297,6 +302,126 @@ integrationTest("AuthService PostgreSQL integration", () => {
     ]);
     expect(memberships.rows[0]!.exists).toBe(false);
   });
+
+  it("does not mail or issue a proof for an existing account while preserving the public verification response", async () => {
+    const registeredEmail = "registered-verification@privacy-fixture.com";
+    await createVerifiedUser(registeredEmail);
+    const tokensBefore = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM email_verification_tokens WHERE email=$1",
+      [registeredEmail],
+    );
+    const messagesBefore = emailSender.messages.length;
+    const app = createApp({ environment, authService: service });
+
+    const existing = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("Idempotency-Key", "registered-verification")
+      .send({ email: " Registered-Verification@Privacy-Fixture.COM " });
+    const replay = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("Idempotency-Key", "registered-verification")
+      .send({ email: " Registered-Verification@Privacy-Fixture.COM " });
+    const unregistered = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .set("Idempotency-Key", "new-verification")
+      .send({ email: "new-verification@privacy-fixture.com" });
+
+    expect(existing.status).toBe(202);
+    expect(replay.status).toBe(202);
+    expect(unregistered.status).toBe(202);
+    expect(existing.text).toBe(unregistered.text);
+    expect(existing.headers["content-type"]).toBe(
+      unregistered.headers["content-type"],
+    );
+    expect(
+      emailSender.messages.slice(messagesBefore).map((mail) => mail.to),
+    ).toEqual(["new-verification@privacy-fixture.com"]);
+    const tokensAfter = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM email_verification_tokens WHERE email=$1",
+      [registeredEmail],
+    );
+    expect(tokensAfter.rows[0]!.count).toBe(tokensBefore.rows[0]!.count);
+
+    for (let index = 0; index < 4; index += 1) {
+      const limited = await request(app)
+        .post("/api/v1/account-verification-requests")
+        .set("Origin", environment.frontendBaseUrl)
+        .send({ email: registeredEmail });
+      expect(limited.status).toBe(202);
+    }
+    const overLimit = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({ email: registeredEmail });
+    expect(overLimit.status).toBe(429);
+    expect(overLimit.headers["retry-after"]).toBeDefined();
+    expect(
+      emailSender.messages.slice(messagesBefore).map((mail) => mail.to),
+    ).toEqual(["new-verification@privacy-fixture.com"]);
+  });
+
+  it("keeps the account-creation uniqueness guard for a token issued before registration", async () => {
+    const email = "signup-race@privacy-race.com";
+    await service.requestVerification(email);
+    const token = tokenFrom(emailSender.messages.at(-1)!);
+    await pool.query(
+      `INSERT INTO organizations (id, domain, name) VALUES ($1, $2, $3)`,
+      [uuidv7(), "privacy-race.com", "Privacy Race"],
+    );
+    const organization = await pool.query<{ id: string }>(
+      "SELECT id FROM organizations WHERE domain = $1",
+      ["privacy-race.com"],
+    );
+    await pool.query(
+      `INSERT INTO users (id, organization_id, email, display_name, password_hash)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [uuidv7(), organization.rows[0]!.id, email, "Registered", "unused"],
+    );
+    const app = createApp({ environment, authService: service });
+    const duplicate = await request(app)
+      .post("/api/v1/users")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({
+        verificationToken: token,
+        password: "correct horse battery staple",
+        displayName: "Duplicate",
+      });
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.error.code).toBe("email_in_use");
+    const state = await pool.query<{ consumed_at: Date | null }>(
+      "SELECT consumed_at FROM email_verification_tokens WHERE token_hash=$1",
+      [hashOpaqueToken(token, environment.authTokenSecret)],
+    );
+    expect(state.rows[0]!.consumed_at).toBeNull();
+  });
+
+  it("holds successful new and existing-account verification responses for at least two seconds", async () => {
+    const registeredEmail = "timed-verification-existing@example.com";
+    await createVerifiedUser(registeredEmail);
+    const app = createApp({
+      environment,
+      authService: new AuthService(pool, environment, emailSender),
+    });
+    const startedExisting = performance.now();
+    const existing = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({ email: registeredEmail });
+    const existingElapsed = performance.now() - startedExisting;
+    const startedNew = performance.now();
+    const unregistered = await request(app)
+      .post("/api/v1/account-verification-requests")
+      .set("Origin", environment.frontendBaseUrl)
+      .send({ email: "timed-verification-new@example.com" });
+    const newElapsed = performance.now() - startedNew;
+    expect(existing.status).toBe(202);
+    expect(unregistered.status).toBe(202);
+    expect(existingElapsed).toBeGreaterThanOrEqual(1950);
+    expect(newElapsed).toBeGreaterThanOrEqual(1950);
+  }, 10_000);
 
   it("admits valid domains regardless of suffix but rejects malformed labels", async () => {
     const app = createApp({ environment, authService: service });
@@ -538,10 +663,10 @@ integrationTest("AuthService PostgreSQL integration", () => {
 
   it("keeps login and password reset available to legacy non-.edu double-dot accounts", async () => {
     const organizationId = uuidv7();
-    const email = "john..smith@example.com";
+    const email = "john..smith@legacy-example.com";
     await pool.query(
       "INSERT INTO organizations (id,domain,name) VALUES ($1,$2,$3)",
-      [organizationId, "example.com", "Legacy"],
+      [organizationId, "legacy-example.com", "Legacy"],
     );
     await pool.query(
       "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES ($1,$2,$3,$4,$5)",
@@ -563,7 +688,7 @@ integrationTest("AuthService PostgreSQL integration", () => {
       .post("/api/v1/sessions")
       .set("Origin", environment.frontendBaseUrl)
       .send({
-        email: " John..Smith@Example.COM ",
+        email: " John..Smith@Legacy-Example.COM ",
         password: "correct horse battery staple",
       });
     expect(sessionResponse.status).toBe(201);
@@ -572,7 +697,7 @@ integrationTest("AuthService PostgreSQL integration", () => {
     const resetResponse = await request(app)
       .post("/api/v1/password-reset-requests")
       .set("Origin", environment.frontendBaseUrl)
-      .send({ email: " John..Smith@Example.COM " });
+      .send({ email: " John..Smith@Legacy-Example.COM " });
     expect(resetResponse.status).toBe(202);
     expect(emailSender.messages.at(-1)?.to).toBe(email);
 
@@ -1322,7 +1447,10 @@ integrationTest("AuthService PostgreSQL integration", () => {
 
   it("holds known and unknown password-reset responses for at least 950 milliseconds", async () => {
     const known = await createVerifiedUser("timed-reset-known@example.edu");
-    const app = createApp({ environment, authService: service });
+    const app = createApp({
+      environment,
+      authService: new AuthService(pool, environment, emailSender),
+    });
 
     const knownStartedAt = performance.now();
     const knownResponse = await request(app)

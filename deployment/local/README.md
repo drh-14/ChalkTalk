@@ -39,7 +39,7 @@ Trust `/tmp/chalktalk-local-root.crt` once in your host OS or browser trust stor
 | [https://localhost:5173](https://localhost:5173) | Web app; Caddy proxies `/api` and `/collaboration` |
 | `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store               |
 
-In full Compose mode, the API is not exposed on a host port; the Caddy gateway exposes its health route at `https://localhost:5173/api/health`. Sign up using a valid email address, then follow the verification link delivered to your inbox through Resend. The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
+In full Compose mode, the API is not exposed on a host port; the Caddy gateway exposes its health route at `https://localhost:5173/api/health`. To create a new account, sign up using a valid email address that is not already registered, then follow the verification link delivered to your inbox through Resend. For an existing account, sign in or reset your password instead; see the [authentication API reference](../../documentation/api/auth.md). The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
 
 ## Environment variables
 

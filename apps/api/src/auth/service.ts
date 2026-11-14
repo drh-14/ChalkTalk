@@ -308,6 +308,11 @@ export class AuthService {
     email: string,
     client?: PoolClient,
   ): Promise<void> {
+    const existing = await (client ?? this.pool).query(
+      "SELECT 1 FROM users WHERE email = $1 AND deleted_at IS NULL LIMIT 1",
+      [email],
+    );
+    if (existing.rowCount) return;
     const token = newOpaqueToken();
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
     const persist = async (transactionClient: PoolClient) => {
@@ -335,16 +340,23 @@ export class AuthService {
     await this.requestVerificationForEmail(email);
   }
 
+  private async paceVerificationResponse(startedAt: number): Promise<void> {
+    const remaining = 2000 - (this.passwordResetTiming.now() - startedAt);
+    if (remaining > 0) await this.passwordResetTiming.sleep(remaining);
+  }
+
   async requestVerificationIdempotently(
     key: string | undefined,
     requestBody: unknown,
     normalizedEmail: string,
     ip: string,
   ): Promise<void> {
+    const startedAt = this.passwordResetTiming.now();
     requireValidEmail(normalizedEmail);
     if (key === undefined) {
       await this.checkLimit(normalizedEmail, ip, "verification");
       await this.requestVerificationForEmail(normalizedEmail);
+      await this.paceVerificationResponse(startedAt);
       return;
     }
     if (key.length < 1 || key.length > 255)
@@ -386,6 +398,7 @@ export class AuthService {
         ["verification", key, requestHash, 202, null],
       );
     });
+    await this.paceVerificationResponse(startedAt);
   }
 
   private async prepareUserCreation(
