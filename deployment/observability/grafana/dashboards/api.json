@@ -2,7 +2,7 @@
   "uid": "chalktalk-api",
   "title": "ChalkTalk API observability",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "editable": false,
   "refresh": "1m",
   "time": {
@@ -27,7 +27,8 @@
       "targets": [
         {
           "expr": "sum(rate(chalktalk_http_requests_total[5m]))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Requests"
         }
       ],
       "fieldConfig": {
@@ -54,7 +55,8 @@
       "targets": [
         {
           "expr": "(sum(rate(chalktalk_http_requests_total{status_class=\"5xx\",outcome=\"completed\"}[5m])) or vector(0)) / clamp_min(sum(rate(chalktalk_http_requests_total{outcome=\"completed\"}[5m])), 0.000001)",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Server errors"
         }
       ],
       "fieldConfig": {
@@ -64,11 +66,15 @@
           "max": 1
         }
       },
-      "options": {}
+      "options": {
+        "legend": {
+          "showLegend": false
+        }
+      }
     },
     {
       "id": 3,
-      "title": "p50 API and database latency",
+      "title": "P50 latency",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -84,17 +90,17 @@
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{outcome=\"completed\"}[5m])))",
           "refId": "A",
-          "legendFormat": "API request"
+          "legendFormat": "API response"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
           "refId": "B",
-          "legendFormat": "DB query ({{job}})"
+          "legendFormat": "Database query ({{job}})"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
           "refId": "C",
-          "legendFormat": "DB pool wait ({{job}})"
+          "legendFormat": "Connection wait ({{job}})"
         }
       ],
       "fieldConfig": {
@@ -106,8 +112,8 @@
       "description": "Compares independent latency percentiles over the same five-minute window. Client-observed query duration includes transport, PostgreSQL execution, locks, and client queueing. Pool wait measures connection acquisition."
     },
     {
-      "id": 4,
-      "title": "p95 API and database latency",
+      "id": 25,
+      "title": "P90 latency",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -121,19 +127,19 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{outcome=\"completed\"}[5m])))",
+          "expr": "histogram_quantile(0.9, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{outcome=\"completed\"}[5m])))",
           "refId": "A",
-          "legendFormat": "API request"
+          "legendFormat": "API response"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.9, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
           "refId": "B",
-          "legendFormat": "DB query ({{job}})"
+          "legendFormat": "Database query ({{job}})"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.9, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
           "refId": "C",
-          "legendFormat": "DB pool wait ({{job}})"
+          "legendFormat": "Connection wait ({{job}})"
         }
       ],
       "fieldConfig": {
@@ -145,8 +151,8 @@
       "description": "Compares independent latency percentiles over the same five-minute window. Client-observed query duration includes transport, PostgreSQL execution, locks, and client queueing. Pool wait measures connection acquisition."
     },
     {
-      "id": 5,
-      "title": "p99 request latency",
+      "id": 4,
+      "title": "P95 latency",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -160,8 +166,19 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{outcome=\"completed\"}[5m])))",
-          "refId": "A"
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{outcome=\"completed\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "API response"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
+          "refId": "B",
+          "legendFormat": "Database query ({{job}})"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
+          "refId": "C",
+          "legendFormat": "Connection wait ({{job}})"
         }
       ],
       "fieldConfig": {
@@ -169,11 +186,12 @@
           "unit": "s"
         }
       },
-      "options": {}
+      "options": {},
+      "description": "Compares independent latency percentiles over the same five-minute window. Client-observed query duration includes transport, PostgreSQL execution, locks, and client queueing. Pool wait measures connection acquisition."
     },
     {
-      "id": 6,
-      "title": "Within 200 ms",
+      "id": 5,
+      "title": "P99 latency",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -187,18 +205,28 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(chalktalk_http_request_duration_seconds_bucket{le=\"0.2\",outcome=\"completed\"}[5m])) / clamp_min(sum(rate(chalktalk_http_request_duration_seconds_count{outcome=\"completed\"}[5m])), 0.000001)",
-          "refId": "A"
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{outcome=\"completed\"}[5m])))",
+          "refId": "A",
+          "legendFormat": "API response"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, job) (rate(chalktalk_db_query_duration_seconds_bucket[5m])))",
+          "refId": "B",
+          "legendFormat": "Database query ({{job}})"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, job) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket[5m])))",
+          "refId": "C",
+          "legendFormat": "Connection wait ({{job}})"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1
+          "unit": "s"
         }
       },
-      "options": {}
+      "options": {},
+      "description": "Compares independent latency percentiles over the same five-minute window. Client-observed query duration includes transport, PostgreSQL execution, locks, and client queueing. Pool wait measures connection acquisition."
     },
     {
       "id": 7,
@@ -217,7 +245,8 @@
       "targets": [
         {
           "expr": "sum by (kind,outcome) (rate(chalktalk_jobs_total[5m]))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Jobs ({{kind}}, {{outcome}})"
         }
       ],
       "fieldConfig": {
@@ -244,7 +273,8 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le,kind) (rate(chalktalk_job_duration_seconds_bucket[5m])))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Job duration ({{kind}})"
         }
       ],
       "fieldConfig": {
@@ -271,7 +301,8 @@
       "targets": [
         {
           "expr": "up{job=~\"chalktalk-(api|worker|collaboration)\"}",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Scrape health ({{job}})"
         }
       ],
       "fieldConfig": {
@@ -298,11 +329,13 @@
       "targets": [
         {
           "expr": "sum(rate(chalktalk_log_spool_dropped_events_total[5m]))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Lost log events"
         },
         {
           "expr": "sum(rate(chalktalk_log_spool_capacity_evicted_events_total[5m]))",
-          "refId": "B"
+          "refId": "B",
+          "legendFormat": "Evicted log events (delivery uncertain)"
         }
       ],
       "fieldConfig": {
@@ -351,11 +384,13 @@
       "targets": [
         {
           "expr": "sum(chalktalk_collaboration_connections)",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Live connections"
         },
         {
           "expr": "sum(chalktalk_collaboration_documents)",
-          "refId": "B"
+          "refId": "B",
+          "legendFormat": "Open documents"
         }
       ],
       "fieldConfig": {
@@ -382,7 +417,8 @@
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_collaboration_store_duration_seconds_bucket[5m])))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Session save duration"
         }
       ],
       "fieldConfig": {
@@ -409,7 +445,8 @@
       "targets": [
         {
           "expr": "sum by (reason) (rate(chalktalk_collaboration_closes_total[5m]))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Session closes ({{reason}})"
         }
       ],
       "fieldConfig": {
@@ -436,11 +473,13 @@
       "targets": [
         {
           "expr": "sum(rate(chalktalk_collaboration_rejected_updates_total[5m]))",
-          "refId": "A"
+          "refId": "A",
+          "legendFormat": "Rejected updates"
         },
         {
           "expr": "sum by (reason) (rate(chalktalk_collaboration_sessions_ended_total[5m]))",
-          "refId": "B"
+          "refId": "B",
+          "legendFormat": "Sessions ended ({{reason}})"
         }
       ],
       "fieldConfig": {
@@ -469,7 +508,7 @@
         {
           "expr": "(sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m])) or (0 * sum by (job) (rate(chalktalk_db_pool_acquire_duration_seconds_count{outcome=\"failed\"}[5m])))) + (sum by (job) (rate(chalktalk_db_pool_acquire_duration_seconds_count{outcome=\"failed\"}[5m])) or (0 * sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m]))))",
           "refId": "A",
-          "legendFormat": "{{job}}"
+          "legendFormat": "Database attempts ({{job}})"
         }
       ],
       "fieldConfig": {
@@ -498,7 +537,7 @@
         {
           "expr": "((sum by (job) (rate(chalktalk_db_query_duration_seconds_count{outcome=\"failed\"}[5m])) or (0 * sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m]))) or (0 * sum by (job) (rate(chalktalk_db_pool_acquire_duration_seconds_count{outcome=\"failed\"}[5m])))) + (sum by (job) (rate(chalktalk_db_pool_acquire_duration_seconds_count{outcome=\"failed\"}[5m])) or (0 * sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m]))))) / clamp_min((sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m])) or (0 * sum by (job) (rate(chalktalk_db_pool_acquire_duration_seconds_count{outcome=\"failed\"}[5m])))) + (sum by (job) (rate(chalktalk_db_pool_acquire_duration_seconds_count{outcome=\"failed\"}[5m])) or (0 * sum by (job) (rate(chalktalk_db_query_duration_seconds_count[5m])))), 0.000001)",
           "refId": "A",
-          "legendFormat": "{{job}}"
+          "legendFormat": "Failed database attempts ({{job}})"
         }
       ],
       "fieldConfig": {
@@ -527,32 +566,32 @@
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"POST\",route=\"/api/v1/sessions\",outcome=\"completed\"}[5m])))",
           "refId": "A",
-          "legendFormat": "Login HTTP p50"
+          "legendFormat": "Login response P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"POST\",route=\"/api/v1/sessions\",outcome=\"completed\"}[5m])))",
           "refId": "B",
-          "legendFormat": "Login HTTP p95"
+          "legendFormat": "Login response P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"login\",outcome=\"completed\"}[5m])))",
           "refId": "C",
-          "legendFormat": "Login DB query total p50"
+          "legendFormat": "Login total query time P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"login\",outcome=\"completed\"}[5m])))",
           "refId": "D",
-          "legendFormat": "Login DB query total p95"
+          "legendFormat": "Login total query time P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"login\",outcome=\"completed\"}[5m])))",
           "refId": "E",
-          "legendFormat": "Login DB pool total p50"
+          "legendFormat": "Login total connection wait P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"login\",outcome=\"completed\"}[5m])))",
           "refId": "F",
-          "legendFormat": "Login DB pool total p95"
+          "legendFormat": "Login total connection wait P95"
         }
       ],
       "fieldConfig": {
@@ -581,32 +620,32 @@
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"POST\",route=\"/api/v1/organizations/:organizationId/courses\",outcome=\"completed\"}[5m])))",
           "refId": "A",
-          "legendFormat": "Course create HTTP p50"
+          "legendFormat": "Course creation response P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"POST\",route=\"/api/v1/organizations/:organizationId/courses\",outcome=\"completed\"}[5m])))",
           "refId": "B",
-          "legendFormat": "Course create HTTP p95"
+          "legendFormat": "Course creation response P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"course_create\",outcome=\"completed\"}[5m])))",
           "refId": "C",
-          "legendFormat": "Course create DB query total p50"
+          "legendFormat": "Course creation total query time P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"course_create\",outcome=\"completed\"}[5m])))",
           "refId": "D",
-          "legendFormat": "Course create DB query total p95"
+          "legendFormat": "Course creation total query time P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"course_create\",outcome=\"completed\"}[5m])))",
           "refId": "E",
-          "legendFormat": "Course create DB pool total p50"
+          "legendFormat": "Course creation total connection wait P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"course_create\",outcome=\"completed\"}[5m])))",
           "refId": "F",
-          "legendFormat": "Course create DB pool total p95"
+          "legendFormat": "Course creation total connection wait P95"
         }
       ],
       "fieldConfig": {
@@ -635,62 +674,62 @@
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/v1/users/me/notifications\",outcome=\"completed\"}[5m])))",
           "refId": "A",
-          "legendFormat": "Notification list HTTP p50"
+          "legendFormat": "Notification list response P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/v1/users/me/notifications\",outcome=\"completed\"}[5m])))",
           "refId": "B",
-          "legendFormat": "Notification list HTTP p95"
+          "legendFormat": "Notification list response P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"notifications_list\",outcome=\"completed\"}[5m])))",
           "refId": "C",
-          "legendFormat": "Notification list DB query total p50"
+          "legendFormat": "Notification list total query time P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"notifications_list\",outcome=\"completed\"}[5m])))",
           "refId": "D",
-          "legendFormat": "Notification list DB query total p95"
+          "legendFormat": "Notification list total query time P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"notifications_list\",outcome=\"completed\"}[5m])))",
           "refId": "E",
-          "legendFormat": "Notification list DB pool total p50"
+          "legendFormat": "Notification list total connection wait P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"notifications_list\",outcome=\"completed\"}[5m])))",
           "refId": "F",
-          "legendFormat": "Notification list DB pool total p95"
+          "legendFormat": "Notification list total connection wait P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/v1/users/me/notifications/unread-count\",outcome=\"completed\"}[5m])))",
           "refId": "G",
-          "legendFormat": "Unread count HTTP p50"
+          "legendFormat": "Unread count response P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{method=\"GET\",route=\"/api/v1/users/me/notifications/unread-count\",outcome=\"completed\"}[5m])))",
           "refId": "H",
-          "legendFormat": "Unread count HTTP p95"
+          "legendFormat": "Unread count response P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"notifications_unread_count\",outcome=\"completed\"}[5m])))",
           "refId": "I",
-          "legendFormat": "Unread count DB query total p50"
+          "legendFormat": "Unread count total query time P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_query_total_duration_seconds_bucket{operation=\"notifications_unread_count\",outcome=\"completed\"}[5m])))",
           "refId": "J",
-          "legendFormat": "Unread count DB query total p95"
+          "legendFormat": "Unread count total query time P95"
         },
         {
           "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"notifications_unread_count\",outcome=\"completed\"}[5m])))",
           "refId": "K",
-          "legendFormat": "Unread count DB pool total p50"
+          "legendFormat": "Unread count total connection wait P50"
         },
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation=\"notifications_unread_count\",outcome=\"completed\"}[5m])))",
           "refId": "L",
-          "legendFormat": "Unread count DB pool total p95"
+          "legendFormat": "Unread count total connection wait P95"
         }
       ],
       "fieldConfig": {

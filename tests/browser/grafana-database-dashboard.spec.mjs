@@ -23,17 +23,33 @@ test("operator sees the API and database latency overlays in private Grafana", a
     "Requires an isolated Grafana test instance",
   );
   await openDashboard(page);
-  for (const percentile of ["p50", "p95"]) {
-    const title = page.getByText(`${percentile} API and database latency`, {
+  for (const percentile of ["P50", "P90", "P95", "P99"]) {
+    const title = page.getByText(`${percentile} latency`, {
       exact: true,
     });
     await title.scrollIntoViewIfNeeded();
     await expect(title).toBeVisible();
   }
+  await expect(page.getByText("Within 200 ms", { exact: true })).toHaveCount(0);
+  const response = await page.request.get(
+    `${process.env.GRAFANA_URL}/api/dashboards/uid/chalktalk-api`,
+  );
+  expect(response.ok()).toBeTruthy();
+  const { dashboard } = await response.json();
+  for (const panel of dashboard.panels.filter(
+    (panel) => panel.type === "timeseries",
+  )) {
+    if (panel.id === 2) {
+      expect(panel.options.legend.showLegend).toBe(false);
+      continue;
+    }
+    for (const target of panel.targets)
+      expect(target.legendFormat).toMatch(/[A-Za-z]{3,}/);
+  }
 
   if (process.env.EXPECT_DB_DATA === "1") {
-    for (const legend of ["DB query (api)", "DB pool wait (api)"])
-      await expect(page.getByText(legend, { exact: true })).toHaveCount(2);
+    for (const legend of ["Database query (api)", "Connection wait (api)"])
+      await expect(page.getByText(legend, { exact: true })).toHaveCount(4);
   }
 
   await page.screenshot({
