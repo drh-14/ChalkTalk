@@ -45,9 +45,9 @@ test("dashboard PromQL computes completed-request indicators", async () => {
     [1, 100 / 60],
     [2, 0.2],
     [3, 0.175],
+    [25, 0.7],
     [4, 0.85],
     [5, 0.97],
-    [6, 0.6],
   ]);
   const fixture = [
     "rule_files: []",
@@ -107,7 +107,7 @@ test("dashboard PromQL computes completed-request indicators", async () => {
   }
 });
 
-test("dashboard overlays database timings on matching HTTP percentiles", () => {
+test("dashboard consolidates four latency overlays and removes redundant indicators", async () => {
   const dashboard = JSON.parse(
     readFileSync(
       new URL(
@@ -118,23 +118,116 @@ test("dashboard overlays database timings on matching HTTP percentiles", () => {
     ),
   );
   const panels = new Map(dashboard.panels.map((panel) => [panel.id, panel]));
-  for (const [id, percentile] of [
-    [3, "p50"],
-    [4, "p95"],
-  ]) {
+  const percentiles = [
+    [3, "P50", [0.2, 0.06, 0.01]],
+    [25, "P90", [0.7, 0.21, 0.0375]],
+    [4, "P95", [0.85, 0.255, 0.04375]],
+    [5, "P99", [0.97, 0.291, 0.04875]],
+  ];
+  for (const [id, percentile] of percentiles) {
     const panel = panels.get(id);
-    assert.equal(panel.title, `${percentile} API and database latency`);
+    assert.equal(panel.title, `${percentile} latency`);
     assert.equal(panel.fieldConfig.defaults.unit, "s");
+    assert.equal(panel.targets.length, 3);
     assert.deepEqual(
       panel.targets.map(({ refId, legendFormat }) => [refId, legendFormat]),
       [
-        ["A", "API request"],
-        ["B", "DB query ({{job}})"],
-        ["C", "DB pool wait ({{job}})"],
+        ["A", "API response"],
+        ["B", "Database query ({{job}})"],
+        ["C", "Connection wait ({{job}})"],
       ],
     );
   }
+  assert.equal(panels.has(6), false);
+  assert.equal(panels.get(2).options.legend.showLegend, false);
   for (const id of [16, 17, 18, 19]) assert.equal(panels.has(id), false);
+  const histograms = [
+    ["chalktalk_http_request_duration_seconds_bucket", ["0.1", "0.2", "0.4", "1", "+Inf"], "outcome=\"completed\""],
+    ["chalktalk_db_query_duration_seconds_bucket", ["0.02", "0.06", "0.12", "0.3", "+Inf"], "job=\"api\""],
+    ["chalktalk_db_pool_acquire_duration_seconds_bucket", ["0.005", "0.01", "0.025", "0.05", "+Inf"], "job=\"api\""],
+  ];
+  const fixture = [
+    "rule_files: []",
+    "evaluation_interval: 1m",
+    "tests:",
+    "  - interval: 1m",
+    "    input_series:",
+    ...histograms.flatMap(([metric, buckets, labels]) =>
+      buckets.flatMap((le, index) => [
+        `      - series: '${metric}{${labels},le="${le}"}'`,
+        `        values: '0+${[2, 5, 8, 10, 10][index]}x6'`,
+      ]),
+    ),
+    "    promql_expr_test:",
+    ...percentiles.flatMap(([id, , values]) =>
+      values.flatMap((value, index) => {
+        const expression = panels.get(id).targets[index].expr;
+        return [
+          `      - expr: ${JSON.stringify(`abs((${expression}) - ${value}) < bool 1e-10`)}`,
+          "        eval_time: 6m",
+          "        exp_samples:",
+          `          - labels: '${index === 0 ? "{}" : '{job="api"}'}'`,
+          "            value: 1",
+        ];
+      }),
+    ),
+  ].join("\n");
+  const directory = await mkdtemp(
+    join(dirname(fileURLToPath(import.meta.url)), ".overlay-promql-test-"),
+  );
+  try {
+    await chmod(directory, 0o755);
+    await writeFile(join(directory, "test.yml"), fixture);
+    execFileSync(
+      "docker",
+      [
+        "run", "--rm", "--pull", "never", "--network", "none",
+        "--mount", `type=bind,source=${directory},target=/fixture,readonly`,
+        "--entrypoint", "/bin/promtool", "prom/prometheus:v3.3.1",
+        "test", "rules", "/fixture/test.yml",
+      ],
+      { encoding: "utf8" },
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("all visible metric series use understandable legend names", () => {
+  const dashboard = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../observability/grafana/dashboards/api.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const panels = new Map(dashboard.panels.map((panel) => [panel.id, panel]));
+  for (const panel of dashboard.panels.filter(
+    (panel) => panel.type === "timeseries" && panel.id !== 2,
+  )) {
+    for (const target of panel.targets) {
+      assert.match(
+        target.legendFormat ?? "",
+        /[A-Za-z]{3,}/,
+        `${panel.title}: ${target.refId}`,
+      );
+      assert.doesNotMatch(target.legendFormat, /\b(?:HTTP|DB|Series [A-Z])\b/);
+    }
+  }
+  assert.deepEqual(
+    panels.get(10).targets.map((target) => target.legendFormat),
+    ["Lost log events", "Evicted log events (delivery uncertain)"],
+  );
+  assert.deepEqual(
+    panels.get(12).targets.map((target) => target.legendFormat),
+    ["Live connections", "Open documents"],
+  );
+  assert.deepEqual(
+    panels.get(15).targets.map((target) => target.legendFormat),
+    ["Rejected updates", "Sessions ended ({{reason}})"],
+  );
 });
 
 test("critical endpoint panels compare request, query-total, and pool-total percentiles", () => {
@@ -156,7 +249,7 @@ test("critical endpoint panels compare request, query-total, and pool-total perc
       [
         [
           "course_create",
-          "Course create",
+          "Course creation",
           "POST",
           "/api/v1/organizations/:organizationId/courses",
         ],
@@ -194,12 +287,12 @@ test("critical endpoint panels compare request, query-total, and pool-total perc
       assert.deepEqual(
         targets.map(({ legendFormat }) => legendFormat),
         [
-          `${label} HTTP p50`,
-          `${label} HTTP p95`,
-          `${label} DB query total p50`,
-          `${label} DB query total p95`,
-          `${label} DB pool total p50`,
-          `${label} DB pool total p95`,
+          `${label} response P50`,
+          `${label} response P95`,
+          `${label} total query time P50`,
+          `${label} total query time P95`,
+          `${label} total connection wait P50`,
+          `${label} total connection wait P95`,
         ],
       );
       for (const [targetIndex, target] of targets.entries()) {
@@ -227,40 +320,33 @@ test("critical endpoint PromQL computes completed-request totals without aborted
       "utf8",
     ),
   );
-  const targets = dashboard.panels.find((panel) => panel.id === 22)?.targets;
-  assert.equal(targets?.length, 6);
-  const samples = [
-    ...[
-      ["0.1", 5],
-      ["0.2", 10],
-      ["+Inf", 10],
-    ].map(([le, count]) => [
-      `chalktalk_http_request_duration_seconds_bucket{method="POST",route="/api/v1/sessions",outcome="completed",le="${le}"}`,
-      count,
-    ]),
-    ...[
-      ["0", 2],
-      ["0.05", 6],
-      ["0.1", 10],
-      ["+Inf", 10],
-    ].map(([le, count]) => [
-      `chalktalk_request_db_query_total_duration_seconds_bucket{operation="login",outcome="completed",le="${le}"}`,
-      count,
-    ]),
-    ...[
-      ["0", 5],
-      ["0.01", 10],
-      ["+Inf", 10],
-    ].map(([le, count]) => [
-      `chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation="login",outcome="completed",le="${le}"}`,
-      count,
-    ]),
-    [
-      'chalktalk_http_request_duration_seconds_bucket{method="POST",route="/api/v1/sessions",outcome="aborted",le="+Inf"}',
-      100,
-    ],
+  const operations = [
+    [22, 0, "login", "POST", "/api/v1/sessions"],
+    [23, 0, "course_create", "POST", "/api/v1/organizations/:organizationId/courses"],
+    [24, 0, "notifications_list", "GET", "/api/v1/users/me/notifications"],
+    [24, 6, "notifications_unread_count", "GET", "/api/v1/users/me/notifications/unread-count"],
   ];
-  const expected = [0.1, 0.19, 0.0375, 0.09375, 0, 0.009];
+  const samples = operations.flatMap(([, , operation, method, route], index) => {
+    const scale = index + 1;
+    return [
+      ...[[0.1, 5], [0.2, 10], ["+Inf", 10]].map(([le, count]) => [
+        `chalktalk_http_request_duration_seconds_bucket{method="${method}",route="${route}",outcome="completed",le="${le === "+Inf" ? le : le * scale}"}`,
+        count,
+      ]),
+      ...[[0, 2], [0.05, 6], [0.1, 10], ["+Inf", 10]].map(([le, count]) => [
+        `chalktalk_request_db_query_total_duration_seconds_bucket{operation="${operation}",outcome="completed",le="${le === "+Inf" ? le : le * scale}"}`,
+        count,
+      ]),
+      ...[[0, 5], [0.01, 10], ["+Inf", 10]].map(([le, count]) => [
+        `chalktalk_request_db_pool_acquire_total_duration_seconds_bucket{operation="${operation}",outcome="completed",le="${le === "+Inf" ? le : le * scale}"}`,
+        count,
+      ]),
+      [
+        `chalktalk_http_request_duration_seconds_bucket{method="${method}",route="${route}",outcome="aborted",le="+Inf"}`,
+        100,
+      ],
+    ];
+  });
   const fixture = [
     "rule_files: []",
     "evaluation_interval: 1m",
@@ -272,13 +358,17 @@ test("critical endpoint PromQL computes completed-request totals without aborted
       `        values: '0+${count}x6'`,
     ]),
     "    promql_expr_test:",
-    ...expected.flatMap((value, index) => [
-      `      - expr: ${JSON.stringify(`abs((${targets[index].expr}) - ${value}) < bool 1e-10`)}`,
-      "        eval_time: 6m",
-      "        exp_samples:",
-      "          - labels: '{}'",
-      "            value: 1",
-    ]),
+    ...operations.flatMap(([panelId, offset], operationIndex) => {
+      const targets = dashboard.panels.find((panel) => panel.id === panelId)?.targets;
+      assert.ok(targets?.length >= offset + 6);
+      return [0.1, 0.19, 0.0375, 0.09375, 0, 0.009].flatMap((base, index) => [
+        `      - expr: ${JSON.stringify(`abs((${targets[offset + index].expr}) - ${base * (operationIndex + 1)}) < bool 1e-10`)}`,
+        "        eval_time: 6m",
+        "        exp_samples:",
+        "          - labels: '{}'",
+        "            value: 1",
+      ]);
+    }),
   ].join("\n");
   const directory = await mkdtemp(
     join(dirname(fileURLToPath(import.meta.url)), ".endpoint-promql-test-"),
