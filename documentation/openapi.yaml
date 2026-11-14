@@ -335,10 +335,10 @@ paths:
         - Authentication
       summary: Request account email verification
       description:
-        Request account email verification before account creation or a same-school
+        Request account email verification before account creation or a same-domain
         email change. The server requires a normalized ASCII address of at most 254 characters
-        with a 1–64-character dot-atom local part and a valid domain ending exactly in .edu (including subdomains)
-        and returns the same response for every eligible .edu request. If delivery
+        with a 1–64-character dot-atom local part and a syntactically valid DNS domain,
+        regardless of suffix, and returns the same response for every valid request. If delivery
         is appropriate, it sends a deployment-configured HTTPS link to the web client
         containing a 30-minute, single-use opaque token; clients cannot supply a redirect
         destination. Tokens are stored only as hashes, and the latest request invalidates
@@ -386,14 +386,6 @@ paths:
               schema:
                 "$ref": "#/components/schemas/Error"
               examples:
-                email_domain_not_allowed:
-                  summary: The syntactically valid normalized email domain does not end exactly in .edu.
-                  value:
-                    error:
-                      code: email_domain_not_allowed
-                      message: Email must use a valid .edu domain
-                      requestId: req_createAccountVerificationRequest
-                      details: []
                 validation_failed:
                   summary: The email address has malformed syntax, including a local part outside the 1–64-character ASCII dot-atom form.
                   value:
@@ -466,7 +458,7 @@ paths:
       tags:
         - Authentication
       summary: Create account
-      description: Create account using a valid pre-account email-verification token. The server derives the verified email from the token and atomically creates the account, finds or creates the school-domain organization, assigns it directly through users.organization_id, and consumes the proof. ChalkTalk has no organization-membership table. The password is accepted only at this boundary and is never returned.
+      description: Create account using a valid pre-account email-verification token. The server derives the verified email from the token and atomically creates the account, finds or creates the exact-domain organization, assigns it directly through users.organization_id, and consumes the proof. ChalkTalk has no organization-membership table. The password is accepted only at this boundary and is never returned.
       operationId: createAccount
       security: []
       responses:
@@ -552,14 +544,6 @@ paths:
                     error:
                       code: verification_token_invalid
                       message: The verification token is invalid, expired, or superseded by a later request.
-                      requestId: req_createAccount
-                      details: []
-                email_domain_not_allowed:
-                  summary: The syntactically valid verified email in the token does not have a .edu domain.
-                  value:
-                    error:
-                      code: email_domain_not_allowed
-                      message: Email must use a valid .edu domain
                       requestId: req_createAccount
                       details: []
                 validation_failed:
@@ -1000,8 +984,8 @@ paths:
       summary: Update account profile
       description:
         Update account profile. A replacement email requires a valid email-verification
-        token and must have a valid .edu domain matching the account's current canonical
-        school domain exactly. Its direct organization association and course memberships do not change. At least one field
+        token and must have a valid domain matching the account's current exact
+        email domain. Its direct organization association and course memberships do not change. At least one field
         is required.
       operationId: updateCurrentUser
       security:
@@ -1102,11 +1086,11 @@ paths:
                 "$ref": "#/components/schemas/Error"
               examples:
                 email_domain_not_allowed:
-                  summary: The syntactically valid replacement email is not in the account's current canonical .edu school domain.
+                  summary: The syntactically valid replacement email is not in the account's current exact email domain.
                   value:
                     error:
                       code: email_domain_not_allowed
-                      message: Email must use the current school domain
+                      message: Email must use the current domain
                       requestId: req_updateCurrentUser
                       details: []
                 validation_failed:
@@ -16595,7 +16579,7 @@ components:
       properties:
         email:
           type: string
-          description: Email address to verify before account creation or a same-school account email change; normalized ASCII address must be at most 254 characters.
+          description: Email address to verify before account creation or a same-domain account email change; normalized ASCII address must be at most 254 characters.
           format: email
       additionalProperties: false
       required:
@@ -16688,7 +16672,7 @@ components:
           maxLength: 100
         emailVerificationToken:
           type: string
-          description: Single-use opaque token proving control of a replacement email address in the account's current school domain.
+          description: Single-use opaque token proving control of a replacement email address in the account's current email domain.
           minLength: 1
           maxLength: 4096
       additionalProperties: false

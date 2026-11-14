@@ -298,7 +298,7 @@ integrationTest("AuthService PostgreSQL integration", () => {
     expect(memberships.rows[0]!.exists).toBe(false);
   });
 
-  it("admits valid .edu subdomains regardless of deployment allowlist, but rejects lookalikes and malformed labels", async () => {
+  it("admits valid domains regardless of suffix but rejects malformed labels", async () => {
     const app = createApp({ environment, authService: service });
     const accepted = await request(app)
       .post("/api/v1/account-verification-requests")
@@ -326,15 +326,16 @@ integrationTest("AuthService PostgreSQL integration", () => {
       "student@school.education",
       "student@example.com",
     ]) {
-      const denied = await request(app)
+      const accepted = await request(app)
         .post("/api/v1/account-verification-requests")
         .set("Origin", environment.frontendBaseUrl)
-        .set("Idempotency-Key", `reject-${email}`)
+        .set("Idempotency-Key", `accept-${email}`)
         .send({ email });
-      expect(denied.status, email).toBe(422);
-      expect(denied.body.error.code, email).toBe("email_domain_not_allowed");
+      expect(accepted.status, email).toBe(202);
+      expect(emailSender.messages.at(-1)?.to, email).toBe(email);
     }
-    expect(emailSender.messages).toHaveLength(countBefore);
+    expect(emailSender.messages).toHaveLength(countBefore + 3);
+    const countAfterValid = emailSender.messages.length;
     const tokensBeforeMalformed = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM email_verification_tokens",
     );
@@ -363,7 +364,7 @@ integrationTest("AuthService PostgreSQL integration", () => {
       expect(malformed.status, email).toBe(422);
       expect(malformed.body.error.code, email).toBe("validation_failed");
     }
-    expect(emailSender.messages).toHaveLength(countBefore);
+    expect(emailSender.messages).toHaveLength(countAfterValid);
     const tokensAfterMalformed = await pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM email_verification_tokens",
     );
@@ -410,44 +411,38 @@ integrationTest("AuthService PostgreSQL integration", () => {
     expect(organization.rows).toEqual([{ domain, name: domain.slice(0, 200) }]);
   });
 
-  it("rejects a pre-policy non-.edu verification token without creating an account or consuming it", async () => {
-    const token = "legacy-nonacademic-verification-token";
-    await pool.query(
-      `INSERT INTO email_verification_tokens (id, email, token_hash, expires_at)
-       VALUES ($1, $2, $3, now() + interval '30 minutes')`,
-      [
-        randomUUID(),
-        "legacy@example.com",
-        hashOpaqueToken(token, environment.authTokenSecret),
-      ],
-    );
+  it("creates accounts from non-.edu proofs and groups users by exact public domain", async () => {
     const app = createApp({ environment, authService: service });
-    const response = await request(app)
-      .post("/api/v1/users")
-      .set("Origin", environment.frontendBaseUrl)
-      .send({
-        verificationToken: token,
-        password: "correct horse battery staple",
-        displayName: "Legacy",
-      });
-    expect(response.status).toBe(422);
-    expect(response.body.error.code).toBe("email_domain_not_allowed");
-    const idempotent = await request(app)
-      .post("/api/v1/users")
-      .set("Origin", environment.frontendBaseUrl)
-      .set("Idempotency-Key", "legacy-token-creation")
-      .send({
-        verificationToken: token,
-        password: "correct horse battery staple",
-        displayName: "Legacy",
-      });
-    expect(idempotent.status).toBe(422);
-    expect(idempotent.body.error.code).toBe("email_domain_not_allowed");
-    const persisted = await pool.query<{ users: string; tokens: string }>(
-      `SELECT (SELECT count(*)::text FROM users WHERE email='legacy@example.com') AS users,
-              (SELECT count(*)::text FROM email_verification_tokens WHERE email='legacy@example.com' AND consumed_at IS NULL) AS tokens`,
+    const createdEmails = ["first@gmail.com", "second@gmail.com"];
+    for (const [index, email] of createdEmails.entries()) {
+      await service.requestVerification(email);
+      const response = await request(app)
+        .post("/api/v1/users")
+        .set("Origin", environment.frontendBaseUrl)
+        .send({
+          verificationToken: tokenFrom(emailSender.messages.at(-1)!),
+          password: "correct horse battery staple",
+          displayName: `Public User ${index + 1}`,
+        });
+      expect(response.status).toBe(201);
+      expect(response.body.data.email).toBe(email);
+    }
+    const organizations = await pool.query<{
+      organization_id: string;
+      domain: string;
+    }>(
+      `SELECT u.organization_id, o.domain FROM users u JOIN organizations o ON o.id = u.organization_id
+       WHERE u.email = ANY($1::text[]) ORDER BY u.email`,
+      [createdEmails],
     );
-    expect(persisted.rows[0]).toEqual({ users: "0", tokens: "1" });
+    expect(organizations.rows).toHaveLength(2);
+    expect(organizations.rows[0]!.organization_id).toBe(
+      organizations.rows[1]!.organization_id,
+    );
+    expect(organizations.rows.map((row) => row.domain)).toEqual([
+      "gmail.com",
+      "gmail.com",
+    ]);
   });
 
   it("rejects malformed email tokens for account creation and email changes", async () => {
@@ -504,7 +499,7 @@ integrationTest("AuthService PostgreSQL integration", () => {
     }
   });
 
-  it("rejects a pre-policy non-.edu email-change token without changing the user or consuming proof", async () => {
+  it("rejects a verified cross-domain email-change token without changing the user or consuming proof", async () => {
     const user = await createVerifiedUser("academic-change@example.edu");
     const login = await service.login(
       user.email,
@@ -786,6 +781,24 @@ integrationTest("AuthService PostgreSQL integration", () => {
         displayName: "Rear Admiral Hopper",
       }),
     ).rejects.toMatchObject({ status: 412, code: "version_conflict" });
+  });
+
+  it("allows verified email changes within a non-.edu domain", async () => {
+    const user = await createVerifiedUser("original@example.com");
+    const login = await service.login(
+      user.email,
+      "correct horse battery staple",
+    );
+    await service.requestVerification("replacement@example.com");
+    const updated = await service.updateProfile(
+      login.credential,
+      userEtag(login.session.user),
+      {
+        emailVerificationToken: tokenFrom(emailSender.messages.at(-1)!),
+      },
+    );
+    expect(updated.email).toBe("replacement@example.com");
+    expect(updated.organizationId).toBe(login.session.user.organizationId);
   });
 
   it("reports consumed verification tokens as used during an email change", async () => {
