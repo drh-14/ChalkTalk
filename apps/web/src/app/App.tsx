@@ -216,7 +216,9 @@ function SignupRequestForm({
     setError(undefined);
     try {
       await requestVerification(email);
-      setNotice("Check your inbox for a link to finish creating your account.");
+      setNotice(
+        "If this address is eligible for a new account, check your inbox for a verification link.",
+      );
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -253,8 +255,19 @@ function SignupRequestForm({
             setPanel("login");
           }}
         >
-          Back to sign in
+          {notice ? "Sign in" : "Back to sign in"}
         </a>
+        {notice && (
+          <a
+            href="/"
+            onClick={(event) => {
+              event.preventDefault();
+              setPanel("reset-request");
+            }}
+          >
+            Reset password
+          </a>
+        )}
       </p>
     </form>
   );

@@ -58,7 +58,7 @@ test("signup accepts valid domains and rejects malformed addresses", async ({
   await email.fill("student@example.com");
   await page.getByRole("button", { name: "Send verification link" }).click();
   await expect(page.getByRole("status")).toHaveText(
-    "Check your inbox for a link to finish creating your account.",
+    "If this address is eligible for a new account, check your inbox for a verification link.",
   );
   expect(verificationRequests).toEqual([{ email: "student@example.com" }]);
   await page.screenshot({
@@ -115,7 +115,7 @@ test("signup accepts valid domains and rejects malformed addresses", async ({
   await email.fill("Student@Dept.State.EDU");
   await page.getByRole("button", { name: "Send verification link" }).click();
   await expect(page.getByRole("status")).toHaveText(
-    "Check your inbox for a link to finish creating your account.",
+    "If this address is eligible for a new account, check your inbox for a verification link.",
   );
   expect(verificationRequests).toEqual([
     { email: "student@example.com" },
@@ -123,6 +123,45 @@ test("signup accepts valid domains and rejects malformed addresses", async ({
   ]);
   await page.screenshot({
     path: resolve(screenshots, "academic-accepted.png"),
+    fullPage: true,
+  });
+});
+
+test("an already registered email receives the same generic signup guidance", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/**", async (route) => {
+    if (route.request().url().endsWith("/sessions/current")) {
+      return route.fulfill({
+        status: 401,
+        json: {
+          error: { code: "authentication_required", message: "Sign in" },
+        },
+      });
+    }
+    if (route.request().url().endsWith("/account-verification-requests")) {
+      expect(route.request().postDataJSON()).toEqual({
+        email: "registered@example.com",
+      });
+      return route.fulfill({ status: 202, body: "" });
+    }
+    return route.fulfill({ status: 404, body: "" });
+  });
+  await page.goto(origin);
+  await page.getByRole("link", { name: "Create an account" }).click();
+  await page
+    .getByRole("textbox", { name: "Email address" })
+    .fill("registered@example.com");
+  await page.getByRole("button", { name: "Send verification link" }).click();
+  await expect(page.getByRole("status")).toHaveText(
+    "If this address is eligible for a new account, check your inbox for a verification link.",
+  );
+  await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Reset password" }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: resolve(screenshots, "existing-account-generic-confirmation.png"),
     fullPage: true,
   });
 });
