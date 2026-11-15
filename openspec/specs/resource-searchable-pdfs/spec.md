@@ -64,12 +64,12 @@ Derived metadata SHALL belong to its immutable course file through a foreign key
 
 ### Requirement: Searchable PDF option in the file text panel
 
-For PDF uploads, the existing extracted-text panel SHALL offer Searchable PDF alongside the readable/original text views. Selecting it SHALL prepare on demand, show pending and failed/retry states, and offer a titled native PDF embed plus open/download fallback links when ready. Polling SHALL run only while the selected mode is open and pending, every two seconds for the first 30 seconds and every ten seconds afterward. After 16 minutes of pending responses, automatic polling SHALL stop, the preparing indicator SHALL be replaced by a taking-longer notice, and Check again SHALL start a fresh bounded check cycle. Polling SHALL also stop on close, mode change, replacement/version change or unmount. Non-PDF resources SHALL NOT show this option. Existing compact action rows, original download, text views and Download .txt SHALL remain available. The UI SHALL disclose that the rendered copy may have less zoom detail and retain access to the original. The PDF viewer SHALL not require a new browser library.
+For PDF uploads, Searchable copy SHALL be available alongside Original in the unified resource PDF viewer. Choosing a not-requested copy SHALL offer Prepare searchable copy without starting generation until the reader requests it. Pending, failed/retry, taking-longer/Check again and ready states SHALL remain available. Ready copies SHALL render within the same viewer with page navigation and zoom and separate open/download links; original download and readable/original text layouts with Download .txt SHALL remain available. Non-PDF resources SHALL NOT show this option. The UI SHALL disclose reduced zoom detail. Existing generation APIs, revision/visibility checks and generation budgets SHALL remain unchanged. Pending polling SHALL occur only while Searchable copy is selected, every two seconds for the first 30 seconds and every ten seconds afterward. After 16 minutes it SHALL stop and offer Check again. Mode change, reload and unmount SHALL cancel obsolete requests and timers. Copy data for a changed original-file ID SHALL NOT be rendered.
 
 #### Scenario: Prepare and inspect the current PDF
 
-- **WHEN** a reader chooses Searchable PDF for an existing upload
-- **THEN** progress changes to an embedded searchable copy with separate open/download links, without requiring another upload
+- **WHEN** a reader chooses Searchable copy for an existing upload and requests preparation
+- **THEN** progress changes to an searchable copy rendered in the viewer with separate open/download links, without requiring another upload
 
 #### Scenario: Close or retry while preparing
 

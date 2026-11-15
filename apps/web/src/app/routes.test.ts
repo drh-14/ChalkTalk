@@ -74,6 +74,33 @@ describe("routes", () => {
     expect(window.location.pathname).toBe("/home");
   });
 
+  it("recognizes the slide viewer with its page and selected post", () => {
+    const post = "019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a90";
+    expect(
+      routeFromLocation(
+        new URL(
+          `https://app.example.edu/courses/abc/resources/r1/view?page=14&post=${post}`,
+        ),
+      ),
+    ).toEqual({
+      name: "course-resource-view",
+      courseId: "abc",
+      resourceId: "r1",
+      page: 14,
+      postId: post,
+    });
+    expect(
+      routeFromLocation(
+        new URL(
+          "https://app.example.edu/courses/abc/resources/r1/view?page=0&post=nope",
+        ),
+      ),
+    ).toEqual({
+      name: "course-resource-view",
+      courseId: "abc",
+      resourceId: "r1",
+    });
+  });
   it("recognizes discussion, selected post, and settings while retaining q", () => {
     expect(
       routeFromLocation(
@@ -312,5 +339,21 @@ describe("routes", () => {
     replaceCurrentQuery("cutoff");
     expect(window.location.search).toBe("?q=cutoff&sort=newest");
     window.history.replaceState(null, "", "/");
+  });
+});
+
+// The text action shares the PDF route instead of opening a second viewer.
+it("selects the extracted-text panel through the PDF viewer route", () => {
+  expect(
+    routeFromLocation(
+      new URL(
+        "https://app.example.edu/courses/c1/resources/r1/view?panel=text&page=3",
+      ),
+    ),
+  ).toMatchObject({
+    name: "course-resource-view",
+    resourceId: "r1",
+    panel: "text",
+    page: 3,
   });
 });

@@ -12,3 +12,18 @@ export const readableCatalogFile = (
  JOIN users cru ON cru.id=crm.user_id AND cru.deleted_at IS NULL
  WHERE crv.file_id=${fileAlias}.id AND cr.deleted_at IS NULL AND (crm.role IN ('ta','instructor') OR (cr.visibility='class' AND COALESCE(crs.visibility,'class')='class'))
  )))`;
+
+/**
+ * A live catalog resource the user can read: a current member of an active or
+ * archived course, and staff or a class-visible item in a class-visible section.
+ */
+export const readableCatalogResource = (
+  resourceAlias: string,
+  userParameter: string,
+) => `(
+ ${resourceAlias}.deleted_at IS NULL AND EXISTS(
+ SELECT 1 FROM course_memberships rm JOIN users ru ON ru.id=rm.user_id AND ru.deleted_at IS NULL
+ JOIN courses rc ON rc.id=rm.course_id AND rc.status IN ('active','archived')
+ LEFT JOIN course_resource_sections rs ON rs.id=${resourceAlias}.section_id
+ WHERE rm.course_id=${resourceAlias}.course_id AND rm.user_id=${userParameter}
+ AND (rm.role IN ('ta','instructor') OR (${resourceAlias}.visibility='class' AND COALESCE(rs.visibility,'class')='class'))))`;

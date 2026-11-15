@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -49,6 +51,8 @@ import {
   type Route,
 } from "./routes.js";
 
+// pdf.js loads only when someone opens course slides.
+const SlideViewer = lazy(() => import("../slides/SlideViewer.js"));
 type LandingPanel = "login" | "signup" | "reset-request";
 
 function errorMessage(error: unknown): string {
@@ -1159,7 +1163,8 @@ function CourseFrame({
   const section =
     route.name === "course-settings"
       ? "settings"
-      : route.name === "course-resources"
+      : route.name === "course-resources" ||
+          route.name === "course-resource-view"
         ? "resources"
         : route.name === "course-threads"
           ? "threads"
@@ -1328,6 +1333,33 @@ function CourseFrame({
               onNavigate(sessionRoute(courseId, sessionId))
             }
           />
+        ) : section === "resources" && route.resourceId ? (
+          <Suspense
+            fallback={
+              <p role="status" className="loading-line">
+                Loading slides…
+              </p>
+            }
+          >
+            <SlideViewer
+              key={route.resourceId}
+              courseId={courseId}
+              resourceId={route.resourceId}
+              initialPage={route.page}
+              initialPanel={route.panel}
+              initialPostId={route.postId}
+              csrfToken={session.csrfToken}
+              staff={staff === true}
+              active={visibleCourse.data.status === "active"}
+              allowAnonymousPosting={visibleCourse.data.allowAnonymousPosting}
+              allowPrivatePosting={visibleCourse.data.allowPrivatePosting}
+              onNavigate={onNavigate}
+              onBeforeLeaveChange={(guard) => {
+                beforeLeave.current = guard;
+                onBeforeLeaveChange(guard);
+              }}
+            />
+          </Suspense>
         ) : section === "resources" ? (
           <CourseResourcesArea
             key={courseId}
@@ -1467,6 +1499,7 @@ export function App() {
           route.name === "post" ||
           route.name === "course-settings" ||
           route.name === "course-resources" ||
+          route.name === "course-resource-view" ||
           route.name === "course-threads" ||
           route.name === "course-collaboration" ||
           route.name === "course-statistics" ||
@@ -1527,6 +1560,7 @@ export function App() {
       route.name === "post" ||
       route.name === "course-settings" ||
       route.name === "course-resources" ||
+      route.name === "course-resource-view" ||
       route.name === "course-threads" ||
       route.name === "course-collaboration" ||
       route.name === "course-statistics" ||

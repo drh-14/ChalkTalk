@@ -265,6 +265,21 @@ Folder names are staff-managed and independent of tags. Existing posts default t
 
 The application must verify that a post and tag belong to the same course before creating a `post_tags` row.
 
+### `post_anchors`
+
+The area of a course PDF page that a question or note asks about. See [slide-anchored questions](../openspec/specs/slide-anchored-questions/spec.md).
+
+- `post_id`: `uuid_v7`; primary key. With `course_id`, foreign key to `posts(course_id, id)` with cascade deletion. A post has at most one anchor.
+- `course_id`: `uuid_v7`.
+- `resource_id`: `uuid_v7`; with `course_id`, foreign key to `course_resources(course_id, id)` with cascade deletion.
+- `file_id`: `uuid_v7`; with `course_id`, foreign key to `course_files(course_id, id)` with cascade deletion. This is the immutable file the author saw: the resource's active upload when the post was created.
+- `page`: `integer`; 1 to 10,000.
+- `box_x`, `box_y`, `box_width`, `box_height`: `double precision`; the box as fractions of the page as displayed, after rotation. Each is 0 to 1, width and height are at least 0.01, and `box_x + box_width` and `box_y + box_height` are at most 1 (with a 0.000001 tolerance for browser rounding).
+- `created_at`: `timestamptz`.
+- `(course_id, file_id, page)` serves the resource questions list, and `(course_id, resource_id)` serves earlier-version counts.
+
+Rows are written only when a post is created, and are never updated: replacing or deleting the resource leaves the anchor on its original file. Reads derive the anchor's status from the resource's current revision and the reader's catalog visibility: `current`, `earlier_version`, or `unavailable`.
+
 ### `poll_options`
 
 - `id`: `uuid_v7`; primary key.
