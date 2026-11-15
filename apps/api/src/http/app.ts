@@ -33,6 +33,7 @@ import {
   draftEtag,
   postEtag,
   type CreatePost,
+  type PostAnchorInput,
   type DraftContent,
   type ListPosts,
   type UpdatePost,
@@ -484,6 +485,67 @@ function pollOptions(value: unknown): string[] {
     throw validationError("Poll options must be distinct");
   return labels;
 }
+function anchorError(path: string, message: string): AuthError {
+  return new AuthError(422, "validation_failed", message, [
+    { location: "body", path, code: "invalid", message },
+  ]);
+}
+/** A post anchor: a resource file, a page, and a box in page fractions. */
+function postAnchor(value: unknown): PostAnchorInput {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw anchorError("anchor", "Anchor is invalid");
+  const anchor = value as Record<string, unknown>;
+  const keys = ["resourceId", "fileId", "page", "box"];
+  if (
+    Object.keys(anchor).some((key) => !keys.includes(key)) ||
+    keys.some((key) => anchor[key] === undefined)
+  )
+    throw anchorError("anchor", "Anchor is invalid");
+  for (const key of ["resourceId", "fileId"] as const)
+    if (typeof anchor[key] !== "string" || !UUID_PATTERN.test(anchor[key]))
+      throw anchorError(`anchor.${key}`, "Anchor resource is invalid");
+  if (
+    typeof anchor.page !== "number" ||
+    !Number.isInteger(anchor.page) ||
+    anchor.page < 1 ||
+    anchor.page > 10000
+  )
+    throw anchorError("anchor.page", "Anchor page must be 1 to 10,000");
+  const box = anchor.box;
+  const sides = ["x", "y", "width", "height"];
+  if (
+    !box ||
+    typeof box !== "object" ||
+    Array.isArray(box) ||
+    Object.keys(box).length !== sides.length ||
+    sides.some((side) => !(side in box))
+  )
+    throw anchorError("anchor.box", "Anchor box is invalid");
+  const fractions = box as Record<string, unknown>;
+  for (const side of sides) {
+    const part = fractions[side];
+    if (
+      typeof part !== "number" ||
+      !Number.isFinite(part) ||
+      part < 0 ||
+      part > 1 ||
+      ((side === "width" || side === "height") && part < 0.01)
+    )
+      throw anchorError(`anchor.box.${side}`, "Anchor box is outside the page");
+  }
+  const { x, y, width, height } = fractions as PostAnchorInput["box"];
+  // A tiny tolerance absorbs floating-point rounding from the browser.
+  if (x + width > 1.000001)
+    throw anchorError("anchor.box.width", "Anchor box is outside the page");
+  if (y + height > 1.000001)
+    throw anchorError("anchor.box.height", "Anchor box is outside the page");
+  return {
+    resourceId: (anchor.resourceId as string).toLowerCase(),
+    fileId: (anchor.fileId as string).toLowerCase(),
+    page: anchor.page,
+    box: { x, y, width, height },
+  };
+}
 function postCreateBody(value: unknown): CreatePost {
   const body = strictBody(
     value,
@@ -504,6 +566,7 @@ function postCreateBody(value: unknown): CreatePost {
       "releaseMode",
       "explanation",
       "scheduledFor",
+      "anchor",
     ],
     ["type", "title", "bodyMarkdown"],
   );
@@ -586,6 +649,13 @@ function postCreateBody(value: unknown): CreatePost {
   }
   if (body.scheduledFor !== undefined && typeof body.scheduledFor !== "string")
     throw validationError("Scheduled time is invalid");
+  if (body.anchor !== undefined && (body.type === "poll" || body.announcement))
+    throw anchorError(
+      "anchor",
+      "Only questions and notes can be anchored to slides",
+    );
+  const anchor =
+    body.anchor === undefined ? undefined : postAnchor(body.anchor);
   return {
     type: body.type,
     title,
@@ -618,6 +688,7 @@ function postCreateBody(value: unknown): CreatePost {
     ...(body.scheduledFor !== undefined
       ? { scheduledFor: body.scheduledFor as string }
       : {}),
+    ...(anchor ? { anchor } : {}),
   };
 }
 function validDraftJsonbText(value: string): boolean {
@@ -2798,6 +2869,25 @@ export function createApp(
     },
   );
   app.get(
+    "/api/v1/courses/:courseId/resources/:resourceId/questions",
+    optionalReadOrigin,
+    async (request, response, next) => {
+      try {
+        const current = await requireSession(request);
+        if (Object.keys(request.query).length)
+          throw new AuthError(400, "invalid_request", "Query is invalid");
+        const value = await posts().resourceQuestions(
+          param(request.params.courseId),
+          param(request.params.resourceId),
+          current.session.user.id,
+        );
+        response.set("Cache-Control", "private, no-store").json(value);
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+  app.get(
     "/api/v1/courses/:courseId/resources/:resourceId/searchable-pdf",
     optionalReadOrigin,
     async (request, response, next) => {
@@ -4327,7 +4417,7 @@ export function createApp(
           code: authError.code,
           message: authError.message,
           requestId: response.locals.requestId,
-          details: [],
+          details: authError.details,
         },
       });
     },

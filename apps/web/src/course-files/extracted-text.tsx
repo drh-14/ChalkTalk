@@ -1,6 +1,7 @@
+import { navigate } from "../app/routes.js";
+import { viewerPath } from "../slides/client.js";
 import { ProgressLabel } from "./progress.js";
 import { useTextProgress } from "./use-progress.js";
-import { SearchablePdfView } from "./searchable-pdf.js";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { extractedText, type ExtractedText, type Resource } from "./client.js";
 import { readableExtractedText, extractedTextFilename } from "./text-format.js";
@@ -10,31 +11,38 @@ export function ResourceExtractedText({
   resourceId,
   name,
   mediaType,
-  csrfToken,
   resource,
+  embedded = false,
+  visible = true,
+  onFileChanged,
 }: {
   courseId: string;
   resourceId: string;
   name: string;
   mediaType?: string;
-  csrfToken: string;
   resource?: Resource;
+  embedded?: boolean;
+  visible?: boolean;
+  onFileChanged?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(embedded);
   const [cycle, setCycle] = useState(0);
   const [data, setData] = useState<ExtractedText>();
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [layout, setLayout] = useState("readable");
-  const pdfLayout = layout === "pdf";
   const [downloadUrl, setDownloadUrl] = useState<string>();
   const state = useTextProgress(
     resource,
-    expanded && layout !== "pdf" && data?.status === "pending",
+    expanded && visible && data?.status === "pending",
   );
+  const pinnedFileId = resource?.fileId;
+  useEffect(() => {
+    if (state.superseded) onFileChanged?.();
+  }, [state.superseded, onFileChanged]);
   const readyFetched = useRef(false);
   useEffect(() => {
-    if (!expanded || layout === "pdf" || state.inaccessible) return;
+    if (!expanded || state.inaccessible) return;
     if (
       state.resource?.textStatus === "ready" &&
       data?.status === "pending" &&
@@ -51,7 +59,7 @@ export function ResourceExtractedText({
           old && { ...old, status: state.resource!.textStatus!, text: null },
       );
     }
-  }, [state.resource, state.inaccessible, expanded, layout, data?.status]);
+  }, [state.resource, state.inaccessible, expanded, data?.status]);
   const displayedText = useMemo(
     () =>
       layout === "original"
@@ -60,13 +68,7 @@ export function ResourceExtractedText({
     [data?.text, layout],
   );
   useEffect(() => {
-    if (
-      !expanded ||
-      layout === "pdf" ||
-      loading ||
-      error ||
-      data?.status !== "ready"
-    ) {
+    if (!expanded || loading || error || data?.status !== "ready") {
       setDownloadUrl(undefined);
       return;
     }
@@ -79,14 +81,22 @@ export function ResourceExtractedText({
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
   useEffect(() => {
-    if (!expanded || pdfLayout) return;
+    if (!expanded || !visible) return;
     const controller = new AbortController();
     setLoading(true);
     setData(undefined);
     setError(undefined);
     extractedText(courseId, resourceId, controller.signal)
       .then(({ data }) => {
-        if (!controller.signal.aborted) setData(data);
+        if (controller.signal.aborted) return;
+        if (pinnedFileId && data.fileId !== pinnedFileId) {
+          onFileChanged?.();
+          setError(
+            "This file was replaced. Reload to read its extracted text.",
+          );
+          return;
+        }
+        setData(data);
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted)
@@ -100,24 +110,57 @@ export function ResourceExtractedText({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [courseId, resourceId, expanded, cycle, pdfLayout]);
+  }, [
+    courseId,
+    resourceId,
+    expanded,
+    visible,
+    cycle,
+    pinnedFileId,
+    onFileChanged,
+  ]);
   function close() {
     readyFetched.current = false;
     setExpanded(false);
     trigger.current?.focus();
   }
-  return (
-    <div className="resource-extracted-text">
-      <button
-        ref={trigger}
-        type="button"
+  if (mediaType === "application/pdf" && !embedded) {
+    const path = `${viewerPath(courseId, resourceId)}?panel=text`;
+    return (
+      <a
         className="button secondary resource-action"
-        aria-expanded={expanded}
-        aria-controls={expanded ? id : undefined}
-        onClick={() => (expanded ? close() : setExpanded(true))}
+        href={path}
+        onClick={(event) => {
+          if (
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          event.preventDefault();
+          navigate(path);
+        }}
       >
-        {expanded ? "Hide extracted text" : "View extracted text"}
-      </button>
+        View extracted text
+      </a>
+    );
+  }
+  return (
+    <div className={`resource-extracted-text${embedded ? " embedded" : ""}`}>
+      {!embedded && (
+        <button
+          ref={trigger}
+          type="button"
+          className="button secondary resource-action"
+          aria-expanded={expanded}
+          aria-controls={expanded ? id : undefined}
+          onClick={() => (expanded ? close() : setExpanded(true))}
+        >
+          {expanded ? "Hide extracted text" : "View extracted text"}
+        </button>
+      )}
       {expanded && !state.inaccessible && (
         <section
           id={id}
@@ -135,9 +178,6 @@ export function ResourceExtractedText({
               >
                 <option value="readable">Readable paragraphs</option>
                 <option value="original">Original line breaks</option>
-                {mediaType === "application/pdf" && (
-                  <option value="pdf">Searchable PDF</option>
-                )}
               </select>
             </label>
             <div className="resource-text-panel-actions">
@@ -150,109 +190,99 @@ export function ResourceExtractedText({
                   Download .txt
                 </a>
               )}
+              {!embedded && (
+                <button
+                  type="button"
+                  className="button secondary resource-action"
+                  onClick={close}
+                >
+                  Close extracted text
+                </button>
+              )}
+            </div>
+          </div>
+          {loading && (
+            <p role="status" className="loading-line">
+              Loading extracted text…
+            </p>
+          )}
+          {error && (
+            <div role="alert">
+              <p>{error}</p>
               <button
                 type="button"
                 className="button secondary resource-action"
-                onClick={close}
+                onClick={() => setCycle((c) => c + 1)}
               >
-                Close extracted text
+                Try again
               </button>
             </div>
-          </div>
-          {layout === "pdf" ? (
-            <SearchablePdfView
-              courseId={courseId}
-              resourceId={resourceId}
-              csrfToken={csrfToken}
-            />
-          ) : (
+          )}
+          {!loading && !error && data && (
             <>
-              {loading && (
-                <p role="status" className="loading-line">
-                  Loading extracted text…
-                </p>
-              )}
-              {error && (
-                <div role="alert">
-                  <p>{error}</p>
-                  <button
-                    type="button"
-                    className="button secondary resource-action"
-                    onClick={() => setCycle((c) => c + 1)}
-                  >
-                    Try again
-                  </button>
-                </div>
-              )}
-              {!loading && !error && data && (
+              {data.status === "ready" ? (
                 <>
-                  {data.status === "ready" ? (
-                    <>
-                      {data.truncated && (
-                        <p className="course-file-meta">
-                          Only part of this file's text was extracted.
-                        </p>
-                      )}
-                      {data.text ? (
-                        <pre
-                          tabIndex={0}
-                          aria-label="Extracted text"
-                          className={
-                            layout === "original"
-                              ? "resource-text-original"
-                              : undefined
-                          }
-                        >
-                          {displayedText}
-                        </pre>
-                      ) : (
-                        <p>No text was found in this file.</p>
-                      )}
-                    </>
+                  {data.truncated && (
+                    <p className="course-file-meta">
+                      Only part of this file's text was extracted.
+                    </p>
+                  )}
+                  {data.text ? (
+                    <pre
+                      tabIndex={0}
+                      aria-label="Extracted text"
+                      className={
+                        layout === "original"
+                          ? "resource-text-original"
+                          : undefined
+                      }
+                    >
+                      {displayedText}
+                    </pre>
                   ) : (
-                    <>
-                      <div role="status">
-                        {data.status === "pending" ? (
-                          <ProgressLabel
-                            progress={
-                              (state.resource ?? resource)?.textProgress
-                            }
-                          />
-                        ) : data.status === "failed" ? (
-                          "Text could not be extracted from this file."
-                        ) : (
-                          "Text extraction is not supported for this file."
-                        )}
-                      </div>
-                      {state.error && <p role="status">{state.error}</p>}
-                      {state.superseded && (
-                        <p role="status">
-                          This file was replaced. Reload the page to see its
-                          latest status.
-                        </p>
-                      )}
-                      {state.stopped && (
-                        <p>
-                          Automatic checks paused.{" "}
-                          <button
-                            type="button"
-                            className="button secondary resource-action"
-                            onClick={state.retry}
-                          >
-                            Check again
-                          </button>
-                        </p>
-                      )}
-                      {data.status === "pending" && (
-                        <button
-                          type="button"
-                          className="button secondary resource-action"
-                          onClick={() => setCycle((c) => c + 1)}
-                        >
-                          Refresh text
-                        </button>
-                      )}
-                    </>
+                    <p>No text was found in this file.</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div role="status">
+                    {data.status === "pending" ? (
+                      <ProgressLabel
+                        progress={(state.resource ?? resource)?.textProgress}
+                      />
+                    ) : data.status === "failed" ? (
+                      "Text could not be extracted from this file."
+                    ) : (
+                      "Text extraction is not supported for this file."
+                    )}
+                  </div>
+                  {state.error && <p role="status">{state.error}</p>}
+                  {state.superseded && (
+                    <p role="status">
+                      This file was replaced. Reload the page to see its latest
+                      status.
+                    </p>
+                  )}
+                  {state.stopped && (
+                    <p>
+                      Automatic checks paused.{" "}
+                      <button
+                        type="button"
+                        className="button secondary resource-action"
+                        onClick={state.retry}
+                      >
+                        Check again
+                      </button>
+                    </p>
+                  )}
+                  {data.status === "pending" && (
+                    <button
+                      type="button"
+                      className="button secondary resource-action"
+                      onClick={() => setCycle((c) => c + 1)}
+                    >
+                      Refresh text
+                    </button>
                   )}
                 </>
               )}

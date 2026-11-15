@@ -106,6 +106,16 @@ For the `private` field on question and note requests, see the [OpenAPI request 
 
 `folderId` (UUID or null, optional): Assign a same-course managed folder; null or omission leaves the post Unfiled.
 
+`anchor` (object, optional): Anchors the post to an area of a page in a course PDF; see [slide-anchored questions](../../openspec/specs/slide-anchored-questions/spec.md). Fixed for the post's lifetime; post edits do not accept it.
+
+`anchor.resourceId` (UUID, required): A live upload resource the author can read whose current file is a PDF.
+
+`anchor.fileId` (UUID, required): That resource's current file, as listed by [List a resource's questions](resources.md#listResourceQuestions). A file that is no longer current returns `409 resource_changed`.
+
+`anchor.page` (integer, required): Page number, 1 to 10,000.
+
+`anchor.box` (object, required): The area as fractions of the page as displayed: `x`, `y`, `width`, and `height`, each 0 to 1, with `width` and `height` at least 0.01 and `x + width` and `y + height` at most 1.
+
 ###### `CreateNotePostRequest` fields
 
 `type` (literal note, required): See the named shape.
@@ -123,6 +133,16 @@ For the `private` field on question and note requests, see the [OpenAPI request 
 `announcement` (boolean, optional; default false): TAs and instructors only. Posts the note as a pinned announcement emailed to members who enable announcement emails; cannot be combined with `anonymous`.
 
 `scheduledFor` (string, optional): Announcements only. ISO 8601 date-time 1 minute to 365 days ahead at which the job worker publishes the announcement; any other value returns `422 schedule_invalid`.
+
+`anchor` (object, optional): Not with `announcement`. Anchors the post to an area of a page in a course PDF; see [slide-anchored questions](../../openspec/specs/slide-anchored-questions/spec.md). Fixed for the post's lifetime; post edits do not accept it.
+
+`anchor.resourceId` (UUID, required): A live upload resource the author can read whose current file is a PDF.
+
+`anchor.fileId` (UUID, required): That resource's current file, as listed by [List a resource's questions](resources.md#listResourceQuestions). A file that is no longer current returns `409 resource_changed`.
+
+`anchor.page` (integer, required): Page number, 1 to 10,000.
+
+`anchor.box` (object, required): The area as fractions of the page as displayed: `x`, `y`, `width`, and `height`, each 0 to 1, with `width` and `height` at least 0.01 and `x + width` and `y + height` at most 1.
 
 ###### `CreatePollPostRequest` fields
 
@@ -229,6 +249,8 @@ Shape: exactly one of CreateQuestionPostRequest, CreateNotePostRequest, CreatePo
 `data.author` (object, required): Author identity visible to the authenticated viewer under the shared identity visibility policy.
 
 `data.anonymous` (boolean, required): Whether the post was authored anonymously.
+
+`data.anchor` (object or null, required): The PDF area the post asks about, or `null`. Contains `page`, `box` (`x`, `y`, `width`, `height` as page fractions), and `status`: `current` when the anchored file is still the resource's current file, `earlier_version` when the resource has since been given another file, or `unavailable` when the resource is deleted or hidden from the viewer. For `current` and `earlier_version` it also contains `resourceId`, `fileId`, and the resource's current `resourceTitle`; for `unavailable` these are omitted. Every post read includes this field.
 
 `data.tags` (list of strings, required): Course-defined post tags.
 
@@ -345,6 +367,8 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 `private_posting_disabled`: New private posts are disabled for this course.
 
+`resource_changed`: The anchored resource's file was replaced after the author opened it; no post is created.
+
 ##### `413 Content Too Large`
 
 `payload_too_large`: Future-only post multipart limit; current parent-scoped uploads use the [attachment contract](../openapi.yaml).
@@ -355,7 +379,7 @@ curl --request POST '/api/v1/courses/course_123/posts' \
 
 ##### `422 Unprocessable Content`
 
-`validation_failed`: The post fields are invalid.
+`validation_failed`: The post fields are invalid. For an invalid `anchor`, `details` names the field, such as `anchor.box.width`; a missing, deleted, hidden, link, or non-PDF resource gives the same `anchor.resourceId` error, and an anchor on a poll or announcement names `anchor`.
 
 `private_announcement`: An announcement cannot be private.
 

@@ -116,9 +116,15 @@ describe("resource search", () => {
         .getAllByRole("mark")
         .map((mark) => mark.textContent),
     ).toEqual(["eigenvalues"]);
+    // A PDF hit opens the in-app viewer; Download keeps the original file.
     expect(
       within(results)
         .getByRole("link", { name: "Lecture 7" })
+        .getAttribute("href"),
+    ).toBe("/courses/course/resources/lecture/view");
+    expect(
+      within(results)
+        .getByRole("link", { name: "Download Lecture 7" })
         .getAttribute("href"),
     ).toBe("/api/v1/courses/course/files/lecture-file/download");
     expect(screen.queryByRole("link", { name: "Week one" })).toBeNull();

@@ -8,6 +8,7 @@ import {
 } from "../notifications/activity.js";
 import { newMentions, parseMentions } from "../notifications/mentions.js";
 import { canReadPost, readablePost } from "./visibility.js";
+import { readableCatalogResource } from "../course-resources/read-policy.js";
 import {
   publishScheduled,
   queueAnnouncementEmails,
@@ -49,6 +50,7 @@ type Row = {
   author_deleted_at: Date | null;
   answered: boolean;
   canonical_title?: string | null;
+  anchored?: boolean;
 };
 export type CreatePost = {
   type: "question" | "note" | "poll";
@@ -72,6 +74,15 @@ export type CreatePost = {
   scheduledFor?: string;
   /** Confirm this owner's course draft revision before publication. */
   draftVersion?: number;
+  /** Questions and notes only: the area of a course PDF page asked about. */
+  anchor?: PostAnchorInput;
+};
+/** A box on one page of a resource's file, as fractions of the page. */
+export type PostAnchorInput = {
+  resourceId: string;
+  fileId: string;
+  page: number;
+  box: { x: number; y: number; width: number; height: number };
 };
 export type DraftContent = {
   type: "question" | "note" | "poll";
@@ -150,6 +161,8 @@ const validation = (message: string) =>
 const STAFF = new Set<Role>(["ta", "instructor"]);
 const ANSWERED =
   "EXISTS (SELECT 1 FROM answers a WHERE a.post_id=p.id AND a.deleted_at IS NULL)";
+/** Lets reads skip the anchor lookup for the many posts without one. */
+const ANCHORED = "EXISTS (SELECT 1 FROM post_anchors pa WHERE pa.post_id=p.id)";
 /** Active, unresolved followup discussions on the post aliased `p`. */
 const UNRESOLVED =
   "FROM followups uf WHERE uf.post_id=p.id AND uf.parent_followup_id IS NULL AND uf.deleted_at IS NULL AND uf.resolved_at IS NULL";
@@ -353,7 +366,7 @@ export class PostService {
     lock = false,
   ): Promise<Row | undefined> {
     const result = await db.query<Row>(
-      `SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN post_folders f ON f.id=p.folder_id WHERE p.id=$1${lock ? " FOR UPDATE OF p" : ""}`,
+      `SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered,${ANCHORED} AS anchored FROM posts p LEFT JOIN users u ON u.id=p.author_user_id LEFT JOIN post_folders f ON f.id=p.folder_id WHERE p.id=$1${lock ? " FOR UPDATE OF p" : ""}`,
       [id],
     );
     return result.rows[0];
@@ -426,6 +439,95 @@ export class PostService {
         ? await this.pollState(db, row.id, viewerId, role)
         : {}),
       ...(await this.viewerState(db, row, viewerId)),
+      anchor:
+        row.anchored === false ? null : await this.anchor(db, row.id, viewerId),
+    };
+  }
+  /**
+   * An anchor the author can create: a live PDF resource they can read, whose
+   * current file is the one they saw. A hidden resource fails like a missing one.
+   */
+  private async validAnchor(
+    db: Db,
+    courseId: string,
+    userId: string,
+    anchor: PostAnchorInput,
+  ) {
+    const resource = await db.query<{ file_id: string }>(
+      `SELECT v.file_id FROM course_resources r
+         JOIN course_resource_revisions v ON v.id=r.active_revision_id
+         JOIN course_files f ON f.id=v.file_id
+        WHERE r.course_id=$1 AND r.id=$2 AND v.kind='upload' AND f.deleted_at IS NULL
+          AND f.media_type='application/pdf' AND ${readableCatalogResource("r", "$3")}
+        FOR SHARE OF r`,
+      [courseId, anchor.resourceId, userId],
+    );
+    const current = resource.rows[0];
+    if (!current)
+      throw new AuthError(
+        422,
+        "validation_failed",
+        "Anchor resource is not a readable PDF",
+        [
+          {
+            location: "body",
+            path: "anchor.resourceId",
+            code: "invalid",
+            message: "Anchor resource is not a readable PDF",
+          },
+        ],
+      );
+    if (current.file_id !== anchor.fileId)
+      throw new AuthError(
+        409,
+        "resource_changed",
+        "These slides were updated; reopen them to ask about the current version",
+      );
+  }
+  /**
+   * The post's anchor for this viewer: current or earlier file when they can
+   * read the resource, otherwise unavailable without naming the resource.
+   */
+  private async anchor(db: Db, postId: string, viewerId: string) {
+    const result = await db.query<{
+      page: number;
+      box_x: number;
+      box_y: number;
+      box_width: number;
+      box_height: number;
+      resource_id: string;
+      file_id: string;
+      readable: boolean;
+      current: boolean;
+      title: string;
+    }>(
+      `SELECT a.page,a.box_x,a.box_y,a.box_width,a.box_height,a.resource_id,a.file_id,r.title,
+              ${readableCatalogResource("r", "$2")} AS readable,
+              v.file_id IS NOT DISTINCT FROM a.file_id AS current
+         FROM post_anchors a
+         JOIN course_resources r ON r.course_id=a.course_id AND r.id=a.resource_id
+         JOIN course_resource_revisions v ON v.id=r.active_revision_id
+        WHERE a.post_id=$1`,
+      [postId, viewerId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const location = {
+      page: row.page,
+      box: {
+        x: row.box_x,
+        y: row.box_y,
+        width: row.box_width,
+        height: row.box_height,
+      },
+    };
+    if (!row.readable) return { ...location, status: "unavailable" };
+    return {
+      ...location,
+      status: row.current ? "current" : "earlier_version",
+      resourceId: row.resource_id,
+      fileId: row.file_id,
+      resourceTitle: row.title,
     };
   }
   private async unresolvedFollowups(db: Db, postId: string) {
@@ -784,6 +886,7 @@ export class PostService {
         Date.parse(body.closesAt) <= Date.now())
     )
       throw validation("Close time must be in the future");
+    if (body.anchor) await this.validAnchor(db, courseId, userId, body.anchor);
     const id = uuidv7();
     await db.query(
       "SELECT singleton FROM digest_schedule_state WHERE singleton=true FOR SHARE",
@@ -807,6 +910,21 @@ export class PostService {
         scheduled ?? null,
       ],
     );
+    if (body.anchor)
+      await db.query(
+        "INSERT INTO post_anchors (post_id,course_id,resource_id,file_id,page,box_x,box_y,box_width,box_height) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        [
+          id,
+          courseId,
+          body.anchor.resourceId,
+          body.anchor.fileId,
+          body.anchor.page,
+          body.anchor.box.x,
+          body.anchor.box.y,
+          body.anchor.box.width,
+          body.anchor.box.height,
+        ],
+      );
     for (const [position, label] of (body.options ?? []).entries())
       await db.query(
         "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES ($1,$2,$3,$4,$5)",
@@ -918,6 +1036,86 @@ export class PostService {
       duplicateOfPostId: row.duplicate_of_post_id!,
       duplicateStatus: "confirmed",
       version: Number(row.version),
+    };
+  }
+  /**
+   * Anchored posts on a PDF resource's current file that the viewer may read,
+   * in page order, with the count of readable posts on earlier files.
+   */
+  async resourceQuestions(
+    courseId: string,
+    resourceId: string,
+    userId: string,
+  ) {
+    if (!UUID_PATTERN.test(courseId) || !UUID_PATTERN.test(resourceId))
+      throw notFound();
+    const member = await this.membership(this.pool, courseId, userId);
+    const resource = await this.pool.query<{ file_id: string }>(
+      `SELECT v.file_id FROM course_resources r
+         JOIN course_resource_revisions v ON v.id=r.active_revision_id
+         JOIN course_files f ON f.id=v.file_id
+        WHERE r.course_id=$1 AND r.id=$2 AND v.kind='upload' AND f.deleted_at IS NULL
+          AND f.media_type='application/pdf' AND ${readableCatalogResource("r", "$3")}`,
+      [courseId, resourceId, userId],
+    );
+    const fileId = resource.rows[0]?.file_id;
+    if (!fileId) throw new AuthError(404, "not_found", "Resource is not found");
+    const readable = `a.course_id=$1 AND a.resource_id=$2 AND p.deleted_at IS NULL
+      AND p.duplicate_status<>'confirmed' AND ${readablePost("p", "$4", "$5")}`;
+    const [rows, earlier] = await Promise.all([
+      this.pool.query<{
+        id: string;
+        type: "question" | "note";
+        title: string;
+        page: number;
+        box_x: number;
+        box_y: number;
+        box_width: number;
+        box_height: number;
+        answered: boolean;
+        unresolved: number;
+        unread: boolean;
+        created_at: Date;
+      }>(
+        `SELECT p.id,p.type,p.title,a.page,a.box_x,a.box_y,a.box_width,a.box_height,p.created_at,
+                ${ANSWERED} AS answered,${ANCHORED} AS anchored,
+                (SELECT count(*)::int ${UNRESOLVED}) AS unresolved,
+                p.last_activity_at > greatest(
+                  coalesce((SELECT read_at FROM post_reads WHERE post_id=p.id AND user_id=$4),'-infinity'),
+                  coalesce((SELECT read_before FROM course_read_marks WHERE course_id=$1 AND user_id=$4),'-infinity')
+                ) AS unread
+           FROM post_anchors a JOIN posts p ON p.id=a.post_id
+          WHERE ${readable} AND a.file_id=$3
+          ORDER BY a.page,p.created_at,p.id LIMIT 500`,
+        [courseId, resourceId, fileId, userId, member.role],
+      ),
+      this.pool.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM post_anchors a JOIN posts p ON p.id=a.post_id
+          WHERE ${readable} AND a.file_id<>$3`,
+        [courseId, resourceId, fileId, userId, member.role],
+      ),
+    ]);
+    return {
+      resourceId,
+      fileId,
+      data: rows.rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        page: row.page,
+        box: {
+          x: row.box_x,
+          y: row.box_y,
+          width: row.box_width,
+          height: row.box_height,
+        },
+        ...(row.type === "question"
+          ? { answered: row.answered, unresolvedFollowups: row.unresolved }
+          : {}),
+        unread: row.unread,
+        createdAt: row.created_at.toISOString(),
+      })),
+      earlierVersionCount: earlier.rows[0]!.count,
     };
   }
   async list(courseId: string, userId: string, options: ListPosts) {
@@ -1164,7 +1362,7 @@ export class PostService {
             UNION SELECT post_id FROM semantic_matches
           ), candidates AS (
             SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,
-              ${ANSWERED} AS answered,canonical.title AS canonical_title,
+              ${ANSWERED} AS answered,${ANCHORED} AS anchored,canonical.title AS canonical_title,
               p.search_vector @@ ${searchQuery} AS lexical_match,
               (ts_rank_cd(p.search_vector,${searchQuery})
                 + ts_rank_cd(to_tsvector('english',p.title),${searchQuery})) AS lexical_score,
@@ -1211,7 +1409,7 @@ export class PostService {
             options.sort === "relevance"
               ? `candidates AS (
             SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,
-              ${ANSWERED} AS answered,canonical.title AS canonical_title,
+              ${ANSWERED} AS answered,${ANCHORED} AS anchored,canonical.title AS canonical_title,
               p.search_vector @@ ${searchQuery} AS lexical_match,
               (ts_rank_cd(p.search_vector,${searchQuery})
                 + ts_rank_cd(to_tsvector('english',p.title),${searchQuery})) AS lexical_score,
@@ -1229,12 +1427,12 @@ export class PostService {
             SELECT ranked.*,round(CASE WHEN lexical_match THEN 1.0+1.5/(60+lexical_position)+1.0/(60+fuzzy_position) ELSE 1.0/(60+fuzzy_position) END,12) AS rank_value FROM ranked
           )`
               : `listed AS (
-            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value
+            SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered,${ANCHORED} AS anchored,canonical.title AS canonical_title,${sortExpression} AS rank_value
             ${source} AND p.id IN (SELECT id FROM candidate_ids)
           )`
           }`;
           })()
-        : `listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
+        : `listed AS (SELECT p.*,u.display_name,u.deleted_at AS author_deleted_at,f.name AS folder_name,${ANSWERED} AS answered,${ANCHORED} AS anchored,canonical.title AS canonical_title,${sortExpression} AS rank_value ${source})`;
     if (watermark) {
       const count = await this.pool.query<{ count: number }>(
         `WITH ${listed} SELECT count(*)::int AS count FROM listed`,

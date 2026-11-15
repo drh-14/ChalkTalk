@@ -293,6 +293,15 @@ jobs:
       - name: Run other mocked-API browser scenarios
         run: npm run test:browser:mocked
 
+      - name: Upload browser screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: browser-screenshots
+          path: test-results/**/*.png
+          if-no-files-found: warn
+          retention-days: 14
+
   semantic-search:
     runs-on: ubuntu-26.04
     services:

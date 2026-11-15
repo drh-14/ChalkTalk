@@ -12,6 +12,7 @@ import { ApiError } from "../auth/client.js";
 import { PostBody } from "./PostBody.js";
 import { MarkdownEditorField } from "./MarkdownEditorField.js";
 import { MentionContext, mentionSuggestions } from "./mentions.js";
+import { AnchorBlock, AnchorChip } from "../slides/AnchorViews.js";
 import { QuestionResponses } from "../answers/views.js";
 import {
   AttachmentManager,
@@ -45,6 +46,7 @@ import {
   updatePost,
   updatePostDraft,
   type CreatePostInput,
+  type PostAnchorInput,
   type MergedPost,
   type Post,
   type PostDetail,
@@ -786,10 +788,10 @@ function editDraftMetadataText(
   return translated.length <= MAX_DRAFT_FIELD_LENGTH ? translated : original;
 }
 
-function Composer({
+export function Composer({
   courseId,
   csrfToken,
-  staff = false,
+  staff: staffMember = false,
   folders,
   archived = false,
   allowAnonymousPosting = true,
@@ -800,6 +802,9 @@ function Composer({
   onLeaveRequestChange,
   onStateChange,
   initialTitle = "",
+  anchor,
+  anchorPreview,
+  onAnchorStale,
 }: {
   courseId: string;
   csrfToken: string;
@@ -816,7 +821,19 @@ function Composer({
   onStateChange: (dirty: boolean, pending: boolean) => void;
   /** A starting title, such as a search the reader chose to ask as a question. */
   initialTitle?: string;
+  /** Anchors the post to an area of a course PDF; only questions and notes. */
+  anchor?: PostAnchorInput;
+  /** Shown above the fields, such as a crop of the anchored area. */
+  anchorPreview?: ReactNode;
+  /** Called when the anchored slides were replaced before posting. */
+  onAnchorStale?: () => void;
 }) {
+  // Polls and announcements can't be anchored, so an anchored composer offers
+  // what a student's would.
+  const staff = staffMember && !anchor;
+  // Read by the stable draft-restore callback below.
+  const anchored = useRef(false);
+  anchored.current = Boolean(anchor);
   const [type, setType] = useState<"question" | "note" | "poll">("question");
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [selectionMode, setSelectionMode] = useState<"single" | "multiple">(
@@ -888,10 +905,22 @@ function Composer({
       anonymous,
       tags: parseComposerTags(tags),
       ...(type === "poll" ? { options: pollOptions } : {}),
-      ...(type === "note" && announcement ? { announcement: true } : {}),
+      ...(!anchor && type === "note" && announcement
+        ? { announcement: true }
+        : {}),
       ...(type !== "poll" && audience === "staff" ? { private: true } : {}),
     }),
-    [type, title, body, anonymous, tags, pollOptions, announcement, audience],
+    [
+      type,
+      title,
+      body,
+      anonymous,
+      tags,
+      pollOptions,
+      announcement,
+      audience,
+      anchor,
+    ],
   );
   const contentRef = useRef(draftContent);
   contentRef.current = draftContent;
@@ -922,14 +951,16 @@ function Composer({
     if (content) {
       savedContent.current = draftFingerprint(content);
       setRestoredDraft(true);
-      setType(content.type);
+      setType(
+        anchored.current && content.type === "poll" ? "question" : content.type,
+      );
       setTitle(content.title);
       setBody(content.bodyMarkdown);
       setEditorGeneration((generation) => generation + 1);
       setAnonymous(content.anonymous);
       setTags(formatComposerTags(content.tags));
       setPollOptions(content.options ?? ["", ""]);
-      setAnnouncement(Boolean(content.announcement));
+      setAnnouncement(!anchored.current && Boolean(content.announcement));
       setAudience(content.private ? "staff" : "course");
     } else {
       savedContent.current = draftFingerprint({
@@ -1196,7 +1227,7 @@ function Composer({
     }
   }
   const privately = type !== "poll" && audience === "staff";
-  const announcing = type === "note" && announcement && !privately;
+  const announcing = !anchor && type === "note" && announcement && !privately;
   const submittedAnonymous = announcing ? false : anonymous;
 
   useEffect(() => {
@@ -1298,6 +1329,7 @@ function Composer({
         : {}),
       ...(announcing ? { announcement: true } : {}),
       ...(privately ? { private: true } : {}),
+      ...(anchor ? { anchor } : {}),
       ...(announcing && publishLater
         ? { scheduledFor: new Date(publishAt).toISOString() }
         : {}),
@@ -1383,7 +1415,18 @@ function Composer({
       );
       if (complete) onCreated(created);
     } catch (caught) {
-      if (!postCreated && caught instanceof ApiError && caught.status === 412) {
+      if (
+        !postCreated &&
+        caught instanceof ApiError &&
+        caught.code === "resource_changed"
+      ) {
+        setError(message(caught));
+        onAnchorStale?.();
+      } else if (
+        !postCreated &&
+        caught instanceof ApiError &&
+        caught.status === 412
+      ) {
         conflictRef.current = true;
         setDraftStatus("conflict");
         setDraftError(
@@ -1398,6 +1441,7 @@ function Composer({
   }
   return (
     <section className="post-composer" aria-label="Create a post">
+      {anchorPreview}
       <div className="section-title">
         <h2>Create a post</h2>
         <button type="button" className="text-button" onClick={onClose}>
@@ -3986,6 +4030,9 @@ function DiscussionContent({
                                       {post.folder.name}
                                     </span>
                                   )}
+                                  {post.anchor && (
+                                    <AnchorChip anchor={post.anchor} />
+                                  )}
                                 </span>
                               </a>
                               <TagList
@@ -4283,6 +4330,16 @@ function DiscussionContent({
                             onSelect={selectTag}
                           />
                           {renderPostActions(detail, false)}
+                          {detail.anchor && (
+                            <AnchorBlock
+                              courseId={courseId}
+                              postId={detail.id}
+                              anchor={detail.anchor}
+                              onNavigate={(path) => {
+                                if (leaveComposer()) onNavigate(path);
+                              }}
+                            />
+                          )}
                           <div className="post-markdown">
                             <PostBody bodyMarkdown={detail.bodyMarkdown} />
                             {detail.type === "poll" && detail.options && (

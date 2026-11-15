@@ -183,7 +183,7 @@ For a current PDF upload, `GET /api/v1/courses/{courseId}/resources/{resourceId}
 
 Ready relative URLs bind the current immutable `fileId`: `.../searchable-pdf/{fileId}/view` streams inline PDF and `.../download` streams an attachment named `*-searchable.pdf`. Both enforce current course/item/section membership and visibility, `application/pdf`, exact length, nosniff and private no-store. Missing authentication is 401; invalid unsafe Origin/CSRF is 403; missing, hidden, wrong-course, replaced, removed, non-PDF or link resources are 404; a not-ready content request is `409 searchable_pdf_not_ready`; unavailable service/storage is 503. Internal storage keys/errors are never exposed.
 
-The panel offers Searchable PDF with background progress, retry, embedded viewing and open/download fallback links. Pending status is checked every two seconds for 30 seconds, then every ten seconds. After 16 minutes, automatic checks stop and Check again starts a fresh cycle. The copy preserves rendered page appearance and an aligned invisible OCR text layer; rendered zoom quality and OCR text can differ from the original. Every page is included or generation fails. Existing OCR page limits, render bounds, a 15-minute processing deadline and 100-MiB copy cap apply. A copy that reaches the deadline fails without automatic retry; POST again to retry it. The original PDF remains unchanged. Replacement/removal/deletion cleans derived objects with durable jobs, and stale generation cannot publish after retirement.
+The [unified PDF viewer](../design/2026-11-14-unified-resource-pdf-viewer.md) offers Searchable copy beside Original, with explicit preparation, progress, retry, in-viewer rendering and open/download links. While it is selected, pending status is checked every two seconds for 30 seconds, then every ten seconds. After 16 minutes, automatic checks stop and Check again starts a fresh cycle. The copy preserves rendered page appearance and an aligned invisible OCR text layer; rendered zoom quality and OCR text can differ from the original. Every page is included or generation fails. Existing OCR page limits, render bounds, a 15-minute processing deadline and 100-MiB copy cap apply. A copy that reaches the deadline fails without automatic retry; POST again to retry it. The original PDF remains unchanged. Replacement/removal/deletion cleans derived objects with durable jobs, and stale generation cannot publish after retirement.
 
 <a id="getCourseResourceExtractedText"></a>
 
@@ -208,6 +208,47 @@ Creates a catalog file from multipart `file` plus optional `title` (defaults to 
 Replaces the resource's file with the resource's `If-Match`, using the same multipart fields. Omitted metadata keeps its current value. Returns `200` with `{ data: resource }`. The resource ID is unchanged, the old file is retired, and text extraction is queued for the new one. See [course information and staff](course-information.md) for the syllabus.
 
 ### Deferred resource catalog operations
+
+<a id="listResourceQuestions"></a>
+
+#### `GET /api/v1/courses/{courseId}/resources/{resourceId}/questions`
+
+Lists the posts anchored to the current file of a PDF resource, for the in-app viewer's markers and page panel; see [slide-anchored questions](../../openspec/specs/slide-anchored-questions/spec.md). Current members who can read the resource may call it, in active or archived courses. It takes no query parameters.
+
+Only posts the caller may read are included, under the feed's rules: private posts appear only for their author and staff, and deleted posts and confirmed duplicates are excluded. Entries are ordered by page, then creation time, then post ID, with at most 500 entries.
+
+Success is `200 application/json` with `Cache-Control: private, no-store`:
+
+```json
+{
+  "resourceId": "019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a8b",
+  "fileId": "019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a8c",
+  "data": [
+    {
+      "id": "019a3c1e-7d2a-7b3e-9f10-2c4d5e6f7a90",
+      "type": "question",
+      "title": "Why is the rotation left-heavy?",
+      "page": 14,
+      "box": { "x": 0.1, "y": 0.2, "width": 0.4, "height": 0.3 },
+      "answered": true,
+      "unresolvedFollowups": 0,
+      "unread": false,
+      "createdAt": "2026-11-06T14:30:00Z"
+    }
+  ],
+  "earlierVersionCount": 2
+}
+```
+
+- `fileId`: the resource's current file. New anchors must name it in [Create post](posts.md#createPost).
+- `answered` and `unresolvedFollowups`: present only for questions.
+- `earlierVersionCount`: the number of readable posts anchored to files the resource used before.
+
+**Errors:**
+
+- `401 authentication_required`: authentication is missing.
+- `400 invalid_request`: a query parameter was supplied.
+- `404 not_found`: the course or resource is missing, deleted, or hidden from the caller, or the resource is a link or a non-PDF upload. These cases are indistinguishable.
 
 The following global `/resources/{resourceId}` and region contracts remain deferred; the implemented catalog uses course-scoped resource routes. Region-level OCR and descriptions remain deferred; whole-file text extraction is covered by [Search course resources](#searchCourseResources).
 
