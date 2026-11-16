@@ -31,6 +31,12 @@ test("local HTTPS gateway serves the login page, API health, and Vite HMR WSS", 
   });
   await page.goto(gateway);
   await expect(
+    page.getByRole("heading", {
+      name: "Your all in one course Q & A platform",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Log in" }).click();
+  await expect(
     page.getByRole("heading", { name: "Sign in to ChalkTalk" }),
   ).toBeVisible();
   await expect.poll(() => connectedSockets.size).toBeGreaterThan(0);

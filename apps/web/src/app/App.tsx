@@ -83,10 +83,12 @@ function LoginForm({
   onSession,
   setPanel,
   notice,
+  onPendingChange,
 }: {
   onSession: (session: Session) => void;
   setPanel: (panel: LandingPanel) => void;
   notice?: string;
+  onPendingChange: (pending: boolean) => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -96,6 +98,7 @@ function LoginForm({
     event.preventDefault();
     if (pending) return;
     setPending(true);
+    onPendingChange(true);
     setError(undefined);
     try {
       onSession(await login(email, password));
@@ -103,6 +106,7 @@ function LoginForm({
       setError(errorMessage(caught));
     } finally {
       setPending(false);
+      onPendingChange(false);
     }
   }
   return (
@@ -348,55 +352,162 @@ function Landing({
   notice?: string;
   onDismissNotice: () => void;
 }) {
-  const [panel, setPanel] = useState<LandingPanel>("login");
+  const [panel, setPanel] = useState<LandingPanel | null>(
+    notice ? "login" : null,
+  );
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const signInPendingRef = useRef(false);
+  const [signInPending, setSignInPending] = useState(false);
+  useEffect(() => {
+    if (notice) setPanel("login");
+  }, [notice]);
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog || !panel) return;
+    if (!dialog.open) dialog.showModal();
+    dialog.querySelector<HTMLInputElement>("input")?.focus();
+  }, [panel]);
+  function dismiss() {
+    if (signInPendingRef.current) return;
+    dialogRef.current?.close();
+  }
+  function closed() {
+    if (signInPendingRef.current) return;
+    setPanel(null);
+    onDismissNotice();
+    openerRef.current?.focus();
+  }
+  function open(nextPanel: LandingPanel, opener: HTMLButtonElement) {
+    openerRef.current = opener;
+    changePanel(nextPanel);
+  }
   function changePanel(nextPanel: LandingPanel) {
+    if (signInPendingRef.current) return;
     if (nextPanel !== "login") onDismissNotice();
     setPanel(nextPanel);
+  }
+  function pendingChanged(pending: boolean) {
+    signInPendingRef.current = pending;
+    setSignInPending(pending);
   }
   return (
     <main className="landing-shell">
       <section className="brand-panel" aria-label="About ChalkTalk">
-        <a className="wordmark" href="/">
-          Chalk<span>Talk</span>
-        </a>
+        <header className="landing-header">
+          <a className="wordmark" href="/">
+            Chalk<span>Talk</span>
+          </a>
+          <nav className="landing-actions" aria-label="Account">
+            <button
+              type="button"
+              onClick={(event) => open("login", event.currentTarget)}
+            >
+              Log in
+            </button>
+            <button
+              type="button"
+              onClick={(event) => open("signup", event.currentTarget)}
+            >
+              Create account
+            </button>
+          </nav>
+        </header>
         <div className="hero-copy">
-          <p className="eyebrow">Built for the learning in between</p>
-          <h1>Discuss the work that matters.</h1>
+          <h1>
+            Your all in one course{" "}
+            <span className="hero-qa">
+              Q <span className="hero-ampersand">&amp;</span> A
+            </span>{" "}
+            platform
+          </h1>
           <p>
-            One focused place for questions, ideas, and the conversations that
-            make a course stick.
+            One focused place for course information, questions and
+            announcements.
           </p>
         </div>
-        <div className="hero-details">
-          <div>
-            <strong>Made for classes</strong>
-            <span>Keep discussion close to the course.</span>
-          </div>
-          <div>
-            <strong>Designed for momentum</strong>
-            <span>Turn a good question into shared understanding.</span>
-          </div>
+      </section>
+      <section
+        className="landing-features"
+        aria-labelledby="landing-features-title"
+      >
+        <h2 id="landing-features-title">
+          Everything your course needs, together.
+        </h2>
+        <div className="feature-grid">
+          {[
+            [
+              "Course Q&A",
+              "Ask questions, share answers, and follow up in organized discussions",
+            ],
+            [
+              "Announcements & course info",
+              "Keep essential updates and class details easy to find",
+            ],
+            [
+              "Organized resources",
+              "Bring course files, links, and materials into one place",
+            ],
+            [
+              "Notifications",
+              "Stay on top of replies and course activity that matter to you",
+            ],
+            [
+              "Live collaboration",
+              "Work together in shared sessions, code, and whiteboards",
+            ],
+          ].map(([title, description]) => (
+            <article className="feature-card" key={title}>
+              <h3>{title}</h3>
+              <p>{description}</p>
+            </article>
+          ))}
         </div>
       </section>
-      <section className="auth-panel">
-        <div className="auth-card">
-          {panel === "login" ? (
-            <LoginForm
-              onSession={onSession}
-              setPanel={changePanel}
-              notice={notice}
-            />
-          ) : panel === "signup" ? (
-            <SignupRequestForm setPanel={changePanel} />
-          ) : (
-            <ResetRequestForm setPanel={changePanel} />
-          )}
-        </div>
-        <p className="privacy-note">
-          Your email domain determines your organization. Other users with the
-          same domain can see its course listing.
-        </p>
-      </section>
+      <dialog
+        ref={dialogRef}
+        className="auth-dialog"
+        aria-label={
+          panel === "login"
+            ? "Sign in to ChalkTalk"
+            : panel === "signup"
+              ? "Verify your email"
+              : "Reset your password"
+        }
+        onCancel={(event) => {
+          if (signInPendingRef.current) event.preventDefault();
+        }}
+        onClose={closed}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) dismiss();
+        }}
+      >
+        {panel && (
+          <div className="auth-card">
+            <button
+              className="auth-dialog-close"
+              type="button"
+              aria-label="Close dialog"
+              disabled={signInPending}
+              onClick={dismiss}
+            >
+              ×
+            </button>
+            {panel === "login" ? (
+              <LoginForm
+                onSession={onSession}
+                setPanel={changePanel}
+                notice={notice}
+                onPendingChange={pendingChanged}
+              />
+            ) : panel === "signup" ? (
+              <SignupRequestForm setPanel={changePanel} />
+            ) : (
+              <ResetRequestForm setPanel={changePanel} />
+            )}
+          </div>
+        )}
+      </dialog>
     </main>
   );
 }
