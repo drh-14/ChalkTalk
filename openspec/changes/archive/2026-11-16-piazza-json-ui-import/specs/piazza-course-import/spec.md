@@ -37,7 +37,7 @@ The API SHALL accept exactly one CLI-generated Piazza JSON file through authenti
 
 The UI import SHALL omit private Piazza posts, their descendants, and historical people referenced only by omitted private content. Public content SHALL retain the existing converter's post, answer, follow-up, authorship, anonymity, and idempotent re-import behavior. The CLI import's existing behavior SHALL remain unchanged.
 
-The UI import SHALL treat the file-reported `selfUid` as a historical Piazza identity separate from the authenticated ChalkTalk uploader. It SHALL NOT attribute posts, answers, follow-ups, or related historical activity to the uploader solely because that UID appears as `selfUid`. This SHALL hold on initial import and re-import. The CLI import SHALL continue mapping `selfUid` to its named owner.
+The UI import SHALL treat the file-reported `selfUid` as a historical Piazza identity separate from the authenticated ChalkTalk uploader. It SHALL NOT attribute newly created posts, answers, follow-ups, or related activity to the uploader solely because that UID appears as `selfUid`. This SHALL hold on initial import and re-import. The CLI import SHALL continue mapping `selfUid` to its named owner. As a legacy exception, a UI re-import SHALL NOT rewrite existing CLI-imported author attribution or related follows, contributors, and activity rows.
 
 #### Scenario: Mixed public and private source
 
@@ -46,8 +46,13 @@ The UI import SHALL treat the file-reported `selfUid` as a historical Piazza ide
 
 #### Scenario: Exporter and uploader differ
 
-- **WHEN** an authorized uploader imports or re-imports a file whose `selfUid` authored retained public content
-- **THEN** that content is attributed to a separate historical Piazza account, not to the uploader
+- **WHEN** an authorized uploader imports or re-imports a file whose `selfUid` authored newly created public content
+- **THEN** that new content is attributed to a separate historical Piazza account, not to the uploader
+
+#### Scenario: UI re-import follows a CLI import
+
+- **WHEN** a CLI-imported course has exporter-authored content attributed to its owner and a current instructor re-imports it through the UI
+- **THEN** existing content retains its CLI-written attribution and related activity while newly created content uses the separate historical Piazza identity
 
 ### Requirement: UI re-import cannot grant instructor access
 

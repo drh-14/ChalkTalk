@@ -73,8 +73,10 @@ paths:
         descendants, and private-only people are omitted. Re-import requires a current
         instructor of the existing imported course, checked within the import transaction.
         A file's selfUid is an unverified historical Piazza identity on this endpoint;
-        exporter-authored content is not attributed to the uploader merely because
-        the uploader owns the course. The CLI owner mapping is unchanged.
+        newly created exporter-authored content is not attributed to the uploader
+        merely because the uploader owns the course. The CLI owner mapping is
+        unchanged. A UI re-import preserves existing CLI-written attribution and
+        related activity rows while assigning new content to the historical exporter.
         The uploaded source is deleted on every outcome; native Piazza exports and
         Piazza credentials are not accepted.
       security:

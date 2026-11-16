@@ -5,8 +5,9 @@ import { SESSION_COOKIE_NAME } from "../auth/crypto.js";
 import type { AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
+import { convertExport } from "../piazza-import/convert.js";
 import { piazzaFixture } from "../piazza-import/fixture.js";
-import { piazzaEmail } from "../piazza-import/importer.js";
+import { importPiazzaCourse, piazzaEmail } from "../piazza-import/importer.js";
 import { PiazzaImportService } from "../piazza-import/service.js";
 import { createApp } from "./app.js";
 
@@ -223,5 +224,141 @@ integration("Piazza JSON HTTP import with PostgreSQL", () => {
         )
       ).rows[0]!.author_user_id,
     ).toBe(exporterId);
+  });
+
+  it("preserves CLI attribution on UI re-import while assigning new content to the exporter", async () => {
+    activeActor = 0;
+    const source = piazzaFixture();
+    source.network.id = "http-cli-then-ui-class";
+    source.posts[0]!.history[0]!.uid = source.selfUid!;
+    for (const entry of source.posts[1]!.history) {
+      entry.anon = "no";
+      entry.uid = source.selfUid!;
+    }
+    source.posts[1]!.children![0]!.history![0]!.uid = source.selfUid!;
+    const cli = await importPiazzaCourse(pool, convertExport(source), {
+      ownerEmail: actors[0]!.email,
+    });
+    const existing = async () => ({
+      posts: (
+        await pool.query(
+          "SELECT title,author_user_id FROM posts WHERE course_id=$1 AND title IN ('Welcome & syllabus','How does $$O(n^2)$$ arise?') ORDER BY title",
+          [cli.courseId],
+        )
+      ).rows,
+      follows: (
+        await pool.query(
+          "SELECT p.title,f.user_id FROM post_follows f JOIN posts p ON p.id=f.post_id WHERE p.course_id=$1 AND p.title IN ('Welcome & syllabus','How does $$O(n^2)$$ arise?') ORDER BY p.title",
+          [cli.courseId],
+        )
+      ).rows,
+      answers: (
+        await pool.query(
+          "SELECT a.created_by_user_id,c.user_id AS contributor,e.user_id AS activity_user FROM answers a JOIN posts p ON p.id=a.post_id JOIN answer_contributors c ON c.answer_id=a.id JOIN answer_contribution_events e ON e.answer_id=a.id AND e.user_id=c.user_id WHERE p.course_id=$1 AND a.kind='student'",
+          [cli.courseId],
+        )
+      ).rows,
+      followups: (
+        await pool.query(
+          "SELECT author_user_id FROM followups WHERE course_id=$1 AND body_markdown='What about three loops?'",
+          [cli.courseId],
+        )
+      ).rows,
+      questionActivity: (
+        await pool.query(
+          "SELECT user_id,question_count FROM question_creation_daily_counts WHERE course_id=$1 AND user_id=$2 AND created_on='2026-09-02'",
+          [cli.courseId, actors[0]!.id],
+        )
+      ).rows,
+    });
+    const before = await existing();
+    expect(before.posts).toHaveLength(2);
+    expect(
+      before.posts.every((row) => row.author_user_id === actors[0]!.id),
+    ).toBe(true);
+    expect(before.answers).toEqual([
+      {
+        created_by_user_id: actors[0]!.id,
+        contributor: actors[0]!.id,
+        activity_user: actors[0]!.id,
+      },
+    ]);
+    expect(before.followups).toEqual([{ author_user_id: actors[0]!.id }]);
+    expect(before.questionActivity).toHaveLength(1);
+
+    const created = "2026-09-12T00:00:00Z";
+    source.posts.push({
+      id: "new-exporter-question",
+      type: "question",
+      status: "active",
+      created,
+      history: [
+        {
+          uid: source.selfUid!,
+          anon: "no",
+          subject: "New exporter question",
+          content: "New body",
+          created,
+        },
+      ],
+      children: [
+        {
+          id: "new-exporter-answer",
+          type: "s_answer",
+          created,
+          history: [
+            {
+              uid: source.selfUid!,
+              anon: "no",
+              content: "New answer",
+              created,
+            },
+          ],
+        },
+        {
+          id: "new-exporter-followup",
+          type: "followup",
+          uid: source.selfUid!,
+          anon: "no",
+          subject: "New followup",
+          created,
+          no_answer: 1,
+        },
+      ],
+    });
+    const response = await send(source);
+    expect(response.status).toBe(200);
+    expect(response.body.data.courseId).toBe(cli.courseId);
+    expect(response.body.data).toMatchObject({
+      posts: { created: 1 },
+      answers: { created: 1 },
+      followups: { created: 1 },
+    });
+    expect(await existing()).toEqual(before);
+    const exporter = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE email=$1",
+      [piazzaEmail("Me Myself", source.selfUid!)],
+    );
+    expect(exporter.rows).toHaveLength(1);
+    const exporterId = exporter.rows[0]!.id;
+    expect(exporterId).not.toBe(actors[0]!.id);
+    const newer = await pool.query(
+      "SELECT p.author_user_id,a.created_by_user_id,f.author_user_id AS followup_author FROM posts p JOIN answers a ON a.post_id=p.id JOIN followups f ON f.post_id=p.id WHERE p.course_id=$1 AND p.title='New exporter question'",
+      [cli.courseId],
+    );
+    expect(newer.rows).toEqual([
+      {
+        author_user_id: exporterId,
+        created_by_user_id: exporterId,
+        followup_author: exporterId,
+      },
+    ]);
+    const activity = await pool.query(
+      "SELECT c.user_id AS contributor,e.user_id AS activity_user FROM answer_contributors c JOIN answer_contribution_events e ON e.answer_id=c.answer_id AND e.user_id=c.user_id JOIN answers a ON a.id=c.answer_id JOIN posts p ON p.id=a.post_id WHERE p.course_id=$1 AND p.title='New exporter question'",
+      [cli.courseId],
+    );
+    expect(activity.rows).toEqual([
+      { contributor: exporterId, activity_user: exporterId },
+    ]);
   });
 });

@@ -10,7 +10,7 @@ The CLI already converts `PiazzaExport` and writes content in one transaction wi
 
 ## Decisions
 
-On UI upload, treat `selfUid` as an unverified historical Piazza identity rather than the authenticated ChalkTalk uploader. Keep the uploader as course owner and represent retained exporter-authored content with the same synthetic account used for other historical authors, including on re-import. Preserve the CLI importer's `selfUid`-to-owner mapping.
+On UI upload, treat `selfUid` as an unverified historical Piazza identity rather than the authenticated ChalkTalk uploader. Keep the uploader as course owner and represent newly created exporter-authored content with the same synthetic account used for other historical authors, including on re-import. Preserve the CLI importer's `selfUid`-to-owner mapping. A UI re-import of a CLI-imported course preserves existing CLI-written authorship and related follows, contributors, and activity rows; it does not rewrite historical data to the synthetic account.
 
 - Use `POST /api/v1/piazza-imports` with one multipart `file`, session/CSRF/origin protection, a 20 MiB endpoint-specific cap, strict bounded validation, and aggregate response. This avoids the JSON-body limit and does not retain the source.
 - Keep preview local to the browser; the server validates and counts independently. Require explicit acknowledgement before upload.
