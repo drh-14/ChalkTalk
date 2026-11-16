@@ -44,6 +44,8 @@ Core features include:
 
 ChalkTalk's goal is to turn a semester's discussion history into a searchable and reusable course knowledge base rather than a collection of disconnected posts.
 
+To import a Piazza course, choose **Import Piazza course** on the course home page and select JSON previously saved by ChalkTalk's Piazza CLI. Review the local preview and confirm you are authorized to migrate the public content before uploading. Private posts are omitted. Native Piazza exports are not supported; see the [Piazza JSON import reference](documentation/api/piazza-imports.md) for limits and re-import permissions.
+
 To manage your account, select your name in the signed-in top bar. Account settings lets you change your display name or password, manage each course's activity, announcement, and daily-digest emails, or delete your account after confirming with your current password. You can also change email choices in each course's settings. Deletion signs you out and leaves past contributions with your name removed. If you are a course's final instructor, assign another instructor before deleting your account.
 
 When starting a post, your one private course draft is automatically restored. Text and post settings autosave across sessions; queued files are not saved with the draft and must be reselected after a reload. See the [post drafts reference](documentation/api/posts.md#private-new-post-drafts) for save, conflict, and archived-course behavior.

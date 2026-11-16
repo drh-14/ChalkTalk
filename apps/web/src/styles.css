@@ -2891,6 +2891,20 @@ a:focus-visible {
   box-shadow: 0 0 0 3px rgba(31, 77, 62, 0.14);
   outline: none;
 }
+.course-form .course-import-consent {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-2);
+  line-height: 1.4;
+}
+.course-form .course-import-consent input {
+  flex: none;
+  height: 1.1rem;
+  margin: 0.05rem 0 0;
+  min-height: 0;
+  padding: 0;
+  width: 1.1rem;
+}
 .empty-state {
   color: var(--ink-muted);
   font-size: 0.88rem;

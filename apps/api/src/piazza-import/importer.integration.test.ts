@@ -357,4 +357,43 @@ integration("Piazza import", () => {
       auth.login(piazzaEmail("Tia Assistant", "ta1"), demoPassword),
     ).resolves.toBeTruthy();
   });
+
+  it("does not auto-promote a same-organization user through UI re-import", async () => {
+    const source = piazzaFixture();
+    source.network.id = "ui-guard-class";
+    const course = convertExport(source);
+    const first = await importPiazzaCourse(pool, course, { ownerEmail });
+    const organization = await pool.query<{ organization_id: string }>(
+      "SELECT organization_id FROM users WHERE id=$1",
+      [ownerId],
+    );
+    const other = await pool.query<{ id: string }>(
+      "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES (gen_random_uuid(),$1,'other@piazza-import.test','Other','x') RETURNING id",
+      [organization.rows[0]!.organization_id],
+    );
+    await expect(
+      importPiazzaCourse(pool, course, {
+        ownerEmail: "other@piazza-import.test",
+        uiActorId: other.rows[0]!.id,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    const membership = await pool.query(
+      "SELECT role FROM course_memberships WHERE course_id=$1 AND user_id=$2",
+      [first.courseId, other.rows[0]!.id],
+    );
+    expect(membership.rows).toHaveLength(0);
+    const otherOrg = await pool.query<{ id: string }>(
+      "INSERT INTO organizations (id,domain,name) VALUES (gen_random_uuid(),'other-piazza-import.test','Other') RETURNING id",
+    );
+    const outsider = await pool.query<{ id: string }>(
+      "INSERT INTO users (id,organization_id,email,display_name,password_hash) VALUES (gen_random_uuid(),$1,'outsider@other-piazza-import.test','Outsider','x') RETURNING id",
+      [otherOrg.rows[0]!.id],
+    );
+    await expect(
+      importPiazzaCourse(pool, course, {
+        ownerEmail: "outsider@other-piazza-import.test",
+        uiActorId: outsider.rows[0]!.id,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
 });
