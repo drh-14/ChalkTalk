@@ -4,7 +4,7 @@ SeaweedFS binds host port 8333 directly, while app containers use `seaweedfs:833
 
 ## Decision
 
-Use `SEAWEEDFS_HOST_PORT` for the Compose `127.0.0.1:<host>:8333` mapping, defaulting to 8333 for compatibility. Keep the internal port and health check fixed. The local env template and README explain how to align host `S3_ENDPOINT`. The S3 smoke script reads the same variable. No port probing or automatic selection: operators must choose a free port explicitly, so the resulting endpoint is predictable.
+Use `SEAWEEDFS_HOST_PORT` for the Compose `127.0.0.1:<host>:8333` mapping, defaulting to 8333 for compatibility. Keep the internal port and health check fixed. The local env template and README explain how to align host `S3_ENDPOINT`. The S3 smoke script obtains the effective published port from Compose, so a value in `.env` requires no separate shell export. No port probing or automatic selection: operators must choose a free port explicitly, so the resulting endpoint is predictable.
 
 ## Alternatives
 
