@@ -1,0 +1,16 @@
+# ChalkTalk local environment for Codex app worktrees.
+version = 1
+name = "ChalkTalk"
+
+[setup]
+script = '''
+set -eu
+npm ci
+test -x node_modules/.bin/eslint
+test -x node_modules/.bin/prettier
+'''
+
+[[actions]]
+name = "Check lint and format"
+icon = "check"
+command = "npm run lint && npm run format:check"
