@@ -45,7 +45,7 @@ test("signup accepts valid domains and rejects malformed addresses", async ({
     });
   });
   await page.goto(origin);
-  await page.getByRole("link", { name: "Create an account" }).click();
+  await page.getByRole("button", { name: "Create account" }).click();
   const email = page.getByRole("textbox", { name: "Email address" });
   await page.getByRole("button", { name: "Send verification link" }).click();
   await expect(page.getByRole("alert")).toHaveText("Enter an email address.");
@@ -148,7 +148,7 @@ test("an already registered email receives the same generic signup guidance", as
     return route.fulfill({ status: 404, body: "" });
   });
   await page.goto(origin);
-  await page.getByRole("link", { name: "Create an account" }).click();
+  await page.getByRole("button", { name: "Create account" }).click();
   await page
     .getByRole("textbox", { name: "Email address" })
     .fill("registered@example.com");

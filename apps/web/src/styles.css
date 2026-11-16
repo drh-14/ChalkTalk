@@ -2082,8 +2082,6 @@ a {
 }
 
 .landing-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1.13fr) minmax(420px, 0.87fr);
   min-height: 100vh;
 }
 .brand-panel {
@@ -2091,8 +2089,8 @@ a {
   color: #fffdf7;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  padding: 2.4rem clamp(2.25rem, 6vw, 7rem) 3.5rem;
+  min-height: min(760px, 100vh);
+  padding: 2.4rem clamp(1.5rem, 6vw, 7rem) 5rem;
   position: relative;
   overflow: hidden;
 }
@@ -2117,24 +2115,145 @@ a {
   width: 21rem;
 }
 .hero-copy {
-  margin: auto 0;
-  max-width: 37rem;
+  margin: auto;
+  max-width: 72rem;
   position: relative;
+  text-align: center;
 }
 .hero-copy h1 {
   font-family: Fraunces, Georgia, serif;
-  font-size: clamp(3.5rem, 5.8vw, 6.2rem);
+  font-size: clamp(3.2rem, 6vw, 6.5rem);
   font-weight: 600;
-  letter-spacing: -0.04em;
-  line-height: 0.94;
-  margin: 1.25rem 0 1.6rem;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+  margin: 0 0 1.8rem;
 }
 .hero-copy > p:last-child {
   color: #d3e0d7;
   font-size: 1.1rem;
   line-height: 1.6;
+  margin: 0 auto;
+  max-width: 42rem;
+}
+.hero-qa {
+  white-space: nowrap;
+}
+.hero-ampersand {
+  font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+}
+.landing-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  z-index: 1;
+}
+.landing-header .wordmark {
+  font-size: 1.59rem;
+}
+.landing-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+.landing-actions button {
+  background: transparent;
+  border: 1px solid #c2d8ca;
+  border-radius: 999px;
+  color: #fffdf7;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.65rem 1.15rem;
+}
+.landing-actions button:last-child {
+  background: #e8f1c7;
+  border-color: #e8f1c7;
+  color: var(--accent);
+}
+.landing-actions button:hover {
+  background: #fffdf7;
+  color: var(--accent);
+}
+.landing-actions button:focus-visible {
+  outline: 3px solid #f6bd60;
+  outline-offset: 3px;
+}
+.landing-features {
+  margin: 0 auto;
+  max-width: 82rem;
+  padding: 5rem clamp(1.5rem, 6vw, 7rem) 6rem;
+}
+.landing-features h2 {
+  font-family: Fraunces, Georgia, serif;
+  font-size: clamp(2.1rem, 4vw, 3.5rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 2.4rem;
+  text-align: center;
+}
+.feature-grid {
+  display: grid;
+  gap: 1.1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.feature-card {
+  background: #fffefa;
+  border: 1px solid #e5e2d7;
+  border-radius: 1.15rem;
+  min-height: 11rem;
+  padding: 1.6rem;
+}
+.feature-card h3 {
+  font-size: 1.1rem;
+  margin: 0 0 0.75rem;
+}
+.feature-card p {
+  color: var(--ink-muted);
+  line-height: 1.6;
   margin: 0;
-  max-width: 31rem;
+}
+.auth-dialog {
+  background: transparent;
+  border: 0;
+  max-height: min(90vh, 850px);
+  max-width: min(29rem, calc(100vw - 2rem));
+  overflow: auto;
+  padding: 0;
+  width: 100%;
+}
+.auth-dialog::backdrop {
+  background: rgba(13, 39, 29, 0.67);
+}
+.auth-dialog .auth-card {
+  box-shadow: 0 24px 60px rgba(15, 36, 24, 0.2);
+  max-width: none;
+  position: relative;
+}
+.auth-dialog-close {
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 1.65rem;
+  height: 2.2rem;
+  line-height: 1;
+  position: absolute;
+  right: 0.8rem;
+  top: 0.8rem;
+  width: 2.2rem;
+}
+.auth-dialog-close:hover {
+  background: #f4f2e9;
+  color: var(--ink);
+}
+.auth-dialog-close:focus-visible {
+  outline: 3px solid var(--accent);
+}
+.auth-dialog-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .hero-details {
   display: flex;
@@ -2919,18 +3038,37 @@ a:focus-visible {
 }
 
 @media (max-width: 760px) {
-  .landing-shell {
-    display: block;
-  }
   .brand-panel {
-    min-height: 0;
-    padding: 1.75rem 1.5rem 2.5rem;
+    min-height: 75vh;
+    padding: 1.5rem 1.25rem 3rem;
   }
   .hero-copy {
-    margin: 4.5rem 0 3.7rem;
+    margin: auto;
   }
   .hero-copy h1 {
-    font-size: clamp(3rem, 14vw, 4.5rem);
+    font-size: clamp(2.6rem, 10vw, 4.5rem);
+  }
+  .landing-header .wordmark {
+    font-size: 1.35rem;
+  }
+  .landing-actions {
+    gap: 0.4rem;
+  }
+  .landing-actions button {
+    font-size: 0.74rem;
+    padding: 0.55rem 0.75rem;
+  }
+  .landing-features {
+    padding: 3.5rem 1.25rem 4rem;
+  }
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+  .feature-card {
+    min-height: 0;
+  }
+  .auth-dialog .auth-card {
+    padding: 2rem 1.5rem;
   }
   .hero-details {
     display: none;

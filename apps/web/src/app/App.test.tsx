@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
 
 // These tests own their mocked requests; the live session lists and the
@@ -117,7 +117,53 @@ afterEach(() => {
   setPath("/");
 });
 
+beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = function () {
+    this.setAttribute("open", "");
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute("open");
+    this.dispatchEvent(new Event("close"));
+  };
+});
+
 describe("ChalkTalk auth entry", () => {
+  it("introduces the product before opening authentication", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(unauthenticatedResponse()),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Your all in one course Q & A platform",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "One focused place for course information, questions and announcements.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText(/Your email domain determines/)).toBeNull();
+    for (const title of [
+      "Course Q&A",
+      "Announcements & course info",
+      "Organized resources",
+      "Notifications",
+      "Live collaboration",
+    ]) {
+      expect(screen.getByRole("heading", { name: title })).toBeTruthy();
+    }
+    await user.click(screen.getByRole("button", { name: "Log in" }));
+    expect(
+      screen.getByRole("dialog", { name: "Sign in to ChalkTalk" }),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Close dialog" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
   it("opens account settings from the signed-in header name", async () => {
     setPath("/home");
     const fetchMock = vi.fn(async (url: string) => {
@@ -192,7 +238,7 @@ describe("ChalkTalk auth entry", () => {
     );
     render(<App />);
     await screen.findByRole("heading", {
-      name: "Discuss the work that matters.",
+      name: "Your all in one course Q & A platform",
     });
     expect(window.location.pathname).toBe("/");
   });
@@ -403,7 +449,7 @@ describe("ChalkTalk auth entry", () => {
       await user.click(accountMenu);
     await user.click(banner.getByRole("button", { name: "Sign out" }));
     await screen.findByRole("heading", {
-      name: "Discuss the work that matters.",
+      name: "Your all in one course Q & A platform",
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/sessions/current",
@@ -1364,10 +1410,10 @@ describe("ChalkTalk auth entry", () => {
     );
 
     await screen.findByRole("heading", {
-      name: "Discuss the work that matters.",
+      name: "Your all in one course Q & A platform",
     });
     expect(window.location.pathname).toBe("/");
-    expect(document.activeElement).toBe(screen.getByLabelText("Email address"));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("signs in, renders live courses, and signs out with the session CSRF token", async () => {
@@ -1387,8 +1433,9 @@ describe("ChalkTalk auth entry", () => {
 
     render(<App />);
     await screen.findByRole("heading", {
-      name: "Discuss the work that matters.",
+      name: "Your all in one course Q & A platform",
     });
+    await user.click(screen.getByRole("button", { name: "Log in" }));
     await user.type(screen.getByLabelText("Email address"), "ada@example.edu");
     await user.type(
       screen.getByLabelText("Password"),
@@ -1405,7 +1452,7 @@ describe("ChalkTalk auth entry", () => {
     await user.click(screen.getByRole("button", { name: "Sign out" }));
 
     await screen.findByRole("heading", {
-      name: "Discuss the work that matters.",
+      name: "Your all in one course Q & A platform",
     });
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/v1/sessions/current",
@@ -1604,8 +1651,8 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await screen.findByRole("link", { name: "Create an account" });
-    await user.click(screen.getByRole("link", { name: "Create an account" }));
+    await screen.findByRole("button", { name: "Create account" });
+    await user.click(screen.getByRole("button", { name: "Create account" }));
     await user.type(screen.getByLabelText("Email address"), "ada@example.edu");
     await user.click(
       screen.getByRole("button", { name: "Send verification link" }),
@@ -1634,7 +1681,7 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(
-      await screen.findByRole("link", { name: "Create an account" }),
+      await screen.findByRole("button", { name: "Create account" }),
     );
     await user.type(
       screen.getByLabelText("Email address"),
@@ -1662,7 +1709,7 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(
-      await screen.findByRole("link", { name: "Create an account" }),
+      await screen.findByRole("button", { name: "Create account" }),
     );
     await user.type(screen.getByLabelText("Email address"), `alices@${domain}`);
     await user.click(
@@ -1683,7 +1730,7 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(
-      await screen.findByRole("link", { name: "Create an account" }),
+      await screen.findByRole("button", { name: "Create account" }),
     );
     await user.type(
       screen.getByLabelText("Email address"),
@@ -1709,7 +1756,7 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(
-      await screen.findByRole("link", { name: "Create an account" }),
+      await screen.findByRole("button", { name: "Create account" }),
     );
     await user.type(
       screen.getByLabelText("Email address"),
@@ -1741,7 +1788,7 @@ describe("ChalkTalk auth entry", () => {
       const user = userEvent.setup();
       render(<App />);
       await user.click(
-        await screen.findByRole("link", { name: "Create an account" }),
+        await screen.findByRole("button", { name: "Create account" }),
       );
       if (email) await user.type(screen.getByLabelText("Email address"), email);
       await user.click(
@@ -1761,7 +1808,7 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await screen.findByRole("link", { name: "Forgot password?" });
+    await user.click(await screen.findByRole("button", { name: "Log in" }));
     await user.click(screen.getByRole("link", { name: "Forgot password?" }));
     await user.type(screen.getByLabelText("Email address"), "ada@example.edu");
     await user.click(screen.getByRole("button", { name: "Send reset link" }));
@@ -1792,7 +1839,7 @@ describe("ChalkTalk auth entry", () => {
     );
     expect(
       await screen.findByRole("heading", {
-        name: "Discuss the work that matters.",
+        name: "Your all in one course Q & A platform",
       }),
     ).toBeTruthy();
     expect(window.location.pathname).toBe("/");
@@ -1810,7 +1857,7 @@ describe("ChalkTalk auth entry", () => {
       screen.queryByText("Password reset. You can now sign in."),
     ).toBeNull();
 
-    await user.click(screen.getByRole("link", { name: "Create an account" }));
+    await user.click(screen.getByRole("button", { name: "Create account" }));
     await user.click(screen.getByRole("link", { name: "Back to sign in" }));
     expect(
       screen.queryByText("Password reset. You can now sign in."),
@@ -1905,8 +1952,9 @@ describe("ChalkTalk auth entry", () => {
 
     render(<App />);
     await screen.findByRole("heading", {
-      name: "Discuss the work that matters.",
+      name: "Your all in one course Q & A platform",
     });
+    await user.click(screen.getByRole("button", { name: "Log in" }));
     await user.type(screen.getByLabelText("Email address"), "ada@example.edu");
     await user.type(screen.getByLabelText("Password"), "incorrect password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
