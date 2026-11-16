@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-endpoint=http://127.0.0.1:8333
+endpoint=http://$(docker compose -f deployment/local/compose.yml --env-file .env port seaweedfs 8333)
 access_key=${SEAWEEDFS_ACCESS_KEY_ID:-chalktalk-local}
 secret_key=${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
 bucket="chalktalk-smoke-$(date +%s)-$$"
@@ -65,6 +65,7 @@ s3_request --output "$temporary_directory/actual" \
 cmp "$temporary_directory/expected" "$temporary_directory/actual"
 
 docker compose -f deployment/local/compose.yml --env-file .env restart seaweedfs >/dev/null
+endpoint=http://$(docker compose -f deployment/local/compose.yml --env-file .env port seaweedfs 8333)
 s3_request --output "$temporary_directory/after-restart" \
   "$endpoint/$bucket/$object"
 cmp "$temporary_directory/expected" "$temporary_directory/after-restart"

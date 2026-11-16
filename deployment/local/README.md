@@ -34,10 +34,18 @@ docker compose -f deployment/local/compose.yml --env-file .env cp \
 
 Trust `/tmp/chalktalk-local-root.crt` once in your host OS or browser trust store (on macOS, open it in Keychain Access and set it to **Always Trust**; on Linux, use your distribution's CA-import procedure). Never export Caddy's `root.key` or mount its private CA data on the host. Its `/data` volume preserves the CA across restarts; if you delete volumes, export and trust the newly generated root. Until then, the browser will warn about the certificate. Open `https://<DOMAIN>:<WEB_PORT>` (defaults: `https://localhost:5173`) after trusting the root.
 
-| Local endpoint                                   | Purpose                                            |
-| ------------------------------------------------ | -------------------------------------------------- |
-| [https://localhost:5173](https://localhost:5173) | Web app; Caddy proxies `/api` and `/collaboration` |
-| `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store               |
+| Local endpoint                                   | Purpose                                               |
+| ------------------------------------------------ | ----------------------------------------------------- |
+| [https://localhost:5173](https://localhost:5173) | Web app; Caddy proxies `/api` and `/collaboration`    |
+| `http://127.0.0.1:<assigned port>`               | SeaweedFS S3-compatible object store (automatic port) |
+
+Docker assigns SeaweedFS an unused loopback host port automatically. Discover the running endpoint with:
+
+```sh
+docker compose -f deployment/local/compose.yml --env-file .env port seaweedfs 8333
+```
+
+For host tools, set `S3_ENDPOINT` in `.env` to `http://` followed by that address. Recheck after restarting or recreating the container, since the assigned port may change. Compose services keep using `http://seaweedfs:8333` internally; the S3 smoke test discovers the host port automatically.
 
 In full Compose mode, the API is not exposed on a host port; the Caddy gateway exposes its health route at `https://localhost:5173/api/health`. To create a new account, sign up using a valid email address that is not already registered, then follow the verification link delivered to your inbox through Resend. For an existing account, sign in or reset your password instead; see the [authentication API reference](../../documentation/api/auth.md). The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
 
@@ -103,7 +111,7 @@ docker compose -f deployment/local/compose.yml --env-file .env run --rm migrate 
 docker compose -f deployment/local/compose.yml --env-file .env down                  # stop the stack; keep data
 ```
 
-`docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**, including Caddy's local CA; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, repeat the [local HTTPS trust step](#3-trust-the-local-https-certificate-and-open-the-app) and confirm `DOMAIN` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
+`docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**, including Caddy's local CA; use it only to intentionally reset the environment. If ports 5432 or 5173 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, repeat the [local HTTPS trust step](#3-trust-the-local-https-certificate-and-open-the-app) and confirm `DOMAIN` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
 
 Run the repository checks before submitting code:
 

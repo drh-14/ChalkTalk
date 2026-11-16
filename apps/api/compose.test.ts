@@ -10,7 +10,7 @@ type ComposeService = {
   command?: string[] | string;
   profiles?: string[];
   environment?: Record<string, string>;
-  ports?: Array<{ host_ip?: string; published: string; target: number }>;
+  ports?: Array<{ host_ip?: string; published?: string; target: number }>;
   volumes?: Array<{ source: string; target: string; type: string }>;
   restart?: string;
   healthcheck?: { test: string[] };
@@ -230,7 +230,6 @@ describe("default Compose object storage", () => {
     expect(seaweedfs.ports).toContainEqual(
       expect.objectContaining({
         host_ip: "127.0.0.1",
-        published: "8333",
         target: 8333,
       }),
     );
@@ -242,6 +241,13 @@ describe("default Compose object storage", () => {
       }),
     );
     expect(configuration.volumes).toHaveProperty("seaweedfs-data");
+  });
+
+  it("lets Docker allocate an unused loopback host port", () => {
+    const services = renderCompose().services;
+    expect(services.seaweedfs.ports).toHaveLength(1);
+    expect(services.seaweedfs.ports?.[0].published).toBeUndefined();
+    expect(services.api.environment?.S3_ENDPOINT).toBe("http://seaweedfs:8333");
   });
 
   it("supplies local S3 credentials by default and accepts overrides", () => {
