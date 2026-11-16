@@ -46,11 +46,11 @@ The developer import command SHALL import only the Piazza class or export explic
 
 ### Requirement: Authorized users can import a saved Piazza JSON file from the course home page
 
-The course home page SHALL offer an import action for the JSON format produced by ChalkTalk's Piazza CLI. Before submission it SHALL show the source course name and counts of posts and people, identify how many private posts will be omitted, and require the user to affirm that they are authorized to migrate the remaining content. It SHALL NOT ask for Piazza credentials or claim to accept native Piazza ZIP/CSV exports. A successful import SHALL open the imported ChalkTalk course; failed imports SHALL leave the user able to retry without duplicate submission.
+The course home page SHALL offer an import action for the JSON format produced by ChalkTalk's Piazza CLI. Before submission it SHALL show the source course name, the count of importable public posts and people in the source file, identify how many private posts will be omitted, and require the user to affirm that they are authorized to migrate the remaining content. It SHALL NOT ask for Piazza credentials or claim to accept native Piazza ZIP/CSV exports. A successful import SHALL open the imported ChalkTalk course; failed imports SHALL leave the user able to retry without duplicate submission.
 
 #### Scenario: User confirms a preview and imports
 
-- **WHEN** an authenticated user selects a valid CLI-generated Piazza JSON file and confirms authorization and private-post omission
+- **WHEN** an authenticated user selects a valid CLI-generated Piazza JSON file, reviews the private-post omission preview, and confirms authorization
 - **THEN** the browser uploads the file once and opens the course returned by the server
 
 #### Scenario: User has not confirmed authorization

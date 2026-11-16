@@ -254,7 +254,7 @@ integration("Piazza JSON HTTP import with PostgreSQL", () => {
       ).rows,
       answers: (
         await pool.query(
-          "SELECT a.created_by_user_id,c.user_id AS contributor,e.user_id AS activity_user FROM answers a JOIN posts p ON p.id=a.post_id JOIN answer_contributors c ON c.answer_id=a.id JOIN answer_contribution_events e ON e.answer_id=a.id AND e.user_id=c.user_id WHERE p.course_id=$1 AND a.kind='student'",
+          "SELECT a.created_by_user_id,c.user_id AS contributor,e.user_id AS activity_user FROM answers a JOIN posts p ON p.id=a.post_id JOIN answer_contributors c ON c.answer_id=a.id JOIN answer_contribution_events e ON e.answer_id=a.id AND e.user_id=c.user_id WHERE p.course_id=$1 AND p.title='How does $$O(n^2)$$ arise?' AND a.kind='student'",
           [cli.courseId],
         )
       ).rows,
