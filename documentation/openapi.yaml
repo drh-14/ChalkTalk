@@ -128,7 +128,7 @@ paths:
                       followups:
                         { "$ref": "#/components/schemas/PiazzaImportCounts" }
         "400":
-          description: Malformed multipart upload.
+          description: Malformed multipart framing.
           content:
             application/json:
               schema: { "$ref": "#/components/schemas/Error" }
@@ -158,7 +158,7 @@ paths:
             application/json:
               schema: { "$ref": "#/components/schemas/Error" }
         "422":
-          description: Invalid or incompatible Piazza JSON.
+          description: Wrong multipart fields or count, or invalid or incompatible Piazza JSON.
           content:
             application/json:
               schema: { "$ref": "#/components/schemas/Error" }

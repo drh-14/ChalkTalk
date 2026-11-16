@@ -1,6 +1,6 @@
 # Piazza JSON import from the course home page
 
-Status: proposed
+Status: implemented
 Date: 2026-11-16
 
 ## Context

@@ -29,15 +29,6 @@ An initial import creates a course owned by the uploader. A re-import updates th
 
 ## Errors
 
-| Status | Code                                             | Meaning                                                           |
-| ------ | ------------------------------------------------ | ----------------------------------------------------------------- |
-| `400`  | `invalid_request`                                | Malformed multipart upload                                        |
-| `401`  | `authentication_required`                        | No valid session                                                  |
-| `403`  | `csrf_validation_failed` or `origin_not_allowed` | CSRF or Origin check failed                                       |
-| `404`  | `not_found`                                      | Existing import is inaccessible or uploader is not its instructor |
-| `413`  | `payload_too_large`                              | File exceeds 20 MiB; use the CLI for larger exports               |
-| `415`  | `unsupported_media_type`                         | Multipart upload required                                         |
-| `422`  | `validation_failed`                              | JSON is malformed, incompatible, or exceeds structural bounds     |
-| `503`  | `service_unavailable`                            | Import service is not configured                                  |
+See the [OpenAPI operation](../openapi.yaml) for response status and error schemas. An oversized file must be imported through the CLI; invalid multipart fields or counts and incompatible JSON are rejected before import. A user without current instructor access to an existing import cannot update it.
 
 A validation or database error does not create a partial course. The uploaded source is never retained in S3 or the database and its content is not logged.
