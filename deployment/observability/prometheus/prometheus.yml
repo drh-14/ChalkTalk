@@ -17,3 +17,11 @@ scrape_configs:
     bearer_token_file: /tmp/metrics-token
     static_configs:
       - targets: [collaboration:3100]
+  - job_name: chalktalk-vm
+    metrics_path: /metrics
+    static_configs:
+      - targets: [node-exporter:9100]
+  - job_name: chalktalk-vm-network
+    metrics_path: /metrics
+    static_configs:
+      - targets: [node-exporter-network:9100]

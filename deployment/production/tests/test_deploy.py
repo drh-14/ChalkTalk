@@ -61,6 +61,8 @@ case "$*" in
   *' ps -aq prometheus'*) echo prometheus-container ;;
   *' ps -aq loki'*) echo loki-container ;;
   *' ps -aq alloy'*) echo alloy-container ;;
+  *' ps -aq node-exporter-network'*) echo node-exporter-network-container ;;
+  *' ps -aq node-exporter'*) echo node-exporter-container ;;
   *' ps' ) echo 'container status snapshot' ;;
   *'inspect'*'config_files'*)
     active="$(cat "$ACTIVE_SHA_FILE" 2>/dev/null)"
@@ -202,7 +204,7 @@ esac
     def test_repeat_checks_each_running_service(self):
         self.assertEqual(self.run_script("stage").returncode, 0)
         self.assertEqual(self.run_script("finish").returncode, 0)
-        for service in ("web", "api", "worker", "collaboration", "grafana", "prometheus", "loki", "alloy"):
+        for service in ("web", "api", "worker", "collaboration", "grafana", "prometheus", "loki", "alloy", "node-exporter", "node-exporter-network"):
             with self.subTest(service=service):
                 self.log.unlink(missing_ok=True)
                 result = self.run_script("stage", MISMATCH_SERVICE=service)

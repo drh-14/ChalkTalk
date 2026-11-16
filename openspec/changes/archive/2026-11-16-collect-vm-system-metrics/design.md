@@ -1,0 +1,7 @@
+# Design
+
+Follow [the approved dated design](../../../docs/design/2026-11-16-production-system-metrics.md): private pinned Node Exporter in both Compose stacks, one shared Prometheus scrape configuration, and one separate VM System Load Grafana dashboard. Production sees the Linux VM host; local Docker Desktop sees its Linux VM. No port is published, no Docker socket is mounted, and Supabase server metrics are not scraped in this change. The preflight queries Prometheus's private API for target and sample freshness instead of assuming a running exporter means valid data.
+
+The host network namespace is not exposed by the ordinary exporter's Compose network. A second pinned network-only exporter in each stack uses `pid: host`, a read-only `/proc` mount, and `/host/proc/1` as its procfs root with only netdev collection and no netlink collector. It remains on the private Compose network without a host port or Docker socket. Prometheus scrapes it separately as `chalktalk-vm-network`; dashboard network traffic/errors and preflight network checks use that job while CPU, memory, disk, and filesystem stay on `chalktalk-vm`.
+
+Alternatives rejected: interactive `top`/`docker stats` snapshots are not retained time series; cAdvisor/Docker socket is more privilege than host-level telemetry requires; separate local/production scrape files would duplicate configuration unnecessarily; Supabase Metrics API was explicitly deferred.

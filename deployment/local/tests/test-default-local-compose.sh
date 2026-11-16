@@ -8,7 +8,8 @@ COMPOSE_ENV_FILE=deployment/local/.env.example docker compose -f deployment/loca
     const services = JSON.parse(input).services;
     const expected = [
       "alloy", "api", "collaboration",
-      "gateway", "grafana", "loki", "migrate", "postgres", "prometheus",
+      "gateway", "grafana", "loki", "migrate", "node-exporter",
+      "node-exporter-network", "postgres", "prometheus",
       "seaweedfs", "web", "worker"
     ];
     if (JSON.stringify(Object.keys(services).sort()) !== JSON.stringify(expected) ||

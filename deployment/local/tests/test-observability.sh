@@ -7,7 +7,7 @@ compose() { docker compose -f deployment/local/compose.yml --env-file .env "$@";
 api_request() {
   compose exec -T api node -e '
     fetch("http://localhost:3000/api/v1/never-a-real-route?private=do-not-log-this", {
-      method: "POST", headers: { Origin: "https://localhost:5173", "Content-Type": "application/json" },
+      method: "POST", headers: { Origin: process.env.FRONTEND_BASE_URL, "Content-Type": "application/json" },
       body: JSON.stringify({ email: "private@example.edu", password: "do-not-log-this" })
     }).then((response) => {
       const id = response.headers.get("x-request-id");
@@ -76,13 +76,26 @@ until metrics_check; do
 done
 count=0
 until compose exec -T api node -e '
-  fetch("http://prometheus:9090/api/v1/query?query=up%7Bjob%3D~%22chalktalk-%28api%7Cworker%7Ccollaboration%29%22%7D")
+  const parameters = new URLSearchParams({ query: `up{job=~"chalktalk-(api|worker|collaboration|vm(-network)?)"}` });
+  fetch(`http://prometheus:9090/api/v1/query?${parameters}`)
   .then((response) => response.json()).then((data) => {
-    if (data.data.result.length !== 3 || data.data.result.some((item) => item.value[1] !== "1")) process.exitCode = 1;
+    if (data.data.result.length !== 5 || data.data.result.some((item) => item.value[1] !== "1")) process.exitCode = 1;
   }).catch(() => { process.exitCode = 1; });' >/dev/null 2>&1; do
   count=$((count + 1))
   if [ "$count" -ge 90 ]; then echo "Prometheus scrape unavailable" >&2; exit 1; fi
   sleep 1
+done
+compose exec -T api node -e '
+  fetch("http://localhost:3000/api/v1/sessions", {
+    method: "POST", headers: { Origin: process.env.FRONTEND_BASE_URL, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "metrics-warmup@example.com", password: "not-a-real-password" })
+  }).then((response) => { if (response.status !== 401) process.exitCode = 1; })
+    .catch(() => { process.exitCode = 1; });'
+count=0
+until compose exec -T api node /app/deployment/observability/verify-metrics.cjs; do
+  count=$((count + 1))
+  if [ "$count" -ge 36 ]; then echo "Application, DB client, or VM metrics are missing or stale" >&2; exit 1; fi
+  sleep 5
 done
 compose exec -T api node -e '
   fetch("http://loki:3100/config")

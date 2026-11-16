@@ -29,7 +29,7 @@ export COMPOSE_ENV_FILE="$env_file"
 compose() { docker compose --env-file "$env_file" -f "$release/deployment/production/compose.yml" "$@"; }
 release_is_running() {
   local service container_id container_state
-  for service in web api worker collaboration grafana prometheus loki alloy; do
+  for service in web api worker collaboration grafana prometheus loki alloy node-exporter node-exporter-network; do
     container_id="$(compose ps -aq "$service")" || return 1
     [[ -n "$container_id" ]] || return 1
     container_state="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}} {{.State.Status}}' "$container_id")" || return 1
@@ -111,7 +111,7 @@ migrate_id="$(compose ps -aq migrate)"
 [[ -n "$migrate_id" && "$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$migrate_id")" == 'exited 0' ]] || {
   echo 'Migration did not complete successfully' >&2; exit 1;
 }
-for service in worker collaboration grafana prometheus loki alloy; do
+for service in worker collaboration grafana prometheus loki alloy node-exporter node-exporter-network; do
   stage_phase="$service check"
   container_id="$(compose ps -aq "$service")"
   [[ -n "$container_id" && "$(docker inspect --format '{{.State.Status}}' "$container_id")" == running ]] || {
