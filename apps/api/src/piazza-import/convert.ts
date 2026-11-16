@@ -266,10 +266,17 @@ function convertDiscussion(child: PiazzaChild) {
   };
 }
 
+export function isImportablePost(post: PiazzaPost): boolean {
+  return (
+    (post.status === undefined ||
+      ["active", "private"].includes(post.status)) &&
+    ["question", "note", "poll"].includes(post.type) &&
+    post.history.length > 0
+  );
+}
+
 function convertPost(post: PiazzaPost): ImportPost | null {
-  if (post.status !== undefined && !["active", "private"].includes(post.status))
-    return null;
-  if (!["question", "note", "poll"].includes(post.type)) return null;
+  if (!isImportablePost(post)) return null;
   const history = oldestFirst(post.history);
   const first = history[0];
   const newest = history.at(-1);

@@ -11,6 +11,7 @@ import type { NewUpload } from "./service.js";
 export async function readMultipart(
   request: Request,
   allowedFields: readonly string[] = [],
+  maxBytes = MAX_UPLOAD_BYTES,
 ): Promise<NewUpload & { fields: Record<string, string> }> {
   const fields: Record<string, string> = {};
   if (!request.headers["content-type"]?.startsWith("multipart/form-data"))
@@ -30,7 +31,7 @@ export async function readMultipart(
     parser = Busboy({
       headers: request.headers,
       limits: {
-        fileSize: MAX_UPLOAD_BYTES + 1,
+        fileSize: maxBytes + 1,
         files: 2,
         fields: allowedFields.length + 1,
         fieldSize: 2048,
@@ -66,7 +67,7 @@ export async function readMultipart(
         failed = new AuthError(
           413,
           "payload_too_large",
-          "Upload exceeds 100 MiB",
+          `Upload exceeds ${Math.floor(maxBytes / 1024 / 1024)} MiB`,
         );
       });
       writes.push(
@@ -100,8 +101,12 @@ export async function readMultipart(
         "Exactly one file is required",
       );
     const { size } = await fs.stat(filePath);
-    if (size > MAX_UPLOAD_BYTES)
-      throw new AuthError(413, "payload_too_large", "Upload exceeds 100 MiB");
+    if (size > maxBytes)
+      throw new AuthError(
+        413,
+        "payload_too_large",
+        `Upload exceeds ${Math.floor(maxBytes / 1024 / 1024)} MiB`,
+      );
     handedOff = true;
     return {
       fields,

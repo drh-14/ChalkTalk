@@ -41,6 +41,7 @@ import {
 import { StatisticsService } from "../statistics/service.js";
 import { CourseFileService } from "../course-files/service.js";
 import { readMultipart } from "../course-files/multipart.js";
+import { PiazzaImportService } from "../piazza-import/service.js";
 import {
   ContentAttachmentService,
   type ParentKind,
@@ -72,6 +73,7 @@ export interface AppDependencies {
   followupService?: FollowupService;
   statisticsService?: StatisticsService;
   courseFileService?: CourseFileService;
+  piazzaImportService?: PiazzaImportService;
   courseResourceService?: CourseResourceService;
   courseInformationService?: CourseInformationService;
   observability?: Observability;
@@ -1101,6 +1103,7 @@ export function createApp(
     followupService,
     statisticsService,
     courseFileService,
+    piazzaImportService,
     courseResourceService,
     courseInformationService,
     observability,
@@ -1958,6 +1961,37 @@ export function createApp(
       );
     return courseFileService;
   };
+  app.post(
+    "/api/v1/piazza-imports",
+    ...authenticatedUnsafe,
+    async (request, response, next) => {
+      let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+      try {
+        if (!piazzaImportService)
+          throw new AuthError(
+            503,
+            "service_unavailable",
+            "Piazza import is unavailable",
+          );
+        upload = await readMultipart(request, [], 20 * 1024 * 1024);
+        const user = auth(response).session.user;
+        const result = await piazzaImportService.importFile(upload.filePath, {
+          id: user.id,
+          email: user.email,
+        });
+        await upload.cleanup();
+        upload = undefined;
+        response
+          .status(200)
+          .set("Location", `/api/v1/courses/${result.courseId}`)
+          .json({ data: result });
+      } catch (error) {
+        next(error);
+      } finally {
+        await upload?.cleanup();
+      }
+    },
+  );
   const contentAttachments = (): ContentAttachmentService => {
     if (!contentAttachmentService)
       throw new AuthError(
