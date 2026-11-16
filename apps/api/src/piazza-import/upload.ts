@@ -1,5 +1,10 @@
 import { AuthError } from "../auth/errors.js";
-import type { PiazzaChild, PiazzaExport, PiazzaPost } from "./convert.js";
+import {
+  isImportablePost,
+  type PiazzaChild,
+  type PiazzaExport,
+  type PiazzaPost,
+} from "./convert.js";
 
 const MAX_POSTS = 10_000;
 const MAX_USERS = 30_000;
@@ -54,7 +59,7 @@ function children(value: unknown, depth: number, counter: { count: number }) {
     string(item.id, 255);
     string(item.type, 50);
     date(item.created);
-    optionalString(item.updated, 64);
+    if (item.updated !== undefined) date(item.updated);
     optionalString(item.uid, 255);
     optionalString(item.anon, 255);
     optionalString(item.subject);
@@ -77,21 +82,23 @@ function children(value: unknown, depth: number, counter: { count: number }) {
 
 function referencedUsers(posts: PiazzaPost[]): Set<string> {
   const ids = new Set<string>();
-  const visit = (node: PiazzaChild) => {
+  const discussion = (node: PiazzaChild) => {
     if (node.uid) ids.add(node.uid);
-    for (const entry of node.history ?? []) if (entry.uid) ids.add(entry.uid);
-    for (const tag of node.tag_endorse ?? []) ids.add(tag.id);
     for (const tag of node.tag_good ?? []) ids.add(tag.id);
     if (node.type === "followup")
       for (const child of node.children ?? [])
-        if (child.type === "feedback") visit(child);
+        if (child.type === "feedback") discussion(child);
   };
   for (const post of posts) {
-    if (!["question", "note", "poll"].includes(post.type)) continue;
     for (const entry of post.history) if (entry.uid) ids.add(entry.uid);
-    for (const child of post.children ?? [])
-      if (["i_answer", "s_answer", "followup"].includes(child.type))
-        visit(child);
+    for (const child of post.children ?? []) {
+      if (child.type === "i_answer" || child.type === "s_answer") {
+        if (child.history?.length) {
+          for (const entry of child.history) if (entry.uid) ids.add(entry.uid);
+        } else if (child.uid) ids.add(child.uid);
+        for (const tag of child.tag_endorse ?? []) ids.add(tag.id);
+      } else if (child.type === "followup") discussion(child);
+    }
   }
   return ids;
 }
@@ -100,8 +107,6 @@ function referencedUsers(posts: PiazzaPost[]): Set<string> {
 export function parsePiazzaUpload(text: string): {
   data: PiazzaExport;
   omittedPrivatePosts: number;
-  publicPosts: number;
-  people: number;
 } {
   let parsed: unknown;
   try {
@@ -132,11 +137,7 @@ export function parsePiazzaUpload(text: string): {
     date(post.created);
     optionalString(post.status, 50);
     if (post.nr !== undefined && typeof post.nr !== "number") invalid();
-    if (
-      post.pinned !== undefined &&
-      typeof post.pinned !== "number" &&
-      typeof post.pinned !== "boolean"
-    )
+    if (post.pinned !== undefined && typeof post.pinned !== "boolean")
       invalid();
     optionalArray(post.folders, 1000);
     for (const folder of (post.folders as unknown[] | undefined) ?? [])
@@ -146,7 +147,7 @@ export function parsePiazzaUpload(text: string): {
   }
   const source = root as PiazzaExport;
   const publicPosts = source.posts.filter((post) => post.status !== "private");
-  const referenced = referencedUsers(publicPosts);
+  const referenced = referencedUsers(publicPosts.filter(isImportablePost));
   if (source.selfUid) referenced.add(source.selfUid);
   const data: PiazzaExport = {
     ...source,
@@ -156,7 +157,5 @@ export function parsePiazzaUpload(text: string): {
   return {
     data,
     omittedPrivatePosts: source.posts.length - publicPosts.length,
-    publicPosts: publicPosts.length,
-    people: data.users.length,
   };
 }

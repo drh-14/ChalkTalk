@@ -101,3 +101,28 @@ it("previews CLI JSON, requires confirmation, and opens the imported course", as
     }),
   );
 });
+
+it("counts only public posts the importer can retain", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      response({ data: [], page: { nextCursor: null, hasMore: false } }),
+    ),
+  );
+  const user = userEvent.setup();
+  render(<CourseHome csrfToken="csrf-token" onOpenCourse={vi.fn()} />);
+  await screen.findByText("You have not joined a course yet.");
+  await user.click(screen.getByRole("button", { name: "Import Piazza course" }));
+  const posts = [
+    ...source.posts,
+    { ...source.posts[0], id: "inactive", status: "deleted" },
+    { ...source.posts[0], id: "empty", history: [] },
+  ];
+  const json = JSON.stringify({ ...source, posts });
+  const file = new File([json], "class.json", { type: "application/json" });
+  Object.defineProperty(file, "text", { value: async () => json });
+  await user.upload(screen.getByLabelText("Piazza JSON file"), file);
+  expect(
+    await screen.findByText(/1 public post and 1 person in source file/),
+  ).toBeTruthy();
+});

@@ -208,10 +208,23 @@ function ImportPiazzaForm({
           typeof post === "object" &&
           (post as Record<string, unknown>).status === "private",
       ).length;
+      const publicPosts = record.posts.filter(
+        (post: unknown) =>
+          post !== null &&
+          typeof post === "object" &&
+          !Array.isArray(post) &&
+          ((post as Record<string, unknown>).status === undefined ||
+            (post as Record<string, unknown>).status === "active") &&
+          ["question", "note", "poll"].includes(
+            (post as Record<string, unknown>).type as string,
+          ) &&
+          Array.isArray((post as Record<string, unknown>).history) &&
+          ((post as Record<string, unknown>).history as unknown[]).length > 0,
+      ).length;
       setFile(next);
       setPreview({
         name: `${typeof network.courseNumber === "string" ? `${network.courseNumber} ` : ""}${network.name}`.trim(),
-        posts: record.posts.length - privatePosts,
+        posts: publicPosts,
         people: record.users.length,
         privatePosts,
       });
