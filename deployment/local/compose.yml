@@ -23,7 +23,7 @@ services:
       AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:-chalktalk-local}
       AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
     ports:
-      - "127.0.0.1:8333:8333"
+      - "127.0.0.1:${SEAWEEDFS_HOST_PORT:-8333}:8333"
     volumes:
       - seaweedfs-data:/data
     healthcheck:

@@ -20,6 +20,7 @@ type ComposeService = {
 function renderCompose(
   credentials?: { accessKey: string; secretKey: string },
   ambientAws?: { accessKey?: string; secretKey?: string },
+  hostPort?: string,
 ) {
   const output = execFileSync(
     "docker",
@@ -41,6 +42,7 @@ function renderCompose(
         COMPOSE_ENV_FILE: "deployment/local/.env.example",
         SEAWEEDFS_ACCESS_KEY_ID: credentials?.accessKey ?? "",
         SEAWEEDFS_SECRET_ACCESS_KEY: credentials?.secretKey ?? "",
+        SEAWEEDFS_HOST_PORT: hostPort ?? "",
         AWS_ACCESS_KEY_ID: ambientAws?.accessKey ?? "",
         AWS_SECRET_ACCESS_KEY: ambientAws?.secretKey ?? "",
         MOCK_DATA: "true",
@@ -242,6 +244,18 @@ describe("default Compose object storage", () => {
       }),
     );
     expect(configuration.volumes).toHaveProperty("seaweedfs-data");
+  });
+
+  it("changes only the loopback host port when the SeaweedFS port is overridden", () => {
+    const services = renderCompose(undefined, undefined, "28333").services;
+    expect(services.seaweedfs.ports).toContainEqual(
+      expect.objectContaining({
+        host_ip: "127.0.0.1",
+        published: "28333",
+        target: 8333,
+      }),
+    );
+    expect(services.api.environment?.S3_ENDPOINT).toBe("http://seaweedfs:8333");
   });
 
   it("supplies local S3 credentials by default and accepts overrides", () => {

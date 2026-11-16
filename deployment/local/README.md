@@ -34,10 +34,10 @@ docker compose -f deployment/local/compose.yml --env-file .env cp \
 
 Trust `/tmp/chalktalk-local-root.crt` once in your host OS or browser trust store (on macOS, open it in Keychain Access and set it to **Always Trust**; on Linux, use your distribution's CA-import procedure). Never export Caddy's `root.key` or mount its private CA data on the host. Its `/data` volume preserves the CA across restarts; if you delete volumes, export and trust the newly generated root. Until then, the browser will warn about the certificate. Open `https://<DOMAIN>:<WEB_PORT>` (defaults: `https://localhost:5173`) after trusting the root.
 
-| Local endpoint                                   | Purpose                                            |
-| ------------------------------------------------ | -------------------------------------------------- |
-| [https://localhost:5173](https://localhost:5173) | Web app; Caddy proxies `/api` and `/collaboration` |
-| `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store               |
+| Local endpoint                                   | Purpose                                             |
+| ------------------------------------------------ | --------------------------------------------------- |
+| [https://localhost:5173](https://localhost:5173) | Web app; Caddy proxies `/api` and `/collaboration`  |
+| `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store (default port) |
 
 In full Compose mode, the API is not exposed on a host port; the Caddy gateway exposes its health route at `https://localhost:5173/api/health`. To create a new account, sign up using a valid email address that is not already registered, then follow the verification link delivered to your inbox through Resend. For an existing account, sign in or reset your password instead; see the [authentication API reference](../../documentation/api/auth.md). The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
 
@@ -52,6 +52,7 @@ Copying `deployment/local/.env.example` provides the local defaults. The table i
 | `DATABASE_URL`                                                   | Local PostgreSQL connection; Compose uses the internal `postgres` hostname.                                                                           |
 | `EMAIL_PROVIDER`, `RESEND_API_KEY`                               | Compose selects Resend. Set a sending-only API key; the sender address is fixed in code.                                                              |
 | `SEAWEEDFS_ACCESS_KEY_ID`, `SEAWEEDFS_SECRET_ACCESS_KEY`, `S3_*` | Local SeaweedFS credentials, bucket, and endpoint. The template values are development placeholders; Compose uses the internal SeaweedFS hostname.    |
+| `SEAWEEDFS_HOST_PORT`                                            | Loopback host port for SeaweedFS (default 8333). If occupied, choose a free port and set host-side `S3_ENDPOINT` to `http://127.0.0.1:<that port>`.   |
 | `METRICS_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`        | Set **different** random secrets for the metrics token and Grafana password. Grafana defaults to host port 3001.                                      |
 | `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`     | Optional semantic matching. Private text and search queries go to the configured provider; see [Optional semantic search](#optional-semantic-search). |
 
