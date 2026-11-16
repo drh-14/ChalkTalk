@@ -1,6 +1,6 @@
 // End-to-end scheduled announcements against the running development stack
 // (`npm run dev`, with the job worker). It seeds its own course and accounts
-// directly in the database named by E2E_DATABASE_URL (or DATABASE_URL) and is
+// directly in the database named by E2E_DATABASE_URL and is
 // skipped without one.
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -8,10 +8,7 @@ import { expect, test } from "@playwright/test";
 import { BASE, databaseUrl, seed, signIn } from "./fixtures/live-stack.mjs";
 
 test.use({ ignoreHTTPSErrors: true });
-test.skip(
-  !databaseUrl,
-  "Set E2E_DATABASE_URL or DATABASE_URL to the running stack's database",
-);
+test.skip(!databaseUrl, "Set E2E_DATABASE_URL to the running stack's database");
 
 const screenshots = resolve(
   import.meta.dirname,
