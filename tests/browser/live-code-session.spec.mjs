@@ -1,6 +1,3 @@
-// End-to-end live session against the running development stack
-// (`npm run dev`). It seeds its own course and accounts directly in the
-// database named by E2E_DATABASE_URL (or DATABASE_URL) and is skipped without one.
 import { expect, test } from "@playwright/test";
 import { BASE, databaseUrl, seed, signIn } from "./fixtures/live-stack.mjs";
 
@@ -112,6 +109,10 @@ test("a student and a TA edit, see each other, and end a live session", async ({
     );
     await expect.poll(() => editorText(page)).toBe(finalText);
   }
+  await Promise.all([
+    student.page.screenshot({ path: testInfo.outputPath("student-ended.png") }),
+    ta.page.screenshot({ path: testInfo.outputPath("ta-ended.png") }),
+  ]);
 
   await student.context.close();
   await ta.context.close();

@@ -1,5 +1,5 @@
-// Shared setup for browser tests against the running development stack
-// (`npm run dev`). Each run seeds its own course and accounts directly in the
+// Shared setup for browser tests against the running development or local Compose stack.
+// Each run seeds its own course and accounts directly in the
 // database named by E2E_DATABASE_URL (or DATABASE_URL).
 import { randomUUID } from "node:crypto";
 import process from "node:process";
@@ -9,7 +9,8 @@ import { v7 as uuidv7 } from "uuid";
 import { expect } from "@playwright/test";
 
 export const BASE = process.env.E2E_BASE_URL ?? "https://localhost:5173";
-export const databaseUrl = process.env.E2E_DATABASE_URL ?? process.env.DATABASE_URL;
+export const databaseUrl =
+  process.env.E2E_DATABASE_URL ?? process.env.DATABASE_URL;
 const PASSWORD = "live session e2e password";
 
 export async function seed() {
@@ -23,13 +24,17 @@ export async function seed() {
   const people = {
     student: { id: uuidv7(), name: `Sam Student ${suffix}`, role: "student" },
     ta: { id: uuidv7(), name: `Tara TA ${suffix}`, role: "ta" },
-    classmate: { id: uuidv7(), name: `Cam Classmate ${suffix}`, role: "student" },
+    classmate: {
+      id: uuidv7(),
+      name: `Cam Classmate ${suffix}`,
+      role: "student",
+    },
   };
   try {
-    await pool.query("INSERT INTO organizations (id,domain,name) VALUES ($1,$2,'E2E University')", [
-      organizationId,
-      domain,
-    ]);
+    await pool.query(
+      "INSERT INTO organizations (id,domain,name) VALUES ($1,$2,'E2E University')",
+      [organizationId, domain],
+    );
     for (const [key, person] of Object.entries(people)) {
       person.email = `${key}@${domain}`;
       await pool.query(
@@ -39,7 +44,13 @@ export async function seed() {
     }
     await pool.query(
       "INSERT INTO courses (id,organization_id,name,created_by_user_id,join_code) VALUES ($1,$2,$3,$4,$5)",
-      [courseId, organizationId, `E2E ${suffix}`, people.ta.id, suffix.toUpperCase()],
+      [
+        courseId,
+        organizationId,
+        `E2E ${suffix}`,
+        people.ta.id,
+        suffix.toUpperCase(),
+      ],
     );
     for (const person of Object.values(people))
       await pool.query(
