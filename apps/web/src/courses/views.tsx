@@ -221,9 +221,20 @@ function ImportPiazzaForm({
           Array.isArray((post as Record<string, unknown>).history) &&
           ((post as Record<string, unknown>).history as unknown[]).length > 0,
       ).length;
+      const courseNumber =
+        typeof network.courseNumber === "string"
+          ? network.courseNumber
+          : undefined;
+      const name = network.name;
       setFile(next);
       setPreview({
-        name: `${typeof network.courseNumber === "string" ? `${network.courseNumber} ` : ""}${network.name}`.trim(),
+        name:
+          (courseNumber && !name.startsWith(courseNumber)
+            ? `${courseNumber} ${name}`
+            : name
+          )
+            .trim()
+            .slice(0, 200) || "Imported Piazza course",
         posts: publicPosts,
         people: record.users.length,
         privatePosts,

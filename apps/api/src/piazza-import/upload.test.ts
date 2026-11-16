@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { convertExport } from "./convert.js";
 import { piazzaFixture } from "./fixture.js";
 import { parsePiazzaUpload } from "./upload.js";
 
@@ -110,4 +111,42 @@ describe("CLI Piazza JSON upload boundary", () => {
       expect.objectContaining({ status: 422 }),
     );
   });
+
+  it("accepts empty optional CLI text using converter fallbacks", () => {
+    const source = piazzaFixture();
+    source.users[0]!.name = "";
+    source.posts[0]!.history[0]!.subject = "";
+    source.posts[0]!.history[0]!.content = "";
+    source.posts[1]!.children![0]!.subject = "";
+    source.posts[1]!.children![0]!.history![0]!.subject = "";
+    source.posts[1]!.children![0]!.history![0]!.content = "";
+    const course = convertExport(parsePiazzaUpload(JSON.stringify(source)).data);
+    expect(course.people.find((person) => person.uid === "prof1")?.name).toBe(
+      "Piazza user",
+    );
+    expect(
+      course.posts.find((post) => post.piazzaId === "p1")?.bodyMarkdown,
+    ).toBe("(empty)");
+    expect(
+      course.posts.find((post) => post.piazzaId === "p2")?.answers[0]
+        ?.bodyMarkdown,
+    ).toBe("(empty)");
+  });
+
+  it.each(["post", "history", "child-created", "child-updated"])(
+    "rejects impossible %s calendar dates before import",
+    (field) => {
+      const source = piazzaFixture();
+      const impossible = "2026-02-31T10:00:00Z";
+      if (field === "post") source.posts[0]!.created = impossible;
+      if (field === "history") source.posts[0]!.history[0]!.created = impossible;
+      if (field === "child-created")
+        source.posts[1]!.children![0]!.created = impossible;
+      if (field === "child-updated")
+        source.posts[1]!.children![0]!.updated = impossible;
+      expect(() => parsePiazzaUpload(JSON.stringify(source))).toThrowError(
+        expect.objectContaining({ status: 422 }),
+      );
+    },
+  );
 });

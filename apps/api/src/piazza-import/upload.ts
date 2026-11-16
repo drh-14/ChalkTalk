@@ -30,11 +30,35 @@ const string = (value: unknown, max = MAX_TEXT): string =>
 const optionalString = (value: unknown, max = MAX_TEXT) => {
   if (value !== undefined) string(value, max);
 };
+const optionalText = (value: unknown, max = MAX_TEXT) => {
+  if (value !== undefined && (typeof value !== "string" || value.length > max))
+    invalid();
+};
 const array = (value: unknown, max: number): unknown[] =>
   Array.isArray(value) && value.length <= max ? value : invalid();
 const date = (value: unknown) => {
   const text = string(value, 64);
-  if (!Number.isFinite(Date.parse(text))) invalid();
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T/.exec(text);
+  if (!parts || !Number.isFinite(Date.parse(text))) invalid();
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leap ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  if (year === 0 || day < 1 || day > (daysInMonth[month - 1] ?? 0)) invalid();
 };
 const optionalArray = (value: unknown, max: number) => {
   if (value !== undefined) array(value, max);
@@ -46,8 +70,8 @@ function history(value: unknown) {
     date(item.created);
     optionalString(item.uid, 255);
     optionalString(item.anon, 255);
-    optionalString(item.subject);
-    optionalString(item.content);
+    optionalText(item.subject);
+    optionalText(item.content);
   }
 }
 
@@ -62,7 +86,7 @@ function children(value: unknown, depth: number, counter: { count: number }) {
     if (item.updated !== undefined) date(item.updated);
     optionalString(item.uid, 255);
     optionalString(item.anon, 255);
-    optionalString(item.subject);
+    optionalText(item.subject);
     if (item.no_answer !== undefined && typeof item.no_answer !== "number")
       invalid();
     if (item.history !== undefined) history(item.history);
@@ -125,7 +149,7 @@ export function parsePiazzaUpload(text: string): {
   for (const entry of users) {
     const user = object(entry);
     string(user.id, 255);
-    optionalString(user.name, 100);
+    optionalText(user.name, 100);
     optionalString(user.role, 50);
   }
   const posts = array(root.posts, MAX_POSTS);

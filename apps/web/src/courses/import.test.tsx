@@ -126,3 +126,25 @@ it("counts only public posts the importer can retain", async () => {
     await screen.findByText(/1 public post and 1 person in source file/),
   ).toBeTruthy();
 });
+
+it("previews an already-prefixed course name without repeating its number", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      response({ data: [], page: { nextCursor: null, hasMore: false } }),
+    ),
+  );
+  const user = userEvent.setup();
+  render(<CourseHome csrfToken="csrf-token" onOpenCourse={vi.fn()} />);
+  await screen.findByText("You have not joined a course yet.");
+  await user.click(screen.getByRole("button", { name: "Import Piazza course" }));
+  const json = JSON.stringify({
+    ...source,
+    network: { ...source.network, name: "CSE 416 Software Engineering" },
+  });
+  const file = new File([json], "class.json", { type: "application/json" });
+  Object.defineProperty(file, "text", { value: async () => json });
+  await user.upload(screen.getByLabelText("Piazza JSON file"), file);
+  expect(await screen.findByText("CSE 416 Software Engineering")).toBeTruthy();
+  expect(screen.queryByText("CSE 416 CSE 416 Software Engineering")).toBeNull();
+});
