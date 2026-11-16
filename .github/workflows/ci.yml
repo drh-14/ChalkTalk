@@ -198,6 +198,20 @@ jobs:
           E2E_CADDY_URL: https://localhost:5174
         run: npx playwright test tests/browser/local-caddy-gateway.spec.mjs --workers=1
 
+      - name: Verify two-browser concurrent collaboration
+        env:
+          E2E_BASE_URL: https://localhost:5174
+          E2E_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+        run: npx playwright test tests/browser/live-code-session.spec.mjs --workers=1
+
+      - name: Upload collaboration browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collaboration-browser-evidence
+          path: test-results/
+          if-no-files-found: ignore
+
       - name: Verify local image PDF and OCR tools
         run: |
           for service in api worker; do
