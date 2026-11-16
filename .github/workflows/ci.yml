@@ -30,6 +30,9 @@ jobs:
       - name: Verify running production monitoring services
         run: node --test deployment/production/tests/observability.runtime.test.mjs
 
+      - name: Verify API ETags survive local and production gateways
+        run: node --test deployment/production/tests/gateway-etags.test.mjs
+
   supabase-integration:
     runs-on: ubuntu-26.04
     timeout-minutes: 35
