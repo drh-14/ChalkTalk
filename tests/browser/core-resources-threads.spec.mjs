@@ -131,6 +131,14 @@ test("staff updates course information and exports statistics after student read
       .click(),
   ]);
   expect(download.suggestedFilename()).toMatch(/\.csv$/);
+  const [header, ...rows] = (await readFile(await download.path(), "utf8"))
+    .trimEnd()
+    .split("\r\n");
+  expect(header).toBe("date,questions_created,answers_created,posts_viewed");
+  expect(rows).toHaveLength(30);
+  expect(
+    rows.filter((row) => /^\d{4}-\d{2}-\d{2},1,0,0$/.test(row)),
+  ).toHaveLength(1);
   await ta.page.screenshot({
     path: testInfo.outputPath("statistics-export.png"),
   });
