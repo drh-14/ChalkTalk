@@ -268,7 +268,8 @@ function convertDiscussion(child: PiazzaChild) {
 
 export function isImportablePost(post: PiazzaPost): boolean {
   return (
-    (post.status === undefined || ["active", "private"].includes(post.status)) &&
+    (post.status === undefined ||
+      ["active", "private"].includes(post.status)) &&
     ["question", "note", "poll"].includes(post.type) &&
     post.history.length > 0
   );

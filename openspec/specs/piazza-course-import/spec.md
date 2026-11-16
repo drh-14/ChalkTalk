@@ -2,7 +2,7 @@
 
 ## Purpose
 
-How a Piazza class export is converted into ChalkTalk content by the developer import tool.
+How a Piazza class export is converted into ChalkTalk content by the developer import tool or an authenticated UI import.
 
 ## Requirements
 

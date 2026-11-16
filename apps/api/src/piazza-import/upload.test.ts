@@ -16,7 +16,11 @@ describe("CLI Piazza JSON upload boundary", () => {
       name: "Ignored Person",
       role: "student",
     });
-    source.users.push({ id: "inactive-only", name: "Inactive", role: "student" });
+    source.users.push({
+      id: "inactive-only",
+      name: "Inactive",
+      role: "student",
+    });
     source.users.push({ id: "empty-only", name: "Empty", role: "student" });
     source.posts[0]!.children!.push({
       id: "ignored-1",
@@ -91,9 +95,8 @@ describe("CLI Piazza JSON upload boundary", () => {
       const source = piazzaFixture();
       const child =
         type === "feedback"
-          ? source.posts[1]!.children!.find(
-              (item) => item.type === "followup",
-            )!.children![0]!
+          ? source.posts[1]!.children!.find((item) => item.type === "followup")!
+              .children![0]!
           : source.posts[1]!.children!.find((item) => item.type === type)!;
       child.updated = "not-a-date";
       expect(() => parsePiazzaUpload(JSON.stringify(source))).toThrowError(
@@ -120,7 +123,9 @@ describe("CLI Piazza JSON upload boundary", () => {
     source.posts[1]!.children![0]!.subject = "";
     source.posts[1]!.children![0]!.history![0]!.subject = "";
     source.posts[1]!.children![0]!.history![0]!.content = "";
-    const course = convertExport(parsePiazzaUpload(JSON.stringify(source)).data);
+    const course = convertExport(
+      parsePiazzaUpload(JSON.stringify(source)).data,
+    );
     expect(course.people.find((person) => person.uid === "prof1")?.name).toBe(
       "Piazza user",
     );
@@ -139,7 +144,8 @@ describe("CLI Piazza JSON upload boundary", () => {
       const source = piazzaFixture();
       const impossible = "2026-02-31T10:00:00Z";
       if (field === "post") source.posts[0]!.created = impossible;
-      if (field === "history") source.posts[0]!.history[0]!.created = impossible;
+      if (field === "history")
+        source.posts[0]!.history[0]!.created = impossible;
       if (field === "child-created")
         source.posts[1]!.children![0]!.created = impossible;
       if (field === "child-updated")

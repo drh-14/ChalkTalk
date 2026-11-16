@@ -38,8 +38,8 @@ const array = (value: unknown, max: number): unknown[] =>
   Array.isArray(value) && value.length <= max ? value : invalid();
 const date = (value: unknown) => {
   const text = string(value, 64);
-  const parts = /^(\d{4})-(\d{2})-(\d{2})T/.exec(text);
-  if (!parts || !Number.isFinite(Date.parse(text))) invalid();
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T/.exec(text) ?? invalid();
+  if (!Number.isFinite(Date.parse(text))) invalid();
   const year = Number(parts[1]);
   const month = Number(parts[2]);
   const day = Number(parts[3]);
@@ -127,7 +127,7 @@ function referencedUsers(posts: PiazzaPost[]): Set<string> {
   return ids;
 }
 
-/** Validates the exact known CLI export fields and discards data only used by private posts. */
+/** Validates consumed CLI export fields and excludes private-post content. */
 export function parsePiazzaUpload(text: string): {
   data: PiazzaExport;
   omittedPrivatePosts: number;

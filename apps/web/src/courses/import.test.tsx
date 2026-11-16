@@ -112,7 +112,9 @@ it("counts only public posts the importer can retain", async () => {
   const user = userEvent.setup();
   render(<CourseHome csrfToken="csrf-token" onOpenCourse={vi.fn()} />);
   await screen.findByText("You have not joined a course yet.");
-  await user.click(screen.getByRole("button", { name: "Import Piazza course" }));
+  await user.click(
+    screen.getByRole("button", { name: "Import Piazza course" }),
+  );
   const posts = [
     ...source.posts,
     { ...source.posts[0], id: "inactive", status: "deleted" },
@@ -137,7 +139,9 @@ it("previews an already-prefixed course name without repeating its number", asyn
   const user = userEvent.setup();
   render(<CourseHome csrfToken="csrf-token" onOpenCourse={vi.fn()} />);
   await screen.findByText("You have not joined a course yet.");
-  await user.click(screen.getByRole("button", { name: "Import Piazza course" }));
+  await user.click(
+    screen.getByRole("button", { name: "Import Piazza course" }),
+  );
   const json = JSON.stringify({
     ...source,
     network: { ...source.network, name: "CSE 416 Software Engineering" },
