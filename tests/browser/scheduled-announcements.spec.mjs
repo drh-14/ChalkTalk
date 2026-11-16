@@ -1,7 +1,6 @@
 // End-to-end scheduled announcements against the running development stack
-// (`npm run dev`, with the job worker). It seeds its own course and accounts
-// directly in the database named by E2E_DATABASE_URL and is
-// skipped without one.
+// (`npm run dev`, with the job worker).
+// Seed isolation setup: documentation/testing.md.
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";

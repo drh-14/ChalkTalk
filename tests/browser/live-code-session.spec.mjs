@@ -1,6 +1,6 @@
 // End-to-end live session against the running development stack
-// (`npm run dev`). It seeds its own course and accounts directly in the
-// database named by E2E_DATABASE_URL and is skipped without one.
+// (`npm run dev`).
+// Seed isolation setup: documentation/testing.md.
 import { expect, test } from "@playwright/test";
 import { BASE, databaseUrl, seed, signIn } from "./fixtures/live-stack.mjs";
 
