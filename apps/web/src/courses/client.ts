@@ -48,11 +48,35 @@ export type Page<T> = {
 
 export type Versioned<T> = { data: T; etag: string };
 
+export type PiazzaImportResult = {
+  courseId: string;
+  courseName: string;
+  omittedPrivatePosts: number;
+  posts: { created: number; updated: number; skipped: number };
+  answers: { created: number; updated: number; skipped: number };
+  followups: { created: number; updated: number; skipped: number };
+};
+
 type ErrorEnvelope = {
   error?: { code?: string; message?: string; requestId?: string };
 };
 
 const newIdempotencyKey = () => crypto.randomUUID();
+
+export async function importPiazzaJson(
+  file: File,
+  csrfToken: string,
+): Promise<PiazzaImportResult> {
+  const body = new FormData();
+  body.append("file", file);
+  return (
+    await request<PiazzaImportResult>("/piazza-imports", {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+      body,
+    })
+  ).data;
+}
 
 async function request<T>(
   path: string,

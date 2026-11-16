@@ -39,6 +39,8 @@ tags:
     description: Organizations operations.
   - name: Courses
     description: Courses operations.
+  - name: Piazza Imports
+    description: Upload a CLI-generated Piazza JSON file as a course.
   - name: Course Memberships
     description: Course Memberships operations.
   - name: Posts
@@ -60,6 +62,111 @@ tags:
   - name: Notifications
     description: Notifications operations.
 paths:
+  "/piazza-imports":
+    post:
+      tags: [Piazza Imports]
+      summary: Import a CLI-generated Piazza JSON course
+      operationId: importPiazzaJson
+      description: >-
+        Authenticated, CSRF-protected import of exactly one CLI-generated PiazzaExport
+        JSON file up to 20 MiB. The session user owns a new course. Private posts,
+        descendants, and private-only people are omitted. Re-import requires a current
+        instructor of the existing imported course, checked within the import transaction.
+        The uploaded source is deleted on every outcome; native Piazza exports and
+        Piazza credentials are not accepted.
+      security:
+        - session_cookie: []
+      parameters:
+        - "$ref": "#/components/parameters/Origin"
+        - "$ref": "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              additionalProperties: false
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Course imported or updated without retaining private source content.
+          headers:
+            Location:
+              description: API URL of the imported course.
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                additionalProperties: false
+                properties:
+                  data:
+                    type: object
+                    required:
+                      [
+                        courseId,
+                        courseName,
+                        omittedPrivatePosts,
+                        posts,
+                        answers,
+                        followups,
+                      ]
+                    additionalProperties: false
+                    properties:
+                      courseId: { type: string, format: uuid }
+                      courseName: { type: string }
+                      omittedPrivatePosts: { type: integer, minimum: 0 }
+                      posts:
+                        { "$ref": "#/components/schemas/PiazzaImportCounts" }
+                      answers:
+                        { "$ref": "#/components/schemas/PiazzaImportCounts" }
+                      followups:
+                        { "$ref": "#/components/schemas/PiazzaImportCounts" }
+        "400":
+          description: Malformed multipart upload.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "403":
+          description: Invalid Origin or CSRF token.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "404":
+          description: Existing imported course is inaccessible to this uploader.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "413":
+          description: File exceeds 20 MiB.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "415":
+          description: Multipart upload required.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "422":
+          description: Invalid or incompatible Piazza JSON.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
+        "503":
+          description: Piazza import unavailable.
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Error" }
   "/courses/{courseId}/files":
     get:
       tags: [Resources]
@@ -13460,6 +13567,14 @@ components:
         minLength: 1
       example: "3600"
   schemas:
+    PiazzaImportCounts:
+      type: object
+      required: [created, updated, skipped]
+      additionalProperties: false
+      properties:
+        created: { type: integer, minimum: 0 }
+        updated: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
     SearchablePdfEnvelope:
       type: object
       required: [data]

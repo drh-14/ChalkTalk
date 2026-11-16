@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import argon2 from "argon2";
 import type { Pool, PoolClient } from "pg";
 import { v5 as uuidv5 } from "uuid";
+import { AuthError } from "../auth/errors.js";
 import type {
   ImportAuthor,
   ImportCourse,
@@ -60,7 +61,7 @@ const joinCode = () =>
 export async function importPiazzaCourse(
   pool: Pool,
   course: ImportCourse,
-  options: { ownerEmail: string; demoPassword?: string },
+  options: { ownerEmail: string; demoPassword?: string; uiActorId?: string },
 ): Promise<ImportSummary> {
   const client = await pool.connect();
   try {
@@ -81,7 +82,7 @@ export async function importPiazzaCourse(
 async function write(
   client: PoolClient,
   course: ImportCourse,
-  options: { ownerEmail: string; demoPassword?: string },
+  options: { ownerEmail: string; demoPassword?: string; uiActorId?: string },
 ): Promise<ImportSummary> {
   const id = (...parts: string[]) => uuidv5(parts.join(":"), PIAZZA_NAMESPACE);
   const courseId = piazzaCourseId(course.piazzaId);
@@ -97,23 +98,36 @@ async function write(
     throw new Error(`No ChalkTalk account has the email ${options.ownerEmail}`);
   const ownerId = owner.rows[0]!.id;
   const organizationId = owner.rows[0]!.organization_id;
+  if (options.uiActorId && options.uiActorId !== ownerId)
+    throw new AuthError(404, "not_found", "Imported course not found");
 
   const existingCourse = await client.query<{
     organization_id: string;
     name: string;
     join_code: string;
     status: string;
-  }>("SELECT organization_id,name,join_code,status FROM courses WHERE id=$1", [
-    courseId,
-  ]);
+  }>(
+    "SELECT organization_id,name,join_code,status FROM courses WHERE id=$1 FOR UPDATE",
+    [courseId],
+  );
   if (existingCourse.rowCount) {
     const row = existingCourse.rows[0]!;
     if (row.organization_id !== organizationId)
-      throw new Error(
-        "This Piazza class was already imported into another organization",
-      );
+      throw options.uiActorId
+        ? new AuthError(404, "not_found", "Imported course not found")
+        : new Error(
+            "This Piazza class was already imported into another organization",
+          );
     if (row.status === "deleting")
       throw new Error("The imported course is being deleted");
+    if (options.uiActorId) {
+      const membership = await client.query<{ role: string }>(
+        "SELECT role FROM course_memberships WHERE course_id=$1 AND user_id=$2 FOR UPDATE",
+        [courseId, options.uiActorId],
+      );
+      if (membership.rows[0]?.role !== "instructor")
+        throw new AuthError(404, "not_found", "Imported course not found");
+    }
   } else {
     await client.query(
       "INSERT INTO courses (id,organization_id,created_by_user_id,name,join_code) VALUES ($1,$2,$3,$4,$5)",
