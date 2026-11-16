@@ -81,10 +81,17 @@ The API SHALL accept exactly one CLI-generated Piazza JSON file through authenti
 
 The UI import SHALL omit private Piazza posts, their descendants, and historical people referenced only by omitted private content. Public content SHALL retain the existing converter's post, answer, follow-up, authorship, anonymity, and idempotent re-import behavior. The CLI import's existing behavior SHALL remain unchanged.
 
+The UI import SHALL treat the file-reported `selfUid` as a historical Piazza identity separate from the authenticated ChalkTalk uploader. It SHALL NOT attribute posts, answers, follow-ups, or related historical activity to the uploader solely because that UID appears as `selfUid`. This SHALL hold on initial import and re-import. The CLI import SHALL continue mapping `selfUid` to its named owner.
+
 #### Scenario: Mixed public and private source
 
 - **WHEN** a source file contains public and private posts with a person referenced only in a private post
 - **THEN** the UI import includes public content and relevant people but not the private post or private-only person
+
+#### Scenario: Exporter and uploader differ
+
+- **WHEN** an authorized uploader imports or re-imports a file whose `selfUid` authored retained public content
+- **THEN** that content is attributed to a separate historical Piazza account, not to the uploader
 
 ### Requirement: UI re-import cannot grant instructor access
 

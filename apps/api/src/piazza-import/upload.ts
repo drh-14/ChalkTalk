@@ -172,7 +172,6 @@ export function parsePiazzaUpload(text: string): {
   const source = root as PiazzaExport;
   const publicPosts = source.posts.filter((post) => post.status !== "private");
   const referenced = referencedUsers(publicPosts.filter(isImportablePost));
-  if (source.selfUid) referenced.add(source.selfUid);
   const data: PiazzaExport = {
     ...source,
     users: source.users.filter((user) => referenced.has(user.id)),

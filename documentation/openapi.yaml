@@ -72,6 +72,9 @@ paths:
         JSON file up to 20 MiB. The session user owns a new course. Private posts,
         descendants, and private-only people are omitted. Re-import requires a current
         instructor of the existing imported course, checked within the import transaction.
+        A file's selfUid is an unverified historical Piazza identity on this endpoint;
+        exporter-authored content is not attributed to the uploader merely because
+        the uploader owns the course. The CLI owner mapping is unchanged.
         The uploaded source is deleted on every outcome; native Piazza exports and
         Piazza credentials are not accepted.
       security:

@@ -68,6 +68,17 @@ describe("CLI Piazza JSON upload boundary", () => {
     expect(result.data.users.some((user) => user.id === "prof1")).toBe(true);
   });
 
+  it("omits a file-reported exporter when only private content refers to them", () => {
+    const source = piazzaFixture();
+    source.posts[1]!.children = source.posts[1]!.children!.filter(
+      (child) => child.id !== "f1" && child.id !== "a1",
+    );
+    const parsed = parsePiazzaUpload(JSON.stringify(source));
+    expect(parsed.data.users.some((user) => user.id === source.selfUid)).toBe(
+      false,
+    );
+  });
+
   it.each(["not JSON", "{}", '{"network":{"id":"x","name":"X"},"posts":{}}'])(
     "rejects malformed or incompatible input: %s",
     (source) => expect(() => parsePiazzaUpload(source)).toThrow(),

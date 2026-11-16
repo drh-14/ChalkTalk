@@ -8,6 +8,8 @@ Authenticated multipart/form-data with exactly one `file` field, a valid `Origin
 
 The UI preview is informational only. The server omits all `status: "private"` posts and their descendants, as well as historical people not referenced by retained content. The CLI import itself retains its existing behavior. Historical author accounts use synthetic `.piazza.invalid` addresses and undisclosed credentials; the response does not expose them.
 
+The file's `selfUid` is a file-reported Piazza identity, not proof that the uploader exported it. On UI imports, retained content attributed to that UID remains attributed to a separate historical Piazza account, even when the uploader owns the ChalkTalk course. The CLI importer continues to map `selfUid` to its specified owner.
+
 ## Success
 
 `200 OK`, `Location: /api/v1/courses/{courseId}`, `Content-Type: application/json`:

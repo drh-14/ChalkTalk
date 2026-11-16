@@ -6,6 +6,7 @@ import type { AuthService } from "../auth/service.js";
 import { loadEnvironment } from "../config/environment.js";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import { piazzaFixture } from "../piazza-import/fixture.js";
+import { piazzaEmail } from "../piazza-import/importer.js";
 import { PiazzaImportService } from "../piazza-import/service.js";
 import { createApp } from "./app.js";
 
@@ -139,5 +140,88 @@ integration("Piazza JSON HTTP import with PostgreSQL", () => {
         )
       ).rows,
     ).toHaveLength(0);
+  });
+
+  it("keeps a file-reported exporter separate from the uploader on import and re-import", async () => {
+    activeActor = 0;
+    const source = piazzaFixture();
+    source.network.id = "http-exporter-class";
+    source.posts[0]!.history[0]!.uid = source.selfUid!;
+    source.posts[1]!.children![0]!.history![0]!.uid = source.selfUid!;
+    const first = await send(source);
+    expect(first.status).toBe(200);
+    const courseId = first.body.data.courseId;
+    const exporter = await pool.query<{ id: string }>(
+      "SELECT id FROM users WHERE email=$1",
+      [piazzaEmail("Me Myself", source.selfUid!)],
+    );
+    expect(exporter.rows).toHaveLength(1);
+    const exporterId = exporter.rows[0]!.id;
+    expect(exporterId).not.toBe(actors[0]!.id);
+    expect(
+      (
+        await pool.query("SELECT created_by_user_id FROM courses WHERE id=$1", [
+          courseId,
+        ])
+      ).rows[0]!.created_by_user_id,
+    ).toBe(actors[0]!.id);
+    const attributed = async () => ({
+      posts: (
+        await pool.query(
+          "SELECT author_user_id FROM posts WHERE course_id=$1 AND title='Welcome & syllabus'",
+          [courseId],
+        )
+      ).rows[0]!.author_user_id,
+      answer: (
+        await pool.query(
+          "SELECT created_by_user_id FROM answers WHERE course_id=$1 AND kind='student'",
+          [courseId],
+        )
+      ).rows[0]!.created_by_user_id,
+      followup: (
+        await pool.query(
+          "SELECT author_user_id FROM followups WHERE course_id=$1 AND body_markdown='What about three loops?'",
+          [courseId],
+        )
+      ).rows[0]!.author_user_id,
+    });
+    expect(await attributed()).toEqual({
+      posts: exporterId,
+      answer: exporterId,
+      followup: exporterId,
+    });
+
+    source.posts.push({
+      id: "exporter-new-post",
+      type: "note",
+      status: "active",
+      created: "2026-09-12T00:00:00Z",
+      history: [
+        {
+          uid: source.selfUid!,
+          anon: "no",
+          subject: "Exporter new note",
+          content: "More",
+          created: "2026-09-12T00:00:00Z",
+        },
+      ],
+    });
+    const second = await send(source);
+    expect(second.status).toBe(200);
+    expect(second.body.data.courseId).toBe(courseId);
+    expect(second.body.data.posts.created).toBe(1);
+    expect(await attributed()).toEqual({
+      posts: exporterId,
+      answer: exporterId,
+      followup: exporterId,
+    });
+    expect(
+      (
+        await pool.query(
+          "SELECT author_user_id FROM posts WHERE course_id=$1 AND title='Exporter new note'",
+          [courseId],
+        )
+      ).rows[0]!.author_user_id,
+    ).toBe(exporterId);
   });
 });

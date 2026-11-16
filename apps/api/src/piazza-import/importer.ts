@@ -197,7 +197,7 @@ async function write(
   };
 
   await join(ownerId, "instructor");
-  if (course.selfUid) users.set(course.selfUid, ownerId);
+  if (course.selfUid && !options.uiActorId) users.set(course.selfUid, ownerId);
   const known = new Map(course.people.map((person) => [person.uid, person]));
   const referenced = new Set<string>(course.people.map((person) => person.uid));
   for (const post of course.posts) {
