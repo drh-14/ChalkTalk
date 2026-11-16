@@ -22,7 +22,7 @@ const editorText = (page) =>
 
 test("a student and a TA edit, see each other, and end a live session", async ({
   browser,
-}) => {
+}, testInfo) => {
   test.setTimeout(90_000);
   const { courseId, people } = await seed();
   const student = await signIn(browser, people.student);
@@ -89,6 +89,12 @@ test("a student and a TA edit, see each other, and end a live session", async ({
     )
     .toBe(true);
   const finalText = await editorText(ta.page);
+  await Promise.all([
+    student.page.screenshot({
+      path: testInfo.outputPath("student-concurrent-edit.png"),
+    }),
+    ta.page.screenshot({ path: testInfo.outputPath("ta-concurrent-edit.png") }),
+  ]);
 
   // The TA ends the session; both editors become read-only with the final text.
   ta.page.once("dialog", (dialog) => void dialog.accept());
@@ -103,6 +109,10 @@ test("a student and a TA edit, see each other, and end a live session", async ({
     );
     await expect.poll(() => editorText(page)).toBe(finalText);
   }
+  await Promise.all([
+    student.page.screenshot({ path: testInfo.outputPath("student-ended.png") }),
+    ta.page.screenshot({ path: testInfo.outputPath("ta-ended.png") }),
+  ]);
 
   await student.context.close();
   await ta.context.close();
