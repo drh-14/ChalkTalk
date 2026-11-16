@@ -11,6 +11,7 @@ import {
   deleteCourse,
   getCourse,
   getMembership,
+  importPiazzaJson,
   joinCourse,
   leaveCourse,
   listCourses,
@@ -156,6 +157,168 @@ function JoinCourseForm({
   );
 }
 
+function ImportPiazzaForm({
+  csrfToken,
+  onImported,
+}: {
+  csrfToken: string;
+  onImported: (courseId: string) => void;
+}) {
+  const [file, setFile] = useState<File>();
+  const [preview, setPreview] = useState<{
+    name: string;
+    posts: number;
+    people: number;
+    privatePosts: number;
+  }>();
+  const [authorized, setAuthorized] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const selection = useRef(0);
+
+  async function selectFile(next: File | undefined) {
+    const current = ++selection.current;
+    setFile(undefined);
+    setPreview(undefined);
+    setAuthorized(false);
+    setError(undefined);
+    if (!next) return;
+    if (next.size > 20 * 1024 * 1024) {
+      setError("JSON file exceeds 20 MiB. Use the CLI for larger exports.");
+      return;
+    }
+    try {
+      const source: unknown = JSON.parse(await next.text());
+      if (current !== selection.current) return;
+      if (!source || typeof source !== "object" || Array.isArray(source))
+        throw new Error("Select JSON saved by ChalkTalk's Piazza import CLI.");
+      const record = source as Record<string, unknown>;
+      const network = record.network as Record<string, unknown> | undefined;
+      if (
+        !network ||
+        typeof network.id !== "string" ||
+        typeof network.name !== "string" ||
+        !Array.isArray(record.posts) ||
+        !Array.isArray(record.users)
+      )
+        throw new Error("Select JSON saved by ChalkTalk's Piazza import CLI.");
+      const privatePosts = record.posts.filter(
+        (post: unknown) =>
+          post !== null &&
+          typeof post === "object" &&
+          (post as Record<string, unknown>).status === "private",
+      ).length;
+      const publicPosts = record.posts.filter(
+        (post: unknown) =>
+          post !== null &&
+          typeof post === "object" &&
+          !Array.isArray(post) &&
+          ((post as Record<string, unknown>).status === undefined ||
+            (post as Record<string, unknown>).status === "active") &&
+          ["question", "note", "poll"].includes(
+            (post as Record<string, unknown>).type as string,
+          ) &&
+          Array.isArray((post as Record<string, unknown>).history) &&
+          ((post as Record<string, unknown>).history as unknown[]).length > 0,
+      ).length;
+      const courseNumber =
+        typeof network.courseNumber === "string"
+          ? network.courseNumber
+          : undefined;
+      const name = network.name;
+      setFile(next);
+      setPreview({
+        name:
+          (courseNumber && !name.startsWith(courseNumber)
+            ? `${courseNumber} ${name}`
+            : name
+          )
+            .trim()
+            .slice(0, 200) || "Imported Piazza course",
+        posts: publicPosts,
+        people: record.users.length,
+        privatePosts,
+      });
+    } catch (caught) {
+      if (current === selection.current)
+        setError(
+          caught instanceof SyntaxError
+            ? "Select a valid JSON file saved by ChalkTalk's Piazza import CLI."
+            : message(caught),
+        );
+    }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!file || !preview || !authorized || pending) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      onImported((await importPiazzaJson(file, csrfToken)).courseId);
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <form className="course-form" onSubmit={(event) => void submit(event)}>
+      <h3>Import a Piazza course</h3>
+      <p>
+        Use JSON previously saved by ChalkTalk's Piazza import CLI. Native
+        Piazza exports are not supported.
+      </p>
+      {error && (
+        <p className="form-message error" role="alert">
+          {error}
+        </p>
+      )}
+      <label>
+        Piazza JSON file
+        <input
+          type="file"
+          accept=".json,application/json"
+          onChange={(event) => void selectFile(event.target.files?.[0])}
+          disabled={pending}
+        />
+      </label>
+      {preview && (
+        <div className="course-import-preview" role="status">
+          <strong>{preview.name}</strong>
+          <p>
+            {preview.posts} public {preview.posts === 1 ? "post" : "posts"} and{" "}
+            {preview.people} {preview.people === 1 ? "person" : "people"} in
+            source file
+          </p>
+          <p>
+            {preview.privatePosts} private{" "}
+            {preview.privatePosts === 1 ? "post" : "posts"} will be omitted
+          </p>
+        </div>
+      )}
+      <label className="course-import-consent">
+        <input
+          type="checkbox"
+          checked={authorized}
+          onChange={(event) => setAuthorized(event.target.checked)}
+          disabled={!preview || pending}
+        />
+        I confirm that I am authorized to migrate the public content in this
+        file.
+      </label>
+      <button
+        className="button primary"
+        type="submit"
+        disabled={!preview || !authorized || pending}
+      >
+        {pending ? "Importing…" : "Import course"}
+      </button>
+    </form>
+  );
+}
+
 export function CourseHome({
   csrfToken,
   onOpenCourse,
@@ -168,7 +331,7 @@ export function CourseHome({
   const [error, setError] = useState<string>();
   const [pageError, setPageError] = useState<string>();
   const [pagePending, setPagePending] = useState(false);
-  const [form, setForm] = useState<"create" | "join">();
+  const [form, setForm] = useState<"create" | "join" | "import">();
   const refresh = () => {
     setError(undefined);
     setPageError(undefined);
@@ -256,6 +419,9 @@ export function CourseHome({
         <button className="button secondary" onClick={() => setForm("join")}>
           Join a course
         </button>
+        <button className="button secondary" onClick={() => setForm("import")}>
+          Import Piazza course
+        </button>
       </div>
       {form === "create" && (
         <CreateCourseForm
@@ -265,6 +431,9 @@ export function CourseHome({
       )}
       {form === "join" && (
         <JoinCourseForm csrfToken={csrfToken} onJoined={onOpenCourse} />
+      )}
+      {form === "import" && (
+        <ImportPiazzaForm csrfToken={csrfToken} onImported={onOpenCourse} />
       )}
       {nextCursor && (
         <>

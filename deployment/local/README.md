@@ -63,7 +63,7 @@ For **real email delivery**, configure a sending-only `RESEND_API_KEY` for both 
 
 For a **manual live Resend acceptance check**, start a disposable PostgreSQL server bound to loopback and set `TEST_DATABASE_URL` to its administrative database. Set `RESEND_LIVE_CONFIRM=send-synthetic-mail`, `RESEND_LIVE_RECIPIENT` to the approved test inbox, and the normal Resend variables, then run `npm run test:email:live`. The command creates and removes its own uniquely named database, sends no more than twelve synthetic messages, and refuses a non-approved recipient, remote database, or mock Resend endpoint. This command is never part of regular CI; it checks provider acceptance, not inbox arrival. See [live validation design](../../documentation/design/2026-11-02-resend-live-validation.md).
 
-## Importing a Piazza class
+## Importing a Piazza class with the CLI
 
 To populate a new installation with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to. Read the password without placing it in shell history:
 

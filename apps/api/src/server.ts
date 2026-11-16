@@ -17,6 +17,7 @@ import { PostService } from "./posts/service.js";
 import { StatisticsService } from "./statistics/service.js";
 import { CourseResourceService } from "./course-resources/service.js";
 import { CourseFileService } from "./course-files/service.js";
+import { PiazzaImportService } from "./piazza-import/service.js";
 import { ensureStorageBucket } from "./course-files/bucket.js";
 import { createObservability, logApiEvent } from "./observability/index.js";
 import { EmbeddingProvider, readEmbeddingConfig } from "./semantic/provider.js";
@@ -69,6 +70,7 @@ const app = createApp({
   followupService: new FollowupService(pool),
   statisticsService: new StatisticsService(pool),
   courseFileService: new CourseFileService(pool, s3, bucket),
+  piazzaImportService: new PiazzaImportService(pool),
   courseResourceService: new CourseResourceService(pool),
   courseInformationService: new CourseInformationService(pool),
   contentAttachmentService: new ContentAttachmentService(pool, s3, bucket),
