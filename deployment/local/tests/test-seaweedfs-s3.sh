@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-endpoint=http://127.0.0.1:${SEAWEEDFS_HOST_PORT:-8333}
+endpoint=http://$(docker compose -f deployment/local/compose.yml --env-file .env port seaweedfs 8333)
 access_key=${SEAWEEDFS_ACCESS_KEY_ID:-chalktalk-local}
 secret_key=${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
 bucket="chalktalk-smoke-$(date +%s)-$$"
