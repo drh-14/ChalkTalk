@@ -186,10 +186,12 @@ services:
       - |
         test -n "$${METRICS_TOKEN}" || { echo 'METRICS_TOKEN is required' >&2; exit 1; }
         printf '%s' "$${METRICS_TOKEN}" > /tmp/metrics-token
-        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=15d
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=15d --web.enable-remote-write-receiver
     environment:
       METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN in /srv/chalktalk/shared/production.env}
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
     volumes:
       - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -222,6 +224,7 @@ services:
       - grafana-data:/var/lib/grafana
       - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ../observability/grafana/load-test-dashboards:/var/lib/grafana/load-test-dashboards:ro
     depends_on:
       - prometheus
       - loki

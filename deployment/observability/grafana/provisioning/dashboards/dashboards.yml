@@ -8,3 +8,11 @@ providers:
     updateIntervalSeconds: 30
     options:
       path: /var/lib/grafana/dashboards
+  - name: Load Tests
+    orgId: 1
+    folder: Load Tests
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/load-test-dashboards

@@ -118,7 +118,7 @@ To open Grafana, run this on your own computer, keeping the SSH session open:
 ssh -N -L 3001:127.0.0.1:3001 ubuntu@YOUR_VM_HOST
 ```
 
-Then visit `http://127.0.0.1:3001` and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD` from the production secrets. The tunnel uses the existing SSH port 22; do not open port 3001 in UFW or the OVHcloud network firewall. Prometheus and Loki have no host-published ports.
+Then visit `http://127.0.0.1:3001` and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD` from the production secrets. The tunnel uses the existing SSH port 22; do not open port 3001 in UFW or the OVHcloud network firewall. Prometheus's remote-write receiver is published **only on VM loopback** at `127.0.0.1:9090` for the [manually dispatched bounded k6 test](../load-test/README.md); never expose that port publicly. Loki has no host-published port.
 
 Before a load test, make a harmless login attempt through the public API to populate HTTP and DB-client timing histograms, wait for two one-minute scrapes, then run the private freshness preflight from the pinned release checkout:
 
