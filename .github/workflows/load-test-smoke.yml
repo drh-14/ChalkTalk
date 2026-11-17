@@ -1,17 +1,7 @@
-name: Bounded production load test
+name: Smoke production load test
 
 on:
   workflow_dispatch:
-    inputs:
-      mode:
-        description: Separate one-VU smoke or reviewed ramp dispatch
-        type: choice
-        options: [smoke, ramp]
-        required: true
-      run_id:
-        description: Unique load-YYYYMMDD-<nonce> fixture identifier
-        type: string
-        required: true
 
 permissions:
   contents: read
@@ -34,8 +24,8 @@ jobs:
           persist-credentials: false
       - name: Run selected bounded operation
         env:
-          MODE: ${{ inputs.mode }}
-          RUN_ID: ${{ inputs.run_id }}
+          MODE: smoke
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           EXPECTED_SHA: ${{ github.sha }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SUPABASE_STORAGE_ENDPOINT: ${{ vars.SUPABASE_STORAGE_ENDPOINT }}

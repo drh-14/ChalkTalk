@@ -1,9 +1,33 @@
 /* global process, URL, fetch, AbortSignal */
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { setTimeout } from "node:timers/promises";
 
 const require = createRequire(import.meta.url);
-const { verifyMetrics } = require("../observability/verify-metrics.cjs");
+const {
+  verifyMetrics,
+  verifyScrapeTargets,
+} = require("../observability/verify-metrics.cjs");
+
+export async function waitForScrapeTargets(
+  query,
+  { timeoutMs = 180_000, pollIntervalMs = 10_000 } = {},
+) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      await verifyScrapeTargets(query);
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline)
+        throw new Error(`Scrape readiness timed out: ${error.message}`);
+      process.stderr.write(`Waiting for fresh scrapes: ${error.message}\n`);
+      await setTimeout(
+        Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())),
+      );
+    }
+  }
+}
 
 export async function verifyLoadMetrics(
   query,
@@ -51,12 +75,14 @@ export async function queryTunnel(expression, now) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [phase, runId] = process.argv.slice(2);
-  if (!["app", "all"].includes(phase))
-    throw new Error("Usage: node preflight.mjs app|all <run-id>");
-  verifyLoadMetrics(queryTunnel, runId, undefined, phase === "all").catch(
-    (error) => {
-      process.stderr.write(`${error.message}\n`);
-      process.exitCode = 1;
-    },
-  );
+  if (!["ready", "all"].includes(phase))
+    throw new Error("Usage: node preflight.mjs ready|all <run-id>");
+  const check =
+    phase === "ready"
+      ? waitForScrapeTargets(queryTunnel)
+      : verifyLoadMetrics(queryTunnel, runId);
+  check.catch((error) => {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  });
 }

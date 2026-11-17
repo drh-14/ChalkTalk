@@ -30,14 +30,11 @@ def deployed_database_url(path):
     return values[0]
 
 
-def prepare(root, env_file, sha_file, run_id, sha, project_ref, host, nonce, mac):
-    if not (RUN_ID.fullmatch(run_id) and SHA.fullmatch(sha) and REF.fullmatch(project_ref)
+def checked_database_url(env_file, sha_file, sha, project_ref, host, nonce, mac):
+    if not (SHA.fullmatch(sha) and REF.fullmatch(project_ref)
             and HOST.fullmatch(host) and re.fullmatch(r"[0-9a-f]{32}", nonce)
             and re.fullmatch(r"[0-9a-f]{64}", mac)):
         raise ValueError("Invalid load-test identity")
-    root_info = root.lstat()
-    if not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.getuid() or root_info.st_mode & 0o077:
-        raise ValueError("Load-test directory must be owner-only")
     if sha_file.read_text().strip() != sha:
         raise ValueError("Deployed SHA mismatch")
     database_url = deployed_database_url(env_file)
@@ -51,6 +48,16 @@ def prepare(root, env_file, sha_file, run_id, sha, project_ref, host, nonce, mac
     expected = hmac.new(database_url.encode(), nonce.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, mac):
         raise ValueError("GitHub and deployed database URL mismatch")
+    return database_url
+
+
+def prepare(root, env_file, sha_file, run_id, sha, project_ref, host, nonce, mac):
+    if not RUN_ID.fullmatch(run_id):
+        raise ValueError("Invalid load-test identity")
+    root_info = root.lstat()
+    if not stat.S_ISDIR(root_info.st_mode) or root_info.st_uid != os.getuid() or root_info.st_mode & 0o077:
+        raise ValueError("Load-test directory must be owner-only")
+    database_url = checked_database_url(env_file, sha_file, sha, project_ref, host, nonce, mac)
     path = root / f"{run_id}.db-url"
     try:
         info = path.lstat()
@@ -79,14 +86,14 @@ def main():
     parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path("/srv/chalktalk/shared/load-test"))
     parser.add_argument("--env-file", type=pathlib.Path, default=pathlib.Path("/srv/chalktalk/shared/production.env"))
     parser.add_argument("--deployed-sha-file", type=pathlib.Path, default=pathlib.Path("/srv/chalktalk/shared/deployed.sha"))
-    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-id")
     parser.add_argument("--deployed-sha", required=True)
     parser.add_argument("--project-ref", required=True)
     parser.add_argument("--database-host", required=True)
     parser.add_argument("--nonce", required=True)
     parser.add_argument("--mac", required=True)
     args = parser.parse_args()
-    prepare(args.root, args.env_file, args.deployed_sha_file, args.run_id, args.deployed_sha,
+    prepare(args.root, args.env_file, args.deployed_sha_file, args.run_id or "", args.deployed_sha,
             args.project_ref, args.database_host, args.nonce, args.mac)
     print("Deployed database target and storage project match")
 

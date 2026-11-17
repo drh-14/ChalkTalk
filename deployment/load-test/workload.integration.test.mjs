@@ -217,7 +217,14 @@ async function exercise(rateLimit, ambiguousMutation = false, mode = "smoke") {
         }),
       );
       const sanitized = join(directory, "sanitized");
-      sanitizeArtifacts(manifest, directory, sanitized, manifest.runId, mode);
+      sanitizeArtifacts(
+        manifest,
+        directory,
+        sanitized,
+        manifest.runId,
+        mode,
+        "https://github.com/drh-14/ChalkTalk/actions/runs/44156607166",
+      );
       assert.ok((await stat(join(sanitized, "summary.json"))).size > 1000);
       if (mode === "ramp")
         assert.ok((await stat(join(sanitized, "report.html"))).size > 1000);
