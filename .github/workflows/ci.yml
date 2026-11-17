@@ -24,10 +24,10 @@ jobs:
       - name: Verify production Node images load the pinned Supabase CA
         run: bash deployment/production/tests/verify-ca-images.sh
 
-      - name: Verify private production observability topology
-        run: node --test deployment/production/tests/observability.test.mjs
+      - name: Verify private production VM and host-network topology
+        run: node --test deployment/production/tests/observability.test.mjs deployment/production/tests/vm-metrics.test.mjs
 
-      - name: Verify running production monitoring services
+      - name: Verify running production VM and host-network telemetry
         run: node --test deployment/production/tests/observability.runtime.test.mjs
 
   supabase-integration:
@@ -252,7 +252,7 @@ jobs:
       - name: Start observability stack
         run: docker compose -f deployment/local/compose.yml --env-file .env up --build --wait --wait-timeout 240 --quiet-pull
 
-      - name: Exercise protected metrics, backlog recovery, and log privacy
+      - name: Exercise VM and host-network freshness, backlog recovery, and log privacy
         run: sh deployment/local/tests/test-observability.sh
 
       - name: Collect service logs

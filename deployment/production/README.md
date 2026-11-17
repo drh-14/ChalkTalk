@@ -12,7 +12,7 @@ This is a **runnable starting point**, not a production-readiness guarantee. It 
 | `worker`        | `deployment/production/Dockerfile.worker`        | Durable jobs, digests, notifications, resource text extraction/OCR, and file cleanup.                      |
 | `migrate`       | Reuses the API image                             | One-shot SQL schema migrations; must finish before app processes start.                                    |
 
-Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hocuspocus, so browser cookies and WebSockets use the same HTTPS origin. API, worker, collaboration, and migration have outbound access to Supabase and Resend; none publishes a host port. The frontend image receives only `DOMAIN`, never database or S3 credentials. Prometheus, Loki, and Alloy stay on the internal Compose network; Grafana publishes only `127.0.0.1:3001` for SSH forwarding.
+Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hocuspocus, so browser cookies and WebSockets use the same HTTPS origin. API, worker, collaboration, and migration have outbound access to Supabase and Resend; none publishes a host port. The frontend image receives only `DOMAIN`, never database or S3 credentials. Prometheus, Loki, Alloy, and both Node Exporters stay on the internal Compose network; Grafana publishes only `127.0.0.1:3001` for SSH forwarding.
 
 ## Prepare managed services
 
@@ -78,7 +78,7 @@ The following manual pinned-release procedure remains available for recovery:
    docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml config --services
    ```
 
-   The expected services are `migrate`, `api`, `worker`, `collaboration`, `web`, `prometheus`, `loki`, `alloy`, and `grafana`. No PostgreSQL, SeaweedFS, SMTP, or Mailpit service should appear. Confirm Docker Engine is version 28 or newer with `docker version --format '{{.Server.Version}}'` before the manual `up`; the automatic deploy script enforces this because older releases can expose loopback-published ports to hosts on the same network.
+   The expected services are `migrate`, `api`, `worker`, `collaboration`, `web`, `prometheus`, `loki`, `alloy`, `node-exporter`, `node-exporter-network`, and `grafana`. No PostgreSQL, SeaweedFS, SMTP, or Mailpit service should appear. Confirm Docker Engine is version 28 or newer with `docker version --format '{{.Server.Version}}'` before the manual `up`; the automatic deploy script enforces this because older releases can expose loopback-published ports to hosts on the same network.
 
 5. Build all four production images and start the stack:
 
@@ -110,7 +110,7 @@ If upgrading an earlier production env file, rename its five `S3_*` entries to t
 
 ## Operate and verify
 
-Production runs Prometheus, Loki, Alloy, and Grafana with persistent named volumes. Prometheus scrapes token-protected API, worker, and collaboration metrics; see the [observability reference](../../documentation/api/observability.md) for database timing interpretation. Alloy reads only sanitized API/worker NDJSON spools, without Docker-socket access; raw Caddy and collaboration logs stay in bounded Docker stdout. Grafana has no public Caddy route. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy. Loki retains logs for seven days and Prometheus retains metrics for fifteen days. Loki's age limit does **not** cap bytes, so monitor free disk space on the VM.
+Production runs Prometheus, Loki, Alloy, both Node Exporters, and Grafana. Prometheus scrapes token-protected application metrics and private VM host metrics; see the [observability reference](../../documentation/api/observability.md) for scrape and database-timing details. Alloy reads only sanitized API/worker NDJSON spools, without Docker-socket access; raw Caddy and collaboration logs stay in bounded Docker stdout. Grafana has no public Caddy route. Docker retains basic container stdout logs with a 10 MiB maximum per file and three files per service; this is size-bounded, not an age-based retention policy. Loki retains logs for seven days and Prometheus retains metrics for fifteen days. Loki's age limit does **not** cap bytes, so monitor free disk space on the VM.
 
 To open Grafana, run this on your own computer, keeping the SSH session open:
 
@@ -119,6 +119,14 @@ ssh -N -L 3001:127.0.0.1:3001 ubuntu@YOUR_VM_HOST
 ```
 
 Then visit `http://127.0.0.1:3001` and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD` from the production secrets. The tunnel uses the existing SSH port 22; do not open port 3001 in UFW or the OVHcloud network firewall. Prometheus and Loki have no host-published ports.
+
+Before a load test, make a harmless login attempt through the public API to populate HTTP and DB-client timing histograms, wait for two one-minute scrapes, then run the private freshness preflight from the pinned release checkout:
+
+```sh
+docker compose --env-file "$COMPOSE_ENV_FILE" -f deployment/production/compose.yml exec -T api node - < deployment/observability/verify-metrics.cjs
+```
+
+The [observability reference](../../documentation/api/observability.md) defines the required fresh series and the **VM System Load** dashboard. Missing or stale series block the load-test ramp. Review Supabase Studio manually for memory commitment and connection warnings before and during the run. Verify plausible VM changes under a small known workload, and record the Grafana time window and preflight output. Repeat this preflight **after deployment on the actual VM**; CI containers do not prove production collection.
 
 `GRAFANA_ADMIN_PASSWORD` initializes the admin login only when the `grafana-data` volume is fresh. Once Grafana has started, its account database persists in that volume: changing the GitHub secret, rerunning bootstrap to rerender `grafana.env`, or recreating the container alone does **not** rotate the login. To rotate it, while signed in over the SSH tunnel, use **Profile → Change password** in Grafana to set a new strong password. Update the GitHub `production` environment secret `GRAFANA_ADMIN_PASSWORD` to that same value, then rerun the manual VM bootstrap to refresh the private `grafana.env`. Over the tunnel, sign out and verify that the old password fails and the new password succeeds. Do not put either password on a shell command line or in logs.
 

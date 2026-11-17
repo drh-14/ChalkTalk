@@ -143,6 +143,42 @@ services:
     networks: [edge]
     logging: *bounded-logs
 
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/kubelet/.+)($$|/)
+    pid: host
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    expose: ["9100"]
+    networks: [edge]
+    logging: *bounded-logs
+
+  node-exporter-network:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.procfs=/host/proc/1
+      - --collector.disable-defaults
+      - --collector.netdev
+      - --no-collector.netdev.netlink
+    pid: host
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    expose: ["9100"]
+    networks: [edge]
+    logging: *bounded-logs
+
   prometheus:
     image: prom/prometheus:v3.3.1
     entrypoint: ["/bin/sh", "-ec"]
@@ -161,6 +197,8 @@ services:
       api: { condition: service_healthy }
       worker: { condition: service_started }
       collaboration: { condition: service_started }
+      node-exporter: { condition: service_started }
+      node-exporter-network: { condition: service_started }
     networks: [edge]
     logging: *bounded-logs
 

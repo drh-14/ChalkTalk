@@ -1,0 +1,128 @@
+{
+  "uid": "chalktalk-vm-system-load",
+  "title": "VM System Load",
+  "description": "Linux VM host metrics from private Node Exporter. On Docker Desktop this is the Docker Linux VM, not physical macOS. Supabase server resources are not collected here.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "1m",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "CPU used",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "chalktalk-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{job=\"chalktalk-vm\",mode=\"idle\"}[5m])))",
+          "legendFormat": "CPU used"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "options": {}
+    },
+    {
+      "id": 2,
+      "title": "Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "chalktalk-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "node_memory_MemAvailable_bytes{job=\"chalktalk-vm\"}",
+          "legendFormat": "Available"
+        },
+        {
+          "refId": "B",
+          "expr": "node_memory_MemTotal_bytes{job=\"chalktalk-vm\"} - node_memory_MemAvailable_bytes{job=\"chalktalk-vm\"}",
+          "legendFormat": "Used"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "options": {}
+    },
+    {
+      "id": 3,
+      "title": "Network traffic",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "chalktalk-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(node_network_receive_bytes_total{job=\"chalktalk-vm-network\",device!~\"lo|veth.*\"}[5m]))",
+          "legendFormat": "Received"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(node_network_transmit_bytes_total{job=\"chalktalk-vm-network\",device!~\"lo|veth.*\"}[5m]))",
+          "legendFormat": "Sent"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "options": {}
+    },
+    {
+      "id": 4,
+      "title": "Network errors",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "chalktalk-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(node_network_receive_errs_total{job=\"chalktalk-vm-network\",device!~\"lo|veth.*\"}[5m]))",
+          "legendFormat": "Receive errors"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(node_network_transmit_errs_total{job=\"chalktalk-vm-network\",device!~\"lo|veth.*\"}[5m]))",
+          "legendFormat": "Transmit errors"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "options": {}
+    },
+    {
+      "id": 5,
+      "title": "Disk I/O",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "chalktalk-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(node_disk_read_bytes_total{job=\"chalktalk-vm\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "Read"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(node_disk_written_bytes_total{job=\"chalktalk-vm\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "Written"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "options": {}
+    },
+    {
+      "id": 6,
+      "title": "Filesystem free",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "chalktalk-prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "node_filesystem_avail_bytes{job=\"chalktalk-vm\",fstype!~\"tmpfs|overlay|squashfs\",mountpoint!~\"/run.*|/host_mnt.*|/oldroot.*|/var/lib/docker/.+\"}",
+          "legendFormat": "{{mountpoint}} free"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "options": {}
+    }
+  ]
+}

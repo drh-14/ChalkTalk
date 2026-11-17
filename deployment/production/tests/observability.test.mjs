@@ -116,3 +116,54 @@ test("production collectors use persistent volumes and sanitized log inputs", ()
       );
   }
 });
+
+test("production host exporter is private and reads host views only", () => {
+  const { services } = model();
+  const exporter = services["node-exporter"];
+  assert.match(exporter.image, /^prom\/node-exporter:v\d/);
+  assert.equal(exporter.ports?.length ?? 0, 0);
+  assert.ok(Object.hasOwn(exporter.networks, "edge"));
+  assert.deepEqual(
+    exporter.volumes.map(({ source, target, read_only }) => [
+      source,
+      target,
+      read_only,
+    ]),
+    [
+      ["/proc", "/host/proc", true],
+      ["/sys", "/host/sys", true],
+      ["/", "/host/root", true],
+    ],
+  );
+  assert.equal(
+    exporter.volumes.some(({ source }) => source.includes("docker.sock")),
+    false,
+  );
+  assert.equal(services.api.depends_on?.["node-exporter"], undefined);
+  assert.equal(services.web.depends_on?.["node-exporter"], undefined);
+});
+
+test("production network exporter reads host PID 1 without a published port", () => {
+  const { services } = model();
+  const exporter = services["node-exporter-network"];
+  assert.equal(exporter.image, "prom/node-exporter:v1.9.1");
+  assert.equal(exporter.image, services["node-exporter"].image);
+  assert.equal(exporter.pid, "host");
+  assert.equal(exporter.network_mode, undefined);
+  assert.equal(exporter.read_only, true);
+  assert.deepEqual(exporter.security_opt, ["no-new-privileges:true"]);
+  assert.equal(exporter.ports?.length ?? 0, 0);
+  assert.ok(Object.hasOwn(exporter.networks, "edge"));
+  assert.deepEqual(
+    exporter.volumes.map(({ source, target, read_only }) => [source, target, read_only]),
+    [["/proc", "/host/proc", true]],
+  );
+  assert.deepEqual(exporter.command, [
+    "--path.procfs=/host/proc/1",
+    "--collector.disable-defaults",
+    "--collector.netdev",
+    "--no-collector.netdev.netlink",
+  ]);
+  assert.equal(services.api.depends_on?.["node-exporter-network"], undefined);
+  assert.equal(services.web.depends_on?.["node-exporter-network"], undefined);
+});

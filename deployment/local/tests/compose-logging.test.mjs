@@ -86,3 +86,53 @@ test("Grafana queries Loki logs and keeps the existing dashboard UID", async () 
   assert.equal(logs.targets[0].expr, '{service=~"api|worker"}');
   assert.equal(dashboard.uid, "chalktalk-api");
 });
+
+test("local host exporter is private and reads Docker Linux VM views only", () => {
+  const exporter = config.services["node-exporter"];
+  assert.match(exporter.image, /^prom\/node-exporter:v\d/);
+  assert.equal(exporter.ports?.length ?? 0, 0);
+  assert.deepEqual(
+    exporter.volumes.map(({ source, target, read_only }) => [
+      source,
+      target,
+      read_only,
+    ]),
+    [
+      ["/proc", "/host/proc", true],
+      ["/sys", "/host/sys", true],
+      ["/", "/host/root", true],
+    ],
+  );
+  assert.equal(
+    exporter.volumes.some(({ source }) => source.includes("docker.sock")),
+    false,
+  );
+  assert.equal(config.services.api.depends_on?.["node-exporter"], undefined);
+  assert.equal(
+    config.services.gateway.depends_on?.["node-exporter"],
+    undefined,
+  );
+});
+
+test("local network exporter reads Docker Linux VM PID 1 privately", () => {
+  const exporter = config.services["node-exporter-network"];
+  assert.equal(exporter.image, "prom/node-exporter:v1.9.1");
+  assert.equal(exporter.image, config.services["node-exporter"].image);
+  assert.equal(exporter.pid, "host");
+  assert.equal(exporter.network_mode, undefined);
+  assert.equal(exporter.read_only, true);
+  assert.deepEqual(exporter.security_opt, ["no-new-privileges:true"]);
+  assert.equal(exporter.ports?.length ?? 0, 0);
+  assert.deepEqual(
+    exporter.volumes.map(({ source, target, read_only }) => [source, target, read_only]),
+    [["/proc", "/host/proc", true]],
+  );
+  assert.deepEqual(exporter.command, [
+    "--path.procfs=/host/proc/1",
+    "--collector.disable-defaults",
+    "--collector.netdev",
+    "--no-collector.netdev.netlink",
+  ]);
+  assert.equal(config.services.api.depends_on?.["node-exporter-network"], undefined);
+  assert.equal(config.services.gateway.depends_on?.["node-exporter-network"], undefined);
+});

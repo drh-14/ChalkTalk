@@ -21,7 +21,7 @@ If reusing an older `.env`, remove its `PORT` entry. Local Compose requires the 
 docker compose -f deployment/local/compose.yml --env-file .env up --build --wait
 ```
 
-This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, collaboration server, Caddy gateway, private Vite web client, Prometheus, Grafana, Loki, and Alloy. A new database has no users or courses. Create a course in the app or explicitly import one from Piazza; startup never loads sample data. With the default `DOMAIN` and `WEB_PORT`, the web client is [https://localhost:5173](https://localhost:5173); otherwise open `https://<DOMAIN>:<WEB_PORT>` using your configured values. The first image build may take a few minutes. Re-running the command preserves named-volume data. For logs, run `docker compose -f deployment/local/compose.yml --env-file .env logs -f api` (or another service).
+This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, collaboration server, Caddy gateway, private Vite web client, Prometheus, Grafana, Loki, Alloy, and two private Node Exporters. A new database has no users or courses. Create a course in the app or explicitly import one from Piazza; startup never loads sample data. With the default `DOMAIN` and `WEB_PORT`, the web client is [https://localhost:5173](https://localhost:5173); otherwise open `https://<DOMAIN>:<WEB_PORT>` using your configured values. The first image build may take a few minutes. Re-running the command preserves named-volume data. For logs, run `docker compose -f deployment/local/compose.yml --env-file .env logs -f api` (or another service).
 
 ## 3. Trust the local HTTPS certificate and open the app
 
@@ -92,7 +92,7 @@ If you have an existing populated local volume created with the earlier `postgre
 
 ## Local observability
 
-Prometheus, Grafana, Loki, and Alloy start with the rest of the local stack. Set `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` in `.env` to **different** outputs of `openssl rand -hex 32` before starting. Open Grafana at [http://127.0.0.1:3001](http://127.0.0.1:3001) and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD`. See the [observability reference](../../documentation/api/observability.md). Do not commit credentials or expose monitoring endpoints publicly.
+Prometheus, Grafana, Loki, and Alloy start with the rest of the local stack. Set `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` in `.env` to **different** outputs of `openssl rand -hex 32` before starting. Open Grafana at [http://127.0.0.1:3001](http://127.0.0.1:3001) and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD`. The separate **VM System Load** dashboard shows Docker Desktop's **Linux VM**, not physical macOS load or Supabase database-server load. After a login attempt warms HTTP and DB-client histograms and two one-minute scrapes have elapsed, run `docker compose -f deployment/local/compose.yml --env-file .env exec -T api node /app/deployment/observability/verify-metrics.cjs` to check scrape freshness. See the [observability reference](../../documentation/api/observability.md). Do not commit credentials or expose monitoring endpoints publicly.
 
 ## Stop, troubleshoot, and check changes
 
