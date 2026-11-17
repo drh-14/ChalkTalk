@@ -12,6 +12,12 @@ For direct work, inspect the affected files, make the change, run focused valida
 
 An explicit user request to skip or use delegation overrides the default threshold.
 
+## Subagent progress monitoring
+
+When starting or resuming subagent work, create a current-chat heartbeat automation if one is not already active for this chat. Check about every 10 minutes. The heartbeat should inspect all subagents for the chat and report only actionable changes: a decision or blocker, a failed check, PR publication, final CI, or completion. Keep unchanged and non-actionable polls quiet; do not approve gates or run production operations on the user's behalf.
+
+At each subagent completion and heartbeat, check whether any subagent is still active. Once none are active, send any final handoff that is due and delete the heartbeat. Start a new heartbeat if subagent work resumes later. If heartbeat automation is unavailable, say so rather than promising automatic updates.
+
 ## Change workflow
 
 1. For product, API, database, or UI behavior changes, create or update an OpenSpec change before implementation. Complete and validate its proposal, affected specs, design, and tasks; resolve material decisions with the user before coding. Wording-only documentation, formatting, and mechanical changes that do not alter behavior do not require an OpenSpec change.
