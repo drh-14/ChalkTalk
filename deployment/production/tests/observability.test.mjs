@@ -40,7 +40,7 @@ function model() {
   );
 }
 
-test("production monitoring has only an SSH-forwardable Grafana port", () => {
+test("production monitoring has only SSH-forwardable Grafana and Prometheus ports", () => {
   const services = model().services;
   assert.deepEqual(
     services.grafana.ports.map(({ host_ip, published, target }) => ({
@@ -51,11 +51,19 @@ test("production monitoring has only an SSH-forwardable Grafana port", () => {
     [{ host_ip: "127.0.0.1", published: "3001", target: 3000 }],
   );
   assert.deepEqual(
+    services.prometheus.ports.map(({ host_ip, published, target }) => ({
+      host_ip,
+      published,
+      target,
+    })),
+    [{ host_ip: "127.0.0.1", published: "9090", target: 9090 }],
+  );
+  assert.deepEqual(
     services.web.ports.map(({ published }) => published).sort(),
     ["80", "443", "443"].sort(),
   );
   for (const [name, service] of Object.entries(services)) {
-    if (name === "grafana" || name === "web") continue;
+    if (name === "grafana" || name === "prometheus" || name === "web") continue;
     assert.equal(service.ports?.length ?? 0, 0, `${name} has a host port`);
   }
   assert.equal(services.grafana.environment.GF_AUTH_ANONYMOUS_ENABLED, "false");
@@ -155,7 +163,11 @@ test("production network exporter reads host PID 1 without a published port", ()
   assert.equal(exporter.ports?.length ?? 0, 0);
   assert.ok(Object.hasOwn(exporter.networks, "edge"));
   assert.deepEqual(
-    exporter.volumes.map(({ source, target, read_only }) => [source, target, read_only]),
+    exporter.volumes.map(({ source, target, read_only }) => [
+      source,
+      target,
+      read_only,
+    ]),
     [["/proc", "/host/proc", true]],
   );
   assert.deepEqual(exporter.command, [

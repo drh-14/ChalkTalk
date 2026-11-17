@@ -1,0 +1,630 @@
+{
+  "uid": "chalktalk-load-test-correlation",
+  "title": "Load Test Correlation",
+  "description": "k6 client series filtered by testid; app and VM series are time-aligned, not exclusive to this run. Supabase server metrics are reviewed manually in Studio.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timezone": "utc",
+  "templating": {
+    "list": [
+      {
+        "name": "testid",
+        "label": "Run ID",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "chalktalk-prometheus"
+        },
+        "query": {
+          "query": "label_values(k6_http_reqs_total, testid)",
+          "refId": "testid"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Client P50 latency",
+      "description": "k6 end-to-end latency; includes network",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_http_req_duration_p50{testid=\"$testid\",expected_response=\"true\"}",
+          "legendFormat": "Client {{name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 2,
+      "title": "Client P90 latency",
+      "description": "k6 end-to-end latency; includes network",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_http_req_duration_p90{testid=\"$testid\",expected_response=\"true\"}",
+          "legendFormat": "Client {{name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 3,
+      "title": "Client P95 latency",
+      "description": "k6 end-to-end latency; includes network",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_http_req_duration_p95{testid=\"$testid\",expected_response=\"true\"}",
+          "legendFormat": "Client {{name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 4,
+      "title": "Client P99 latency",
+      "description": "k6 end-to-end latency; includes network",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_http_req_duration_p99{testid=\"$testid\",expected_response=\"true\"}",
+          "legendFormat": "Client {{name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 5,
+      "title": "Client requests / second",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name) (rate(k6_http_reqs_total{testid=\"$testid\"}[1m]))",
+          "legendFormat": "{{name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 6,
+      "title": "Client errors and checks",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(k6_http_req_failed_rate{testid=\"$testid\"})",
+          "legendFormat": "Failed requests"
+        },
+        {
+          "refId": "B",
+          "expr": "1 - min(k6_checks_rate{testid=\"$testid\"})",
+          "legendFormat": "Failed checks"
+        },
+        {
+          "refId": "C",
+          "expr": "max(k6_unexpected_errors_rate{testid=\"$testid\"})",
+          "legendFormat": "Unexpected statuses"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 7,
+      "title": "Rate limits and dropped iterations",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "increase(k6_rate_limit_hits_total{testid=\"$testid\"}[1m])",
+          "legendFormat": "429 responses"
+        },
+        {
+          "refId": "B",
+          "expr": "increase(k6_dropped_iterations_total{testid=\"$testid\"}[1m])",
+          "legendFormat": "Dropped iterations"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 8,
+      "title": "Active virtual users",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_vus{testid=\"$testid\"}",
+          "legendFormat": "Active VUs"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 9,
+      "title": "API volume and 5xx",
+      "description": "All API traffic in the selected UTC window, including any real users",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chalktalk_http_requests_total{job=\"chalktalk-api\"}[1m]))",
+          "legendFormat": "API requests"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chalktalk_http_requests_total{job=\"chalktalk-api\",status_class=\"5xx\"}[1m]))",
+          "legendFormat": "API 5xx"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 10,
+      "title": "API response P50 / P95 / P99",
+      "description": "Time-aligned application telemetry; may include non-load-test traffic",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(chalktalk_http_request_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 11,
+      "title": "DB query (client-observed) P50 / P95 / P99",
+      "description": "Time-aligned application telemetry; may include non-load-test traffic",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_db_query_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_db_query_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(chalktalk_db_query_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 12,
+      "title": "DB pool wait P50 / P95 / P99",
+      "description": "Time-aligned application telemetry; may include non-load-test traffic",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(chalktalk_db_pool_acquire_duration_seconds_bucket{job=\"chalktalk-api\"}[5m])))",
+          "legendFormat": "P99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 13,
+      "title": "Failed DB attempts",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(chalktalk_db_query_duration_seconds_count{job=\"chalktalk-api\",outcome=\"failed\"}[5m]))",
+          "legendFormat": "Failed query attempts"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(chalktalk_db_pool_acquire_duration_seconds_count{job=\"chalktalk-api\",outcome=\"failed\"}[5m]))",
+          "legendFormat": "Failed pool acquisitions"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 14,
+      "title": "VM CPU used",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{job=\"chalktalk-vm\",mode=\"idle\"}[5m])))",
+          "legendFormat": "CPU used"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 15,
+      "title": "VM memory",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "node_memory_MemAvailable_bytes{job=\"chalktalk-vm\"}",
+          "legendFormat": "Available"
+        },
+        {
+          "refId": "B",
+          "expr": "node_memory_MemTotal_bytes{job=\"chalktalk-vm\"} - node_memory_MemAvailable_bytes{job=\"chalktalk-vm\"}",
+          "legendFormat": "Used"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 16,
+      "title": "VM network",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(node_network_receive_bytes_total{job=\"chalktalk-vm-network\",device!~\"lo|veth.*\"}[5m]))",
+          "legendFormat": "Received"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(node_network_transmit_bytes_total{job=\"chalktalk-vm-network\",device!~\"lo|veth.*\"}[5m]))",
+          "legendFormat": "Sent"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 17,
+      "title": "VM disk I/O",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(node_disk_read_bytes_total{job=\"chalktalk-vm\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "Read"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(node_disk_written_bytes_total{job=\"chalktalk-vm\",device!~\"loop.*|ram.*\"}[5m]))",
+          "legendFormat": "Written"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      },
+      "options": {}
+    },
+    {
+      "id": 18,
+      "title": "VM filesystem available",
+      "description": "",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "chalktalk-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "node_filesystem_avail_bytes{job=\"chalktalk-vm\",fstype!~\"tmpfs|overlay|squashfs\",mountpoint!~\"/run.*|/host_mnt.*|/oldroot.*|/var/lib/docker/.+\"}",
+          "legendFormat": "Free {{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      },
+      "options": {}
+    }
+  ]
+}

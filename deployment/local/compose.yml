@@ -324,6 +324,7 @@ services:
       - grafana-data:/var/lib/grafana
       - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ../observability/grafana/load-test-dashboards:/var/lib/grafana/load-test-dashboards:ro
     depends_on:
       - prometheus
       - loki

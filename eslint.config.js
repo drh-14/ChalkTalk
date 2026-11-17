@@ -35,4 +35,9 @@ export default tseslint.config(
     ],
     languageOptions: { globals: globals.node },
   },
+  {
+    files: ["deployment/load-test/**/*.mjs"],
+    languageOptions: { globals: globals.node },
+    rules: { "no-redeclare": "off" },
+  },
 );

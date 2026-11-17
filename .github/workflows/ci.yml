@@ -25,7 +25,12 @@ jobs:
         run: bash deployment/production/tests/verify-ca-images.sh
 
       - name: Verify private production VM and host-network topology
-        run: node --test deployment/production/tests/observability.test.mjs deployment/production/tests/vm-metrics.test.mjs
+        run: node --test deployment/production/tests/observability.test.mjs deployment/production/tests/vm-metrics.test.mjs deployment/production/tests/load-test.test.mjs deployment/load-test/preflight.test.mjs deployment/load-test/profile.test.mjs deployment/load-test/coverage.test.mjs deployment/load-test/verify-inventory.test.mjs deployment/load-test/sanitize-artifacts.test.mjs
+
+      - name: Verify bounded k6 smoke against a local mock API
+        env:
+          RUN_K6_INTEGRATION: "1"
+        run: node --test deployment/load-test/workload.integration.test.mjs
 
       - name: Verify running production VM and host-network telemetry
         run: node --test deployment/production/tests/observability.runtime.test.mjs
@@ -115,6 +120,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Exercise k6 fixture safety against a separate PostgreSQL instance
+        run: |
+          docker run -d --rm --name chalktalk-k6-fixture-ci -e POSTGRES_PASSWORD=k6-ci-isolated -p 127.0.0.1:55432:5432 postgres:16
+          trap 'docker stop chalktalk-k6-fixture-ci >/dev/null' EXIT
+          until docker exec chalktalk-k6-fixture-ci pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+          export TEST_DATABASE_URL='postgresql://postgres:k6-ci-isolated@127.0.0.1:55432/postgres'
+          DATABASE_URL="$TEST_DATABASE_URL" npm run db:migrate
+          RUN_K6_FIXTURE_INTEGRATION=1 npx vitest run apps/api/src/database/load-test-fixture.integration.test.ts
+
       - name: Install PDF validator
         run: sudo apt-get update && sudo apt-get install -y qpdf poppler-utils tesseract-ocr tesseract-ocr-eng
 
@@ -135,6 +149,9 @@ jobs:
 
       - name: Test production release script without VM secrets
         run: python3 -m unittest discover -s deployment/production/tests -p 'test_*.py'
+
+      - name: Test bounded Actions claims and secret-safe VM target checks
+        run: python3 -m unittest discover -s deployment/load-test -p 'test_*.py'
 
       - name: Build
         run: npm run build
