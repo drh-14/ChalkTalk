@@ -105,6 +105,8 @@ docker compose -f deployment/local/compose.yml --env-file .env down             
 
 `docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**, including Caddy's local CA; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, repeat the [local HTTPS trust step](#3-trust-the-local-https-certificate-and-open-the-app) and confirm `DOMAIN` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
 
+In Codex app worktrees, `.codex/environments/environment.toml` runs `npm ci` during setup, using the committed lockfile to install ESLint and Prettier. The **Check lint and format** action runs `npm run lint` and then `npm run format:check`; it stops if lint fails. Run the other checks below separately.
+
 Run the repository checks before submitting code:
 
 ```bash
