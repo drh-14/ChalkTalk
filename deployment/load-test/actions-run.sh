@@ -6,8 +6,11 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
 [[ ${GITHUB_ACTIONS:-} == true && ${GITHUB_REF:-} == refs/heads/main && ${GITHUB_REPOSITORY:-} == drh-14/ChalkTalk ]] || { echo 'Trusted main Actions dispatch required' >&2; exit 2; }
 [[ ${MODE:-} == smoke || ${MODE:-} == ramp ]] || { echo 'Choose smoke or ramp' >&2; exit 2; }
-[[ ${RUN_ID:-} =~ ^load-[0-9]{8}-[a-z0-9]{8,32}$ && ${EXPECTED_SHA:-} =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid run ID or SHA' >&2; exit 2; }
-[[ ${GITHUB_RUN_ID:-} =~ ^[0-9]+$ ]] || { echo 'GitHub run identity required' >&2; exit 2; }
+[[ ${GITHUB_RUN_ATTEMPT:-} == 1 ]] || { echo 'GitHub Actions rerun refused before fixture access' >&2; exit 2; }
+[[ -z ${RUN_ID:-} ]] || { echo 'Externally supplied run ID refused' >&2; exit 2; }
+RUN_ID=
+[[ ${EXPECTED_SHA:-} =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid deployed SHA' >&2; exit 2; }
+[[ ${GITHUB_RUN_ID:-} =~ ^[0-9]{6,30}$ ]] || { echo 'GitHub run identity required' >&2; exit 2; }
 [[ $(git -C "$repo_root" rev-parse HEAD) == "$EXPECTED_SHA" ]] || { echo 'Checkout SHA mismatch' >&2; exit 2; }
 current_main=$(git ls-remote https://github.com/drh-14/ChalkTalk.git refs/heads/main | cut -f1)
 [[ $current_main == "$EXPECTED_SHA" ]] || { echo 'Dispatch is not current main' >&2; exit 2; }
@@ -23,11 +26,12 @@ raw_dir=$(mktemp -d)
 chmod 700 "$input_dir" "$credential_dir" "$raw_dir"
 sanitized_dir=${LOAD_TEST_REPORT_DIR:?Sanitized report directory required}
 vm_root=/srv/chalktalk/shared/load-test
-profile_vm_path="$vm_root/$RUN_ID.$GITHUB_RUN_ID.profile.json"
+profile_vm_path="$vm_root/attempt-$GITHUB_RUN_ID.profile.json"
 release="/srv/chalktalk/releases/$EXPECTED_SHA"
 claimed=false
 completed=false
 artifacts_published=false
+source_smoke_url=
 tunnel_pid=
 cleanup_failed=false
 summary_file=${GITHUB_STEP_SUMMARY:-/dev/null}
@@ -43,7 +47,9 @@ cleanup() {
     printf '{"start":"%s","end":"%s"}\n' "$workload_start_utc" "$workload_end_utc" > "$raw_dir/window.json"
   fi
   if [[ -n $tunnel_pid ]]; then kill "$tunnel_pid" 2>/dev/null || true; wait "$tunnel_pid" 2>/dev/null || true; fi
-  if [[ $claimed == true && ( $MODE == ramp || $completed != true ) ]]; then
+  if [[ $claimed == true && -z $RUN_ID ]]; then
+    cleanup_failed=true
+  elif [[ $claimed == true && ( $MODE == ramp || $completed != true ) ]]; then
     echo 'Attempting reviewed VM fixture cleanup' >&2
     if vm_ssh "test -f $vm_root/$RUN_ID.json"; then
       if ! vm_ssh "bash $release/deployment/load-test/vm_fixture.sh inventory $RUN_ID $EXPECTED_SHA $project_ref $db_host" > "$raw_dir/final-inventory.json" ||
@@ -59,7 +65,7 @@ cleanup() {
     fi
   fi
   if [[ $artifacts_published != true && -f $input_dir/manifest.json ]]; then
-    if ! node "$script_dir/sanitize-artifacts.mjs" "$input_dir/manifest.json" "$raw_dir" "$sanitized_dir" "$RUN_ID" "$MODE"; then
+    if ! node "$script_dir/sanitize-artifacts.mjs" "$input_dir/manifest.json" "$raw_dir" "$sanitized_dir" "$RUN_ID" "$MODE" "$source_smoke_url"; then
       cleanup_failed=true
     fi
   fi
@@ -82,7 +88,8 @@ cleanup() {
     fi
   fi
   {
-    echo "## Bounded k6 $MODE — $RUN_ID"
+    echo "## Bounded k6 $MODE — ${RUN_ID:-not-resolved}"
+    echo "- Source Smoke workflow: ${source_smoke_url:-not-selected}"
     echo "- Selected core API flows only: login, course/feed/post/notification reads, question/note/answer/follow-up/poll/vote writes"
     echo "- Not all app flows: course creation, files, email, and collaboration are excluded"
     echo "- Production deployment SHA: $EXPECTED_SHA"
@@ -90,7 +97,7 @@ cleanup() {
     echo "- Workload UTC window: ${workload_start_utc:-not-started} → ${workload_end_utc:-not-started}"
     echo "- Outcome: $([[ $result -eq 0 ]] && echo passed || echo failed-or-incomplete)"
     echo "- Fixture cleanup: $fixture_status"
-    echo "- Grafana: Load Tests / Load Test Correlation, run ID $RUN_ID (private VM access required)"
+    echo "- Grafana: Load Tests / Load Test Correlation, run ID ${RUN_ID:-not-resolved} (private VM access required)"
     echo "- Supabase Studio baseline and warnings require human review"
   } >> "$summary_file"
   rm -rf -- "$input_dir" "$credential_dir" "$raw_dir"
@@ -112,18 +119,6 @@ db_host=$(jq -r .databaseHost "$input_dir/identity.json")
 nonce=$(jq -r .nonce "$input_dir/identity.json")
 mac=$(jq -r .mac "$input_dir/identity.json")
 [[ $(vm_ssh 'cat /srv/chalktalk/shared/deployed.sha') == "$EXPECTED_SHA" ]] || { echo 'VM is not running the dispatched main SHA' >&2; exit 1; }
-vm_ssh "install -d -m 0700 $vm_root"
-vm_scp "$input_dir/profile.json" "ubuntu@$VM_HOST:$profile_vm_path"
-vm_ssh "python3 $release/deployment/load-test/vm_control.py prepare --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --project-ref $project_ref --database-host $db_host --nonce $nonce --mac $mac" >/dev/null
-vm_ssh "python3 $release/deployment/load-test/vm_state.py claim-$MODE --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path" >/dev/null
-claimed=true
-if [[ $MODE == smoke ]]; then
-  vm_ssh "bash $release/deployment/load-test/vm_fixture.sh provision $RUN_ID $EXPECTED_SHA $project_ref $db_host" >/dev/null
-fi
-vm_ssh "bash $release/deployment/load-test/vm_fixture.sh inventory $RUN_ID $EXPECTED_SHA $project_ref $db_host" > "$raw_dir/inventory.json"
-node "$script_dir/verify-inventory.mjs" "$raw_dir/inventory.json"
-vm_scp "ubuntu@$VM_HOST:$vm_root/$RUN_ID.json" "$input_dir/manifest.json"
-chmod 600 "$input_dir/manifest.json"
 ssh "${ssh_options[@]}" -o ExitOnForwardFailure=yes -N -L 19090:127.0.0.1:9090 "ubuntu@$VM_HOST" &
 tunnel_pid=$!
 for _ in {1..15}; do
@@ -132,7 +127,24 @@ for _ in {1..15}; do
   sleep 1
 done
 curl --fail --silent --show-error --max-time 3 http://127.0.0.1:19090/-/ready >/dev/null
-node "$script_dir/preflight.mjs" app "$RUN_ID"
+node "$script_dir/preflight.mjs" ready "$RUN_ID"
+vm_ssh "install -d -m 0700 $vm_root"
+vm_scp "$input_dir/profile.json" "ubuntu@$VM_HOST:$profile_vm_path"
+source_arg=
+if [[ $MODE == smoke ]]; then source_arg="--source-run-id $GITHUB_RUN_ID"; fi
+claim_result=$(vm_ssh "python3 $release/deployment/load-test/vm_state.py claim-$MODE-auto --root $vm_root --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path --project-ref $project_ref --database-host $db_host --nonce $nonce --mac $mac $source_arg")
+claimed=true
+RUN_ID=$(printf '%s' "$claim_result" | jq -er .runId)
+source_smoke_url=$(printf '%s' "$claim_result" | jq -er .sourceRunUrl)
+[[ $RUN_ID =~ ^load-[0-9]{8}-[a-z0-9]{8,32}$ && $source_smoke_url =~ ^https://github.com/drh-14/ChalkTalk/actions/runs/[0-9]+$ ]] || { echo 'VM claim response identity invalid; manual review required' >&2; exit 1; }
+vm_ssh "python3 $release/deployment/load-test/vm_control.py prepare --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --project-ref $project_ref --database-host $db_host --nonce $nonce --mac $mac" >/dev/null
+if [[ $MODE == smoke ]]; then
+  vm_ssh "bash $release/deployment/load-test/vm_fixture.sh provision $RUN_ID $EXPECTED_SHA $project_ref $db_host" >/dev/null
+fi
+vm_ssh "bash $release/deployment/load-test/vm_fixture.sh inventory $RUN_ID $EXPECTED_SHA $project_ref $db_host" > "$raw_dir/inventory.json"
+node "$script_dir/verify-inventory.mjs" "$raw_dir/inventory.json"
+vm_scp "ubuntu@$VM_HOST:$vm_root/$RUN_ID.json" "$input_dir/manifest.json"
+chmod 600 "$input_dir/manifest.json"
 echo "Starting bounded $MODE for $RUN_ID; selected core API flows only"
 workload_start_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker run --rm --network host --user "$(id -u):$(id -g)" \
@@ -151,7 +163,7 @@ if [[ $MODE == smoke ]]; then
   sleep 120
   node "$script_dir/preflight.mjs" all "$RUN_ID"
   printf '{"start":"%s","end":"%s"}\n' "$workload_start_utc" "$workload_end_utc" > "$raw_dir/window.json"
-  node "$script_dir/sanitize-artifacts.mjs" "$input_dir/manifest.json" "$raw_dir" "$sanitized_dir" "$RUN_ID" "$MODE"
+  node "$script_dir/sanitize-artifacts.mjs" "$input_dir/manifest.json" "$raw_dir" "$sanitized_dir" "$RUN_ID" "$MODE" "$source_smoke_url"
   artifacts_published=true
   vm_ssh "python3 $release/deployment/load-test/vm_state.py verify-smoke --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path" >/dev/null
 fi

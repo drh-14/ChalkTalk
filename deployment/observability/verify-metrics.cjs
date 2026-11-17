@@ -1,5 +1,5 @@
 /* global AbortSignal, URL, console, fetch, module, process, require */
-const checks = [
+const scrapeChecks = [
   ...[
     "chalktalk-api",
     "chalktalk-worker",
@@ -11,6 +11,9 @@ const checks = [
     expression: `up{job="${job}"}`,
     up: true,
   })),
+];
+const checks = [
+  ...scrapeChecks,
   {
     label: "HTTP duration",
     expression:
@@ -65,8 +68,8 @@ const checks = [
   },
 ];
 
-async function verifyMetrics(query, now = Math.floor(Date.now() / 1000)) {
-  for (const { label, expression, up } of checks) {
+async function verifyChecks(query, checksToVerify, now) {
+  for (const { label, expression, up } of checksToVerify) {
     const response = await query(expression, now);
     if (
       response.status !== "success" ||
@@ -81,7 +84,12 @@ async function verifyMetrics(query, now = Math.floor(Date.now() / 1000)) {
           time <= now + 15 &&
           Number.isFinite(Number(value)),
       );
-      return samples.length >= 2 && (!up || Number(samples.at(-1)[1]) === 1);
+      return (
+        samples.length >= 2 &&
+        (!up ||
+          (Number(samples.at(-1)[1]) === 1 &&
+            samples.filter(([, value]) => Number(value) === 1).length >= 2))
+      );
     });
     if (!fresh)
       throw new Error(
@@ -89,6 +97,14 @@ async function verifyMetrics(query, now = Math.floor(Date.now() / 1000)) {
       );
     process.stdout.write(`${label}: two fresh samples${up ? ", up=1" : ""}\n`);
   }
+}
+
+async function verifyScrapeTargets(query, now = Math.floor(Date.now() / 1000)) {
+  await verifyChecks(query, scrapeChecks, now);
+}
+
+async function verifyMetrics(query, now = Math.floor(Date.now() / 1000)) {
+  await verifyChecks(query, checks, now);
 }
 
 async function queryPrometheus(expression, now) {
@@ -100,7 +116,7 @@ async function queryPrometheus(expression, now) {
   return response.json();
 }
 
-module.exports = { queryPrometheus, verifyMetrics };
+module.exports = { queryPrometheus, verifyMetrics, verifyScrapeTargets };
 if (require.main === module || process.argv[1] === "-") {
   verifyMetrics(queryPrometheus).catch((error) => {
     console.error(error.message);

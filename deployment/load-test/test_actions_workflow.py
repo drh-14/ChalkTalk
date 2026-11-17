@@ -7,33 +7,40 @@ import textwrap
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github" / "workflows" / "load-test.yml"
+WORKFLOWS = {
+    "smoke": ROOT / ".github" / "workflows" / "load-test-smoke.yml",
+    "ramp": ROOT / ".github" / "workflows" / "load-test-ramp.yml",
+}
 RUNNER = ROOT / "deployment" / "load-test" / "actions-run.sh"
 
 
 class ActionsWorkflowTest(unittest.TestCase):
-    def test_dispatch_is_main_only_environment_gated_and_never_automatic(self):
-        result = subprocess.run(
-            ["ruby", "-ryaml", "-rjson", "-e", "puts JSON.generate(YAML.load_file(ARGV[0]))", str(WORKFLOW)],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        workflow = json.loads(result.stdout)
-        triggers = workflow.get("on", workflow.get("true"))
-        self.assertEqual(list(triggers), ["workflow_dispatch"])
-        self.assertEqual(workflow["concurrency"]["group"], "chalktalk-production-vm")
-        self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
-        dispatch = triggers["workflow_dispatch"]["inputs"]
-        self.assertEqual(dispatch["mode"]["type"], "choice")
-        self.assertEqual(dispatch["mode"]["options"], ["smoke", "ramp"])
-        self.assertTrue(dispatch["run_id"]["required"])
-        job = workflow["jobs"]["load-test"]
-        self.assertEqual(job["environment"], "production")
-        self.assertEqual(job["if"], "github.ref == 'refs/heads/main' && github.repository == 'drh-14/ChalkTalk'")
-        steps = job["steps"]
-        self.assertEqual([step.get("run") for step in steps if "run" in step],
-                         ["bash deployment/load-test/actions-run.sh"])
-        self.assertTrue(any("actions/upload-artifact@" in step.get("uses", "") for step in steps))
+    def test_two_id_free_dispatches_are_main_only_environment_gated_and_never_automatic(self):
+        self.assertFalse((ROOT / ".github" / "workflows" / "load-test.yml").exists())
+        for mode, path in WORKFLOWS.items():
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    ["ruby", "-ryaml", "-rjson", "-e", "puts JSON.generate(YAML.load_file(ARGV[0]))", str(path)],
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                workflow = json.loads(result.stdout)
+                triggers = workflow.get("on", workflow.get("true"))
+                self.assertEqual(list(triggers), ["workflow_dispatch"])
+                self.assertFalse(triggers["workflow_dispatch"] and triggers["workflow_dispatch"].get("inputs"))
+                self.assertEqual(workflow["concurrency"]["group"], "chalktalk-production-vm")
+                self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+                job = workflow["jobs"]["load-test"]
+                self.assertEqual(job["environment"], "production")
+                self.assertEqual(job["if"], "github.ref == 'refs/heads/main' && github.repository == 'drh-14/ChalkTalk'")
+                steps = job["steps"]
+                self.assertEqual([step.get("run") for step in steps if "run" in step],
+                                 ["bash deployment/load-test/actions-run.sh"])
+                runner_env = steps[1]["env"]
+                self.assertEqual(runner_env["MODE"], mode)
+                self.assertNotIn("RUN_ID", runner_env)
+                self.assertEqual(runner_env["GITHUB_RUN_ATTEMPT"], "${{ github.run_attempt }}")
+                self.assertTrue(any("actions/upload-artifact@" in step.get("uses", "") for step in steps))
 
     def test_executable_runner_rejects_untrusted_dispatch_before_any_vm_action(self):
         base = {
@@ -75,11 +82,15 @@ class ActionsWorkflowTest(unittest.TestCase):
                         events.write("ssh " + command + "\\n")
                     if command == "cat /srv/chalktalk/shared/deployed.sha":
                         print(os.environ["EXPECTED_SHA"])
+                    elif " claim-smoke-auto " in command or " claim-ramp-auto " in command:
+                        print(json.dumps({"runId": os.environ["MOCK_RUN_ID"],
+                                          "sourceRunUrl": os.environ["MOCK_SOURCE_URL"],
+                                          "status": "smoke-claimed" if " claim-smoke-auto " in command else "ramp-claimed"}))
                     elif " inventory " in command:
                         print("{}")
                 elif name == "scp":
                     if args[-1].endswith("manifest.json"):
-                        pathlib.Path(args[-1]).write_text(json.dumps({"runId": os.environ["RUN_ID"]}))
+                        pathlib.Path(args[-1]).write_text(json.dumps({"runId": os.environ["MOCK_RUN_ID"]}))
                 elif name == "node":
                     script = pathlib.Path(args[0]).name
                     if script == "prepare-runner.mjs":
@@ -88,6 +99,11 @@ class ActionsWorkflowTest(unittest.TestCase):
                         (target / "profile.json").write_text(json.dumps({"maxVus": 1, "stageMinutes": [1, 1, 1, 1], "rampWriteAttempts": 6}))
                     elif script == "coverage.mjs":
                         print("{}")
+                    elif script == "preflight.mjs":
+                        with (root / "events").open("a") as events:
+                            events.write("preflight " + args[1] + "\\n")
+                        if args[1] == "ready" and os.environ.get("FAIL_PREFLIGHT") == "1":
+                            sys.exit(1)
                     elif script == "sanitize-artifacts.mjs":
                         with (root / "events").open("a") as events:
                             events.write("sanitize\\n")
@@ -97,8 +113,9 @@ class ActionsWorkflowTest(unittest.TestCase):
                         destination.mkdir()
                         (destination / "scope.json").write_text("{}")
                 elif name == "jq":
-                    if args[0] == "-r":
-                        print({".projectRef": "ref", ".databaseHost": "host", ".nonce": "nonce", ".mac": "mac"}.get(args[1], "profile"))
+                    if args[0] in ("-r", "-er"):
+                        print({".projectRef": "ref", ".databaseHost": "host", ".nonce": "nonce", ".mac": "mac",
+                               ".runId": os.environ["MOCK_RUN_ID"], ".sourceRunUrl": os.environ["MOCK_SOURCE_URL"]}.get(args[1], "profile"))
                 """))
             mock.chmod(0o755)
             for name in ("git", "ssh", "scp", "node", "jq", "docker", "curl", "sleep", "ssh-keygen"):
@@ -110,16 +127,18 @@ class ActionsWorkflowTest(unittest.TestCase):
                 "GITHUB_ACTIONS": "true",
                 "GITHUB_REF": "refs/heads/main",
                 "GITHUB_REPOSITORY": "drh-14/ChalkTalk",
-                "GITHUB_RUN_ID": "123",
+                "GITHUB_RUN_ID": "123456789",
+                "GITHUB_RUN_ATTEMPT": "1",
                 "MODE": "smoke",
-                "RUN_ID": "load-20261117-a1b2c3d4",
+                "MOCK_RUN_ID": "load-20261117-gh123456789",
+                "MOCK_SOURCE_URL": "https://github.com/drh-14/ChalkTalk/actions/runs/123456789",
                 "EXPECTED_SHA": "a" * 40,
                 "VM_HOST": "example.invalid",
                 "SSH_PRIVATE_KEY": "test-key",
                 "VM_KNOWN_HOSTS": "test-host-key",
             }
-            for failure in (True, False):
-                with self.subTest(sanitization_fails=failure):
+            for failure in ("preflight", "sanitization", None):
+                with self.subTest(failure=failure):
                     (root / "events").write_text("")
                     destination = root / "sanitized"
                     if destination.exists():
@@ -129,14 +148,22 @@ class ActionsWorkflowTest(unittest.TestCase):
                     result = subprocess.run(
                         ["bash", str(RUNNER)], cwd=ROOT,
                         env={**env, "LOAD_TEST_REPORT_DIR": str(destination),
-                             "FAIL_SANITIZE": "1" if failure else "0",
+                             "FAIL_PREFLIGHT": "1" if failure == "preflight" else "0",
+                             "FAIL_SANITIZE": "1" if failure == "sanitization" else "0",
                              "GITHUB_STEP_SUMMARY": str(root / "summary")},
                         capture_output=True, text=True,
                     )
                     events = (root / "events").read_text().splitlines()
                     verified = [i for i, event in enumerate(events) if " verify-smoke " in event]
                     cleaned = [event for event in events if " teardown " in event]
-                    if failure:
+                    if failure == "preflight":
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("preflight ready", events)
+                        self.assertFalse(any(" vm_control.py prepare " in event for event in events))
+                        self.assertFalse(any(" claim-smoke-auto " in event for event in events))
+                        self.assertFalse(any(" provision " in event for event in events))
+                        self.assertFalse(cleaned)
+                    elif failure == "sanitization":
                         self.assertNotEqual(result.returncode, 0)
                         self.assertFalse(verified)
                         self.assertTrue(cleaned)
@@ -147,6 +174,47 @@ class ActionsWorkflowTest(unittest.TestCase):
                         self.assertEqual(len(verified), 1)
                         self.assertLess(events.index("sanitize"), verified[0])
                         self.assertFalse(cleaned)
+                        self.assertLess(events.index("preflight ready"),
+                                        next(i for i, event in enumerate(events) if " claim-smoke-auto " in event))
+                        self.assertFalse(any("vm_control.py check " in event for event in events))
+                        summary = (root / "summary").read_text()
+                        self.assertIn(env["MOCK_RUN_ID"], summary)
+                        self.assertIn(env["MOCK_SOURCE_URL"], summary)
+
+            (root / "events").write_text("")
+            for child in destination.iterdir():
+                child.unlink()
+            destination.rmdir()
+            ramp = subprocess.run(
+                ["bash", str(RUNNER)], cwd=ROOT,
+                env={**env, "MODE": "ramp", "LOAD_TEST_REPORT_DIR": str(destination),
+                     "FAIL_PREFLIGHT": "0", "FAIL_SANITIZE": "0",
+                     "GITHUB_STEP_SUMMARY": str(root / "summary")},
+                capture_output=True, text=True,
+            )
+            events = (root / "events").read_text().splitlines()
+            self.assertEqual(ramp.returncode, 0, ramp.stderr)
+            self.assertTrue(any(" claim-ramp-auto " in event for event in events))
+            self.assertFalse(any(" claim-smoke-auto " in event for event in events))
+            self.assertFalse(any("vm_control.py check " in event for event in events))
+            self.assertTrue(any(" teardown " in event for event in events))
+            self.assertIn(env["MOCK_SOURCE_URL"], (root / "summary").read_text())
+
+    def test_runner_rejects_rerun_or_supplied_id_before_vm_access(self):
+        base = {
+            **os.environ, "GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/main",
+            "GITHUB_REPOSITORY": "drh-14/ChalkTalk", "MODE": "smoke",
+            "EXPECTED_SHA": "a" * 40, "GITHUB_RUN_ID": "123456789",
+            "VM_HOST": "example.invalid", "SSH_PRIVATE_KEY": "test-key",
+            "VM_KNOWN_HOSTS": "test-host-key", "LOAD_TEST_REPORT_DIR": "/tmp/k6-dispatch-rejected",
+        }
+        for change in ({"GITHUB_RUN_ATTEMPT": "2"},
+                       {"GITHUB_RUN_ATTEMPT": "1", "RUN_ID": "load-20261117-a1b2c3d4"}):
+            with self.subTest(change=change):
+                result = subprocess.run(["bash", str(RUNNER)], cwd=ROOT,
+                                        env={**base, **change}, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("refused", result.stderr.lower())
 
 
 if __name__ == "__main__":
