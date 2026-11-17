@@ -30,6 +30,9 @@ jobs:
       - name: Verify running production VM and host-network telemetry
         run: node --test deployment/production/tests/observability.runtime.test.mjs
 
+      - name: Verify API ETags survive local and production gateways
+        run: node --test deployment/production/tests/gateway-etags.test.mjs
+
   supabase-integration:
     runs-on: ubuntu-26.04
     timeout-minutes: 35
@@ -222,6 +225,20 @@ jobs:
         with:
           name: core-browser-screenshots
           path: test-results/**/*.png
+          if-no-files-found: ignore
+
+      - name: Verify two-browser concurrent collaboration
+        env:
+          E2E_BASE_URL: https://localhost:5174
+          E2E_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+        run: npx playwright test tests/browser/live-code-session.spec.mjs --workers=1
+
+      - name: Upload collaboration browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collaboration-browser-evidence
+          path: test-results/
           if-no-files-found: ignore
 
       - name: Verify local image PDF and OCR tools

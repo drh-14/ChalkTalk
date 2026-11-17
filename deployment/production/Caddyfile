@@ -1,5 +1,6 @@
 {$DOMAIN} {
-	encode zstd gzip
+	@notApi not path /api/*
+	encode @notApi zstd gzip
 
 	@apiHealth path /api/health
 	handle @apiHealth {
