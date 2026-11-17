@@ -1,6 +1,6 @@
 // End-to-end live session viewer and posting against the running development
-// stack (`npm run dev`). It seeds its own course and accounts directly in the
-// database named by E2E_DATABASE_URL (or DATABASE_URL) and is skipped without one.
+// stack (`npm run dev`).
+// Seed isolation setup: documentation/testing.md.
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
@@ -8,10 +8,7 @@ import { expect, test } from "@playwright/test";
 import { BASE, databaseUrl, seed, signIn } from "./fixtures/live-stack.mjs";
 
 test.use({ ignoreHTTPSErrors: true });
-test.skip(
-  !databaseUrl,
-  "Set E2E_DATABASE_URL or DATABASE_URL to the running stack's database",
-);
+test.skip(!databaseUrl, "Set E2E_DATABASE_URL to the running stack's database");
 
 const screenshots = process.env.E2E_SCREENSHOTS_DIR
   ? resolve(process.env.E2E_SCREENSHOTS_DIR, "session-viewers")

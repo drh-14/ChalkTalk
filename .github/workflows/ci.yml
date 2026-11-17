@@ -188,6 +188,18 @@ jobs:
           docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT count(*) FROM courses" | grep -qx 0
           docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT count(*) FROM users" | grep -qx 0
 
+      - name: Guard the isolated browser-test database
+        run: |
+          node --test tests/browser/fixtures/isolation.test.mjs
+          token=$(openssl rand -hex 24)
+          echo "E2E_DB_GUARD_TOKEN=$token" >> "$GITHUB_ENV"
+          system_identifier=$(docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres \
+            psql -U chalktalk -d chalktalk -tA -v ON_ERROR_STOP=1 -c "SELECT system_identifier::text FROM pg_control_system()")
+          echo "E2E_DB_SYSTEM_IDENTIFIER=$system_identifier" >> "$GITHUB_ENV"
+          docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres \
+            psql -U chalktalk -d chalktalk -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE chalktalk_e2e_guard (token text PRIMARY KEY); INSERT INTO chalktalk_e2e_guard VALUES ('$token');"
+
       - name: Verify Caddy HTTPS routes, WebSocket upgrades, and persistent CA
         env:
           WEB_PORT: 5174
@@ -197,6 +209,20 @@ jobs:
         env:
           E2E_CADDY_URL: https://localhost:5174
         run: npx playwright test tests/browser/local-caddy-gateway.spec.mjs --workers=1
+
+      - name: Verify core flows against the real API and database
+        env:
+          E2E_BASE_URL: https://localhost:5174
+          E2E_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+        run: npm run test:browser:core
+
+      - name: Upload core browser screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-browser-screenshots
+          path: test-results/**/*.png
+          if-no-files-found: ignore
 
       - name: Verify local image PDF and OCR tools
         run: |

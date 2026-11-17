@@ -1,7 +1,6 @@
 // End-to-end notifications against the running development stack
-// (`npm run dev`, with the job worker and Mailpit). It seeds its own course and
-// accounts directly in the database named by E2E_DATABASE_URL (or DATABASE_URL)
-// and is skipped without one.
+// (`npm run dev`, with the job worker and Mailpit).
+// Seed isolation setup: documentation/testing.md.
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
@@ -9,10 +8,7 @@ import { expect, test } from "@playwright/test";
 import { BASE, databaseUrl, seed, signIn } from "./fixtures/live-stack.mjs";
 
 test.use({ ignoreHTTPSErrors: true });
-test.skip(
-  !databaseUrl,
-  "Set E2E_DATABASE_URL or DATABASE_URL to the running stack's database",
-);
+test.skip(!databaseUrl, "Set E2E_DATABASE_URL to the running stack's database");
 
 const MAILPIT = process.env.E2E_MAILPIT_URL ?? "http://127.0.0.1:8025";
 const screenshots = resolve(

@@ -1,14 +1,11 @@
 // End-to-end live session against the running development stack
-// (`npm run dev`). It seeds its own course and accounts directly in the
-// database named by E2E_DATABASE_URL (or DATABASE_URL) and is skipped without one.
+// (`npm run dev`).
+// Seed isolation setup: documentation/testing.md.
 import { expect, test } from "@playwright/test";
 import { BASE, databaseUrl, seed, signIn } from "./fixtures/live-stack.mjs";
 
 test.use({ ignoreHTTPSErrors: true });
-test.skip(
-  !databaseUrl,
-  "Set E2E_DATABASE_URL or DATABASE_URL to the running stack's database",
-);
+test.skip(!databaseUrl, "Set E2E_DATABASE_URL to the running stack's database");
 
 // Line text without remote cursor widgets, which render inside the lines.
 const editorText = (page) =>
