@@ -4421,7 +4421,8 @@ function DiscussionContent({
                           </div>
                         </>
                       )}
-                      {detail.type === "question" && (
+                      {(detail.type === "question" ||
+                        detail.type === "note") && (
                         <QuestionResponses
                           postId={detail.id}
                           role={role}
@@ -4433,6 +4434,7 @@ function DiscussionContent({
                           discussionLocked={detail.discussionLocked}
                           csrfToken={csrfToken}
                           onActivity={() => void refreshFollowing(detail.id)}
+                          withAnswers={detail.type === "question"}
                         />
                       )}
                     </article>

@@ -1609,10 +1609,14 @@ export function FollowupSections(props: Props) {
   );
 }
 
-export function QuestionResponses(props: Props) {
+/** Answers for questions, and followup discussions for questions and notes. */
+export function QuestionResponses({
+  withAnswers = true,
+  ...props
+}: Props & { withAnswers?: boolean }) {
   return (
     <div className="question-responses" key={props.postId}>
-      <AnswerSections {...props} />
+      {withAnswers && <AnswerSections {...props} />}
       <FollowupSections {...props} />
     </div>
   );
