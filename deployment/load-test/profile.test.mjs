@@ -25,6 +25,10 @@ test("normalizes the bounded profile and fingerprints canonical values", () => {
     normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "020" }),
     profile,
   );
+  assert.deepEqual(
+    normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "20.0" }),
+    profile,
+  );
 });
 
 test("smaller ceilings collapse fixed targets without raising them", () => {
@@ -40,6 +44,14 @@ test("smaller ceilings collapse fixed targets without raising them", () => {
       rampWriteAttempts: 17,
     },
   );
+  assert.equal(
+    normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "10.0" }).maxVus,
+    10,
+  );
+  assert.equal(
+    normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "15.0" }).maxVus,
+    15,
+  );
 });
 
 test("invalid or missing profile values fail closed", () => {
@@ -48,6 +60,10 @@ test("invalid or missing profile values fail closed", () => {
     ["over-vus", { ...variables, MAX_CONCURRENT_USERS: "21" }],
     ["one-vu", { ...variables, MAX_CONCURRENT_USERS: "1" }],
     ["noninteger", { ...variables, MAX_CONCURRENT_USERS: "2.5" }],
+    ["over-decimal", { ...variables, MAX_CONCURRENT_USERS: "21.0" }],
+    ["missing-fraction", { ...variables, MAX_CONCURRENT_USERS: "15." }],
+    ["exponent", { ...variables, MAX_CONCURRENT_USERS: "1e1" }],
+    ["whitespace", { ...variables, MAX_CONCURRENT_USERS: " 10.0" }],
   ])
     assert.throws(() => normalizeProfile(values), undefined, name);
 });

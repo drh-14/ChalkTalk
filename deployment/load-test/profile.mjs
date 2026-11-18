@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 
 function integer(name, value, min, max) {
-  if (!/^\d+$/.test(value ?? "")) throw new Error(`${name} must be an integer`);
+  if (!/^\d+(?:\.0+)?$/.test(value ?? ""))
+    throw new Error(`${name} must be an integer`);
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max)
     throw new Error(`${name} must be between ${min} and ${max}`);
