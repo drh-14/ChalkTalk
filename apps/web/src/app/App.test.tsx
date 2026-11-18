@@ -243,7 +243,7 @@ describe("ChalkTalk auth entry", () => {
     expect(window.location.pathname).toBe("/");
   });
 
-  it("shows Statistics to staff and denies a student opening its direct route", async () => {
+  it("shows a student the Course pulse but not staff-only Activity", async () => {
     setPath(`/courses/${course.id}/statistics`);
     const member = {
       id: "membership_123",
@@ -254,23 +254,49 @@ describe("ChalkTalk auth entry", () => {
       updatedAt: course.updatedAt,
       version: 1,
     };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (url.endsWith("/sessions/current"))
-          return jsonResponse({ data: session });
-        if (url.endsWith(`/courses/${course.id}`))
-          return jsonResponse({ data: course });
-        if (url.endsWith(`/members/${session.user.id}`))
-          return jsonResponse({ data: member });
-        return jsonResponse({ data: [] });
-      }),
-    );
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/sessions/current"))
+        return jsonResponse({ data: session });
+      if (url.endsWith(`/courses/${course.id}`))
+        return jsonResponse({ data: course });
+      if (url.endsWith(`/members/${session.user.id}`))
+        return jsonResponse({ data: member });
+      if (url.includes("/statistics/pulse"))
+        return jsonResponse({
+          data: {
+            courseId: course.id,
+            timeZone: "UTC",
+            firstQuestionAt: null,
+            lastQuestionAt: null,
+            questions: 0,
+            answered: 0,
+            unanswered: 0,
+            medianFirstAnswerMinutes: null,
+            hours: Array.from({ length: 7 }, () => Array(24).fill(0)),
+            weeks: [],
+            topics: [],
+            helpers: [],
+            generatedAt: "2026-11-18T00:00:00Z",
+          },
+        });
+      return jsonResponse({ data: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     render(<App />);
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "course staff",
+    expect(
+      await screen.findByRole("heading", { name: "Course statistics" }),
+    ).toBeTruthy();
+    expect(await screen.findByText("No questions yet")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Statistics" })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Statistics view" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Activity" })).toBeNull();
+    // Only the class-wide pulse is requested, never per-student activity.
+    const statistics = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes("/statistics"));
+    expect(statistics.every((url) => url.includes("/statistics/pulse"))).toBe(
+      true,
     );
-    expect(screen.queryByRole("link", { name: "Statistics" })).toBeNull();
   });
   it("keeps a shared course header while switching between discussion and settings", async () => {
     setPath(`/courses/${course.id}`);
@@ -521,12 +547,14 @@ describe("ChalkTalk auth entry", () => {
     const tabs = within(
       banner.getByRole("navigation", { name: "Course navigation" }),
     );
+    // Every member sees Statistics, which opens Course pulse for students.
     expect(tabs.getAllByRole("link").map((link) => link.textContent)).toEqual([
       "Discussion",
       "Threads",
       "Collaboration",
       "Course resources",
       "Course settings",
+      "Statistics",
     ]);
     expect(
       tabs

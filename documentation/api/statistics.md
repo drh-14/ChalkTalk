@@ -138,7 +138,7 @@ Summarizes every published, non-deleted question in the course, regardless of wh
 
 **Authentication:** `Cookie: __Host-chalktalk_session=<opaque-session>`.
 
-**Access:** Instructor or TA.
+**Access:** Any current course member. Students receive the same class-wide summary as staff; the per-student statistics and exports below stay staff-only.
 
 **Request media:** None.
 
@@ -291,10 +291,6 @@ The `hours` example is shortened; each response holds 7 lists of 24 counts.
 ##### `401 Unauthorized`
 
 `authentication_required`: Authentication is missing or invalid.
-
-##### `403 Forbidden`
-
-`permission_denied`: A staff role is required.
 
 ##### `404 Not Found`
 
