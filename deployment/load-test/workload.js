@@ -1,28 +1,29 @@
-/* global open, __ENV, __VU */
+/* global open, __ENV, __VU, setTimeout */
 import http from "k6/http";
 import { check, sleep } from "k6";
 import exec from "k6/execution";
 import { Counter, Rate } from "k6/metrics";
+import { WebSocket } from "k6/websockets";
+import { SLOT_MS, buildRampSchedule, mayStartSlot } from "./schedule.mjs";
 
-const WRITE_INTERVAL_MS = 30000;
 const BASE_URL = "https://joinchalktalk.com";
 const manifest = JSON.parse(open(__ENV.MANIFEST_PATH));
 const profile = JSON.parse(open(__ENV.PROFILE_PATH));
 if (
   !Number.isInteger(profile.maxVus) ||
   profile.maxVus < 1 ||
-  profile.maxVus > 20 ||
+  profile.maxVus > 30 ||
   !Array.isArray(profile.stageMinutes) ||
   profile.stageMinutes.length !== 4 ||
   profile.stageMinutes.some((n) => !Number.isInteger(n) || n < 1) ||
   profile.stageMinutes.reduce((a, b) => a + b, 0) > 10 ||
   !Array.isArray(profile.stageTargets) ||
   JSON.stringify(profile.stageTargets) !==
-    JSON.stringify([2, 5, 10, 20].map((n) => Math.min(n, profile.maxVus))) ||
+    JSON.stringify([2, 10, 20, 30].map((n) => Math.min(n, profile.maxVus))) ||
   !Number.isInteger(profile.rampWriteAttempts) ||
-  profile.rampWriteAttempts !== 17 ||
+  profile.rampWriteAttempts !== (__ENV.MODE === "ramp" ? 60 : 17) ||
   JSON.stringify(profile.stageMinutes) !== JSON.stringify([1, 3, 3, 3]) ||
-  (__ENV.MODE === "ramp" && profile.maxVus < 2) ||
+  (__ENV.MODE === "ramp" && profile.maxVus < 10) ||
   (__ENV.MODE === "smoke" && profile.maxVus !== 1)
 )
   throw new Error("Invalid bounded load profile");
@@ -45,14 +46,21 @@ if (
   __ENV.DEPLOYED_SHA !== manifest.deployedSha
 )
   throw new Error("Deployed SHA must match the credential manifest");
-if (
-  !Array.isArray(manifest.users) ||
-  manifest.users.length !== 20 ||
-  new Set(manifest.users.map((u) => u.email)).size !== 20
-)
-  throw new Error("Expected 20 distinct synthetic users");
 if (!["smoke", "ramp"].includes(mode))
   throw new Error("MODE must be smoke or ramp");
+if (
+  !Array.isArray(manifest.users) ||
+  manifest.users.length !== (mode === "ramp" ? 30 : 20) ||
+  new Set(manifest.users.map((u) => u.email)).size !== manifest.users.length ||
+  (mode === "ramp" &&
+    (manifest.mode !== "ramp" ||
+      manifest.courses?.length !== 3 ||
+      manifest.users.some(
+        (u, i) => u.courseId !== manifest.courses[i % 3]?.id,
+      )))
+)
+  throw new Error("Synthetic fixture does not match selected workload");
+const rampSchedule = mode === "ramp" ? buildRampSchedule(profile.maxVus) : null;
 
 const unexpectedErrors = new Rate("unexpected_errors");
 const rateLimitHits = new Counter("rate_limit_hits");
@@ -71,8 +79,30 @@ const successfulOperations = Object.fromEntries(
     "create_followup",
     "create_poll",
     "vote",
+    "list_threads",
+    "thread_unread_count",
+    "list_conversations",
+    "read_conversation",
+    "list_thread_messages",
+    "thread_catchup",
+    "resource_list",
+    "resource_search",
+    "create_thread_conversation",
+    "create_thread_reply",
+    "thread_watch",
+    "thread_read",
+    "thread_socket_subscribed",
+    "thread_socket_changed",
+    "thread_socket_closed",
+    "course_1_post",
+    "course_2_post",
+    "course_3_post",
+    "course_1_thread",
+    "course_2_thread",
+    "course_3_thread",
   ].map((name) => [name, new Counter(`op_${name}_success`)]),
 );
+const skippedWriteSlots = new Counter("skipped_write_slots");
 
 export const options = {
   tags: { testid: manifest.runId },
@@ -87,31 +117,18 @@ export const options = {
             gracefulStop: "0s",
           },
         }
-      : {
-          traffic: {
-            executor: "ramping-vus",
-            startVUs: 2,
-            stages: [
-              {
-                duration: `${profile.stageMinutes[0]}m`,
-                target: profile.stageTargets[0],
-              },
-              {
-                duration: `${profile.stageMinutes[1]}m`,
-                target: profile.stageTargets[1],
-              },
-              {
-                duration: `${profile.stageMinutes[2]}m`,
-                target: profile.stageTargets[2],
-              },
-              {
-                duration: `${profile.stageMinutes[3]}m`,
-                target: profile.stageTargets[3],
-              },
-            ],
-            gracefulRampDown: "0s",
-          },
-        },
+      : Object.fromEntries(
+          rampSchedule.actors.map((actor) => [
+            `actor_${String(actor.actorIndex + 1).padStart(2, "0")}`,
+            {
+              executor: "constant-vus",
+              vus: 1,
+              startTime: `${actor.loginSlot * rampSchedule.slotMs}ms`,
+              duration: `${rampSchedule.slotMs * (100 - actor.loginSlot)}ms`,
+              gracefulStop: "0s",
+            },
+          ]),
+        ),
   thresholds: {
     unexpected_errors: [
       { threshold: "rate<0.02", abortOnFail: true, delayAbortEval: "1m" },
@@ -122,13 +139,28 @@ export const options = {
 
 let session;
 let writes = 0;
-let lastWriteAt = 0;
-let activeQuestionId = manifest.questionId;
-let activePollId = manifest.pollId;
-let activeOptionId = manifest.pollOptionId;
 let readIteration = 0;
+let writeCursor = 0;
+let socketAttempted = false;
+let selectedPostId;
+let conversationId;
+let otherConversationId;
+let latestMessageId;
 
-function request(method, path, body, name, expected, csrf) {
+export function setup() {
+  return { originMs: Date.now() + 2000 };
+}
+
+function request(
+  method,
+  path,
+  body,
+  name,
+  expected,
+  csrf,
+  writeSlot,
+  originMs,
+) {
   const headers = { Accept: "application/json" };
   // k6 clears its cookie jar between iterations; keep the authenticated VU session.
   if (session) headers.Cookie = session.cookie;
@@ -138,17 +170,20 @@ function request(method, path, body, name, expected, csrf) {
     if (csrf) headers["X-CSRF-Token"] = csrf;
   }
   let response;
+  const payload = body === undefined ? null : JSON.stringify(body);
+  if (
+    writeSlot !== undefined &&
+    !mayStartSlot(Date.now(), originMs, writeSlot)
+  ) {
+    skippedWriteSlots.add(1, { operation: name });
+    return null;
+  }
   try {
-    response = http.request(
-      method,
-      `${BASE_URL}${path}`,
-      body === undefined ? null : JSON.stringify(body),
-      {
-        headers,
-        tags: { name },
-        timeout: "10s",
-      },
-    );
+    response = http.request(method, `${BASE_URL}${path}`, payload, {
+      headers,
+      tags: { name },
+      timeout: "10s",
+    });
   } catch (error) {
     exec.test.abort(`${name}: network failure; workload stopped`);
     throw error;
@@ -183,8 +218,8 @@ function mutationId(response, path) {
   return id;
 }
 
-function login() {
-  const user = manifest.users[__VU - 1];
+function login(actorIndex = __VU - 1, writeSlot, originMs) {
+  const user = manifest.users[actorIndex];
   if (!user) throw new Error("VU exceeds synthetic account count");
   const response = request(
     "POST",
@@ -192,7 +227,11 @@ function login() {
     { email: user.email, password: user.password },
     "login",
     201,
+    undefined,
+    writeSlot,
+    originMs,
   );
+  if (!response) exec.test.abort("Missed reserved login slot");
   const csrf = response.json("data.csrfToken");
   if (typeof csrf !== "string" || !csrf)
     throw new Error("Login response lacks CSRF token");
@@ -202,159 +241,350 @@ function login() {
   session = { csrf, cookie: `__Host-chalktalk_session=${cookie}` };
 }
 
-const mutationKinds = [
-  "question",
-  "note",
-  "answer",
-  "followup",
-  "poll",
-  "vote",
-];
-function mutate() {
-  if (
-    __VU !== 1 ||
-    writes >= (mode === "smoke" ? 1 : profile.rampWriteAttempts)
-  )
-    return;
-  const now = Date.now();
-  if (lastWriteAt && now - lastWriteAt < WRITE_INTERVAL_MS) return;
-  const attempt = writes;
-  writes += 1;
-  lastWriteAt = now;
-  if (mode === "smoke") {
-    request(
-      "PUT",
-      `/api/v1/posts/${manifest.pollId}/vote`,
-      { optionId: manifest.pollOptionId },
-      "smoke_vote",
-      200,
-      session.csrf,
-    );
-    return;
+function smokeVote(originMs) {
+  if (writes) return;
+  writes = 1;
+  waitForSlot(originMs, 1);
+  request(
+    "PUT",
+    `/api/v1/posts/${manifest.pollId}/vote`,
+    { optionId: manifest.pollOptionId },
+    "smoke_vote",
+    200,
+    session.csrf,
+    1,
+    originMs,
+  );
+}
+
+function rampActor() {
+  const match = /^actor_(\d{2})$/.exec(exec.scenario.name);
+  const index = match ? Number(match[1]) - 1 : -1;
+  if (index < 0 || index >= rampSchedule.actors.length)
+    throw new Error("Ramp actor scenario does not match bounded profile");
+  return rampSchedule.actors[index];
+}
+
+function waitForSlot(originMs, slot) {
+  const delay = originMs + slot * SLOT_MS - Date.now();
+  if (delay > 0) sleep(delay / 1000);
+  return mayStartSlot(Date.now(), originMs, slot);
+}
+
+function readJsonArray(response, operation) {
+  const value = response.json("data");
+  if (!Array.isArray(value)) {
+    exec.test.abort(`${operation}: expected a bounded list`);
+    throw new Error(`${operation}: invalid list`);
   }
-  const kind = mutationKinds[attempt % mutationKinds.length];
-  const round = Math.floor(attempt / mutationKinds.length) + 1;
-  const label = `Load test ${manifest.runId} ${round}`;
-  const csrf = session.csrf;
-  if (kind === "question") {
-    const response = request(
-      "POST",
-      `/api/v1/courses/${manifest.courseId}/posts`,
-      {
-        type: "question",
-        title: `${label} question`,
-        bodyMarkdown: "Synthetic question for bounded load testing",
-      },
-      "create_question",
-      201,
-      csrf,
-    );
-    activeQuestionId = mutationId(response, "data.id");
-  } else if (kind === "note") {
-    request(
-      "POST",
-      `/api/v1/courses/${manifest.courseId}/posts`,
-      {
-        type: "note",
-        title: `${label} note`,
-        bodyMarkdown: "Synthetic note for bounded load testing",
-      },
-      "create_note",
-      201,
-      csrf,
-    );
-  } else if (kind === "answer") {
-    request(
-      "POST",
-      `/api/v1/posts/${activeQuestionId}/answers`,
-      { bodyMarkdown: "Synthetic answer for bounded load testing" },
-      "create_answer",
-      201,
-      csrf,
-    );
-  } else if (kind === "followup") {
-    request(
-      "POST",
-      `/api/v1/posts/${activeQuestionId}/followups`,
-      { bodyMarkdown: "Synthetic followup for bounded load testing" },
-      "create_followup",
-      201,
-      csrf,
-    );
-  } else if (kind === "poll") {
-    const response = request(
-      "POST",
-      `/api/v1/courses/${manifest.courseId}/posts`,
-      {
-        type: "poll",
-        title: `${label} poll`,
-        bodyMarkdown: "Synthetic poll for bounded load testing",
-        options: [{ label: "Option A" }, { label: "Option B" }],
-      },
-      "create_poll",
-      201,
-      csrf,
-    );
-    activePollId = mutationId(response, "data.id");
-    activeOptionId = mutationId(response, "data.options.0.id");
-  } else {
-    request(
-      "PUT",
-      `/api/v1/posts/${activePollId}/vote`,
-      { optionId: activeOptionId },
-      "vote",
-      200,
-      csrf,
-    );
+  return value;
+}
+
+function prepareThreadWatch(course) {
+  const path = `/api/v1/courses/${course.id}/threads/${course.boardId}/conversations`;
+  const others = readJsonArray(
+    request("GET", path, undefined, "list_conversations", 200),
+    "list_conversations",
+  );
+  otherConversationId = others.find((item) => item.id !== conversationId)?.id;
+  if (!otherConversationId) {
+    exec.test.abort("Other synthetic conversation is unavailable for watch");
+    throw new Error("Other synthetic conversation is unavailable");
   }
 }
 
-export default function () {
-  if (!session) login();
-  if (mode === "ramp" && __VU === 1) {
-    mutate();
-    sleep(2);
+function rampWrite(task, originMs) {
+  const course = manifest.courses[task.courseIndex];
+  const csrf = session.csrf;
+  const label = `Synthetic ${manifest.runId} ${task.kind}`;
+  const postPath = `/api/v1/courses/${course.id}/posts`;
+  const threadPath = `/api/v1/courses/${course.id}/threads/${course.boardId}/conversations`;
+  let response;
+  if (["question", "note", "poll"].includes(task.kind)) {
+    const body = {
+      type: task.kind,
+      title: label,
+      bodyMarkdown:
+        "Synthetic course question, note, or poll for bounded load testing",
+      ...(task.kind === "poll"
+        ? { options: [{ label: "Option A" }, { label: "Option B" }] }
+        : {}),
+    };
+    response = request(
+      "POST",
+      postPath,
+      body,
+      task.kind === "question"
+        ? "create_question"
+        : task.kind === "note"
+          ? "create_note"
+          : "create_poll",
+      201,
+      csrf,
+      task.slot,
+      originMs,
+    );
+    if (response)
+      successfulOperations[`course_${task.courseIndex + 1}_post`].add(1);
+  } else if (task.kind === "answer") {
+    response = request(
+      "POST",
+      `/api/v1/posts/${course.questionId}/answers`,
+      { bodyMarkdown: label },
+      "create_answer",
+      201,
+      csrf,
+      task.slot,
+      originMs,
+    );
+  } else if (task.kind === "followup") {
+    response = request(
+      "POST",
+      `/api/v1/posts/${course.questionId}/followups`,
+      { bodyMarkdown: label },
+      "create_followup",
+      201,
+      csrf,
+      task.slot,
+      originMs,
+    );
+  } else if (task.kind === "vote") {
+    response = request(
+      "PUT",
+      `/api/v1/posts/${course.pollId}/vote`,
+      { optionId: course.pollOptionId },
+      "vote",
+      200,
+      csrf,
+      task.slot,
+      originMs,
+    );
+  } else if (task.kind === "conversation") {
+    response = request(
+      "POST",
+      threadPath,
+      { bodyMarkdown: label },
+      "create_thread_conversation",
+      201,
+      csrf,
+      task.slot,
+      originMs,
+    );
+    if (response) {
+      conversationId = mutationId(response, "data.id");
+      latestMessageId = mutationId(response, "openingMessage.id");
+      successfulOperations[`course_${task.courseIndex + 1}_thread`].add(1);
+    }
+  } else if (task.kind === "watch") {
+    if (!otherConversationId) return;
+    response = request(
+      "PUT",
+      `${threadPath}/${otherConversationId}/watch`,
+      { noticesEnabled: true },
+      "thread_watch",
+      200,
+      csrf,
+      task.slot,
+      originMs,
+    );
+  } else if (task.kind === "reply") {
+    if (!conversationId) return;
+    response = request(
+      "POST",
+      `${threadPath}/${conversationId}/messages`,
+      { bodyMarkdown: label },
+      "create_thread_reply",
+      201,
+      csrf,
+      task.slot,
+      originMs,
+    );
+    if (response) {
+      latestMessageId = mutationId(response, "data.id");
+      successfulOperations[`course_${task.courseIndex + 1}_thread`].add(1);
+    }
+  } else if (task.kind === "read") {
+    if (!conversationId || !latestMessageId) return;
+    response = request(
+      "POST",
+      `${threadPath}/${conversationId}/read`,
+      { messageIds: [latestMessageId] },
+      "thread_read",
+      204,
+      csrf,
+      task.slot,
+      originMs,
+    );
+  }
+  return response;
+}
+
+function rampRead(actor) {
+  const course = manifest.courses[actor.courseIndex];
+  const root = `/api/v1/courses/${course.id}`;
+  const thread = `${root}/threads/${course.boardId}`;
+  const selected = readIteration++ % 13;
+  if (selected === 0)
+    request("GET", "/api/v1/courses", undefined, "list_courses", 200);
+  else if (selected === 1) {
+    const posts = readJsonArray(
+      request("GET", `${root}/posts`, undefined, "list_posts", 200),
+      "list_posts",
+    );
+    if (!posts.length || typeof posts[0].id !== "string")
+      exec.test.abort("Synthetic course feed is unexpectedly empty");
+    selectedPostId = posts[0].id;
+  } else if (selected === 2)
+    request(
+      "GET",
+      `/api/v1/posts/${selectedPostId ?? course.questionId}`,
+      undefined,
+      "read_post",
+      200,
+    );
+  else if (selected === 3)
+    request(
+      "GET",
+      "/api/v1/users/me/notifications/unread-count",
+      undefined,
+      "unread_count",
+      200,
+    );
+  else if (selected === 4)
+    request(
+      "GET",
+      "/api/v1/users/me/notifications",
+      undefined,
+      "list_notifications",
+      200,
+    );
+  else if (selected === 5)
+    request("GET", `${root}/threads`, undefined, "list_threads", 200);
+  else if (selected === 6)
+    request(
+      "GET",
+      `${root}/threads/unread-count`,
+      undefined,
+      "thread_unread_count",
+      200,
+    );
+  else if (selected === 7) {
+    const conversations = readJsonArray(
+      request(
+        "GET",
+        `${thread}/conversations`,
+        undefined,
+        "list_conversations",
+        200,
+      ),
+      "list_conversations",
+    );
+    if (!conversationId && conversations.length)
+      otherConversationId = conversations[0].id;
+  } else if (selected === 8 && (conversationId || otherConversationId))
+    request(
+      "GET",
+      `${thread}/conversations/${conversationId ?? otherConversationId}`,
+      undefined,
+      "read_conversation",
+      200,
+    );
+  else if (selected === 9 && (conversationId || otherConversationId))
+    request(
+      "GET",
+      `${thread}/conversations/${conversationId ?? otherConversationId}/messages`,
+      undefined,
+      "list_thread_messages",
+      200,
+    );
+  else if (selected === 10)
+    request("GET", `${root}/resources`, undefined, "resource_list", 200);
+  else if (selected === 11)
+    request(
+      "GET",
+      `${root}/resources/search?q=guide&limit=10`,
+      undefined,
+      "resource_search",
+      200,
+    );
+  else if (selected === 12)
+    request(
+      "GET",
+      `${root}/threads/changes?limit=20`,
+      undefined,
+      "thread_catchup",
+      200,
+    );
+  sleep(1 + ((actor.actorIndex + readIteration) % 3));
+}
+
+function subscribeToThread(actor) {
+  socketAttempted = true;
+  const course = manifest.courses[actor.courseIndex];
+  const url = `${BASE_URL.replace(/^http/, "ws")}/api/v1/thread-events`;
+  const socket = new WebSocket(url, null, {
+    headers: { Cookie: session.cookie, Origin: BASE_URL },
+    tags: { name: "thread_socket" },
+  });
+  socket.onopen = () =>
+    socket.send(JSON.stringify({ type: "subscribe", courseId: course.id }));
+  socket.onmessage = (event) => {
+    let signal;
+    try {
+      signal = JSON.parse(event.data);
+    } catch {
+      exec.test.abort("Invalid Thread signal");
+      return;
+    }
+    if (signal.type === "subscribed" && signal.courseId === course.id)
+      successfulOperations.thread_socket_subscribed.add(1);
+    else if (signal.type === "changed" && signal.courseId === course.id)
+      successfulOperations.thread_socket_changed.add(1);
+    else if (signal.type === "error")
+      exec.test.abort("Thread signal subscription rejected");
+  };
+  socket.onerror = () => exec.test.abort("Thread signal connection failed");
+  socket.onclose = () => successfulOperations.thread_socket_closed.add(1);
+  setTimeout(() => socket.close(), 100000);
+}
+
+function runRamp(data) {
+  const actor = rampActor();
+  if (!session) {
+    waitForSlot(data.originMs, actor.loginSlot);
+    login(actor.actorIndex, actor.loginSlot, data.originMs);
     return;
   }
-  if (mode === "ramp" && readIteration > 0) {
-    const selected = readIteration % 5;
-    if (selected === 0)
-      request("GET", "/api/v1/courses", undefined, "list_courses", 200);
-    if (selected === 1)
-      request(
-        "GET",
-        `/api/v1/courses/${manifest.courseId}/posts`,
-        undefined,
-        "list_posts",
-        200,
-      );
-    if (selected === 2)
-      request(
-        "GET",
-        `/api/v1/posts/${manifest.questionId}`,
-        undefined,
-        "read_post",
-        200,
-      );
-    if (selected === 3)
-      request(
-        "GET",
-        "/api/v1/users/me/notifications",
-        undefined,
-        "list_notifications",
-        200,
-      );
-    if (selected === 4)
-      request(
-        "GET",
-        "/api/v1/users/me/notifications/unread-count",
-        undefined,
-        "unread_count",
-        200,
-      );
-    readIteration += 1;
-    sleep(1 + ((__VU + readIteration) % 3));
+  if (actor.actorIndex >= 6 && actor.actorIndex <= 8 && !socketAttempted) {
+    subscribeToThread(actor);
     return;
+  }
+  const tasks = rampSchedule.writes.filter(
+    (item) => item.actorIndex === actor.actorIndex,
+  );
+  const next = tasks[writeCursor];
+  if (next) {
+    const due = data.originMs + next.slot * rampSchedule.slotMs;
+    if (Date.now() >= due - Math.min(3000, rampSchedule.slotMs / 2)) {
+      if (next.kind === "watch" && !otherConversationId)
+        prepareThreadWatch(manifest.courses[next.courseIndex]);
+      writeCursor++;
+      waitForSlot(data.originMs, next.slot);
+      rampWrite(next, data.originMs);
+      return;
+    }
+  }
+  rampRead(actor);
+}
+
+export default function (data) {
+  if (mode === "ramp") {
+    runRamp(data);
+    return;
+  }
+  if (!session) {
+    waitForSlot(data.originMs, 0);
+    login(undefined, 0, data.originMs);
   }
   request("GET", "/api/v1/courses", undefined, "list_courses", 200);
   request(
@@ -385,8 +615,7 @@ export default function () {
     "unread_count",
     200,
   );
-  if (mode === "smoke") mutate();
-  readIteration += 1;
+  smokeVote(data.originMs);
   sleep(1 + (__VU % 3));
 }
 

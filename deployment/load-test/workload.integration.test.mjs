@@ -13,17 +13,28 @@ import {
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { WebSocketServer } from "ws";
 import { sanitizeArtifacts } from "./sanitize-artifacts.mjs";
+import { verifyCoverage } from "./coverage.mjs";
 
 const integration = process.env.RUN_K6_INTEGRATION === "1" ? test : test.skip;
 const sourcePath = resolve(import.meta.dirname, "workload.js");
+const schedulePath = resolve(import.meta.dirname, "schedule.mjs");
 
 async function exercise(rateLimit, ambiguousMutation = false, mode = "smoke") {
   const requests = [];
+  const courseIds = Array.from({ length: 3 }, () => randomUUID());
+  const boardIds = Array.from({ length: 3 }, () => randomUUID());
+  const questionIds = Array.from({ length: 3 }, () => randomUUID());
+  const pollIds = Array.from({ length: 3 }, () => randomUUID());
+  const pollOptionIds = Array.from({ length: 3 }, () => randomUUID());
+  const conversations = new Map(courseIds.map((id) => [id, []]));
+  const sockets = new Set();
   const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     requests.push({
+      at: Date.now(),
       method: request.method,
       path: request.url,
       headers: request.headers,
@@ -37,6 +48,55 @@ async function exercise(rateLimit, ambiguousMutation = false, mode = "smoke") {
         "__Host-chalktalk_session=fake; Path=/; SameSite=Lax",
       );
       response.end(JSON.stringify({ data: { csrfToken: "fake-csrf" } }));
+    } else if (
+      mode === "ramp" &&
+      request.method === "GET" &&
+      /\/conversations$/.test(request.url)
+    ) {
+      const courseId = request.url.split("/")[4];
+      response.statusCode = 200;
+      response.end(JSON.stringify({ data: conversations.get(courseId) ?? [] }));
+    } else if (
+      mode === "ramp" &&
+      request.method === "GET" &&
+      /\/posts$/.test(request.url)
+    ) {
+      const courseId = request.url.split("/")[4];
+      response.statusCode = 200;
+      response.end(
+        JSON.stringify({
+          data: [{ id: questionIds[courseIds.indexOf(courseId)] }],
+        }),
+      );
+    } else if (
+      mode === "ramp" &&
+      request.method === "POST" &&
+      /\/conversations$/.test(request.url)
+    ) {
+      const courseId = request.url.split("/")[4];
+      const id = randomUUID();
+      conversations.get(courseId).push({ id });
+      response.statusCode = 201;
+      response.end(
+        JSON.stringify({ data: { id }, openingMessage: { id: randomUUID() } }),
+      );
+      for (const peer of sockets)
+        if (peer.courseId === courseId)
+          peer.socket.send(JSON.stringify({ type: "changed", courseId }));
+    } else if (
+      mode === "ramp" &&
+      request.method === "POST" &&
+      /\/messages$/.test(request.url)
+    ) {
+      response.statusCode = 201;
+      response.end(JSON.stringify({ data: { id: randomUUID() } }));
+    } else if (
+      mode === "ramp" &&
+      request.method === "POST" &&
+      /\/read$/.test(request.url)
+    ) {
+      response.statusCode = 204;
+      response.end();
     } else if (
       !request.headers.cookie?.includes("__Host-chalktalk_session=fake")
     ) {
@@ -66,8 +126,32 @@ async function exercise(rateLimit, ambiguousMutation = false, mode = "smoke") {
       );
     } else {
       response.statusCode = 200;
-      response.end(JSON.stringify({ data: {} }));
+      response.end(JSON.stringify({ data: [] }));
     }
+  });
+  const wsServer = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    if (mode !== "ramp" || request.url !== "/api/v1/thread-events") {
+      socket.destroy();
+      return;
+    }
+    wsServer.handleUpgrade(request, socket, head, (peer) => {
+      wsServer.emit("connection", peer, request);
+    });
+  });
+  wsServer.on("connection", (peer) => {
+    const entry = { socket: peer, courseId: null };
+    sockets.add(entry);
+    peer.on("message", (data) => {
+      const event = JSON.parse(data.toString());
+      if (event.type === "subscribe") {
+        entry.courseId = event.courseId;
+        peer.send(
+          JSON.stringify({ type: "subscribed", courseId: event.courseId }),
+        );
+      }
+    });
+    peer.on("close", () => sockets.delete(entry));
   });
   await new Promise((resolve) => server.listen(0, "0.0.0.0", resolve));
   const directory = await mkdtemp(
@@ -86,42 +170,52 @@ async function exercise(rateLimit, ambiguousMutation = false, mode = "smoke") {
         'duration: "2m"',
         process.env.K6_TEST_REMOTE_WRITE_URL
           ? 'duration: "15s"'
-          : 'duration: "8s"',
+          : 'duration: "12s"',
       )
-      .replace("sleep(2);", "sleep(1);");
-    const rampSource =
-      mode === "ramp"
-        ? source
-            .replaceAll(
-              /duration: `\$\{profile\.stageMinutes\[\d\]\}m`/g,
-              'duration: "5s"',
-            )
-            .replace(
-              "const WRITE_INTERVAL_MS = 30000;",
-              "const WRITE_INTERVAL_MS = 1000;",
-            )
-        : source;
+      .replace("sleep(2);", "sleep(1);")
+      .replace(
+        "sleep(1 + ((actor.actorIndex + readIteration) % 3));",
+        "sleep(0.01);",
+      )
+      .replace(
+        "setTimeout(() => socket.close(), 100000);",
+        "setTimeout(() => socket.close(), 3000);",
+      );
     const instrumentedSource = ambiguousMutation
-      ? rampSource
-          .replace(
-            "const WRITE_INTERVAL_MS = 30000;",
-            "const WRITE_INTERVAL_MS = 1000;",
-          )
-          .replace('timeout: "10s"', 'timeout: "1s"')
-      : rampSource;
+      ? source.replace('timeout: "10s"', 'timeout: "1s"')
+      : source;
     await writeFile(join(directory, "workload.js"), instrumentedSource);
     await chmod(join(directory, "workload.js"), 0o644);
+    const schedule = mode === "ramp"
+      ? (await readFile(schedulePath, "utf8"))
+          .replace("const SLOT_MS = 6000;", "const SLOT_MS = 200;")
+          .replace("const MAX_LATE_MS = 1000;", "const MAX_LATE_MS = 100;")
+      : await readFile(schedulePath, "utf8");
+    await writeFile(join(directory, "schedule.mjs"), schedule);
+    await chmod(join(directory, "schedule.mjs"), 0o644);
     const manifest = {
       runId: `load-20261117-${randomUUID().replaceAll("-", "").slice(0, 8)}`,
       deployedSha: "a".repeat(40),
       baseUrl: target,
-      courseId: randomUUID(),
-      questionId: randomUUID(),
-      pollId: randomUUID(),
-      pollOptionId: randomUUID(),
-      users: Array.from({ length: 20 }, (_, i) => ({
+      mode: mode === "ramp" ? "ramp" : undefined,
+      courseId: courseIds[0],
+      questionId: questionIds[0],
+      pollId: pollIds[0],
+      pollOptionId: pollOptionIds[0],
+      courses:
+        mode === "ramp"
+          ? courseIds.map((id, i) => ({
+              id,
+              boardId: boardIds[i],
+              questionId: questionIds[i],
+              pollId: pollIds[i],
+              pollOptionId: pollOptionIds[i],
+            }))
+          : undefined,
+      users: Array.from({ length: mode === "ramp" ? 30 : 20 }, (_, i) => ({
         email: `vu${i}@example.invalid`,
         password: "synthetic-private-password-not-in-k6-report",
+        courseId: mode === "ramp" ? courseIds[i % 3] : undefined,
       })),
     };
     await writeFile(
@@ -129,10 +223,10 @@ async function exercise(rateLimit, ambiguousMutation = false, mode = "smoke") {
       JSON.stringify(
         mode === "ramp"
           ? {
-              maxVus: 2,
+              maxVus: 10,
               stageMinutes: [1, 3, 3, 3],
-              stageTargets: [2, 2, 2, 2],
-              rampWriteAttempts: 17,
+              stageTargets: [2, 10, 10, 10],
+              rampWriteAttempts: 60,
             }
           : {
               maxVus: 1,
@@ -226,11 +320,11 @@ async function exercise(rateLimit, ambiguousMutation = false, mode = "smoke") {
         "https://github.com/drh-14/ChalkTalk/actions/runs/44156607166",
       );
       assert.ok((await stat(join(sanitized, "summary.json"))).size > 1000);
-      if (mode === "ramp")
-        assert.ok((await stat(join(sanitized, "report.html"))).size > 1000);
     }
     return { requests, output, summary };
   } finally {
+    for (const peer of wsServer.clients) peer.terminate();
+    wsServer.close();
     server.close();
     await rm(directory, { force: true, recursive: true });
   }
@@ -261,6 +355,12 @@ integration(
     assert.ok(requests.filter((r) => r.path === "/api/v1/courses").length >= 2);
     const vote = requests.filter((r) => r.method === "PUT");
     assert.equal(vote.length, 1);
+    const writeStarts = requests
+      .filter((r) => r.method !== "GET")
+      .map((r) => r.at)
+      .sort((a, b) => a - b);
+    assert.equal(writeStarts.length, 2);
+    assert.ok(writeStarts[1] - writeStarts[0] >= 5000);
     assert.match(vote[0].path, /^\/api\/v1\/posts\/[a-f0-9-]+\/vote$/);
     assert.match(
       vote[0].headers.origin,
@@ -276,29 +376,25 @@ integration(
   async () => {
     const { requests, output, summary } = await exercise(false, false, "ramp");
     assert.equal(output.code, 0, output.text);
-    for (const operation of [
-      "login",
-      "list_courses",
-      "list_posts",
-      "read_post",
-      "list_notifications",
-      "unread_count",
-      "create_question",
-      "create_note",
-      "create_answer",
-      "create_followup",
-      "create_poll",
-      "vote",
-    ])
-      assert.ok(
-        summary.metrics[`op_${operation}_success`]?.values.count >= 1,
-        operation,
-      );
+    verifyCoverage(summary, "ramp");
     const writes =
       requests.filter(
         (r) => r.method === "POST" && r.path !== "/api/v1/sessions",
       ).length + requests.filter((r) => r.method === "PUT").length;
-    assert.ok(writes >= 6 && writes <= 17);
+    assert.equal(writes, 60);
+    assert.equal(
+      requests.filter((r) => r.path === "/api/v1/sessions").length,
+      10,
+    );
+    const writeStarts = requests
+      .filter((r) => r.method !== "GET")
+      .map((r) => r.at)
+      .sort((a, b) => a - b);
+    assert.ok(
+      writeStarts.every(
+        (at, index) => index === 0 || at - writeStarts[index - 1] >= 100,
+      ),
+    );
   },
 );
 

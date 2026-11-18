@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       max_concurrent_users:
-        description: Maximum active synthetic users (2–20)
+        description: Maximum active synthetic users (10–30)
         required: true
         type: number
 
@@ -38,6 +38,7 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           LOAD_TEST_REPORT_DIR: ${{ runner.temp }}/chalktalk-load-test-sanitized
         run: bash deployment/load-test/actions-run.sh
       - name: Upload sanitized k6 reports

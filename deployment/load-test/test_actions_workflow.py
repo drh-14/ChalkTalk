@@ -119,6 +119,10 @@ class ActionsWorkflowTest(unittest.TestCase):
                     elif " teardown " in command and os.environ.get("FAIL_CLEANUP") == "ambiguous":
                         print("Ambiguous transaction outcome", file=sys.stderr)
                         sys.exit(1)
+                    elif " teardown " in command:
+                        print(json.dumps({"runId": os.environ["MOCK_RUN_ID"], "residue": 0, "manifestRemoved": True}))
+                    elif " mark-cleaned " in command:
+                        print(json.dumps({"runId": os.environ["MOCK_RUN_ID"], "deployedSha": os.environ["EXPECTED_SHA"], "status": "cleaned"}))
                     elif " verify-fixture " in command:
                         manifest = json.dumps({"runId": os.environ["MOCK_RUN_ID"]}).encode()
                         print(json.dumps({"verifiedManifestSha256": hashlib.sha256(manifest).hexdigest()}))
@@ -148,8 +152,18 @@ class ActionsWorkflowTest(unittest.TestCase):
                         destination = pathlib.Path(args[3])
                         destination.mkdir()
                         (destination / "scope.json").write_text("{}")
+                        (destination / "report.html").write_text("<!doctype html><html>safe</html>")
+                    elif script == "report.mjs":
+                        pathlib.Path(args[4]).write_text("<!doctype html><html>safe</html>")
+                    elif script == "email-report.mjs":
+                        with (root / "events").open("a") as events:
+                            events.write("email\\n")
+                        print(json.dumps({"status": "failed" if os.environ.get("FAIL_EMAIL") == "1" else "delivered"}))
                 elif name == "jq":
                     if args[0] in ("-r", "-er"):
+                        if args[1] == '.status // "failed"':
+                            print(json.loads(sys.stdin.read()).get("status", "failed"))
+                            sys.exit(0)
                         print({".projectRef": "ref", ".databaseHost": "host", ".nonce": "nonce", ".mac": "mac",
                                ".runId": os.environ["MOCK_RUN_ID"], ".sourceRunUrl": os.environ["MOCK_SOURCE_URL"],
                                ".verifiedManifestSha256": hashlib.sha256(json.dumps({"runId": os.environ["MOCK_RUN_ID"]}).encode()).hexdigest()}.get(args[1], "profile"))
@@ -174,6 +188,7 @@ class ActionsWorkflowTest(unittest.TestCase):
                 "VM_HOST": "example.invalid",
                 "SSH_PRIVATE_KEY": "test-key",
                 "VM_KNOWN_HOSTS": "test-host-key",
+                "RESEND_API_KEY": "re_mock",
             }
             for failure in ("preflight", "sanitization", "retry", "exhausted", "ambiguous", "changed-count", "changed-job", None):
                 with self.subTest(failure=failure):
@@ -234,6 +249,7 @@ class ActionsWorkflowTest(unittest.TestCase):
                         self.assertEqual(len(verified), 1)
                         self.assertTrue(cleaned)
                         self.assertLess(verified[0], events.index("sanitize"))
+                        self.assertLess(next(i for i, event in enumerate(events) if " mark-cleaned " in event), events.index("email"))
                         self.assertLess(events.index("preflight ready"),
                                         next(i for i, event in enumerate(events) if " claim-smoke-auto " in event))
                         self.assertFalse(any("vm_control.py check " in event for event in events))
@@ -261,6 +277,22 @@ class ActionsWorkflowTest(unittest.TestCase):
             self.assertTrue(any(" provision " in event for event in events))
             self.assertIn("preflight all", events)
             self.assertIn(env["MOCK_SOURCE_URL"], (root / "summary").read_text())
+            self.assertIn("Report email delivery: delivered", (root / "summary").read_text())
+
+            for child in destination.iterdir():
+                child.unlink()
+            destination.rmdir()
+            (root / "events").write_text("")
+            mail_failure = subprocess.run(
+                ["bash", str(RUNNER)], cwd=ROOT,
+                env={**env, "MODE": "ramp", "LOAD_TEST_REPORT_DIR": str(destination),
+                     "FAIL_PREFLIGHT": "0", "FAIL_SANITIZE": "0", "FAIL_EMAIL": "1",
+                     "GITHUB_STEP_SUMMARY": str(root / "summary")},
+                capture_output=True, text=True,
+            )
+            self.assertEqual(mail_failure.returncode, 0, mail_failure.stderr)
+            self.assertIn("Report email delivery: failed", (root / "summary").read_text())
+            self.assertTrue(any(" mark-cleaned " in event for event in (root / "events").read_text().splitlines()))
 
     def test_runner_rejects_rerun_or_supplied_id_before_vm_access(self):
         base = {

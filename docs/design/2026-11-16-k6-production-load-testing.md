@@ -1,6 +1,6 @@
 # Bounded k6 load testing against production
 
-Status: historical design; Smoke-to-Ramp handoff superseded by the [independent Ramp design](2026-11-17-independent-ramp-user-flow.md). Current operator procedure: [load-test runbook](../../deployment/load-test/README.md).
+Status: historical design; Smoke-to-Ramp handoff was superseded by the [independent Ramp design](2026-11-17-independent-ramp-user-flow.md), then its Ramp profile and traffic mix by the [multicourse design](2026-11-17-multicourse-journey-load-test.md). Current operator procedure: [load-test runbook](../../deployment/load-test/README.md).
 Date: 2026-11-16
 Amended: 2026-11-17
 

@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { normalizeProfile, validateTargetIdentity } from "./profile.mjs";
+import { buildRampSchedule } from "./schedule.mjs";
 
 const variables = {
   MODE: "ramp",
-  MAX_CONCURRENT_USERS: "20",
+  MAX_CONCURRENT_USERS: "30",
 };
 const databaseUrl =
   "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full";
@@ -16,32 +17,36 @@ const databaseUrl =
 test("normalizes the bounded profile and fingerprints canonical values", () => {
   const profile = normalizeProfile(variables);
   assert.deepEqual(profile, {
-    maxVus: 20,
+    maxVus: 30,
     stageMinutes: [1, 3, 3, 3],
-    stageTargets: [2, 5, 10, 20],
-    rampWriteAttempts: 17,
+    stageTargets: [2, 10, 20, 30],
+    rampWriteAttempts: 60,
   });
+  assert.equal(
+    profile.rampWriteAttempts,
+    buildRampSchedule(profile.maxVus).writes.length,
+  );
   assert.deepEqual(
-    normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "020" }),
+    normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "030" }),
     profile,
   );
   assert.deepEqual(
-    normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "20.0" }),
+    normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "30.0" }),
     profile,
   );
 });
 
-test("smaller ceilings collapse fixed targets without raising them", () => {
+test("smaller valid ceilings collapse fixed targets without raising them", () => {
   assert.deepEqual(
     normalizeProfile({
       ...variables,
-      MAX_CONCURRENT_USERS: "4",
+      MAX_CONCURRENT_USERS: "10",
     }),
     {
-      maxVus: 4,
+      maxVus: 10,
       stageMinutes: [1, 3, 3, 3],
-      stageTargets: [2, 4, 4, 4],
-      rampWriteAttempts: 17,
+      stageTargets: [2, 10, 10, 10],
+      rampWriteAttempts: 60,
     },
   );
   assert.equal(
@@ -57,10 +62,11 @@ test("smaller ceilings collapse fixed targets without raising them", () => {
 test("invalid or missing profile values fail closed", () => {
   for (const [name, values] of [
     ["missing", { ...variables, MAX_CONCURRENT_USERS: "" }],
-    ["over-vus", { ...variables, MAX_CONCURRENT_USERS: "21" }],
+    ["over-vus", { ...variables, MAX_CONCURRENT_USERS: "31" }],
     ["one-vu", { ...variables, MAX_CONCURRENT_USERS: "1" }],
+    ["below-min", { ...variables, MAX_CONCURRENT_USERS: "9" }],
     ["noninteger", { ...variables, MAX_CONCURRENT_USERS: "2.5" }],
-    ["over-decimal", { ...variables, MAX_CONCURRENT_USERS: "21.0" }],
+    ["over-decimal", { ...variables, MAX_CONCURRENT_USERS: "31.0" }],
     ["missing-fraction", { ...variables, MAX_CONCURRENT_USERS: "15." }],
     ["exponent", { ...variables, MAX_CONCURRENT_USERS: "1e1" }],
     ["whitespace", { ...variables, MAX_CONCURRENT_USERS: " 10.0" }],

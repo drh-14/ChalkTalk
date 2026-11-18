@@ -29,6 +29,15 @@ test("smoke and ramp require every selected operation to succeed", () => {
   const missing = summary("ramp");
   delete missing.metrics.op_create_followup_success;
   assert.throws(() => verifyCoverage(missing, "ramp"), /create_followup/);
+  const skipped = summary("ramp");
+  skipped.metrics.skipped_write_slots = { values: { count: 1 } };
+  assert.throws(
+    () => verifyCoverage(skipped, "ramp"),
+    /Missed reserved write slot/,
+  );
+  const courseMissing = summary("ramp");
+  delete courseMissing.metrics.op_course_3_thread_success;
+  assert.throws(() => verifyCoverage(courseMissing, "ramp"), /course_3_thread/);
   assert.throws(() => verifyCoverage(summary("smoke"), "ramp"));
 });
 

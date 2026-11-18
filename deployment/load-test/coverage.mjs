@@ -16,15 +16,43 @@ const mutations = [
   "create_poll",
   "vote",
 ];
+const courseActivity = [
+  "list_threads",
+  "thread_unread_count",
+  "list_conversations",
+  "read_conversation",
+  "list_thread_messages",
+  "thread_catchup",
+  "resource_list",
+  "resource_search",
+  "create_thread_conversation",
+  "create_thread_reply",
+  "thread_watch",
+  "thread_read",
+  "thread_socket_subscribed",
+  "thread_socket_changed",
+  "thread_socket_closed",
+  ...[1, 2, 3].flatMap((index) => [
+    `course_${index}_post`,
+    `course_${index}_thread`,
+  ]),
+];
 
 export function requiredOperations(mode) {
   if (mode === "smoke") return [...reads, "smoke_vote"];
-  if (mode === "ramp") return [...reads, ...mutations];
+  if (mode === "ramp") return [...reads, ...mutations, ...courseActivity];
   throw new Error("Invalid load-test mode");
 }
 
 export function verifyCoverage(summary, mode) {
   const required = requiredOperations(mode);
+  if (
+    mode === "ramp" &&
+    (summary.metrics?.skipped_write_slots?.values?.count ?? 0) > 0
+  )
+    throw new Error(
+      "Missed reserved write slot: selected-flow coverage is incomplete",
+    );
   for (const operation of required) {
     const count = summary.metrics?.[`op_${operation}_success`]?.values?.count;
     if (!Number.isFinite(count) || count < 1)
@@ -34,12 +62,22 @@ export function verifyCoverage(summary, mode) {
 }
 
 export function assertSafeText(text, manifest) {
-  const secrets = [
-    ...(manifest.users ?? []).flatMap((user) => [user.email, user.password]),
-    ...Object.entries(manifest)
-      .filter(([key]) => key !== "runId" && /id$/i.test(key))
-      .map(([, value]) => value),
-  ].filter((value) => typeof value === "string" && value.length >= 4);
+  const secrets = [];
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (
+        key !== "runId" &&
+        /(^id$|id$|password|email)/i.test(key) &&
+        typeof child === "string" &&
+        child.length >= 4
+      )
+        secrets.push(child);
+      if (Array.isArray(child)) child.forEach(visit);
+      else visit(child);
+    }
+  };
+  visit(manifest);
   if (
     secrets.some((secret) => text.includes(secret)) ||
     /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(text) ||

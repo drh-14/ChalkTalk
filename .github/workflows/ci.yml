@@ -21,6 +21,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Install pinned dependencies
+        run: npm ci
+
       - name: Verify production Node images load the pinned Supabase CA
         run: bash deployment/production/tests/verify-ca-images.sh
 

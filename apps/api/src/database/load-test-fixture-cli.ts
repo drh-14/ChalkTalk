@@ -44,6 +44,7 @@ async function main(): Promise<void> {
       "db-url-file": { type: "string" },
       manifest: { type: "string" },
       "confirm-delete": { type: "string" },
+      mode: { type: "string" },
     },
   });
   if (values["confirm-production"] !== "joinchalktalk.com")
@@ -72,6 +73,10 @@ async function main(): Promise<void> {
   validateProductionTarget(connectionString, expectedRef, expectedHost);
   if (action === "teardown" && values["confirm-delete"] !== runId)
     throw new Error("Teardown requires matching --confirm-delete run ID");
+  if (action === "provision" && !["smoke", "ramp"].includes(values.mode ?? ""))
+    throw new Error("Provisioning requires an explicit smoke or ramp mode");
+  if (action !== "provision" && values.mode)
+    throw new Error("Mode is only accepted for provisioning");
 
   // Never fall back to the app's generic DATABASE_URL; this CLI requires its own explicit file.
   const pool = new Pool({
@@ -95,6 +100,7 @@ async function main(): Promise<void> {
             await file.sync();
             written = true;
           },
+          values.mode as "smoke" | "ramp",
         );
         process.stdout.write(
           `Provisioned ${manifest.users.length} synthetic users for ${runId}; manifest is ${manifestPath}\n`,
