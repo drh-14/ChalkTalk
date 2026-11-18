@@ -17,5 +17,10 @@ COMPOSE_ENV_FILE=deployment/local/.env.example docker compose -f deployment/loca
       console.error("Default local stack must include every service without profiles or seeding");
       process.exitCode = 1;
     }
+    if (!services.collaboration.healthcheck?.test ||
+        services.gateway.depends_on?.collaboration?.condition !== "service_healthy") {
+      console.error("Gateway must wait for a healthy collaboration WebSocket upstream");
+      process.exitCode = 1;
+    }
   });
 '

@@ -156,6 +156,19 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3100/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      # A fresh development volume installs dependencies before the listener starts.
+      start_period: 120s
 
   web:
     build:
@@ -205,6 +218,9 @@ services:
       - caddy-data:/data
     depends_on:
       web:
+        condition: service_healthy
+      # A running collaboration container may not yet accept WebSocket upgrades.
+      collaboration:
         condition: service_healthy
     healthcheck:
       test:
