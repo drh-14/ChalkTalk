@@ -84,7 +84,7 @@ The system SHALL paginate current student members in stable order, including tho
 
 ### Requirement: Statistics course tab
 
-The course navigation SHALL show Statistics only to staff and SHALL present period selection, daily activity, summary metrics, pagination, and loading, empty, and retry states. The UI SHALL explain that recorded view history starts at deployment. The average response time caption SHALL read “Time from question to first endorsed answer.” When the selected period has no endorsed answer and the mean response time is null, the metric SHALL display “No answers” in the same size and bold weight as the other metric values.
+The course navigation SHALL show Statistics to every course member. Students SHALL see only Course pulse; staff SHALL also see the Activity view, which SHALL present period selection, daily activity, summary metrics, pagination, and loading, empty, and retry states. The UI SHALL explain that recorded view history starts at deployment. The average response time caption SHALL read “Time from question to first endorsed answer.” When the selected period has no endorsed answer and the mean response time is null, the metric SHALL display “No answers” in the same size and bold weight as the other metric values.
 
 #### Scenario: No daily activity
 
@@ -99,7 +99,7 @@ The course navigation SHALL show Statistics only to staff and SHALL present peri
 #### Scenario: Student course navigation
 
 - **WHEN** a student opens a course
-- **THEN** the Statistics tab is absent
+- **THEN** the Statistics tab is present and opens Course pulse without the Activity view or any request for per-student activity
 
 #### Scenario: No endorsed answer in the period
 
@@ -151,7 +151,7 @@ The Statistics tab SHALL offer separate daily activity and student roster downlo
 
 ### Requirement: Course pulse over the whole question history
 
-`GET /api/v1/courses/{courseId}/statistics/pulse` SHALL return, to current course TAs and instructors only, a summary of every published, non-deleted question in the course regardless of when the course record was created. It SHALL accept an optional `timeZone` query parameter holding an IANA time zone name, default `UTC`, and SHALL reject an unknown zone with `400 invalid_request`. A student SHALL receive `403 permission_denied`, and a non-member or unknown course `404 not_found`. The response SHALL contain:
+`GET /api/v1/courses/{courseId}/statistics/pulse` SHALL return, to every current course member, a summary of every published, non-deleted question in the course regardless of when the course record was created. It SHALL accept an optional `timeZone` query parameter holding an IANA time zone name, default `UTC`, and SHALL reject an unknown zone with `400 invalid_request`. Students SHALL receive the same class-wide summary as staff; a non-member or unknown course SHALL receive `404 not_found`. The per-student statistics, activity summary, and CSV exports remain staff-only. The response SHALL contain:
 
 - `timeZone`, `firstQuestionAt`, and `lastQuestionAt` (both `null` when there are no questions);
 - `questions`, `answered`, and `unanswered` totals, where a question is answered when it has at least one non-deleted answer;
@@ -176,7 +176,7 @@ Anonymous answers SHALL never contribute to `helpers`, so no anonymous author is
 #### Scenario: A student requests the pulse
 
 - **WHEN** a student requests the course pulse
-- **THEN** the API returns `403 permission_denied` without statistics
+- **THEN** the API returns the same class-wide summary a TA receives
 
 #### Scenario: An unknown time zone
 
@@ -185,7 +185,7 @@ Anonymous answers SHALL never contribute to `helpers`, so no anonymous author is
 
 ### Requirement: Course pulse view
 
-The Statistics tab SHALL offer two views, **Course pulse** (the default) and **Activity** (the existing period-based summary, student table, and exports), and SHALL show the period selector only for Activity. Course pulse SHALL request the pulse in the viewer's time zone and show:
+The Statistics tab SHALL offer staff two views, **Course pulse** (the default) and **Activity** (the existing period-based summary, student table, and exports), and SHALL show the period selector only for Activity. Students SHALL see Course pulse alone, with no view switcher. Course pulse SHALL request the pulse in the viewer's time zone and show:
 
 - headline tiles for the busiest weekday-and-hour block, the peak week and its question count, the median time to first answer, and unanswered questions;
 - a weekday-by-hour heatmap shaded from light to dark by question count;
@@ -209,3 +209,8 @@ Every heatmap cell and weekly bar SHALL reveal its exact value on hover or keybo
 
 - **WHEN** a TA opens Course pulse in a course without questions
 - **THEN** an empty state explains that the pulse appears once students ask questions
+
+#### Scenario: A student opens Statistics
+
+- **WHEN** a student opens the Statistics tab
+- **THEN** Course pulse shows the class-wide tiles, heatmap, weekly chart, topics, and helpers, with no Activity view

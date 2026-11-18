@@ -25,7 +25,14 @@ function responseTime(seconds: number | null) {
 
 type View = "pulse" | "activity";
 
-export function CourseStatistics({ courseId }: { courseId: string }) {
+/** Every member sees Course pulse; only staff also get per-student Activity. */
+export function CourseStatistics({
+  courseId,
+  staff = true,
+}: {
+  courseId: string;
+  staff?: boolean;
+}) {
   const [view, setView] = useState<View>("pulse");
   return (
     <section className="statistics-page" aria-labelledby="statistics-title">
@@ -38,29 +45,31 @@ export function CourseStatistics({ courseId }: { courseId: string }) {
               : "Discussion activity and current student participation"}
           </p>
         </div>
-        <div
-          className="statistics-views"
-          role="group"
-          aria-label="Statistics view"
-        >
-          {(
-            [
-              ["pulse", "Course pulse"],
-              ["activity", "Activity"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={view === value}
-              onClick={() => setView(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {staff && (
+          <div
+            className="statistics-views"
+            role="group"
+            aria-label="Statistics view"
+          >
+            {(
+              [
+                ["pulse", "Course pulse"],
+                ["activity", "Activity"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={view === value}
+                onClick={() => setView(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-      {view === "pulse" ? (
+      {view === "pulse" || !staff ? (
         <CoursePulse courseId={courseId} />
       ) : (
         <ActivityStatistics courseId={courseId} />

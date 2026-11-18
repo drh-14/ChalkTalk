@@ -71,7 +71,12 @@ export class StatisticsService {
     return value;
   }
 
-  private async authorized(courseId: string, userId: string): Promise<Date> {
+  /** Course members may read; only TAs and instructors unless `members` is set. */
+  private async authorized(
+    courseId: string,
+    userId: string,
+    members = false,
+  ): Promise<Date> {
     const result = await this.query<{ role: string; created_at: Date }>(
       "SELECT m.role,c.created_at FROM courses c JOIN course_memberships m ON m.course_id=c.id WHERE c.id=$1 AND m.user_id=$2",
       [courseId, userId],
@@ -79,7 +84,11 @@ export class StatisticsService {
     const membership = result.rows[0];
     if (!membership)
       throw new AuthError(404, "not_found", "Course is not found");
-    if (membership.role !== "instructor" && membership.role !== "ta")
+    if (
+      !members &&
+      membership.role !== "instructor" &&
+      membership.role !== "ta"
+    )
       throw new AuthError(403, "permission_denied", "Staff role is required");
     return membership.created_at;
   }
@@ -183,7 +192,8 @@ export class StatisticsService {
   async pulse(courseId: string, userId: string, timeZoneInput: unknown) {
     const timeZone = timeZoneInput === undefined ? "UTC" : timeZoneInput;
     if (typeof timeZone !== "string" || timeZone.length > 64) throw invalid();
-    await this.authorized(courseId, userId);
+    // The pulse is class-wide aggregates, so every member may read it.
+    await this.authorized(courseId, userId, true);
     const zone = await this.query<{ name: string }>(
       "SELECT name FROM pg_timezone_names WHERE name=$1",
       [timeZone],

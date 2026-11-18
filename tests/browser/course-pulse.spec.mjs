@@ -84,8 +84,12 @@ const post = (id, title) => ({
   version: 1,
 });
 
-/** Mocks the API for a TA; `slow` holds the named responses until each promise settles. */
-async function mockApi(page, slow = {}) {
+/**
+ * Mocks the API for a TA (or another `role`); `slow` holds the named
+ * responses until each promise settles. Returns the statistics paths requested.
+ */
+async function mockApi(page, slow = {}, role = "ta") {
+  const requested = [];
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -119,8 +123,9 @@ async function mockApi(page, slow = {}) {
           expiresAt: "2090-01-01T00:00:00Z",
         },
       });
+    if (path.includes("/statistics")) requested.push(path);
     if (path === "/api/v1/courses/course-1/members/user-1")
-      return respond({ data: { role: "ta" } });
+      return respond({ data: { role } });
     if (path === "/api/v1/courses/course-1")
       return respond({
         data: {
@@ -158,6 +163,7 @@ async function mockApi(page, slow = {}) {
     if (path.endsWith("/unread-count")) return respond({ data: { count: 0 } });
     return respond(empty);
   });
+  return requested;
 }
 const shot = (page, name, fullPage = true) =>
   page.screenshot({ path: resolve(evidence, `${name}.png`), fullPage });
@@ -281,5 +287,30 @@ test.describe("discussion", () => {
     await expect(
       page.getByRole("link", { name: /Red black trees/ }),
     ).toBeVisible();
+  });
+});
+
+test.describe("student", () => {
+  test.use({ viewport: { width: 1536, height: 864 } });
+
+  test("a student sees Course pulse without staff-only Activity", async ({
+    page,
+  }) => {
+    const requested = await mockApi(page, {}, "student");
+    await page.goto(`${origin}/courses/course-1/statistics`);
+    await expect(page.getByRole("link", { name: "Statistics" })).toBeVisible({
+      timeout: 30000,
+    });
+    await expect(page.locator(".pulse-tile-value").first()).toHaveText(
+      "Tue 9 am–12 pm",
+    );
+    await expect(
+      page.getByRole("group", { name: "Statistics view" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Activity" })).toHaveCount(0);
+    expect(requested.every((path) => path.endsWith("/statistics/pulse"))).toBe(
+      true,
+    );
+    await shot(page, "student-pulse");
   });
 });

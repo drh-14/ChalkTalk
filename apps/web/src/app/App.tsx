@@ -1309,15 +1309,11 @@ function CourseFrame({
       label: "Course settings",
       path: `${discussionPath}/settings`,
     },
-    ...(staff
-      ? [
-          {
-            key: "statistics",
-            label: "Statistics",
-            path: `${discussionPath}/statistics`,
-          },
-        ]
-      : []),
+    {
+      key: "statistics",
+      label: "Statistics",
+      path: `${discussionPath}/statistics`,
+    },
   ];
   function follow(event: MouseEvent<HTMLAnchorElement>, path: string) {
     if (
@@ -1512,11 +1508,7 @@ function CourseFrame({
             userId={session.user.id}
           />
         ) : section === "statistics" ? (
-          staff ? (
-            <CourseStatistics courseId={courseId} />
-          ) : (
-            <p role="alert">Statistics are available to course staff.</p>
-          )
+          <CourseStatistics courseId={courseId} staff={staff === true} />
         ) : (
           <Discussion
             courseId={courseId}

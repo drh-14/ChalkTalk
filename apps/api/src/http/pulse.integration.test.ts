@@ -235,11 +235,18 @@ integration("course pulse API", () => {
     });
   });
 
-  it("rejects students, non-members, and unknown time zones", async () => {
+  it("shows students the same class-wide pulse as staff", async () => {
     const student = await pulse(ids.student, ids.course);
-    expect(student.status).toBe(403);
-    expect(student.body.error.code).toBe("permission_denied");
-    expect(student.body).not.toHaveProperty("data");
+    const staff = await pulse(ids.staff, ids.course);
+    expect(student.status).toBe(200);
+    expect(student.headers["cache-control"]).toContain("no-store");
+    expect({ ...student.body.data, generatedAt: null }).toEqual({
+      ...staff.body.data,
+      generatedAt: null,
+    });
+  });
+
+  it("rejects non-members and unknown time zones", async () => {
     const outsider = await pulse(ids.outsider, ids.course);
     expect(outsider.status).toBe(404);
     expect(outsider.body.error.code).toBe("not_found");
