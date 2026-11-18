@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-11-17
+goal: Make Ramp independent with a single bounded user-count input and
+  self-contained fixture cleanup

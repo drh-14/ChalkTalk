@@ -20,6 +20,8 @@ command -v jq >/dev/null
 command -v ssh >/dev/null
 command -v scp >/dev/null
 command -v node >/dev/null
+command -v sha256sum >/dev/null
+command -v timeout >/dev/null
 input_dir=$(mktemp -d)
 credential_dir=$(mktemp -d)
 raw_dir=$(mktemp -d)
@@ -29,9 +31,8 @@ vm_root=/srv/chalktalk/shared/load-test
 profile_vm_path="$vm_root/attempt-$GITHUB_RUN_ID.profile.json"
 release="/srv/chalktalk/releases/$EXPECTED_SHA"
 claimed=false
-completed=false
 artifacts_published=false
-source_smoke_url=
+source_workflow_url=
 tunnel_pid=
 cleanup_failed=false
 summary_file=${GITHUB_STEP_SUMMARY:-/dev/null}
@@ -49,23 +50,41 @@ cleanup() {
   if [[ -n $tunnel_pid ]]; then kill "$tunnel_pid" 2>/dev/null || true; wait "$tunnel_pid" 2>/dev/null || true; fi
   if [[ $claimed == true && -z $RUN_ID ]]; then
     cleanup_failed=true
-  elif [[ $claimed == true && ( $MODE == ramp || $completed != true ) ]]; then
+  elif [[ $claimed == true ]]; then
     echo 'Attempting reviewed VM fixture cleanup' >&2
-    if vm_ssh "test -f $vm_root/$RUN_ID.json"; then
-      if ! vm_ssh "bash $release/deployment/load-test/vm_fixture.sh inventory $RUN_ID $EXPECTED_SHA $project_ref $db_host" > "$raw_dir/final-inventory.json" ||
-         ! node "$script_dir/verify-inventory.mjs" "$raw_dir/final-inventory.json"; then
-        cleanup_failed=true
-      elif ! vm_ssh "bash $release/deployment/load-test/vm_fixture.sh teardown $RUN_ID $EXPECTED_SHA $project_ref $db_host $RUN_ID" > "$raw_dir/teardown.json"; then
-        cleanup_failed=true
-      elif ! vm_ssh "python3 $release/deployment/load-test/vm_state.py mark-cleaned --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path" >/dev/null; then
-        cleanup_failed=true
-      fi
+    cleanup_deadline=$(($(date +%s) + 120))
+    if vm_ssh_cleanup "test -f $vm_root/$RUN_ID.json"; then
+      local attempt step_error retryable cleanup_baseline=
+      for attempt in 1 2 3; do
+        retryable=false
+        step_error="$raw_dir/cleanup-error"
+        if ! vm_ssh_cleanup "bash $release/deployment/load-test/vm_fixture.sh inventory $RUN_ID $EXPECTED_SHA $project_ref $db_host" > "$raw_dir/final-inventory.json" 2>"$step_error"; then
+          if grep -q 'CONNECTION_ACQUISITION_EXHAUSTED' "$step_error"; then retryable=true; fi
+        elif ! node "$script_dir/verify-inventory.mjs" "$raw_dir/final-inventory.json" ${cleanup_baseline:+"$cleanup_baseline"}; then
+          cleanup_failed=true
+          break
+        else
+          if [[ -z $cleanup_baseline ]]; then
+            cleanup_baseline="$raw_dir/cleanup-baseline.json"
+            cp -- "$raw_dir/final-inventory.json" "$cleanup_baseline"
+          fi
+          if ! vm_ssh_cleanup "bash $release/deployment/load-test/vm_fixture.sh teardown $RUN_ID $EXPECTED_SHA $project_ref $db_host $RUN_ID" > "$raw_dir/teardown.json" 2>"$step_error"; then
+            if grep -q 'CONNECTION_ACQUISITION_EXHAUSTED' "$step_error"; then retryable=true; fi
+          else
+            if ! vm_ssh "python3 $release/deployment/load-test/vm_state.py mark-cleaned --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path" >/dev/null; then cleanup_failed=true; fi
+            break
+          fi
+        fi
+        if [[ $retryable != true || $attempt == 3 || $(date +%s) -ge $((cleanup_deadline - 30)) ]]; then cleanup_failed=true; break; fi
+        echo 'Connection-acquisition exhaustion during cleanup; retrying after quiescence' >&2
+        sleep 30
+      done
     else
       cleanup_failed=true
     fi
   fi
   if [[ $artifacts_published != true && -f $input_dir/manifest.json ]]; then
-    if ! node "$script_dir/sanitize-artifacts.mjs" "$input_dir/manifest.json" "$raw_dir" "$sanitized_dir" "$RUN_ID" "$MODE" "$source_smoke_url"; then
+    if ! node "$script_dir/sanitize-artifacts.mjs" "$input_dir/manifest.json" "$raw_dir" "$sanitized_dir" "$RUN_ID" "$MODE" "$source_workflow_url"; then
       cleanup_failed=true
     fi
   fi
@@ -79,9 +98,7 @@ cleanup() {
     effective_profile=$(jq -r '"max VUs=\(.maxVus), stage minutes=\(.stageMinutes | join(",")), ramp write attempts=\(.rampWriteAttempts)"' "$input_dir/profile.json")
   fi
   if [[ $claimed == true ]]; then
-    if [[ $MODE == smoke && $completed == true ]]; then
-      fixture_status=retained-for-reviewed-ramp
-    elif [[ $cleanup_failed == false ]]; then
+    if [[ $cleanup_failed == false ]]; then
       fixture_status=verified
     else
       fixture_status=manual-recovery-required
@@ -89,7 +106,7 @@ cleanup() {
   fi
   {
     echo "## Bounded k6 $MODE — ${RUN_ID:-not-resolved}"
-    echo "- Source Smoke workflow: ${source_smoke_url:-not-selected}"
+    echo "- Source workflow: ${source_workflow_url:-not-selected}"
     echo "- Selected core API flows only: login, course/feed/post/notification reads, question/note/answer/follow-up/poll/vote writes"
     echo "- Not all app flows: course creation, files, email, and collaboration are excluded"
     echo "- Production deployment SHA: $EXPECTED_SHA"
@@ -112,6 +129,11 @@ chmod 600 "$credential_dir/id_ed25519" "$credential_dir/known_hosts"
 ssh-keygen -F "$VM_HOST" -f "$credential_dir/known_hosts" >/dev/null || { echo 'Pinned VM host key missing' >&2; exit 2; }
 ssh_options=(-p 22 -i "$credential_dir/id_ed25519" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$credential_dir/known_hosts")
 vm_ssh() { ssh "${ssh_options[@]}" "ubuntu@$VM_HOST" "$1"; }
+vm_ssh_cleanup() {
+  local remaining=$((cleanup_deadline - $(date +%s)))
+  (( remaining > 0 )) || return 124
+  timeout "${remaining}s" ssh "${ssh_options[@]}" "ubuntu@$VM_HOST" "$1"
+}
 vm_scp() { scp -P 22 -i "$credential_dir/id_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$credential_dir/known_hosts" "$@"; }
 node "$script_dir/prepare-runner.mjs" "$input_dir"
 project_ref=$(jq -r .projectRef "$input_dir/identity.json")
@@ -130,21 +152,19 @@ curl --fail --silent --show-error --max-time 3 http://127.0.0.1:19090/-/ready >/
 node "$script_dir/preflight.mjs" ready "$RUN_ID"
 vm_ssh "install -d -m 0700 $vm_root"
 vm_scp "$input_dir/profile.json" "ubuntu@$VM_HOST:$profile_vm_path"
-source_arg=
-if [[ $MODE == smoke ]]; then source_arg="--source-run-id $GITHUB_RUN_ID"; fi
-claim_result=$(vm_ssh "python3 $release/deployment/load-test/vm_state.py claim-$MODE-auto --root $vm_root --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path --project-ref $project_ref --database-host $db_host --nonce $nonce --mac $mac $source_arg")
+claim_result=$(vm_ssh "python3 $release/deployment/load-test/vm_state.py claim-$MODE-auto --root $vm_root --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path --project-ref $project_ref --database-host $db_host --nonce $nonce --mac $mac --source-run-id $GITHUB_RUN_ID")
 claimed=true
 RUN_ID=$(printf '%s' "$claim_result" | jq -er .runId)
-source_smoke_url=$(printf '%s' "$claim_result" | jq -er .sourceRunUrl)
-[[ $RUN_ID =~ ^load-[0-9]{8}-[a-z0-9]{8,32}$ && $source_smoke_url =~ ^https://github.com/drh-14/ChalkTalk/actions/runs/[0-9]+$ ]] || { echo 'VM claim response identity invalid; manual review required' >&2; exit 1; }
+source_workflow_url=$(printf '%s' "$claim_result" | jq -er .sourceRunUrl)
+[[ $RUN_ID =~ ^load-[0-9]{8}-[a-z0-9]{8,32}$ && $source_workflow_url =~ ^https://github.com/drh-14/ChalkTalk/actions/runs/[0-9]+$ ]] || { echo 'VM claim response identity invalid; manual review required' >&2; exit 1; }
 vm_ssh "python3 $release/deployment/load-test/vm_control.py prepare --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --project-ref $project_ref --database-host $db_host --nonce $nonce --mac $mac" >/dev/null
-if [[ $MODE == smoke ]]; then
-  vm_ssh "bash $release/deployment/load-test/vm_fixture.sh provision $RUN_ID $EXPECTED_SHA $project_ref $db_host" >/dev/null
-fi
+vm_ssh "bash $release/deployment/load-test/vm_fixture.sh provision $RUN_ID $EXPECTED_SHA $project_ref $db_host" >/dev/null
 vm_ssh "bash $release/deployment/load-test/vm_fixture.sh inventory $RUN_ID $EXPECTED_SHA $project_ref $db_host" > "$raw_dir/inventory.json"
 node "$script_dir/verify-inventory.mjs" "$raw_dir/inventory.json"
 vm_scp "ubuntu@$VM_HOST:$vm_root/$RUN_ID.json" "$input_dir/manifest.json"
 chmod 600 "$input_dir/manifest.json"
+verified_manifest=$(vm_ssh "python3 $release/deployment/load-test/vm_state.py verify-fixture --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path" | jq -er .verifiedManifestSha256)
+[[ $verified_manifest =~ ^[0-9a-f]{64}$ && $(sha256sum "$input_dir/manifest.json" | cut -d' ' -f1) == "$verified_manifest" ]] || { echo 'Copied fixture manifest digest mismatch' >&2; exit 1; }
 echo "Starting bounded $MODE for $RUN_ID; selected core API flows only"
 workload_start_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker run --rm --network host --user "$(id -u):$(id -g)" \
@@ -159,12 +179,8 @@ docker run --rm --network host --user "$(id -u):$(id -g)" \
   run --out experimental-prometheus-rw --summary-trend-stats='avg,med,p(90),p(95),p(99)' /scripts/workload.js
 workload_end_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 node "$script_dir/coverage.mjs" "$MODE" "$raw_dir/$RUN_ID-$MODE-summary.json" "$input_dir/manifest.json" > "$raw_dir/coverage.json"
-if [[ $MODE == smoke ]]; then
-  sleep 120
-  node "$script_dir/preflight.mjs" all "$RUN_ID"
-  printf '{"start":"%s","end":"%s"}\n' "$workload_start_utc" "$workload_end_utc" > "$raw_dir/window.json"
-  node "$script_dir/sanitize-artifacts.mjs" "$input_dir/manifest.json" "$raw_dir" "$sanitized_dir" "$RUN_ID" "$MODE" "$source_smoke_url"
-  artifacts_published=true
-  vm_ssh "python3 $release/deployment/load-test/vm_state.py verify-smoke --root $vm_root --run-id $RUN_ID --deployed-sha $EXPECTED_SHA --profile-file $profile_vm_path" >/dev/null
-fi
-completed=true
+sleep 120
+node "$script_dir/preflight.mjs" all "$RUN_ID"
+printf '{"start":"%s","end":"%s"}\n' "$workload_start_utc" "$workload_end_utc" > "$raw_dir/window.json"
+node "$script_dir/sanitize-artifacts.mjs" "$input_dir/manifest.json" "$raw_dir" "$sanitized_dir" "$RUN_ID" "$MODE" "$source_workflow_url"
+artifacts_published=true

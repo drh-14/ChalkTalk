@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 SCRIPT = pathlib.Path(__file__).with_name("vm_state.py")
 SHA = "a" * 40
 RUN_ID = "load-20261117-a1b2c3d4"
-PROFILE = {"maxVus": 20, "stageMinutes": [1, 3, 3, 3], "stageTargets": [1, 5, 10, 20], "rampWriteAttempts": 17}
+PROFILE = {"maxVus": 20, "stageMinutes": [1, 3, 3, 3], "stageTargets": [2, 5, 10, 20], "rampWriteAttempts": 17}
 REF = "abcdefghijklmnopqrst"
 HOST = "aws-0-us-east-1.pooler.supabase.com"
 SOURCE_RUN = "44156607166"
@@ -42,7 +42,7 @@ class VmStateTest(unittest.TestCase):
                 "--project-ref", project_ref, "--database-host", database_host,
                 "--nonce", nonce, "--mac", mac, "--env-file", str(self.env_file),
                 "--deployed-sha-file", str(self.sha_file)]
-        if action == "claim-smoke-auto":
+        if action in ("claim-smoke-auto", "claim-ramp-auto"):
             args.extend(["--source-run-id", source_run])
         return subprocess.run(args, text=True, capture_output=True)
 
@@ -154,6 +154,22 @@ class VmStateTest(unittest.TestCase):
         self.assertNotEqual(self.auto("claim-smoke-auto").returncode, 0)
         self.assertEqual(len(list(self.root.glob("*.state.json"))), 1)
 
+    def test_independent_ramp_claims_fresh_run_without_smoke_and_blocks_uncertain_fixture(self):
+        claimed = self.auto_ok("claim-ramp-auto")
+        run_id = claimed["runId"]
+        self.assertEqual(claimed["status"], "ramp-claimed")
+        self.assertEqual(claimed["sourceRunUrl"], source_url := f"https://github.com/drh-14/ChalkTalk/actions/runs/{SOURCE_RUN}")
+        state = json.loads((self.root / f"{run_id}.state.json").read_text())
+        self.assertEqual(state["sourceRunUrl"], source_url)
+        self.assertNotEqual(self.auto("claim-ramp-auto", source_run="44156607167").returncode, 0)
+        self.assertEqual(self.call("mark-cleaned", run_id=run_id).returncode, 0)
+        self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
+        self.assertEqual(self.auto("claim-ramp-auto", source_run="44156607167").returncode, 0)
+
+    def test_independent_ramp_refuses_active_legacy_smoke(self):
+        self.assert_ok("claim-smoke")
+        self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
+
     def test_auto_ramp_selects_only_recent_verified_fixture_once(self):
         run_id = self.auto_ok("claim-smoke-auto")["runId"]
         manifest, _ = self.mark_fixture_files(run_id)
@@ -161,11 +177,12 @@ class VmStateTest(unittest.TestCase):
         self.assertEqual(self.call("verify-smoke", run_id=run_id).returncode, 0)
         state = json.loads((self.root / f"{run_id}.state.json").read_text())
         self.assertEqual(state["verifiedManifestSha256"], hashlib.sha256(manifest.read_bytes()).hexdigest())
-        selected = self.auto_ok("claim-ramp-auto")
-        self.assertEqual(selected["runId"], run_id)
-        self.assertEqual(selected["sourceRunUrl"],
-                         f"https://github.com/drh-14/ChalkTalk/actions/runs/{SOURCE_RUN}")
-        self.assertEqual(selected["status"], "ramp-claimed")
+        self.assertNotEqual(self.auto("claim-ramp-auto", source_run="44156607167").returncode, 0)
+        manifest.unlink()
+        (self.root / f"{run_id}.db-url").unlink()
+        self.assert_ok("mark-cleaned", run_id=run_id)
+        selected = self.auto_ok("claim-ramp-auto", source_run="44156607167")
+        self.assertNotEqual(selected["runId"], run_id)
         self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
 
     def test_auto_ramp_rejects_well_formed_manifest_replacement_without_mutation(self):
@@ -210,41 +227,18 @@ class VmStateTest(unittest.TestCase):
         self.assertNotEqual(self.call("verify-smoke", run_id=run_id).returncode, 0)
         self.assertEqual(state_path.read_bytes(), claimed_state)
 
-    def test_auto_ramp_fails_closed_on_stale_identity_manifest_or_ambiguity(self):
-        self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
-        run_id = self.auto_ok("claim-smoke-auto")["runId"]
-        manifest, target = self.mark_fixture_files(run_id)
-        self.assertEqual(self.call("verify-smoke", run_id=run_id).returncode, 0)
+    def test_ramp_manifest_digest_is_recorded_before_traffic_and_rejects_tampering(self):
+        run_id = self.auto_ok("claim-ramp-auto")["runId"]
         state_path = self.root / f"{run_id}.state.json"
-        original = json.loads(state_path.read_text())
-        for changed in ({"verifiedAt": 1}, {"projectRef": "z" * 20}):
-            state_path.write_text(json.dumps({**original, **changed}))
-            self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
-            self.assertEqual(json.loads(state_path.read_text())["status"], "smoke-verified")
-        state_path.write_text(json.dumps(original))
-        manifest.unlink()
-        self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
-        self.mark_fixture_files(run_id)
-        invalid = json.loads(manifest.read_text())
-        invalid["users"] = []
-        manifest.write_text(json.dumps(invalid))
-        self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
-        self.mark_fixture_files(run_id)
-        self.database_url = self.database_url.replace("test-only", "changed-test-only")
-        self.env_file.write_text(f"DATABASE_URL={self.database_url}\n")
-        self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
-        self.database_url = self.database_url.replace("changed-test-only", "test-only")
-        self.env_file.write_text(f"DATABASE_URL={self.database_url}\n")
-        second_id = "load-20261117-gh44156607168"
-        second_state = {**original, "runId": second_id, "sourceRunId": "44156607168",
-                        "sourceRunUrl": "https://github.com/drh-14/ChalkTalk/actions/runs/44156607168"}
-        (self.root / f"{second_id}.state.json").write_text(json.dumps(second_state))
-        (self.root / f"{second_id}.state.json").chmod(0o600)
-        ambiguous = self.auto("claim-ramp-auto")
-        self.assertNotEqual(ambiguous.returncode, 0)
-        self.assertIn("exactly one", ambiguous.stderr)
-        self.assertEqual(json.loads(state_path.read_text())["status"], "smoke-verified")
-        target.unlink()
+        original = state_path.read_bytes()
+        self.assertNotEqual(self.call("verify-fixture", run_id=run_id).returncode, 0)
+        self.assertEqual(state_path.read_bytes(), original)
+        manifest, _ = self.mark_fixture_files(run_id)
+        self.assert_ok("verify-fixture", run_id=run_id)
+        state = json.loads(state_path.read_text())
+        self.assertEqual(state["verifiedManifestSha256"], hashlib.sha256(manifest.read_bytes()).hexdigest())
+        self.assertEqual(state["status"], "ramp-claimed")
+        self.assertNotEqual(self.call("verify-fixture", run_id=run_id).returncode, 0)
 
     def test_auto_smoke_ignores_legacy_cleaned_but_refuses_orphans(self):
         self.assert_ok("claim-smoke")

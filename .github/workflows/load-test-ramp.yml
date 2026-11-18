@@ -2,6 +2,11 @@ name: Ramp production load test
 
 on:
   workflow_dispatch:
+    inputs:
+      max_concurrent_users:
+        description: Maximum active synthetic users (2–20)
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -25,13 +30,11 @@ jobs:
       - name: Run selected bounded operation
         env:
           MODE: ramp
+          MAX_CONCURRENT_USERS: ${{ inputs.max_concurrent_users }}
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
           EXPECTED_SHA: ${{ github.sha }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SUPABASE_STORAGE_ENDPOINT: ${{ vars.SUPABASE_STORAGE_ENDPOINT }}
-          LOAD_TEST_MAX_VUS: ${{ vars.LOAD_TEST_MAX_VUS }}
-          LOAD_TEST_STAGE_MINUTES: ${{ vars.LOAD_TEST_STAGE_MINUTES }}
-          LOAD_TEST_RAMP_WRITE_ATTEMPTS: ${{ vars.LOAD_TEST_RAMP_WRITE_ATTEMPTS }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}

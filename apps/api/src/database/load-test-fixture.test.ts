@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  acquireFixtureClient,
   validateProductionTarget,
   validateRunId,
   fixtureIdentity,
@@ -13,6 +14,26 @@ const url =
   "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full";
 
 describe("privileged load-test fixture guard", () => {
+  it("marks only pre-transaction connection exhaustion as retryable", async () => {
+    const exhausted = {
+      connect: async () => {
+        throw new Error(
+          "(EMAXCONNSESSION) max clients reached in session mode",
+        );
+      },
+    };
+    await expect(acquireFixtureClient(exhausted as never)).rejects.toThrow(
+      "CONNECTION_ACQUISITION_EXHAUSTED",
+    );
+    const other = {
+      connect: async () => {
+        throw new Error("connection lost after commit");
+      },
+    };
+    await expect(acquireFixtureClient(other as never)).rejects.toThrow(
+      "connection lost after commit",
+    );
+  });
   it("requires the exact project reference, host, database, and verified TLS before a connection", () => {
     expect(() =>
       validateProductionTarget(

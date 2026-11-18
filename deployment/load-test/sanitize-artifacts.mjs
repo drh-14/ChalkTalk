@@ -16,7 +16,7 @@ export function sanitizeArtifacts(
   destination,
   runId,
   mode,
-  sourceSmokeUrl,
+  sourceWorkflowUrl,
 ) {
   if (
     !/^load-[0-9]{8}-[a-z0-9]{8,32}$/.test(runId) ||
@@ -26,10 +26,10 @@ export function sanitizeArtifacts(
     throw new Error("Report identity mismatch");
   if (
     !/^https:\/\/github\.com\/drh-14\/ChalkTalk\/actions\/runs\/[0-9]{6,30}$/.test(
-      sourceSmokeUrl ?? "",
+      sourceWorkflowUrl ?? "",
     )
   )
-    throw new Error("Source Smoke workflow URL is invalid");
+    throw new Error("Source workflow URL is invalid");
   const reportNames = [
     [`${runId}-${mode}-summary.json`, "summary.json", "json"],
     [`${runId}-${mode}.html`, "report.html", "html"],
@@ -86,7 +86,7 @@ export function sanitizeArtifacts(
         {
           runId,
           mode,
-          sourceSmokeUrl,
+          sourceWorkflowUrl,
           selectedCoreApiOnly: true,
           excludedFlows: ["course creation", "files", "email", "collaboration"],
           workloadWindowUtc: window,
@@ -111,7 +111,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       destination,
       runId,
       mode,
-      sourceSmokeUrl,
+      sourceWorkflowUrl,
     ] = process.argv.slice(2);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     sanitizeArtifacts(
@@ -120,7 +120,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       destination,
       runId,
       mode,
-      sourceSmokeUrl,
+      sourceWorkflowUrl,
     );
     process.stdout.write("Report artifacts screened for private data\n");
   } catch (error) {

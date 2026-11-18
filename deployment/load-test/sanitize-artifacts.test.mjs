@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { sanitizeArtifacts } from "./sanitize-artifacts.mjs";
 
 const runId = "load-20261117-a1b2c3d4";
-const sourceSmokeUrl =
+const sourceWorkflowUrl =
   "https://github.com/drh-14/ChalkTalk/actions/runs/44156607166";
 const manifest = {
   runId,
@@ -48,14 +48,14 @@ test("only expected sanitized report files become artifacts", () => {
         end: "2026-11-17T15:01:00Z",
       }),
     );
-    sanitizeArtifacts(manifest, raw, dest, runId, "smoke", sourceSmokeUrl);
+    sanitizeArtifacts(manifest, raw, dest, runId, "smoke", sourceWorkflowUrl);
     assert.ok(existsSync(join(dest, "summary.json")));
     assert.ok(existsSync(join(dest, "report.html")));
     assert.ok(existsSync(join(dest, "coverage.json")));
     assert.deepEqual(JSON.parse(readFileSync(join(dest, "scope.json"))), {
       runId,
       mode: "smoke",
-      sourceSmokeUrl,
+      sourceWorkflowUrl,
       selectedCoreApiOnly: true,
       excludedFlows: ["course creation", "files", "email", "collaboration"],
       workloadWindowUtc: {
@@ -85,7 +85,7 @@ test("failed workload can publish a window-only scope but refuses invalid chrono
         end: "2026-11-17T15:01:00Z",
       }),
     );
-    sanitizeArtifacts(manifest, raw, dest, runId, "ramp", sourceSmokeUrl);
+    sanitizeArtifacts(manifest, raw, dest, runId, "ramp", sourceWorkflowUrl);
     assert.ok(existsSync(join(dest, "scope.json")));
     const other = join(root, "other");
     writeFileSync(
@@ -97,7 +97,14 @@ test("failed workload can publish a window-only scope but refuses invalid chrono
     );
     assert.throws(
       () =>
-        sanitizeArtifacts(manifest, raw, other, runId, "ramp", sourceSmokeUrl),
+        sanitizeArtifacts(
+          manifest,
+          raw,
+          other,
+          runId,
+          "ramp",
+          sourceWorkflowUrl,
+        ),
       /window/i,
     );
     assert.equal(existsSync(other), false);
@@ -121,7 +128,7 @@ test("secret leakage leaves no downloadable partial artifact", () => {
       `<html>${manifest.users[0].password}</html>`,
     );
     assert.throws(() =>
-      sanitizeArtifacts(manifest, raw, dest, runId, "smoke", sourceSmokeUrl),
+      sanitizeArtifacts(manifest, raw, dest, runId, "smoke", sourceWorkflowUrl),
     );
     assert.equal(existsSync(dest), false);
   } finally {
@@ -129,7 +136,7 @@ test("secret leakage leaves no downloadable partial artifact", () => {
   }
 });
 
-test("untrusted source Smoke URLs cannot enter a sanitized artifact", () => {
+test("untrusted source workflow URLs cannot enter a sanitized artifact", () => {
   const root = mkdtempSync(join(tmpdir(), "k6-sanitize-"));
   try {
     const raw = join(root, "raw"),
@@ -152,7 +159,7 @@ test("untrusted source Smoke URLs cannot enter a sanitized artifact", () => {
           "smoke",
           "https://example.invalid/actions/runs/44156607166",
         ),
-      /Smoke.*URL/i,
+      /Source workflow URL/i,
     );
     assert.equal(existsSync(dest), false);
   } finally {

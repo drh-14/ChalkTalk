@@ -9,25 +9,20 @@ function integer(name, value, min, max) {
 }
 
 export function normalizeProfile(source) {
-  const maxVus = integer("LOAD_TEST_MAX_VUS", source.LOAD_TEST_MAX_VUS, 1, 20);
-  const stages = (source.LOAD_TEST_STAGE_MINUTES ?? "").split(",");
-  if (stages.length !== 4)
-    throw new Error("LOAD_TEST_STAGE_MINUTES needs four stages");
-  const stageMinutes = stages.map((value) =>
-    integer("stage minutes", value, 1, 10),
-  );
-  if (stageMinutes.reduce((sum, value) => sum + value, 0) > 10)
-    throw new Error("LOAD_TEST_STAGE_MINUTES exceeds ten minutes");
-  const rampWriteAttempts = integer(
-    "LOAD_TEST_RAMP_WRITE_ATTEMPTS",
-    source.LOAD_TEST_RAMP_WRITE_ATTEMPTS,
-    6,
-    17,
-  );
+  if (!["smoke", "ramp"].includes(source.MODE))
+    throw new Error("Invalid load-test mode");
+  if (source.MODE === "smoke" && source.MAX_CONCURRENT_USERS)
+    throw new Error("Smoke does not accept a concurrency input");
+  const maxVus =
+    source.MODE === "smoke"
+      ? 1
+      : integer("MAX_CONCURRENT_USERS", source.MAX_CONCURRENT_USERS, 2, 20);
+  const stageMinutes = [1, 3, 3, 3];
+  const rampWriteAttempts = 17;
   return {
     maxVus,
     stageMinutes,
-    stageTargets: [1, 5, 10, 20].map((target) => Math.min(target, maxVus)),
+    stageTargets: [2, 5, 10, 20].map((target) => Math.min(target, maxVus)),
     rampWriteAttempts,
   };
 }

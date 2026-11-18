@@ -18,10 +18,12 @@ if (
   profile.stageMinutes.reduce((a, b) => a + b, 0) > 10 ||
   !Array.isArray(profile.stageTargets) ||
   JSON.stringify(profile.stageTargets) !==
-    JSON.stringify([1, 5, 10, 20].map((n) => Math.min(n, profile.maxVus))) ||
+    JSON.stringify([2, 5, 10, 20].map((n) => Math.min(n, profile.maxVus))) ||
   !Number.isInteger(profile.rampWriteAttempts) ||
-  profile.rampWriteAttempts < 6 ||
-  profile.rampWriteAttempts > 17
+  profile.rampWriteAttempts !== 17 ||
+  JSON.stringify(profile.stageMinutes) !== JSON.stringify([1, 3, 3, 3]) ||
+  (__ENV.MODE === "ramp" && profile.maxVus < 2) ||
+  (__ENV.MODE === "smoke" && profile.maxVus !== 1)
 )
   throw new Error("Invalid bounded load profile");
 const mode = __ENV.MODE;
@@ -88,7 +90,7 @@ export const options = {
       : {
           traffic: {
             executor: "ramping-vus",
-            startVUs: 1,
+            startVUs: 2,
             stages: [
               {
                 duration: `${profile.stageMinutes[0]}m`,
@@ -124,6 +126,7 @@ let lastWriteAt = 0;
 let activeQuestionId = manifest.questionId;
 let activePollId = manifest.pollId;
 let activeOptionId = manifest.pollOptionId;
+let readIteration = 0;
 
 function request(method, path, body, name, expected, csrf) {
   const headers = { Accept: "application/json" };
@@ -308,6 +311,51 @@ function mutate() {
 
 export default function () {
   if (!session) login();
+  if (mode === "ramp" && __VU === 1) {
+    mutate();
+    sleep(2);
+    return;
+  }
+  if (mode === "ramp" && readIteration > 0) {
+    const selected = readIteration % 5;
+    if (selected === 0)
+      request("GET", "/api/v1/courses", undefined, "list_courses", 200);
+    if (selected === 1)
+      request(
+        "GET",
+        `/api/v1/courses/${manifest.courseId}/posts`,
+        undefined,
+        "list_posts",
+        200,
+      );
+    if (selected === 2)
+      request(
+        "GET",
+        `/api/v1/posts/${manifest.questionId}`,
+        undefined,
+        "read_post",
+        200,
+      );
+    if (selected === 3)
+      request(
+        "GET",
+        "/api/v1/users/me/notifications",
+        undefined,
+        "list_notifications",
+        200,
+      );
+    if (selected === 4)
+      request(
+        "GET",
+        "/api/v1/users/me/notifications/unread-count",
+        undefined,
+        "unread_count",
+        200,
+      );
+    readIteration += 1;
+    sleep(1 + ((__VU + readIteration) % 3));
+    return;
+  }
   request("GET", "/api/v1/courses", undefined, "list_courses", 200);
   request(
     "GET",
@@ -337,8 +385,9 @@ export default function () {
     "unread_count",
     200,
   );
-  mutate();
-  sleep(2);
+  if (mode === "smoke") mutate();
+  readIteration += 1;
+  sleep(1 + (__VU % 3));
 }
 
 export function handleSummary(data) {

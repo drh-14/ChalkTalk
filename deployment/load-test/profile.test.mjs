@@ -7,9 +7,8 @@ import { test } from "node:test";
 import { normalizeProfile, validateTargetIdentity } from "./profile.mjs";
 
 const variables = {
-  LOAD_TEST_MAX_VUS: "20",
-  LOAD_TEST_STAGE_MINUTES: "1,3,3,3",
-  LOAD_TEST_RAMP_WRITE_ATTEMPTS: "17",
+  MODE: "ramp",
+  MAX_CONCURRENT_USERS: "20",
 };
 const databaseUrl =
   "postgresql://postgres.abcdefghijklmnopqrst:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full";
@@ -19,11 +18,11 @@ test("normalizes the bounded profile and fingerprints canonical values", () => {
   assert.deepEqual(profile, {
     maxVus: 20,
     stageMinutes: [1, 3, 3, 3],
-    stageTargets: [1, 5, 10, 20],
+    stageTargets: [2, 5, 10, 20],
     rampWriteAttempts: 17,
   });
   assert.deepEqual(
-    normalizeProfile({ ...variables, LOAD_TEST_MAX_VUS: "020" }),
+    normalizeProfile({ ...variables, MAX_CONCURRENT_USERS: "020" }),
     profile,
   );
 });
@@ -32,31 +31,37 @@ test("smaller ceilings collapse fixed targets without raising them", () => {
   assert.deepEqual(
     normalizeProfile({
       ...variables,
-      LOAD_TEST_MAX_VUS: "4",
-      LOAD_TEST_RAMP_WRITE_ATTEMPTS: "6",
+      MAX_CONCURRENT_USERS: "4",
     }),
     {
       maxVus: 4,
       stageMinutes: [1, 3, 3, 3],
-      stageTargets: [1, 4, 4, 4],
-      rampWriteAttempts: 6,
+      stageTargets: [2, 4, 4, 4],
+      rampWriteAttempts: 17,
     },
   );
 });
 
 test("invalid or missing profile values fail closed", () => {
   for (const [name, values] of [
-    ["missing", { ...variables, LOAD_TEST_MAX_VUS: "" }],
-    ["over-vus", { ...variables, LOAD_TEST_MAX_VUS: "21" }],
-    ["zero-vus", { ...variables, LOAD_TEST_MAX_VUS: "0" }],
-    ["bad-stages", { ...variables, LOAD_TEST_STAGE_MINUTES: "1,3,3" }],
-    ["zero-stage", { ...variables, LOAD_TEST_STAGE_MINUTES: "1,3,0,3" }],
-    ["long-stages", { ...variables, LOAD_TEST_STAGE_MINUTES: "1,4,4,4" }],
-    ["bad-writes", { ...variables, LOAD_TEST_RAMP_WRITE_ATTEMPTS: "5" }],
-    ["high-writes", { ...variables, LOAD_TEST_RAMP_WRITE_ATTEMPTS: "18" }],
-    ["noninteger", { ...variables, LOAD_TEST_MAX_VUS: "2.5" }],
+    ["missing", { ...variables, MAX_CONCURRENT_USERS: "" }],
+    ["over-vus", { ...variables, MAX_CONCURRENT_USERS: "21" }],
+    ["one-vu", { ...variables, MAX_CONCURRENT_USERS: "1" }],
+    ["noninteger", { ...variables, MAX_CONCURRENT_USERS: "2.5" }],
   ])
     assert.throws(() => normalizeProfile(values), undefined, name);
+});
+
+test("smoke profile is fixed and rejects a ramp input", () => {
+  assert.deepEqual(normalizeProfile({ MODE: "smoke" }), {
+    maxVus: 1,
+    stageMinutes: [1, 3, 3, 3],
+    stageTargets: [1, 1, 1, 1],
+    rampWriteAttempts: 17,
+  });
+  assert.throws(() =>
+    normalizeProfile({ MODE: "smoke", MAX_CONCURRENT_USERS: "10" }),
+  );
 });
 
 test("target identity accepts only same-project Supabase storage and verified database", () => {

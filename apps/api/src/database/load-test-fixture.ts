@@ -3,6 +3,16 @@ import argon2 from "argon2";
 import type { Pool, PoolClient } from "pg";
 
 const USER_COUNT = 20;
+export async function acquireFixtureClient(pool: Pool): Promise<PoolClient> {
+  try {
+    return await pool.connect();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/EMAXCONNSESSION|max clients reached in session mode/i.test(message))
+      throw new Error("CONNECTION_ACQUISITION_EXHAUSTED");
+    throw error;
+  }
+}
 const MAX_INDEXABLE_POSTS = 7;
 const MAX_SEMANTIC_JOBS = 64;
 const MAX_SEMANTIC_CATCHUP_ROWS = 64;
@@ -491,7 +501,11 @@ async function scanOwnedReferences(
 export async function inventoryFixture(
   client: PoolClient,
   manifest: FixtureManifest,
-): Promise<{ counts: Record<string, number>; violations: string[] }> {
+): Promise<{
+  counts: Record<string, number>;
+  violations: string[];
+  jobIds: string[];
+}> {
   const ids = await ownedIds(client, manifest);
   const { matches, violations } = await scanOwnedReferences(client, ids);
   const counts = Object.fromEntries(
@@ -552,14 +566,14 @@ export async function inventoryFixture(
   const jobs = await fixtureJobs(client, ids, manifest.runId);
   counts.jobs = jobs.ids.length;
   violations.push(...jobs.violations);
-  return { counts, violations };
+  return { counts, violations, jobIds: jobs.ids.sort() };
 }
 
 export async function teardownFixture(
   pool: Pool,
   manifest: FixtureManifest,
 ): Promise<Record<string, number>> {
-  const client = await pool.connect();
+  const client = await acquireFixtureClient(pool);
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [

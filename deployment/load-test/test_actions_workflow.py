@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -15,7 +16,7 @@ RUNNER = ROOT / "deployment" / "load-test" / "actions-run.sh"
 
 
 class ActionsWorkflowTest(unittest.TestCase):
-    def test_two_id_free_dispatches_are_main_only_environment_gated_and_never_automatic(self):
+    def test_manual_dispatches_are_main_only_environment_gated_and_never_automatic(self):
         self.assertFalse((ROOT / ".github" / "workflows" / "load-test.yml").exists())
         for mode, path in WORKFLOWS.items():
             with self.subTest(mode=mode):
@@ -27,7 +28,11 @@ class ActionsWorkflowTest(unittest.TestCase):
                 workflow = json.loads(result.stdout)
                 triggers = workflow.get("on", workflow.get("true"))
                 self.assertEqual(list(triggers), ["workflow_dispatch"])
-                self.assertFalse(triggers["workflow_dispatch"] and triggers["workflow_dispatch"].get("inputs"))
+                if mode == "smoke":
+                    self.assertFalse(triggers["workflow_dispatch"] and triggers["workflow_dispatch"].get("inputs"))
+                else:
+                    self.assertEqual(list(triggers["workflow_dispatch"]["inputs"]), ["max_concurrent_users"])
+                    self.assertTrue(triggers["workflow_dispatch"]["inputs"]["max_concurrent_users"]["required"])
                 self.assertEqual(workflow["concurrency"]["group"], "chalktalk-production-vm")
                 self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
                 job = workflow["jobs"]["load-test"]
@@ -39,6 +44,8 @@ class ActionsWorkflowTest(unittest.TestCase):
                 runner_env = steps[1]["env"]
                 self.assertEqual(runner_env["MODE"], mode)
                 self.assertNotIn("RUN_ID", runner_env)
+                self.assertEqual("MAX_CONCURRENT_USERS" in runner_env, mode == "ramp")
+                self.assertFalse(any(key.startswith("LOAD_TEST_") and key != "LOAD_TEST_REPORT_DIR" for key in runner_env))
                 self.assertEqual(runner_env["GITHUB_RUN_ATTEMPT"], "${{ github.run_attempt }}")
                 self.assertTrue(any("actions/upload-artifact@" in step.get("uses", "") for step in steps))
 
@@ -67,6 +74,7 @@ class ActionsWorkflowTest(unittest.TestCase):
             mock.write_text(textwrap.dedent("""\
                 #!/usr/bin/env python3
                 import json
+                import hashlib
                 import os
                 import pathlib
                 import sys
@@ -74,7 +82,9 @@ class ActionsWorkflowTest(unittest.TestCase):
                 name = pathlib.Path(sys.argv[0]).name
                 args = sys.argv[1:]
                 root = pathlib.Path(os.environ["MOCK_ROOT"])
-                if name == "git":
+                if name == "timeout":
+                    os.execvp(args[1], args[1:])
+                elif name == "git":
                     print(os.environ["EXPECTED_SHA"] + ("\\trefs/heads/main" if "ls-remote" in args else ""))
                 elif name == "ssh":
                     command = args[-1]
@@ -87,13 +97,39 @@ class ActionsWorkflowTest(unittest.TestCase):
                                           "sourceRunUrl": os.environ["MOCK_SOURCE_URL"],
                                           "status": "smoke-claimed" if " claim-smoke-auto " in command else "ramp-claimed"}))
                     elif " inventory " in command:
-                        print("{}")
+                        counter = root / "inventory-count"
+                        number = int(counter.read_text()) + 1 if counter.exists() else 1
+                        counter.write_text(str(number))
+                        if (os.environ.get("FAIL_CLEANUP") == "retry" and number == 2) or (os.environ.get("FAIL_CLEANUP") == "exhausted" and number >= 2):
+                            print("CONNECTION_ACQUISITION_EXHAUSTED", file=sys.stderr)
+                            sys.exit(1)
+                        changed = os.environ.get("FAIL_CLEANUP")
+                        posts = 3 if number == 3 and changed == "changed-count" else 2
+                        job_id = "job-2" if number == 3 and changed == "changed-job" else "job-1"
+                        print(json.dumps({"counts": {"organizations": 1, "courses": 1, "users": 20,
+                                                     "posts": posts, "jobs": 1},
+                                          "violations": [], "jobIds": [job_id]}))
+                    elif " teardown " in command and os.environ.get("FAIL_CLEANUP") in ("changed-count", "changed-job"):
+                        counter = root / "teardown-count"
+                        number = int(counter.read_text()) + 1 if counter.exists() else 1
+                        counter.write_text(str(number))
+                        if number == 1:
+                            print("CONNECTION_ACQUISITION_EXHAUSTED", file=sys.stderr)
+                            sys.exit(1)
+                    elif " teardown " in command and os.environ.get("FAIL_CLEANUP") == "ambiguous":
+                        print("Ambiguous transaction outcome", file=sys.stderr)
+                        sys.exit(1)
+                    elif " verify-fixture " in command:
+                        manifest = json.dumps({"runId": os.environ["MOCK_RUN_ID"]}).encode()
+                        print(json.dumps({"verifiedManifestSha256": hashlib.sha256(manifest).hexdigest()}))
                 elif name == "scp":
                     if args[-1].endswith("manifest.json"):
                         pathlib.Path(args[-1]).write_text(json.dumps({"runId": os.environ["MOCK_RUN_ID"]}))
                 elif name == "node":
                     script = pathlib.Path(args[0]).name
-                    if script == "prepare-runner.mjs":
+                    if script == "verify-inventory.mjs":
+                        os.execv(os.environ["MOCK_NODE"], [os.environ["MOCK_NODE"], *args])
+                    elif script == "prepare-runner.mjs":
                         target = pathlib.Path(args[1])
                         (target / "identity.json").write_text(json.dumps({"projectRef": "ref", "databaseHost": "host", "nonce": "nonce", "mac": "mac"}))
                         (target / "profile.json").write_text(json.dumps({"maxVus": 1, "stageMinutes": [1, 1, 1, 1], "rampWriteAttempts": 6}))
@@ -115,15 +151,17 @@ class ActionsWorkflowTest(unittest.TestCase):
                 elif name == "jq":
                     if args[0] in ("-r", "-er"):
                         print({".projectRef": "ref", ".databaseHost": "host", ".nonce": "nonce", ".mac": "mac",
-                               ".runId": os.environ["MOCK_RUN_ID"], ".sourceRunUrl": os.environ["MOCK_SOURCE_URL"]}.get(args[1], "profile"))
+                               ".runId": os.environ["MOCK_RUN_ID"], ".sourceRunUrl": os.environ["MOCK_SOURCE_URL"],
+                               ".verifiedManifestSha256": hashlib.sha256(json.dumps({"runId": os.environ["MOCK_RUN_ID"]}).encode()).hexdigest()}.get(args[1], "profile"))
                 """))
             mock.chmod(0o755)
-            for name in ("git", "ssh", "scp", "node", "jq", "docker", "curl", "sleep", "ssh-keygen"):
+            for name in ("git", "ssh", "scp", "node", "jq", "docker", "curl", "sleep", "timeout", "ssh-keygen"):
                 (bin_dir / name).symlink_to(mock)
             env = {
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
                 "MOCK_ROOT": str(root),
+                "MOCK_NODE": shutil.which("node"),
                 "GITHUB_ACTIONS": "true",
                 "GITHUB_REF": "refs/heads/main",
                 "GITHUB_REPOSITORY": "drh-14/ChalkTalk",
@@ -137,9 +175,11 @@ class ActionsWorkflowTest(unittest.TestCase):
                 "SSH_PRIVATE_KEY": "test-key",
                 "VM_KNOWN_HOSTS": "test-host-key",
             }
-            for failure in ("preflight", "sanitization", None):
+            for failure in ("preflight", "sanitization", "retry", "exhausted", "ambiguous", "changed-count", "changed-job", None):
                 with self.subTest(failure=failure):
                     (root / "events").write_text("")
+                    (root / "inventory-count").unlink(missing_ok=True)
+                    (root / "teardown-count").unlink(missing_ok=True)
                     destination = root / "sanitized"
                     if destination.exists():
                         for child in destination.iterdir():
@@ -150,11 +190,12 @@ class ActionsWorkflowTest(unittest.TestCase):
                         env={**env, "LOAD_TEST_REPORT_DIR": str(destination),
                              "FAIL_PREFLIGHT": "1" if failure == "preflight" else "0",
                              "FAIL_SANITIZE": "1" if failure == "sanitization" else "0",
+                             "FAIL_CLEANUP": failure if failure in ("retry", "exhausted", "ambiguous", "changed-count", "changed-job") else "",
                              "GITHUB_STEP_SUMMARY": str(root / "summary")},
                         capture_output=True, text=True,
                     )
                     events = (root / "events").read_text().splitlines()
-                    verified = [i for i, event in enumerate(events) if " verify-smoke " in event]
+                    verified = [i for i, event in enumerate(events) if " verify-fixture " in event]
                     cleaned = [event for event in events if " teardown " in event]
                     if failure == "preflight":
                         self.assertNotEqual(result.returncode, 0)
@@ -165,15 +206,34 @@ class ActionsWorkflowTest(unittest.TestCase):
                         self.assertFalse(cleaned)
                     elif failure == "sanitization":
                         self.assertNotEqual(result.returncode, 0)
-                        self.assertFalse(verified)
+                        self.assertEqual(len(verified), 1)
                         self.assertTrue(cleaned)
                         self.assertFalse(destination.exists())
+                    elif failure == "ambiguous":
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(len(cleaned), 1)
+                        self.assertFalse(any(" mark-cleaned " in event for event in events))
+                    elif failure == "retry":
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(len(cleaned), 1)
+                        self.assertEqual(int((root / "inventory-count").read_text()), 3)
+                        self.assertTrue(any(" mark-cleaned " in event for event in events))
+                    elif failure == "exhausted":
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(int((root / "inventory-count").read_text()), 4)
+                        self.assertFalse(cleaned)
+                        self.assertFalse(any(" mark-cleaned " in event for event in events))
+                    elif failure in ("changed-count", "changed-job"):
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(int((root / "inventory-count").read_text()), 3)
+                        self.assertEqual(len(cleaned), 1)
+                        self.assertFalse(any(" mark-cleaned " in event for event in events))
                     else:
                         self.assertEqual(result.returncode, 0, result.stderr)
                         self.assertTrue((destination / "scope.json").exists())
                         self.assertEqual(len(verified), 1)
-                        self.assertLess(events.index("sanitize"), verified[0])
-                        self.assertFalse(cleaned)
+                        self.assertTrue(cleaned)
+                        self.assertLess(verified[0], events.index("sanitize"))
                         self.assertLess(events.index("preflight ready"),
                                         next(i for i, event in enumerate(events) if " claim-smoke-auto " in event))
                         self.assertFalse(any("vm_control.py check " in event for event in events))
@@ -198,6 +258,8 @@ class ActionsWorkflowTest(unittest.TestCase):
             self.assertFalse(any(" claim-smoke-auto " in event for event in events))
             self.assertFalse(any("vm_control.py check " in event for event in events))
             self.assertTrue(any(" teardown " in event for event in events))
+            self.assertTrue(any(" provision " in event for event in events))
+            self.assertIn("preflight all", events)
             self.assertIn(env["MOCK_SOURCE_URL"], (root / "summary").read_text())
 
     def test_runner_rejects_rerun_or_supplied_id_before_vm_access(self):
