@@ -10,6 +10,9 @@ import { PostService } from "../posts/service.js";
 import { AnswerService } from "../answers/service.js";
 import { FollowupService } from "../followups/service.js";
 import { NotificationService } from "../notifications/service.js";
+import { ThreadService } from "../threads/service.js";
+import { ThreadWatchService } from "../threads/watch.js";
+import { CourseResourceService } from "../course-resources/service.js";
 import { createApp } from "../http/app.js";
 import {
   fixtureIdentity,
@@ -26,6 +29,216 @@ const url =
 const integration = url ? describe : describe.skip;
 
 integration("isolated PostgreSQL fixture lifecycle", () => {
+  it("serves Ramp Thread and resource journeys through the real API, then tears down all dependents", async () => {
+    const parsed = new URL(url!);
+    if (parsed.hostname !== "127.0.0.1" || parsed.port !== "55432")
+      throw new Error(
+        "Fixture test must target isolated Docker PostgreSQL on port 55432",
+      );
+    const pool = new Pool({ connectionString: url });
+    const runId = `load-20261117-${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+    try {
+      const manifest = await provisionFixture(
+        pool,
+        runId,
+        "a".repeat(40),
+        "abcdefghijklmnopqrst",
+        "aws-0-us-east-1.pooler.supabase.com",
+        async () => {},
+        "ramp",
+      );
+      const environment = loadEnvironment({
+        AUTH_TOKEN_SECRET:
+          "isolated-load-test-secret-longer-than-32-characters",
+        FRONTEND_ORIGINS: "https://joinchalktalk.com",
+        FRONTEND_BASE_URL: "https://joinchalktalk.com",
+        DATABASE_URL: url!,
+      });
+      const authService = new AuthService(
+        pool,
+        environment,
+        createEmailSender(environment),
+      );
+      const application = createApp({
+        environment,
+        authService,
+        threadService: new ThreadService(pool),
+        threadWatchService: new ThreadWatchService(pool),
+        courseResourceService: new CourseResourceService(pool),
+        notificationService: new NotificationService(pool),
+      });
+      const sessions = [];
+      for (const user of [manifest.users[0]!, manifest.users[3]!]) {
+        const login = await request(application)
+          .post("/api/v1/sessions")
+          .set("Origin", environment.frontendBaseUrl)
+          .send({ email: user.email, password: user.password })
+          .expect(201);
+        sessions.push({
+          cookie: login.headers["set-cookie"][0].split(";")[0],
+          csrf: login.body.data.csrfToken as string,
+        });
+      }
+      const staff = sessions[0]!;
+      const student = sessions[1]!;
+      const course = manifest.courses![0]!;
+      const root = `/api/v1/courses/${course.id}`;
+      const thread = `${root}/threads/${course.boardId}`;
+      const write = (
+        session: typeof staff,
+        method: "post" | "put",
+        path: string,
+      ) => {
+        const agent = request(application);
+        return agent[method](path)
+          .set("Cookie", session.cookie)
+          .set("Origin", environment.frontendBaseUrl)
+          .set("X-CSRF-Token", session.csrf);
+      };
+      const read = (session: typeof staff, path: string) =>
+        request(application).get(path).set("Cookie", session.cookie);
+      await read(student, `${root}/resources`).expect(200);
+      await read(student, `${root}/resources/search?q=guide&limit=10`).expect(
+        200,
+      );
+      await read(student, `${root}/threads`).expect(200);
+      const conversation = await write(staff, "post", `${thread}/conversations`)
+        .send({ bodyMarkdown: "Synthetic conversation" })
+        .expect(201);
+      const conversationId = conversation.body.data.id as string;
+      const path = `${thread}/conversations/${conversationId}`;
+      await read(student, `${thread}/conversations`).expect(200);
+      await read(student, path).expect(200);
+      await write(student, "put", `${path}/watch`)
+        .send({ noticesEnabled: true })
+        .expect(200);
+      const reply = await write(staff, "post", `${path}/messages`)
+        .send({ bodyMarkdown: "Synthetic reply" })
+        .expect(201);
+      await read(student, `${path}/messages`).expect(200);
+      await write(student, "post", `${path}/read`)
+        .send({ messageIds: [reply.body.data.id] })
+        .expect(204);
+      await read(student, `${root}/threads/changes?limit=20`).expect(200);
+      await read(student, `${root}/threads/unread-count`).expect(200);
+      await read(student, "/api/v1/users/me/notifications").expect(200);
+      const client = await pool.connect();
+      try {
+        expect((await inventoryFixture(client, manifest)).violations).toEqual(
+          [],
+        );
+      } finally {
+        client.release();
+      }
+      const counts = await teardownFixture(pool, manifest);
+      expect(counts.thread_conversations).toBe(1);
+      expect(counts.thread_messages).toBe(2);
+      expect(
+        (
+          await pool.query(
+            "SELECT count(*)::int AS n FROM courses WHERE organization_id=$1",
+            [manifest.organizationId],
+          )
+        ).rows[0]!.n,
+      ).toBe(0);
+    } finally {
+      await pool.end();
+    }
+  }, 120_000);
+  it("provisions three Ramp cohorts and reviews Thread/resource dependents before zero-residue cleanup", async () => {
+    const parsed = new URL(url!);
+    if (parsed.hostname !== "127.0.0.1" || parsed.port !== "55432")
+      throw new Error(
+        "Fixture test must target isolated Docker PostgreSQL on port 55432",
+      );
+    const pool = new Pool({ connectionString: url });
+    const runId = `load-20261117-${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+    try {
+      const manifest = await provisionFixture(
+        pool,
+        runId,
+        "a".repeat(40),
+        "abcdefghijklmnopqrst",
+        "aws-0-us-east-1.pooler.supabase.com",
+        async () => {},
+        "ramp",
+      );
+      expect(manifest.courses).toHaveLength(3);
+      expect(manifest.users).toHaveLength(30);
+      const course = manifest.courses![0]!;
+      const conversationId = randomUUID();
+      const messageId = randomUUID();
+      const changeEntityId = randomUUID();
+      await pool.query(
+        "INSERT INTO thread_conversations(id,course_id,board_id,created_by_user_id,next_message_ordinal) VALUES($1,$2,$3,$4,2)",
+        [conversationId, course.id, course.boardId, manifest.users[0]!.id],
+      );
+      await pool.query(
+        "INSERT INTO thread_messages(id,course_id,board_id,conversation_id,ordinal,author_user_id,author_role_at_posting,body_markdown) VALUES($1,$2,$3,$4,1,$5,'instructor','synthetic')",
+        [
+          messageId,
+          course.id,
+          course.boardId,
+          conversationId,
+          manifest.users[0]!.id,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO thread_watches(course_id,conversation_id,user_id) VALUES($1,$2,$3)",
+        [course.id, conversationId, manifest.users[3]!.id],
+      );
+      await pool.query(
+        "INSERT INTO thread_message_reads(course_id,message_id,user_id) VALUES($1,$2,$3)",
+        [course.id, messageId, manifest.users[3]!.id],
+      );
+      await pool.query(
+        "INSERT INTO thread_notifications(id,course_id,conversation_id,message_id,recipient_user_id,actor_user_id) VALUES($1,$2,$3,$4,$5,$6)",
+        [
+          randomUUID(),
+          course.id,
+          conversationId,
+          messageId,
+          manifest.users[3]!.id,
+          manifest.users[0]!.id,
+        ],
+      );
+      await pool.query(
+        "INSERT INTO thread_course_counters(course_id,sequence) VALUES($1,1)",
+        [course.id],
+      );
+      await pool.query(
+        "INSERT INTO thread_changes(course_id,sequence,board_id,kind,entity_id) VALUES($1,1,$2,'message_created',$3)",
+        [course.id, course.boardId, changeEntityId],
+      );
+      const inventory = async () => {
+        const client = await pool.connect();
+        try {
+          return await inventoryFixture(client, manifest);
+        } finally {
+          client.release();
+        }
+      };
+      expect((await inventory()).violations).toContain(
+        "thread_changes.entity_id: unknown fixture entity",
+      );
+      await expect(teardownFixture(pool, manifest)).rejects.toThrow(
+        /unknown fixture entity/,
+      );
+      await pool.query(
+        "UPDATE thread_changes SET entity_id=$1 WHERE course_id=$2 AND sequence=1",
+        [messageId, course.id],
+      );
+      expect((await inventory()).violations).toEqual([]);
+      const deleted = await teardownFixture(pool, manifest);
+      expect(deleted.courses).toBe(3);
+      expect(deleted.users).toBe(30);
+      expect(deleted.thread_notifications).toBe(1);
+      expect((await inventory()).counts.courses).toBe(0);
+      expect((await inventory()).counts.thread_changes ?? 0).toBe(0);
+    } finally {
+      await pool.end();
+    }
+  }, 120_000);
   it("enforces semantic job, catch-up, and indexable-post caps before transactional cleanup", async () => {
     const parsed = new URL(url!);
     if (parsed.hostname !== "127.0.0.1" || parsed.port !== "55432")

@@ -17,13 +17,13 @@ export function normalizeProfile(source) {
   const maxVus =
     source.MODE === "smoke"
       ? 1
-      : integer("MAX_CONCURRENT_USERS", source.MAX_CONCURRENT_USERS, 2, 20);
+      : integer("MAX_CONCURRENT_USERS", source.MAX_CONCURRENT_USERS, 10, 30);
   const stageMinutes = [1, 3, 3, 3];
-  const rampWriteAttempts = 17;
+  const rampWriteAttempts = source.MODE === "smoke" ? 17 : 60;
   return {
     maxVus,
     stageMinutes,
-    stageTargets: [2, 5, 10, 20].map((target) => Math.min(target, maxVus)),
+    stageTargets: [2, 10, 20, 30].map((target) => Math.min(target, maxVus)),
     rampWriteAttempts,
   };
 }

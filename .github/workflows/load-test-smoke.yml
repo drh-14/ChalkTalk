@@ -32,6 +32,7 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           LOAD_TEST_REPORT_DIR: ${{ runner.temp }}/chalktalk-load-test-sanitized
         run: bash deployment/load-test/actions-run.sh
       - name: Upload sanitized k6 reports

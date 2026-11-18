@@ -40,12 +40,16 @@ def read_profile(path):
     vus = profile["maxVus"]
     minutes = profile["stageMinutes"]
     attempts = profile["rampWriteAttempts"]
-    if (type(vus) is not int or not 1 <= vus <= 20 or
-            type(attempts) is not int or not 6 <= attempts <= 17 or
+    legacy = (type(vus) is int and 1 <= vus <= 20 and
+              type(attempts) is int and 6 <= attempts <= 17 and
+              profile["stageTargets"] in ([min(n, vus) for n in (1, 5, 10, 20)],
+                                         [min(n, vus) for n in (2, 5, 10, 20)]))
+    expanded = (type(vus) is int and 10 <= vus <= 30 and attempts == 60 and
+                profile["stageTargets"] == [min(n, vus) for n in (2, 10, 20, 30)])
+    if (not (legacy or expanded) or
             not isinstance(minutes, list) or len(minutes) != 4 or
             any(type(n) is not int or n < 1 for n in minutes) or sum(minutes) > 10 or
-            profile["stageTargets"] not in ([min(n, vus) for n in (1, 5, 10, 20)],
-                                            [min(n, vus) for n in (2, 5, 10, 20)])):
+            (expanded and minutes != [1, 3, 3, 3])):
         raise ValueError("Profile exceeds hard limits")
     canonical = json.dumps(profile, separators=(",", ":")).encode()
     return profile, hashlib.sha256(canonical).hexdigest()
@@ -150,7 +154,7 @@ def valid_uuid(value):
         return False
 
 
-def manifest_matches(manifest, run_id, sha, project_ref, database_host):
+def manifest_matches(manifest, run_id, sha, project_ref, database_host, profile=None):
     if not isinstance(manifest, dict) or any((
             manifest.get("runId") != run_id,
             manifest.get("deployedSha") != sha,
@@ -161,15 +165,30 @@ def manifest_matches(manifest, run_id, sha, project_ref, database_host):
     if not all(valid_uuid(manifest.get(key)) for key in
                ("organizationId", "courseId", "questionId", "pollId", "pollOptionId")):
         return False
+    expanded = profile is not None and profile.get("rampWriteAttempts") == 60
+    courses = manifest.get("courses")
+    if expanded:
+        if manifest.get("mode") != "ramp" or not isinstance(courses, list) or len(courses) != 3:
+            return False
+        keys = ("id", "questionId", "pollId", "pollOptionId", "boardId", "resourceId")
+        if (not all(isinstance(course, dict) and all(valid_uuid(course.get(key)) for key in keys)
+                    for course in courses) or
+                len({course["id"] for course in courses}) != 3 or
+                any(manifest.get(key) != courses[0][alias] for key, alias in
+                    (("courseId", "id"), ("questionId", "questionId"), ("pollId", "pollId"), ("pollOptionId", "pollOptionId")))):
+            return False
     users = manifest.get("users")
-    if not isinstance(users, list) or len(users) != 20:
+    expected = 30 if expanded else 20
+    if not isinstance(users, list) or len(users) != expected:
         return False
     for index, user in enumerate(users, 1):
         if (not isinstance(user, dict) or not valid_uuid(user.get("id"))
                 or user.get("email") != f"vu{index:02d}@{run_id}.loadtest.invalid"
-                or not isinstance(user.get("password"), str) or not user["password"]):
+                or not isinstance(user.get("password"), str) or not user["password"]
+                or (expanded and (user.get("courseId") != courses[(index - 1) % 3]["id"]
+                                  or user.get("role") != ("instructor" if index <= 3 else "student")))):
             return False
-    return len({user["id"] for user in users}) == 20
+    return len({user["id"] for user in users}) == expected
 
 
 def auto_transition(action, root, sha, profile, fingerprint, source_run_id,
@@ -241,7 +260,7 @@ def transition(action, root, run_id, sha, profile_file, source_run_id=None,
                 if "sourceRunId" in state:
                     manifest_bytes = private_bytes(root / f"{run_id}.json", 65536)
                     manifest = json.loads(manifest_bytes)
-                    if (not manifest_matches(manifest, run_id, sha, state["projectRef"], state["databaseHost"])
+                    if (not manifest_matches(manifest, run_id, sha, state["projectRef"], state["databaseHost"], profile)
                             or hashlib.sha256(private_bytes(root / f"{run_id}.db-url", 4096)).hexdigest()
                             != state["dbFingerprint"]):
                         raise ValueError("Fixture manifest identity mismatch")

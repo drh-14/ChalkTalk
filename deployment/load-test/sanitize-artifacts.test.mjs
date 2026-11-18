@@ -35,6 +35,10 @@ test("only expected sanitized report files become artifacts", () => {
     );
     writeFileSync(
       join(raw, `${runId}-smoke.html`),
+      "<html><body>original k6 report</body></html>",
+    );
+    writeFileSync(
+      join(raw, "report.html"),
       "<html><body>k6 report</body></html>",
     );
     writeFileSync(
@@ -51,13 +55,20 @@ test("only expected sanitized report files become artifacts", () => {
     sanitizeArtifacts(manifest, raw, dest, runId, "smoke", sourceWorkflowUrl);
     assert.ok(existsSync(join(dest, "summary.json")));
     assert.ok(existsSync(join(dest, "report.html")));
+    assert.ok(existsSync(join(dest, "k6-original.html")));
     assert.ok(existsSync(join(dest, "coverage.json")));
     assert.deepEqual(JSON.parse(readFileSync(join(dest, "scope.json"))), {
       runId,
       mode: "smoke",
       sourceWorkflowUrl,
       selectedCoreApiOnly: true,
-      excludedFlows: ["course creation", "files", "email", "collaboration"],
+      excludedFlows: [
+        "signup and email workflows",
+        "course administration",
+        "file upload, download and OCR",
+        "collaboration",
+        "destructive user actions",
+      ],
       workloadWindowUtc: {
         start: "2026-11-17T15:00:00Z",
         end: "2026-11-17T15:01:00Z",
@@ -129,6 +140,43 @@ test("secret leakage leaves no downloadable partial artifact", () => {
     );
     assert.throws(() =>
       sanitizeArtifacts(manifest, raw, dest, runId, "smoke", sourceWorkflowUrl),
+    );
+    assert.equal(existsSync(dest), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("nested three-course identifiers are screened before publishing any report", () => {
+  const root = mkdtempSync(join(tmpdir(), "k6-sanitize-"));
+  try {
+    const raw = join(root, "raw"),
+      dest = join(root, "dest");
+    mkdirSync(raw);
+    const nested = {
+      ...manifest,
+      courses: [
+        {
+          id: "22222222-2222-2222-2222-222222222222",
+          boardId: "33333333-3333-3333-3333-333333333333",
+        },
+      ],
+    };
+    writeFileSync(
+      join(raw, "report.html"),
+      `<html>${nested.courses[0].boardId}</html>`,
+    );
+    writeFileSync(
+      join(raw, "window.json"),
+      JSON.stringify({
+        start: "2026-11-17T15:00:00Z",
+        end: "2026-11-17T15:01:00Z",
+      }),
+    );
+    assert.throws(
+      () =>
+        sanitizeArtifacts(nested, raw, dest, runId, "ramp", sourceWorkflowUrl),
+      /private/i,
     );
     assert.equal(existsSync(dest), false);
   } finally {

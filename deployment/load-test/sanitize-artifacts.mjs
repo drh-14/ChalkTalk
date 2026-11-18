@@ -32,7 +32,8 @@ export function sanitizeArtifacts(
     throw new Error("Source workflow URL is invalid");
   const reportNames = [
     [`${runId}-${mode}-summary.json`, "summary.json", "json"],
-    [`${runId}-${mode}.html`, "report.html", "html"],
+    ["report.html", "report.html", "html"],
+    [`${runId}-${mode}.html`, "k6-original.html", "html"],
     ["coverage.json", "coverage.json", "json"],
   ];
   const available = reportNames.filter(([name]) =>
@@ -88,7 +89,13 @@ export function sanitizeArtifacts(
           mode,
           sourceWorkflowUrl,
           selectedCoreApiOnly: true,
-          excludedFlows: ["course creation", "files", "email", "collaboration"],
+          excludedFlows: [
+            "signup and email workflows",
+            "course administration",
+            "file upload, download and OCR",
+            "collaboration",
+            "destructive user actions",
+          ],
           workloadWindowUtc: window,
         },
         null,

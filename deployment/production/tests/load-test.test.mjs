@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
+import { normalizeProfile } from "../../load-test/profile.mjs";
 
 const root = resolve(import.meta.dirname, "../../..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
@@ -235,23 +236,28 @@ test("k6 itself accepts only the bounded smoke and ramp execution plans without 
     runId,
     deployedSha: sha,
     baseUrl: "https://joinchalktalk.com",
-    users: Array.from({ length: 20 }, (_, i) => ({
-      email: `vu${i}@example.invalid`,
-      password: "test",
-    })),
   };
-  writeFileSync(resolve(directory, "manifest.json"), JSON.stringify(manifest));
-  chmodSync(resolve(directory, "manifest.json"), 0o644);
   try {
     for (const mode of ["smoke", "ramp"]) {
+      const courses = Array.from({ length: 3 }, (_, i) => ({ id: `course-${i}` }));
+      const selectedManifest = {
+        ...manifest,
+        mode,
+        ...(mode === "ramp" ? { courses } : {}),
+        users: Array.from({ length: mode === "ramp" ? 30 : 20 }, (_, i) => ({
+          email: `vu${i}@example.invalid`,
+          password: "test",
+          ...(mode === "ramp" ? { courseId: courses[i % 3].id } : {}),
+        })),
+      };
+      writeFileSync(resolve(directory, `manifest-${mode}.json`), JSON.stringify(selectedManifest));
+      chmodSync(resolve(directory, `manifest-${mode}.json`), 0o644);
       writeFileSync(
         resolve(directory, `profile-${mode}.json`),
-        JSON.stringify({
-          maxVus: mode === "smoke" ? 1 : 20,
-          stageMinutes: [1, 3, 3, 3],
-          stageTargets: mode === "smoke" ? [1, 1, 1, 1] : [2, 5, 10, 20],
-          rampWriteAttempts: 17,
-        }),
+        JSON.stringify(normalizeProfile({
+          MODE: mode,
+          ...(mode === "ramp" ? { MAX_CONCURRENT_USERS: "20" } : {}),
+        })),
       );
       chmodSync(resolve(directory, `profile-${mode}.json`), 0o644);
       const options = JSON.parse(
@@ -267,7 +273,7 @@ test("k6 itself accepts only the bounded smoke and ramp execution plans without 
             "grafana/k6:2.4.0",
             "inspect",
             "-e",
-            "MANIFEST_PATH=/test/manifest.json",
+            `MANIFEST_PATH=/test/manifest-${mode}.json`,
             "-e",
             `PROFILE_PATH=/test/profile-${mode}.json`,
             "-e",
@@ -286,23 +292,27 @@ test("k6 itself accepts only the bounded smoke and ramp execution plans without 
       assert.equal(options.tags.testid, runId);
       assert.ok(options.systemTags.includes("name"));
       assert.equal(options.systemTags.includes("url"), false);
-      const traffic = options.scenarios.traffic;
       if (mode === "smoke") {
+        const traffic = options.scenarios.traffic;
         assert.equal(traffic.executor, "constant-vus");
         assert.equal(traffic.vus, 1);
         assert.equal(traffic.duration, "2m0s");
       } else {
-        assert.equal(traffic.executor, "ramping-vus");
-        assert.equal(traffic.startVUs, 2);
-        assert.deepEqual(
-          traffic.stages.map(({ target, duration }) => [target, duration]),
-          [
-            [2, "1m0s"],
-            [5, "3m0s"],
-            [10, "3m0s"],
-            [20, "3m0s"],
-          ],
-        );
+        const starts = [0, 6, 60, 84, 108, 132, 156, 180, 204, 228,
+          240, 258, 276, 294, 312, 330, 348, 366, 384, 402];
+        const seconds = (duration) => {
+          const match = /^(?:(\d+)m)?(\d+)s$/.exec(duration);
+          assert.ok(match, `unexpected k6 duration: ${duration}`);
+          return Number(match[1] ?? 0) * 60 + Number(match[2]);
+        };
+        assert.equal(Object.keys(options.scenarios).length, starts.length);
+        for (const [index, start] of starts.entries()) {
+          const actor = options.scenarios[`actor_${String(index + 1).padStart(2, "0")}`];
+          assert.equal(actor.executor, "constant-vus");
+          assert.equal(actor.vus, 1);
+          assert.equal(seconds(actor.startTime), start);
+          assert.equal(seconds(actor.startTime) + seconds(actor.duration), 600);
+        }
       }
     }
   } finally {

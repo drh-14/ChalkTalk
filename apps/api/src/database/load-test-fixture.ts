@@ -14,6 +14,7 @@ export async function acquireFixtureClient(pool: Pool): Promise<PoolClient> {
   }
 }
 const MAX_INDEXABLE_POSTS = 7;
+const RAMP_INDEXABLE_POSTS = 15;
 const MAX_SEMANTIC_JOBS = 64;
 const MAX_SEMANTIC_CATCHUP_ROWS = 64;
 const BASE_URL = "https://joinchalktalk.com";
@@ -46,8 +47,30 @@ const OWNED_TABLES = new Set([
   "course_information",
   "semantic_post_catchup",
   "post_embeddings",
+  "thread_boards",
+  "thread_conversations",
+  "thread_messages",
+  "thread_watches",
+  "thread_message_reads",
+  "thread_notifications",
+  "thread_course_counters",
+  "thread_changes",
+  "course_resource_catalogs",
+  "course_resources",
+  "course_resource_revisions",
 ]);
 const DELETE_ORDER = [
+  "thread_notifications",
+  "thread_message_reads",
+  "thread_watches",
+  "thread_changes",
+  "thread_course_counters",
+  "thread_messages",
+  "thread_conversations",
+  "thread_boards",
+  "course_resource_revisions",
+  "course_resources",
+  "course_resource_catalogs",
   "semantic_post_catchup",
   "post_embeddings",
   "notifications",
@@ -80,6 +103,7 @@ const DELETE_ORDER = [
 ];
 
 export interface FixtureManifest {
+  mode?: "smoke" | "ramp";
   runId: string;
   deployedSha: string;
   baseUrl: string;
@@ -90,7 +114,21 @@ export interface FixtureManifest {
   questionId: string;
   pollId: string;
   pollOptionId: string;
-  users: { id: string; email: string; password: string }[];
+  courses?: {
+    id: string;
+    questionId: string;
+    pollId: string;
+    pollOptionId: string;
+    boardId: string;
+    resourceId: string;
+  }[];
+  users: {
+    id: string;
+    email: string;
+    password: string;
+    courseId?: string;
+    role?: "instructor" | "student";
+  }[];
 }
 
 export function validateRunId(runId: string): void {
@@ -144,18 +182,34 @@ export function validateManifest(
   sha: string,
 ): void {
   validateRunId(runId);
+  const ramp = manifest.mode === "ramp";
+  const expectedUsers = ramp ? 30 : USER_COUNT;
+  const cohorts = manifest.courses;
   if (
     !/^[0-9a-f]{40}$/.test(sha) ||
     manifest.runId !== runId ||
     manifest.deployedSha !== sha ||
     manifest.baseUrl !== BASE_URL ||
-    manifest.users?.length !== USER_COUNT ||
-    new Set(manifest.users.map((u) => u.id)).size !== USER_COUNT ||
+    manifest.users?.length !== expectedUsers ||
+    new Set(manifest.users.map((u) => u.id)).size !== expectedUsers ||
     manifest.users.some(
       (u, i) =>
         u.email !==
-        `vu${String(i + 1).padStart(2, "0")}@${fixtureIdentity(runId).domain}`,
-    )
+          `vu${String(i + 1).padStart(2, "0")}@${fixtureIdentity(runId).domain}` ||
+        (ramp &&
+          (u.courseId !== cohorts?.[i % 3]?.id ||
+            u.role !== (i < 3 ? "instructor" : "student"))),
+    ) ||
+    (ramp &&
+      (cohorts?.length !== 3 ||
+        new Set(cohorts.map((cohort) => cohort.id)).size !== 3 ||
+        new Set(cohorts.flatMap((cohort) => Object.values(cohort))).size !==
+          18 ||
+        manifest.courseId !== cohorts[0]?.id ||
+        manifest.questionId !== cohorts[0]?.questionId ||
+        manifest.pollId !== cohorts[0]?.pollId ||
+        manifest.pollOptionId !== cohorts[0]?.pollOptionId)) ||
+    (!ramp && manifest.mode !== undefined && manifest.mode !== "smoke")
   )
     throw new Error("Credential manifest does not match run and deployed SHA");
 }
@@ -167,6 +221,7 @@ export async function provisionFixture(
   expectedProjectRef: string,
   expectedHost: string,
   saveManifest: (manifest: FixtureManifest) => Promise<void>,
+  mode: "smoke" | "ramp" = "smoke",
 ): Promise<FixtureManifest> {
   validateRunId(runId);
   if (!/^[0-9a-f]{40}$/.test(sha))
@@ -189,16 +244,31 @@ export async function provisionFixture(
     if (existing.rowCount) throw new Error("Fixture namespace already exists");
 
     const organizationId = randomUUID();
-    const courseId = randomUUID();
-    const questionId = randomUUID();
-    const pollId = randomUUID();
-    const pollOptionId = randomUUID();
-    const secondOptionId = randomUUID();
-    const users = Array.from({ length: USER_COUNT }, (_, i) => ({
+    const cohorts = Array.from({ length: mode === "ramp" ? 3 : 1 }, (_, i) => ({
       id: randomUUID(),
-      email: `vu${String(i + 1).padStart(2, "0")}@${domain}`,
-      password: randomBytes(24).toString("base64url"),
+      name: i ? `${courseName} course ${i + 1}` : courseName,
+      questionId: randomUUID(),
+      pollId: randomUUID(),
+      pollOptionId: randomUUID(),
+      secondOptionId: randomUUID(),
+      boardId: randomUUID(),
+      resourceId: randomUUID(),
     }));
+    const users = Array.from(
+      { length: mode === "ramp" ? 30 : USER_COUNT },
+      (_, i) => ({
+        id: randomUUID(),
+        email: `vu${String(i + 1).padStart(2, "0")}@${domain}`,
+        password: randomBytes(24).toString("base64url"),
+        ...(mode === "ramp"
+          ? {
+              courseId: cohorts[i % 3]!.id,
+              role: (i < 3 ? "instructor" : "student") as
+                "instructor" | "student",
+            }
+          : {}),
+      }),
+    );
     const hashes: string[] = [];
     for (const user of users)
       hashes.push(await argon2.hash(user.password, { type: argon2.argon2id }));
@@ -219,61 +289,112 @@ export async function provisionFixture(
         ],
       );
     }
-    await client.query(
-      "INSERT INTO courses (id,organization_id,name,created_by_user_id,join_code) VALUES ($1,$2,$3,$4,$5)",
-      [
-        courseId,
-        organizationId,
-        courseName,
-        users[0]!.id,
-        randomBytes(4).toString("hex").toUpperCase(),
-      ],
-    );
-    for (let i = 0; i < users.length; i++) {
+    for (let cohortIndex = 0; cohortIndex < cohorts.length; cohortIndex++) {
+      const cohort = cohorts[cohortIndex]!;
+      const instructor = users[cohortIndex]!;
       await client.query(
-        "INSERT INTO course_memberships (course_id,user_id,role,activity_emails,announcement_emails,digest_emails) VALUES ($1,$2,$3,false,false,false)",
-        [courseId, users[i]!.id, i === 0 ? "instructor" : "student"],
+        "INSERT INTO courses (id,organization_id,name,created_by_user_id,join_code) VALUES ($1,$2,$3,$4,$5)",
+        [
+          cohort.id,
+          organizationId,
+          cohort.name,
+          instructor.id,
+          randomBytes(4).toString("hex").toUpperCase(),
+        ],
       );
+      for (let i = 0; i < users.length; i++) {
+        const user = users[i]!;
+        if (mode === "ramp" && i % 3 !== cohortIndex) continue;
+        await client.query(
+          "INSERT INTO course_memberships (course_id,user_id,role,activity_emails,announcement_emails,digest_emails) VALUES ($1,$2,$3,false,false,false)",
+          [
+            cohort.id,
+            user.id,
+            user.role ?? (i === 0 ? "instructor" : "student"),
+          ],
+        );
+      }
+      await client.query(
+        "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown) VALUES ($1,$2,$3,'question',$4,$5)",
+        [
+          cohort.questionId,
+          cohort.id,
+          instructor.id,
+          `${cohort.name} seed question`,
+          "Synthetic question for isolated load testing",
+        ],
+      );
+      await client.query(
+        "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown) VALUES ($1,$2,$3,'poll',$4,$5)",
+        [
+          cohort.pollId,
+          cohort.id,
+          instructor.id,
+          `${cohort.name} seed poll`,
+          "Synthetic poll for isolated load testing",
+        ],
+      );
+      await client.query(
+        "INSERT INTO poll_settings (post_id,results_released_at) VALUES ($1,now())",
+        [cohort.pollId],
+      );
+      await client.query(
+        "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES ($1,$2,$3,0,'Option A'),($4,$2,$3,1,'Option B')",
+        [cohort.pollOptionId, cohort.id, cohort.pollId, cohort.secondOptionId],
+      );
+      if (mode === "ramp") {
+        await client.query(
+          "INSERT INTO thread_boards (id,course_id,title) VALUES ($1,$2,$3)",
+          [cohort.boardId, cohort.id, `${cohort.name} discussion`],
+        );
+        await client.query(
+          "INSERT INTO course_resource_catalogs (course_id) VALUES ($1)",
+          [cohort.id],
+        );
+        await client.query(
+          "INSERT INTO course_resources (id,course_id,title,visibility,position,active_revision_id) VALUES ($1,$2,$3,'class',0,$1)",
+          [cohort.resourceId, cohort.id, `${cohort.name} guide`],
+        );
+        await client.query(
+          "INSERT INTO course_resource_revisions (id,resource_id,course_id,kind,url) VALUES ($1,$1,$2,'link','https://example.invalid/load-test-guide')",
+          [cohort.resourceId, cohort.id],
+        );
+      }
     }
-    await client.query(
-      "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown) VALUES ($1,$2,$3,'question',$4,$5)",
-      [
-        questionId,
-        courseId,
-        users[0]!.id,
-        `${courseName} seed question`,
-        "Synthetic question for isolated load testing",
-      ],
-    );
-    await client.query(
-      "INSERT INTO posts (id,course_id,author_user_id,type,title,body_markdown) VALUES ($1,$2,$3,'poll',$4,$5)",
-      [
-        pollId,
-        courseId,
-        users[0]!.id,
-        `${courseName} seed poll`,
-        "Synthetic poll for isolated load testing",
-      ],
-    );
-    await client.query(
-      "INSERT INTO poll_settings (post_id,results_released_at) VALUES ($1,now())",
-      [pollId],
-    );
-    await client.query(
-      "INSERT INTO poll_options (id,course_id,post_id,position,label) VALUES ($1,$2,$3,0,'Option A'),($4,$2,$3,1,'Option B')",
-      [pollOptionId, courseId, pollId, secondOptionId],
-    );
+    const first = cohorts[0]!;
     const manifest: FixtureManifest = {
+      ...(mode === "ramp" ? { mode } : {}),
       runId,
       deployedSha: sha,
       baseUrl: BASE_URL,
       expectedProjectRef,
       expectedHost,
       organizationId,
-      courseId,
-      questionId,
-      pollId,
-      pollOptionId,
+      courseId: first.id,
+      questionId: first.questionId,
+      pollId: first.pollId,
+      pollOptionId: first.pollOptionId,
+      ...(mode === "ramp"
+        ? {
+            courses: cohorts.map(
+              ({
+                id,
+                questionId,
+                pollId,
+                pollOptionId,
+                boardId,
+                resourceId,
+              }) => ({
+                id,
+                questionId,
+                pollId,
+                pollOptionId,
+                boardId,
+                resourceId,
+              }),
+            ),
+          }
+        : {}),
       users,
     };
     await saveManifest(manifest);
@@ -302,32 +423,53 @@ interface OwnedIds {
   answer: string[];
   followup: string[];
   option: string[];
+  board: string[];
+  conversation: string[];
+  message: string[];
+  resource: string[];
+  revision: string[];
 }
 
 async function ownedIds(
   client: PoolClient,
   manifest: FixtureManifest,
 ): Promise<OwnedIds> {
-  const course = manifest.courseId;
+  const course = manifest.courses?.map((cohort) => cohort.id) ?? [
+    manifest.courseId,
+  ];
   const posts = await client.query<{ id: string; type: string }>(
-    "SELECT id,type FROM posts WHERE course_id=$1",
+    "SELECT id,type FROM posts WHERE course_id=ANY($1::uuid[])",
     [course],
   );
   const answers = await client.query<{ id: string }>(
-    "SELECT id FROM answers WHERE course_id=$1",
+    "SELECT id FROM answers WHERE course_id=ANY($1::uuid[])",
     [course],
   );
   const followups = await client.query<{ id: string }>(
-    "SELECT id FROM followups WHERE course_id=$1",
+    "SELECT id FROM followups WHERE course_id=ANY($1::uuid[])",
     [course],
   );
   const options = await client.query<{ id: string }>(
-    "SELECT id FROM poll_options WHERE course_id=$1",
+    "SELECT id FROM poll_options WHERE course_id=ANY($1::uuid[])",
     [course],
   );
+  const roots: string[][] = [];
+  for (const table of [
+    "thread_boards",
+    "thread_conversations",
+    "thread_messages",
+    "course_resources",
+    "course_resource_revisions",
+  ]) {
+    const result = await client.query<{ id: string }>(
+      `SELECT id FROM ${table} WHERE course_id=ANY($1::uuid[])`,
+      [course],
+    );
+    roots.push(result.rows.map((row) => row.id));
+  }
   return {
     organization: [manifest.organizationId],
-    course: [course],
+    course,
     user: manifest.users.map((u) => u.id),
     post: posts.rows.map((r) => r.id),
     indexablePost: posts.rows
@@ -336,6 +478,11 @@ async function ownedIds(
     answer: answers.rows.map((r) => r.id),
     followup: followups.rows.map((r) => r.id),
     option: options.rows.map((r) => r.id),
+    board: roots[0]!,
+    conversation: roots[1]!,
+    message: roots[2]!,
+    resource: roots[3]!,
+    revision: roots[4]!,
   };
 }
 
@@ -356,6 +503,12 @@ const ID_COLUMNS: Record<string, keyof OwnedIds> = {
   recipient_user_id: "user",
   owner_user_id: "user",
   last_edited_by_user_id: "user",
+  board_id: "board",
+  conversation_id: "conversation",
+  message_id: "message",
+  resource_id: "resource",
+  active_revision_id: "revision",
+  revision_id: "revision",
 };
 
 interface TableMatch {
@@ -459,6 +612,11 @@ async function scanOwnedReferences(
     answers: "answer",
     followups: "followup",
     poll_options: "option",
+    thread_boards: "board",
+    thread_conversations: "conversation",
+    thread_messages: "message",
+    course_resources: "resource",
+    course_resource_revisions: "revision",
   };
   for (const fk of foreignKeys.rows) {
     const key =
@@ -493,6 +651,13 @@ async function scanOwnedReferences(
         if (value && !ids[key].includes(String(value)))
           violations.push(`${table}.${name}: foreign reference`);
       }
+      if (
+        table === "thread_changes" &&
+        ![...ids.board, ...ids.conversation, ...ids.message].includes(
+          String(row.entity_id),
+        )
+      )
+        violations.push("thread_changes.entity_id: unknown fixture entity");
     }
   }
   return { matches, violations: [...new Set(violations)] };
@@ -513,20 +678,45 @@ export async function inventoryFixture(
   );
   counts.indexable_posts = ids.indexablePost.length;
   counts.semantic_post_catchup ??= 0;
-  if (counts.indexable_posts > MAX_INDEXABLE_POSTS)
+  if (
+    counts.indexable_posts >
+    (manifest.mode === "ramp" ? RAMP_INDEXABLE_POSTS : MAX_INDEXABLE_POSTS)
+  )
     violations.push("posts: fixture indexable post cap exceeded");
+  if (manifest.mode === "ramp") {
+    const caps: Record<string, number> = {
+      posts: 18,
+      answers: 6,
+      followups: 6,
+      poll_votes: 6,
+      thread_boards: 3,
+      thread_conversations: 6,
+      thread_messages: 18,
+      thread_watches: 18,
+      thread_message_reads: 60,
+      thread_notifications: 256,
+      thread_changes: 64,
+      thread_course_counters: 3,
+      course_resource_catalogs: 3,
+      course_resources: 3,
+      course_resource_revisions: 3,
+    };
+    for (const [table, cap] of Object.entries(caps))
+      if ((counts[table] ?? 0) > cap)
+        violations.push(`${table}: fixture row cap exceeded`);
+  }
   if (counts.semantic_post_catchup > MAX_SEMANTIC_CATCHUP_ROWS)
     violations.push("semantic_post_catchup: fixture catch-up cap exceeded");
-  for (const [table, id] of [
-    ["organizations", manifest.organizationId],
-    ["courses", manifest.courseId],
-  ] as const) {
-    const result = await client.query(
-      `SELECT count(*)::int AS count FROM ${table} WHERE id=$1`,
-      [id],
-    );
-    counts[table] = result.rows[0]?.count ?? 0;
-  }
+  const organizationCount = await client.query<{ count: number }>(
+    "SELECT count(*)::int AS count FROM organizations WHERE id=$1",
+    [manifest.organizationId],
+  );
+  counts.organizations = organizationCount.rows[0]?.count ?? 0;
+  const courseCount = await client.query<{ count: number }>(
+    "SELECT count(*)::int AS count FROM courses WHERE id=ANY($1::uuid[])",
+    [ids.course],
+  );
+  counts.courses = courseCount.rows[0]?.count ?? 0;
   const organization = await client.query<{ domain: string }>(
     "SELECT domain FROM organizations WHERE id=$1",
     [manifest.organizationId],
@@ -537,13 +727,20 @@ export async function inventoryFixture(
   )
     violations.push("organizations: manifest namespace mismatch");
   const course = await client.query<{ name: string; organization_id: string }>(
-    "SELECT name,organization_id FROM courses WHERE id=$1",
-    [manifest.courseId],
+    "SELECT name,organization_id FROM courses WHERE id=ANY($1::uuid[]) ORDER BY name",
+    [ids.course],
+  );
+  const expectedNames = ids.course.map((_, i) =>
+    i
+      ? `${fixtureIdentity(manifest.runId).courseName} course ${i + 1}`
+      : fixtureIdentity(manifest.runId).courseName,
   );
   if (
-    course.rows[0] &&
-    (course.rows[0].name !== fixtureIdentity(manifest.runId).courseName ||
-      course.rows[0].organization_id !== manifest.organizationId)
+    course.rows.some(
+      (row) =>
+        row.organization_id !== manifest.organizationId ||
+        !expectedNames.includes(row.name),
+    )
   )
     violations.push("courses: manifest identity mismatch");
   const users = await client.query<{
@@ -588,8 +785,8 @@ export async function teardownFixture(
     const before = await inventoryFixture(client, manifest);
     if (
       before.counts.organizations !== 1 ||
-      before.counts.courses !== 1 ||
-      before.counts.users !== USER_COUNT
+      before.counts.courses !== ids.course.length ||
+      before.counts.users !== (manifest.mode === "ramp" ? 30 : USER_COUNT)
     )
       violations.push("Manifest roots do not exactly match the database");
     violations.push(...before.violations);
@@ -616,8 +813,8 @@ export async function teardownFixture(
         );
       else if (table === "courses")
         await client.query(
-          "DELETE FROM courses WHERE id=$1 AND organization_id=$2",
-          [manifest.courseId, manifest.organizationId],
+          "DELETE FROM courses WHERE id=ANY($1::uuid[]) AND organization_id=$2",
+          [ids.course, manifest.organizationId],
         );
       else {
         const match = byTable.get(table);

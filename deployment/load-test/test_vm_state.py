@@ -166,6 +166,32 @@ class VmStateTest(unittest.TestCase):
         self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
         self.assertEqual(self.auto("claim-ramp-auto", source_run="44156607167").returncode, 0)
 
+    def test_new_three_course_ramp_profile_and_manifest_are_accepted_once(self):
+        profile = {"maxVus": 30, "stageMinutes": [1, 3, 3, 3],
+                   "stageTargets": [2, 10, 20, 30], "rampWriteAttempts": 60}
+        self.profile.write_text(json.dumps(
+            {**profile, "rampWriteAttempts": 48}, separators=(",", ":")))
+        self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
+        self.profile.write_text(json.dumps(profile, separators=(",", ":")))
+        claimed = self.auto_ok("claim-ramp-auto")
+        run_id = claimed["runId"]
+        manifest, _ = self.mark_fixture_files(run_id)
+        data = json.loads(manifest.read_text())
+        courses = []
+        for index in range(3):
+            courses.append({key: str(uuid.UUID(int=200 + 10 * index + offset))
+                            for offset, key in enumerate(("id", "questionId", "pollId", "pollOptionId", "boardId", "resourceId"))})
+        data.update({"mode": "ramp", "courseId": courses[0]["id"],
+                     "questionId": courses[0]["questionId"], "pollId": courses[0]["pollId"],
+                     "pollOptionId": courses[0]["pollOptionId"], "courses": courses,
+                     "users": [{"id": str(uuid.UUID(int=i + 1)),
+                                "email": f"vu{i + 1:02d}@{run_id}.loadtest.invalid",
+                                "password": "test-only", "courseId": courses[i % 3]["id"],
+                                "role": "instructor" if i < 3 else "student"}
+                               for i in range(30)]})
+        manifest.write_text(json.dumps(data))
+        self.assertEqual(self.call("verify-fixture", run_id=run_id).returncode, 0)
+
     def test_independent_ramp_refuses_active_legacy_smoke(self):
         self.assert_ok("claim-smoke")
         self.assertNotEqual(self.auto("claim-ramp-auto").returncode, 0)
