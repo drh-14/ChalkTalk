@@ -2,6 +2,7 @@ import { lstat, open, readFile, unlink } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { Pool } from "pg";
 import {
+  acquireFixtureClient,
   inventoryFixture,
   provisionFixture,
   teardownFixture,
@@ -116,7 +117,7 @@ async function main(): Promise<void> {
     )
       throw new Error("Manifest project identity mismatch");
     if (action === "inventory") {
-      const client = await pool.connect();
+      const client = await acquireFixtureClient(pool);
       try {
         process.stdout.write(
           `${JSON.stringify(await inventoryFixture(client, manifest), null, 2)}\n`,

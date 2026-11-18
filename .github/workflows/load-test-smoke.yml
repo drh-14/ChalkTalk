@@ -29,9 +29,6 @@ jobs:
           EXPECTED_SHA: ${{ github.sha }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SUPABASE_STORAGE_ENDPOINT: ${{ vars.SUPABASE_STORAGE_ENDPOINT }}
-          LOAD_TEST_MAX_VUS: ${{ vars.LOAD_TEST_MAX_VUS }}
-          LOAD_TEST_STAGE_MINUTES: ${{ vars.LOAD_TEST_STAGE_MINUTES }}
-          LOAD_TEST_RAMP_WRITE_ATTEMPTS: ${{ vars.LOAD_TEST_RAMP_WRITE_ATTEMPTS }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}

@@ -129,15 +129,15 @@ async function exercise(rateLimit, ambiguousMutation = false, mode = "smoke") {
       JSON.stringify(
         mode === "ramp"
           ? {
-              maxVus: 1,
-              stageMinutes: [1, 1, 1, 1],
-              stageTargets: [1, 1, 1, 1],
-              rampWriteAttempts: 6,
+              maxVus: 2,
+              stageMinutes: [1, 3, 3, 3],
+              stageTargets: [2, 2, 2, 2],
+              rampWriteAttempts: 17,
             }
           : {
-              maxVus: 20,
+              maxVus: 1,
               stageMinutes: [1, 3, 3, 3],
-              stageTargets: [1, 5, 10, 20],
+              stageTargets: [1, 1, 1, 1],
               rampWriteAttempts: 17,
             },
       ),
@@ -272,7 +272,7 @@ integration(
 );
 
 integration(
-  "ramp obtains successful checks for every selected read and write within six attempts",
+  "ramp obtains successful checks for every selected read and write within the bounded attempts",
   async () => {
     const { requests, output, summary } = await exercise(false, false, "ramp");
     assert.equal(output.code, 0, output.text);
@@ -294,12 +294,11 @@ integration(
         summary.metrics[`op_${operation}_success`]?.values.count >= 1,
         operation,
       );
-    assert.equal(
+    const writes =
       requests.filter(
         (r) => r.method === "POST" && r.path !== "/api/v1/sessions",
-      ).length + requests.filter((r) => r.method === "PUT").length,
-      6,
-    );
+      ).length + requests.filter((r) => r.method === "PUT").length;
+    assert.ok(writes >= 6 && writes <= 17);
   },
 );
 

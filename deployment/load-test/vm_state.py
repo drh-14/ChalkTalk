@@ -44,7 +44,8 @@ def read_profile(path):
             type(attempts) is not int or not 6 <= attempts <= 17 or
             not isinstance(minutes, list) or len(minutes) != 4 or
             any(type(n) is not int or n < 1 for n in minutes) or sum(minutes) > 10 or
-            profile["stageTargets"] != [min(n, vus) for n in (1, 5, 10, 20)]):
+            profile["stageTargets"] not in ([min(n, vus) for n in (1, 5, 10, 20)],
+                                            [min(n, vus) for n in (2, 5, 10, 20)])):
         raise ValueError("Profile exceeds hard limits")
     canonical = json.dumps(profile, separators=(",", ":")).encode()
     return profile, hashlib.sha256(canonical).hexdigest()
@@ -176,45 +177,24 @@ def auto_transition(action, root, sha, profile, fingerprint, source_run_id,
     states = scan_states(root)
     active = [(run_id, state) for run_id, state in states.items() if state["status"] != "cleaned"]
     db_fingerprint = hashlib.sha256(database_url.encode()).hexdigest()
-    if action == "claim-smoke-auto":
+    if action in {"claim-smoke-auto", "claim-ramp-auto"}:
         if active:
             raise ValueError("Another load-test fixture is active or cleanup-uncertain")
         if not SOURCE_RUN_ID.fullmatch(source_run_id or ""):
-            raise ValueError("Trusted source Smoke run ID is invalid")
+            raise ValueError("Trusted source workflow run ID is invalid")
         if any(state.get("sourceRunId") == source_run_id for state in states.values()):
-            raise ValueError("Smoke source workflow run was already consumed")
+            raise ValueError("Source workflow run was already consumed")
         run_id = f"load-{datetime.datetime.now(datetime.timezone.utc):%Y%m%d}-gh{source_run_id}"
         if not RUN_ID.fullmatch(run_id) or run_id in states:
-            raise ValueError("Smoke source run identity was already consumed")
+            raise ValueError("Source run identity was already consumed")
         state = {"runId": run_id, "deployedSha": sha, "profile": profile,
                  "profileFingerprint": fingerprint, "projectRef": project_ref,
                  "databaseHost": database_host, "dbFingerprint": db_fingerprint,
                  "sourceRunId": source_run_id, "sourceRunUrl": source_url(source_run_id),
-                 "status": "smoke-claimed", "claimedAt": int(time.time())}
+                 "status": "smoke-claimed" if action == "claim-smoke-auto" else "ramp-claimed",
+                 "claimedAt": int(time.time())}
         persist(root / f"{run_id}.state.json", state, new=True)
         return state
-    if len(active) != 1:
-        raise ValueError("Ramp requires exactly one active verified Smoke fixture")
-    run_id, state = active[0]
-    age = int(time.time()) - state.get("verifiedAt", 0)
-    if (state["status"] != "smoke-verified" or not 0 <= age <= MAX_SMOKE_AGE_SECONDS
-            or state.get("deployedSha") != sha or state.get("profileFingerprint") != fingerprint
-            or state.get("profile") != profile or state.get("projectRef") != project_ref
-            or state.get("databaseHost") != database_host or state.get("dbFingerprint") != db_fingerprint
-            or not SOURCE_RUN_ID.fullmatch(state.get("sourceRunId", ""))
-            or state.get("sourceRunUrl") != source_url(state.get("sourceRunId"))):
-        raise ValueError("Recent verified Smoke identity is unavailable or mismatched")
-    manifest_bytes = private_bytes(root / f"{run_id}.json", 65536)
-    manifest = json.loads(manifest_bytes)
-    if (not re.fullmatch(r"[0-9a-f]{64}", state.get("verifiedManifestSha256", ""))
-            or hashlib.sha256(manifest_bytes).hexdigest() != state["verifiedManifestSha256"]
-            or not manifest_matches(manifest, run_id, sha, project_ref, database_host)
-            or private_bytes(root / f"{run_id}.db-url", 4096).decode() != database_url):
-        raise ValueError("Smoke fixture manifest or target identity mismatch")
-    state["status"] = "ramp-claimed"
-    state["rampClaimedAt"] = int(time.time())
-    persist(root / f"{run_id}.state.json", state)
-    return state
 
 
 def transition(action, root, run_id, sha, profile_file, source_run_id=None,
@@ -253,13 +233,21 @@ def transition(action, root, run_id, sha, profile_file, source_run_id=None,
         else:
             if state is None or state.get("runId") != run_id or state.get("deployedSha") != sha or state.get("profileFingerprint") != fingerprint or state.get("profile") != profile:
                 raise ValueError("Attempt identity or profile mismatch")
-            if action == "verify-smoke":
-                if state["status"] != "smoke-claimed":
-                    raise ValueError("Smoke is not claimable for verification")
+            if action in {"verify-smoke", "verify-fixture"}:
+                if state["status"] not in ({"smoke-claimed"} if action == "verify-smoke" else {"smoke-claimed", "ramp-claimed"}):
+                    raise ValueError("Fixture is not claimable for verification")
+                if action == "verify-fixture" and "verifiedManifestSha256" in state:
+                    raise ValueError("Fixture manifest was already verified")
                 if "sourceRunId" in state:
-                    state["verifiedManifestSha256"] = hashlib.sha256(
-                        private_bytes(root / f"{run_id}.json", 65536)).hexdigest()
-                state["status"] = "smoke-verified"
+                    manifest_bytes = private_bytes(root / f"{run_id}.json", 65536)
+                    manifest = json.loads(manifest_bytes)
+                    if (not manifest_matches(manifest, run_id, sha, state["projectRef"], state["databaseHost"])
+                            or hashlib.sha256(private_bytes(root / f"{run_id}.db-url", 4096)).hexdigest()
+                            != state["dbFingerprint"]):
+                        raise ValueError("Fixture manifest identity mismatch")
+                    state["verifiedManifestSha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+                if action == "verify-smoke":
+                    state["status"] = "smoke-verified"
                 state["verifiedAt"] = int(time.time())
             elif action == "claim-ramp":
                 age = int(time.time()) - state.get("verifiedAt", 0)
@@ -285,7 +273,7 @@ def transition(action, root, run_id, sha, profile_file, source_run_id=None,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["claim-smoke", "verify-smoke", "claim-ramp", "claim-smoke-auto", "claim-ramp-auto", "mark-cleaned", "inspect"])
+    parser.add_argument("action", choices=["claim-smoke", "verify-smoke", "verify-fixture", "claim-ramp", "claim-smoke-auto", "claim-ramp-auto", "mark-cleaned", "inspect"])
     parser.add_argument("--root", type=pathlib.Path, default=pathlib.Path("/srv/chalktalk/shared/load-test"))
     parser.add_argument("--run-id")
     parser.add_argument("--source-run-id")
@@ -302,6 +290,7 @@ def main():
                        args.source_run_id, args.project_ref, args.database_host, args.env_file,
                        args.deployed_sha_file, args.nonce, args.mac)
     print(json.dumps({key: state[key] for key in ("runId", "deployedSha", "profileFingerprint", "status")}
+                     | ({"verifiedManifestSha256": state["verifiedManifestSha256"]} if args.action == "verify-fixture" else {})
                      | ({"sourceRunUrl": state["sourceRunUrl"]} if "sourceRunUrl" in state else {}),
                      separators=(",", ":")))
 

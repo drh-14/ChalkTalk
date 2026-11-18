@@ -240,20 +240,20 @@ test("k6 itself accepts only the bounded smoke and ramp execution plans without 
       password: "test",
     })),
   };
-  writeFileSync(
-    resolve(directory, "profile.json"),
-    JSON.stringify({
-      maxVus: 20,
-      stageMinutes: [1, 3, 3, 3],
-      stageTargets: [1, 5, 10, 20],
-      rampWriteAttempts: 17,
-    }),
-  );
-  chmodSync(resolve(directory, "profile.json"), 0o644);
   writeFileSync(resolve(directory, "manifest.json"), JSON.stringify(manifest));
   chmodSync(resolve(directory, "manifest.json"), 0o644);
   try {
     for (const mode of ["smoke", "ramp"]) {
+      writeFileSync(
+        resolve(directory, `profile-${mode}.json`),
+        JSON.stringify({
+          maxVus: mode === "smoke" ? 1 : 20,
+          stageMinutes: [1, 3, 3, 3],
+          stageTargets: mode === "smoke" ? [1, 1, 1, 1] : [2, 5, 10, 20],
+          rampWriteAttempts: 17,
+        }),
+      );
+      chmodSync(resolve(directory, `profile-${mode}.json`), 0o644);
       const options = JSON.parse(
         execFileSync(
           "docker",
@@ -269,7 +269,7 @@ test("k6 itself accepts only the bounded smoke and ramp execution plans without 
             "-e",
             "MANIFEST_PATH=/test/manifest.json",
             "-e",
-            "PROFILE_PATH=/test/profile.json",
+            `PROFILE_PATH=/test/profile-${mode}.json`,
             "-e",
             `MODE=${mode}`,
             "-e",
@@ -293,11 +293,11 @@ test("k6 itself accepts only the bounded smoke and ramp execution plans without 
         assert.equal(traffic.duration, "2m0s");
       } else {
         assert.equal(traffic.executor, "ramping-vus");
-        assert.equal(traffic.startVUs, 1);
+        assert.equal(traffic.startVUs, 2);
         assert.deepEqual(
           traffic.stages.map(({ target, duration }) => [target, duration]),
           [
-            [1, "1m0s"],
+            [2, "1m0s"],
             [5, "3m0s"],
             [10, "3m0s"],
             [20, "3m0s"],
