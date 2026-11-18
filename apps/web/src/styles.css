@@ -5847,3 +5847,20 @@ main input[type="file"]:hover::file-selector-button {
 .slide-viewer.pdf-searchable .slide-ask-mode {
   display: inline-flex;
 }
+
+/* Long code lines wrap inside their block, keeping indentation, instead of
+   widening the post, its answers, or its followups. Grid columns may shrink
+   below their content. */
+.post-markdown pre {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.answer-sections,
+.answer-card,
+.followup-sections {
+  grid-template-columns: minmax(0, 1fr);
+}
+.shared-answer-slot {
+  min-width: 0;
+}
