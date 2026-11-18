@@ -987,13 +987,26 @@ integration("answers HTTP contract: create and read", () => {
     expect(replay.body.data).toEqual(first.body.data);
   });
 
-  it("checks followup edit permissions, versions, and question-only creation", async () => {
+  it("checks followup edit permissions, versions, and question- and note-only creation", async () => {
+    // Notes take followups like questions; polls do not.
     const noteId = await insertPost("note");
     const note = await unsafe(
       request(app(ids.author)).post(`/api/v1/posts/${noteId}/followups`),
+    ).send({ bodyMarkdown: "On the note" });
+    expect(note.status).toBe(201);
+    const noteList = await unsafe(
+      request(app(ids.author)).get(`/api/v1/posts/${noteId}/followups`),
+    );
+    expect(noteList.status).toBe(200);
+    expect(noteList.body.data.map((f: { id: string }) => f.id)).toEqual([
+      note.body.data.id,
+    ]);
+    const pollId = await insertPost("poll");
+    const poll = await unsafe(
+      request(app(ids.author)).post(`/api/v1/posts/${pollId}/followups`),
     ).send({ bodyMarkdown: "No" });
-    expect(note.status).toBe(409);
-    expect(note.body.error.code).toBe("not_a_question");
+    expect(poll.status).toBe(409);
+    expect(poll.body.error.code).toBe("not_a_question");
     const postId = await insertPost();
     const created = await unsafe(
       request(app(ids.author)).post(`/api/v1/posts/${postId}/followups`),

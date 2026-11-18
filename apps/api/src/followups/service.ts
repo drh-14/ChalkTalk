@@ -123,7 +123,8 @@ export class FollowupService {
       !canReadPost(row, userId, row.role)
     )
       throw notFound();
-    if (row.type !== "question")
+    // Questions and notes take followup discussions, as on Piazza; polls do not.
+    if (row.type !== "question" && row.type !== "note")
       throw new AuthError(
         noteStatus,
         "not_a_question",

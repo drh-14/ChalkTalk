@@ -3220,6 +3220,15 @@ it("shows shared answer areas for questions and hides them for notes and tombsto
     expect(
       screen.queryByRole("region", { name: "Students' answer" }),
     ).toBeNull();
+    // Notes keep followup discussions, as on Piazza; tombstones show none.
+    if (postId === "n1")
+      expect(
+        await screen.findByRole("heading", { name: /Followup Discussions/ }),
+      ).toBeTruthy();
+    else
+      expect(
+        screen.queryByRole("heading", { name: /Followup Discussions/ }),
+      ).toBeNull();
   }
 });
 
