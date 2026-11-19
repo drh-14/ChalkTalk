@@ -965,9 +965,11 @@ const isPlainClick = (event: MouseEvent<HTMLAnchorElement>) =>
 /** Course list opened from the course name; ported from Khaihern Low's workspace redesign. */
 function CourseSwitcher({
   currentCourseId,
+  currentCourseName,
   onChoose,
 }: {
   currentCourseId?: string;
+  currentCourseName?: string;
   onChoose: (path: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1054,6 +1056,8 @@ function CourseSwitcher({
         type="button"
         className="switcher-button"
         aria-label="Switch course"
+        aria-describedby="course-title-heading"
+        title={currentCourseName}
         aria-expanded={open}
         aria-controls="course-switcher-panel"
         onClick={() => setOpen((value) => !value)}
@@ -1378,7 +1382,12 @@ function CourseFrame({
           All courses
         </a>
         <div className="app-bar-course">
-          <h1 id="course-title-heading" ref={headingRef} tabIndex={-1}>
+          <h1
+            id="course-title-heading"
+            ref={headingRef}
+            tabIndex={-1}
+            title={visibleCourse?.data.name}
+          >
             {visibleCourse?.data.name ??
               (error?.courseId === courseId ? (
                 "Course unavailable"
@@ -1394,10 +1403,16 @@ function CourseFrame({
           </h1>
           <CourseSwitcher
             currentCourseId={courseId}
+            currentCourseName={visibleCourse?.data.name}
             onChoose={(path) => {
               if (beforeLeave.current()) onNavigate(path);
             }}
           />
+          {visibleCourse && (
+            <span className="course-title-tooltip" aria-hidden="true">
+              {visibleCourse.data.name}
+            </span>
+          )}
           {visibleCourse && visibleCourse.data.status !== "active" && (
             <span className="course-status">{visibleCourse.data.status}</span>
           )}
