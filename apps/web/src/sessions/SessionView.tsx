@@ -1,3 +1,4 @@
+import { useConfirm } from "../app/useConfirm.js";
 import {
   Suspense,
   lazy,
@@ -107,6 +108,7 @@ export function SessionView({
   onNavigate: (path: string) => void;
   connect?: Connect;
 }) {
+  const confirm = useConfirm();
   const [session, setSession] = useState<Versioned<CodeSession>>();
   const [unavailable, setUnavailable] = useState(false);
   const [state, setState] = useState<ConnectionState>("connecting");
@@ -431,11 +433,11 @@ export function SessionView({
               type="button"
               className="button danger"
               disabled={pending}
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  !window.confirm(
+                  !(await confirm(
                     "End this session for everyone? The code and whiteboard become read-only.",
-                  )
+                  ))
                 )
                   return;
                 void act(async () => {

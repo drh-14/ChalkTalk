@@ -243,6 +243,12 @@ test("member reads formatted information and current staff, without management c
     page.getByRole("heading", { name: "Welcome to Calculus" }),
   ).toBeVisible();
   await expect(
+    page.getByRole("link", { name: "Course website" }),
+  ).toHaveAttribute("target", "_blank");
+  await expect(
+    page.getByRole("link", { name: "Course syllabus.pdf" }),
+  ).toHaveAttribute("target", "_blank");
+  await expect(
     page.locator("strong", { hasText: "derivatives" }),
   ).toBeVisible();
   await expect(

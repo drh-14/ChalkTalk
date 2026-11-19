@@ -301,7 +301,11 @@ function InformationPanel({ courseId, canEdit, csrfToken }: Props) {
         <section className="course-information-syllabus">
           <h3>Syllabus</h3>
           {data.syllabus ? (
-            <a href={downloadPath(courseId, data.syllabus.id)}>
+            <a
+              href={downloadPath(courseId, data.syllabus.id)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               {data.syllabus.fileName}
             </a>
           ) : (

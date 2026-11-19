@@ -1,3 +1,4 @@
+import { useConfirm } from "../app/useConfirm.js";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError } from "../auth/client.js";
 import { MarkdownEditorField } from "../posts/MarkdownEditorField.js";
@@ -557,6 +558,7 @@ function AnswerCard({
   onReplace: (next: Answer | ((current: Answer) => Answer)) => void;
   onRemove: (id: string) => void;
 }) {
+  const confirm = useConfirm();
   useResponseAnchor(`answer-${answer.id}`);
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);
@@ -587,11 +589,16 @@ function AnswerCard({
     if (pending) return;
     if (
       action !== "vote" &&
-      !window.confirm(
+      !(await confirm(
         action === "endorse"
           ? "Endorse this answer? A later text edit will clear this endorsement."
-          : "Delete this answer? This cannot be undone.",
-      )
+          : {
+              title: "Delete answer",
+              message: "Delete this answer? This cannot be undone.",
+              confirmLabel: "Delete",
+              destructive: true,
+            },
+      ))
     )
       return;
     setPending(true);
@@ -942,6 +949,7 @@ function FollowupItem({
   /** Authorized direct-descendant path to a URL-linked nested reply. */
   linkedChildren?: Followup[];
 }) {
+  const confirm = useConfirm();
   useResponseAnchor(`followup-${item.id}`);
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
@@ -1007,7 +1015,16 @@ function FollowupItem({
   }
   async function act(action: "vote" | "delete") {
     if (pending) return;
-    if (action === "delete" && !window.confirm("Delete this followup?")) return;
+    if (
+      action === "delete" &&
+      !(await confirm({
+        title: "Delete followup",
+        message: "Delete this followup?",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
+    )
+      return;
     setPending(true);
     setError("");
     reconcile.begin();

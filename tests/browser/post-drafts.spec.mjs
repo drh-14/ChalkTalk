@@ -42,6 +42,11 @@ const shot = async (page, name) => {
     fullPage: true,
   });
 };
+const acceptConfirmation = async (page, label = "Confirm") => {
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: label }).click();
+};
 async function mockApi(
   page,
   {
@@ -277,8 +282,8 @@ test("conflict preserves local text and offers confirmed overwrite", async ({
   await page.getByRole("textbox", { name: "Post title" }).fill("Local change");
   await expect(page.getByText(/changed elsewhere/i)).toBeVisible();
   await shot(page, "04-conflict-local-retained");
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Overwrite saved draft" }).click();
+  await acceptConfirmation(page);
   await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
   expect(state.content.title).toBe("Local change");
   await shot(page, "05-confirmed-overwrite");
@@ -299,8 +304,8 @@ test("can reload remote after conflict", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Reload saved draft" }),
   ).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Reload saved draft" }).click();
+  await acceptConfirmation(page);
   await expect(page.getByRole("textbox", { name: "Post title" })).toHaveValue(
     "Remote revision",
   );
@@ -317,8 +322,8 @@ test("confirmed discard clears the singleton draft", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "Post title" })).toHaveValue(
     "Discard me",
   );
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Discard draft" }).click();
+  await acceptConfirmation(page, "Discard");
   await expect(page.getByRole("textbox", { name: "Post title" })).toHaveValue(
     "",
   );
@@ -362,8 +367,8 @@ test("archived course restores draft read-only and allows confirmed discard", as
     page.getByRole("button", { name: "Publish post" }),
   ).toBeDisabled();
   await shot(page, "10-archived-restored");
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Discard draft" }).click();
+  await acceptConfirmation(page, "Discard");
   expect(state.content).toBeNull();
   await shot(page, "11-archived-discarded");
 });
@@ -409,8 +414,8 @@ test("transient overwrite error retains local text and both recovery actions", a
   await expect(
     page.getByRole("button", { name: "Overwrite saved draft" }),
   ).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Overwrite saved draft" }).click();
+  await acceptConfirmation(page);
   await expect(page.getByText(/Draft not saved: Try again/)).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Post title" })).toHaveValue(
     "Local change",
@@ -422,8 +427,8 @@ test("transient overwrite error retains local text and both recovery actions", a
     page.getByRole("button", { name: "Reload saved draft" }),
   ).toBeVisible();
   await shot(page, "14-overwrite-error-recovery");
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Overwrite saved draft" }).click();
+  await acceptConfirmation(page);
   await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
   expect(state.content.title).toBe("Local change");
 });
@@ -468,8 +473,8 @@ test("stale discard keeps text and exposes conflict recovery", async ({
   });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
   await page.getByRole("button", { name: "Create post" }).click();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Discard draft" }).click();
+  await acceptConfirmation(page, "Discard");
   await expect(
     page.getByRole("button", { name: "Reload saved draft" }),
   ).toBeVisible();

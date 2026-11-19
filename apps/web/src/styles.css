@@ -2619,6 +2619,9 @@ a:focus-visible {
   font-family: var(--font-serif);
   margin: 0;
 }
+.confirm-dialog h2 {
+  color: var(--ink);
+}
 .account-dialog p,
 .course-confirmation-dialog p {
   line-height: 1.5;

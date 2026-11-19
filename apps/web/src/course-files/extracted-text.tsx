@@ -186,6 +186,8 @@ export function ResourceExtractedText({
                   className="button secondary resource-action"
                   href={downloadUrl}
                   download={extractedTextFilename(name)}
+                  target="_blank"
+                  rel="noopener noreferrer"
                 >
                   Download .txt
                 </a>

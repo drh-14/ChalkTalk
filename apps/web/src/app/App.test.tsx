@@ -1649,6 +1649,7 @@ describe("ChalkTalk auth entry", () => {
       name: "Create your ChalkTalk account",
     });
     expect(window.location.search).toBe("");
+    expect(window.history.state?.chalktalkIndex).toBe(0);
     await user.type(screen.getByLabelText("Display name"), "Ada");
     await user.type(
       screen.getByLabelText("New password"),

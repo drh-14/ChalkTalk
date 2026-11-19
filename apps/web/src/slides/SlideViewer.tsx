@@ -833,6 +833,8 @@ function Viewer({
           <a
             className="text-button slide-download"
             href={downloadPath(courseId, fileId)}
+            target="_blank"
+            rel="noopener noreferrer"
           >
             Download original
           </a>
@@ -848,7 +850,12 @@ function Viewer({
           </a>
         )}
         {copy.data?.status === "ready" && copy.data.downloadUrl && (
-          <a className="text-button" href={copy.data.downloadUrl}>
+          <a
+            className="text-button"
+            href={copy.data.downloadUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Download searchable PDF
           </a>
         )}

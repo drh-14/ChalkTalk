@@ -3,12 +3,17 @@ import {
   waitFor,
   cleanup,
   fireEvent,
-  render,
+  render as testingRender,
   screen,
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { ReactElement } from "react";
+import { ConfirmProvider } from "../app/ConfirmDialog.js";
+
+const render = (ui: ReactElement) =>
+  testingRender(ui, { wrapper: ConfirmProvider });
 
 // pdf.js needs a real canvas; the viewer is tested against a three-page fake.
 const loadPdf = vi.fn();

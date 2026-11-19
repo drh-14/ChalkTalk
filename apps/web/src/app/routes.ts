@@ -212,12 +212,15 @@ export function routeFromLocation(location: URL): Route {
 export function initializeRoute(location: URL, history: History): Route {
   const route = routeFromLocation(location);
   const { token } = route;
-  if (token) history.replaceState(null, "", location.pathname);
+  if (token) history.replaceState(history.state ?? null, "", location.pathname);
   return route;
 }
 
 export function navigate(pathname: string): void {
-  window.history.pushState(null, "", pathname);
+  const state = window.history.state;
+  const previousIndex =
+    typeof state?.chalktalkIndex === "number" ? state.chalktalkIndex : 0;
+  window.history.pushState({ chalktalkIndex: previousIndex + 1 }, "", pathname);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -229,7 +232,7 @@ export function replaceCurrentQuery(query: string): void {
   if (query) url.searchParams.set("q", query);
   else url.searchParams.delete("q");
   window.history.replaceState(
-    null,
+    window.history.state,
     "",
     `${url.pathname}${url.search}${url.hash}`,
   );
@@ -245,7 +248,7 @@ export function replaceCurrentFilters(filters: FeedFilters): void {
   ))
     url.searchParams.append(key, value);
   window.history.replaceState(
-    null,
+    window.history.state,
     "",
     `${url.pathname}${url.search}${url.hash}`,
   );

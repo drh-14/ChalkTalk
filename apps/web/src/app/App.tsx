@@ -23,6 +23,8 @@ import {
   type User,
 } from "../auth/client.js";
 import { AccountPage } from "../account/AccountPage.js";
+import { ConfirmProvider } from "./ConfirmDialog.js";
+import { createPageEntrance } from "./pageEntrance.js";
 import { CourseDetail, CourseHome } from "../courses/views.js";
 import {
   getCourse,
@@ -726,13 +728,13 @@ function AccountControls({
   onSignOut,
   onAccountClick,
   onNavigate,
-  canLeave = () => true,
+  canLeave = async () => true,
 }: {
   session: Session;
   onSignOut: () => Promise<void>;
   onAccountClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   onNavigate: (path: string) => void;
-  canLeave?: () => boolean;
+  canLeave?: () => Promise<boolean>;
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -757,7 +759,7 @@ function AccountControls({
     };
   }, [menuOpen]);
   async function signOut() {
-    if (pending || !canLeave()) return;
+    if (pending || !(await canLeave())) return;
     setPending(true);
     setError(undefined);
     try {
@@ -771,8 +773,8 @@ function AccountControls({
     <div className="account-controls">
       <NotificationBell
         csrfToken={session.csrfToken}
-        onOpenPost={(courseId, postId, hash) => {
-          if (!canLeave()) return;
+        onOpenPost={async (courseId, postId, hash) => {
+          if (!(await canLeave())) return;
           onNavigate(
             postId
               ? `${postPath(courseId, postId)}${hash ?? ""}`
@@ -787,10 +789,12 @@ function AccountControls({
           messageId,
           notificationId,
         ) => {
-          if (canLeave())
-            onNavigate(
-              `/courses/${encodeURIComponent(courseId)}/threads/${encodeURIComponent(threadId)}/conversations/${encodeURIComponent(conversationId)}?notificationId=${encodeURIComponent(notificationId)}#thread-message-${encodeURIComponent(messageId)}`,
-            );
+          void canLeave().then((allowed) => {
+            if (allowed)
+              onNavigate(
+                `/courses/${encodeURIComponent(courseId)}/threads/${encodeURIComponent(threadId)}/conversations/${encodeURIComponent(conversationId)}?notificationId=${encodeURIComponent(notificationId)}#thread-message-${encodeURIComponent(messageId)}`,
+              );
+          });
         }}
       />
       <div className="account-menu" ref={menu}>
@@ -856,7 +860,7 @@ function AppBar({
   onSignOut: () => Promise<void>;
   onNavigate: (path: string) => void;
   onAccountClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
-  canLeave?: () => boolean;
+  canLeave?: () => Promise<boolean>;
   onHomeClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   tabs?: ReactNode;
   children?: ReactNode;
@@ -1152,7 +1156,7 @@ function CourseFrame({
   session: Session;
   onNavigate: (path: string) => void;
   onSignOut: () => Promise<void>;
-  onBeforeLeaveChange: (guard: () => boolean) => void;
+  onBeforeLeaveChange: (guard: () => Promise<boolean>) => void;
 }) {
   const courseId = route.courseId!;
   const [course, setCourse] = useState<Versioned<Course>>();
@@ -1216,7 +1220,7 @@ function CourseFrame({
     onThreadChange,
     setThreadTypingNames,
   );
-  const beforeLeave = useRef<() => boolean>(() => true);
+  const beforeLeave = useRef<() => Promise<boolean>>(async () => true);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const visibleCourse = course?.data.id === courseId ? course : undefined;
   useEffect(() => {
@@ -1315,7 +1319,7 @@ function CourseFrame({
       path: `${discussionPath}/statistics`,
     },
   ];
-  function follow(event: MouseEvent<HTMLAnchorElement>, path: string) {
+  async function follow(event: MouseEvent<HTMLAnchorElement>, path: string) {
     if (
       event.button !== 0 ||
       event.metaKey ||
@@ -1325,7 +1329,7 @@ function CourseFrame({
     )
       return;
     event.preventDefault();
-    if (beforeLeave.current()) onNavigate(path);
+    if (await beforeLeave.current()) onNavigate(path);
   }
   return (
     <div
@@ -1394,8 +1398,8 @@ function CourseFrame({
           </h1>
           <CourseSwitcher
             currentCourseId={courseId}
-            onChoose={(path) => {
-              if (beforeLeave.current()) onNavigate(path);
+            onChoose={async (path) => {
+              if (await beforeLeave.current()) onNavigate(path);
             }}
           />
           {visibleCourse && visibleCourse.data.status !== "active" && (
@@ -1462,8 +1466,9 @@ function CourseFrame({
               allowPrivatePosting={visibleCourse.data.allowPrivatePosting}
               onNavigate={onNavigate}
               onBeforeLeaveChange={(guard) => {
-                beforeLeave.current = guard;
-                onBeforeLeaveChange(guard);
+                const asyncGuard = async () => guard();
+                beforeLeave.current = asyncGuard;
+                onBeforeLeaveChange(asyncGuard);
               }}
             />
           </Suspense>
@@ -1533,24 +1538,39 @@ function CourseFrame({
   );
 }
 
-export function App() {
+function AppContent({ onEntrance }: { onEntrance: () => void }) {
   const [route, setRoute] = useState<Route>(() =>
     routeFromLocation(new URL(window.location.href)),
   );
   const [session, setSession] = useState<Session>();
   const [landingNotice, setLandingNotice] = useState<string>();
   const [ready, setReady] = useState(false);
+  const [entranceVersion, setEntranceVersion] = useState(0);
   const sessionRestoreStarted = useRef(false);
-  const beforeCourseLeave = useRef<() => boolean>(() => true);
+  const beforeCourseLeave = useRef<() => Promise<boolean>>(async () => true);
   const lastPath = useRef(
     `${window.location.pathname}${window.location.search}`,
   );
+  const lastIndex = useRef(
+    typeof window.history.state?.chalktalkIndex === "number"
+      ? (window.history.state.chalktalkIndex as number)
+      : 0,
+  );
   const internalNavigation = useRef(false);
+  const navigationPending = useRef(false);
+  const reverting = useRef<{ index: number; resolve: () => void } | null>(null);
+  const approvedIndex = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (ready) onEntrance();
+  }, [ready, entranceVersion, onEntrance]);
   function move(path: string) {
+    const changed = path !== lastPath.current;
     internalNavigation.current = true;
     navigate(path);
     lastPath.current = path;
+    lastIndex.current = window.history.state.chalktalkIndex;
     setRoute(initializeRoute(new URL(window.location.href), window.history));
+    if (changed) setEntranceVersion((version) => version + 1);
   }
   function startSession(nextSession: Session) {
     setSession(nextSession);
@@ -1560,19 +1580,93 @@ export function App() {
     setSession((current) => (current ? { ...current, user } : current));
   }, []);
   useEffect(() => {
-    const updateRoute = () => {
+    if (typeof window.history.state?.chalktalkIndex !== "number")
+      window.history.replaceState(
+        { chalktalkIndex: lastIndex.current },
+        "",
+        window.location.href,
+      );
+    const updateRoute = async () => {
       const nextPath = `${window.location.pathname}${window.location.search}`;
-      if (
-        !internalNavigation.current &&
-        window.location.pathname !==
-          new URL(lastPath.current, window.location.origin).pathname &&
-        !beforeCourseLeave.current()
-      ) {
-        window.history.pushState(null, "", lastPath.current);
+      const nextIndex =
+        typeof window.history.state?.chalktalkIndex === "number"
+          ? (window.history.state.chalktalkIndex as number)
+          : lastIndex.current;
+      if (internalNavigation.current) {
+        internalNavigation.current = false;
         return;
       }
-      internalNavigation.current = false;
+      if (reverting.current) {
+        if (nextIndex !== reverting.current.index) {
+          window.history.go(reverting.current.index - nextIndex);
+          return;
+        }
+        const { resolve } = reverting.current;
+        reverting.current = null;
+        resolve();
+        return;
+      }
+      if (navigationPending.current) {
+        if (nextIndex !== lastIndex.current) {
+          reverting.current = { index: lastIndex.current, resolve: () => {} };
+          window.history.go(lastIndex.current - nextIndex);
+        }
+        return;
+      }
+      const changedPage =
+        window.location.pathname !==
+        new URL(lastPath.current, window.location.origin).pathname;
+      if (changedPage) {
+        if (approvedIndex.current === nextIndex) {
+          approvedIndex.current = null;
+          lastPath.current = nextPath;
+          lastIndex.current = nextIndex;
+          setRoute(
+            initializeRoute(new URL(window.location.href), window.history),
+          );
+          setEntranceVersion((version) => version + 1);
+          return;
+        }
+        const previousIndex = lastIndex.current;
+        navigationPending.current = true;
+        let resolvedImmediately = false;
+        const decision = beforeCourseLeave.current().then((allowed) => {
+          resolvedImmediately = true;
+          return allowed;
+        });
+        await Promise.resolve();
+        const restored = !resolvedImmediately && nextIndex !== previousIndex;
+        if (restored) {
+          const reversed = new Promise<void>((resolve) => {
+            reverting.current = { index: previousIndex, resolve };
+          });
+          window.history.go(previousIndex - nextIndex);
+          await reversed;
+        }
+        const allowed = await decision;
+        navigationPending.current = false;
+        if (!allowed) {
+          if (!restored && nextIndex !== previousIndex) {
+            reverting.current = { index: previousIndex, resolve: () => {} };
+            window.history.go(previousIndex - nextIndex);
+          }
+          return;
+        }
+        if (restored) {
+          approvedIndex.current = nextIndex;
+          window.history.go(nextIndex - previousIndex);
+        } else {
+          lastPath.current = nextPath;
+          lastIndex.current = nextIndex;
+          setRoute(
+            initializeRoute(new URL(window.location.href), window.history),
+          );
+          setEntranceVersion((version) => version + 1);
+        }
+        return;
+      }
       lastPath.current = nextPath;
+      lastIndex.current = nextIndex;
       setRoute(initializeRoute(new URL(window.location.href), window.history));
     };
     window.addEventListener("popstate", updateRoute);
@@ -1581,7 +1675,11 @@ export function App() {
 
   useEffect(() => {
     if (route.token)
-      window.history.replaceState(null, "", window.location.pathname);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        window.location.pathname,
+      );
     // The emailed token remains in React state but never in the visible URL.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1700,5 +1798,33 @@ export function App() {
       notice={landingNotice}
       onDismissNotice={() => setLandingNotice(undefined)}
     />
+  );
+}
+
+export function App() {
+  const entrance = useRef<ReturnType<typeof createPageEntrance> | null>(null);
+  if (!entrance.current)
+    entrance.current = createPageEntrance(
+      () => document.getElementById("root"),
+      () =>
+        window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ??
+        false,
+    );
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const onChange = () => {
+      if (media?.matches) entrance.current?.cancel();
+    };
+    media?.addEventListener("change", onChange);
+    return () => {
+      media?.removeEventListener("change", onChange);
+      entrance.current?.cancel();
+    };
+  }, []);
+  const onEntrance = useCallback(() => entrance.current?.play(), []);
+  return (
+    <ConfirmProvider>
+      <AppContent onEntrance={onEntrance} />
+    </ConfirmProvider>
   );
 }
