@@ -191,7 +191,7 @@ h2[tabindex="-1"]:focus {
 }
 .app-bar-course h1 {
   color: #fffdf7;
-  max-width: 16rem;
+  max-width: min(32rem, 38vw);
   font-family: Fraunces, Georgia, serif;
   font-size: 1.05rem;
   letter-spacing: -0.03em;
@@ -224,6 +224,25 @@ h2[tabindex="-1"]:focus {
 .switcher-button:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
+}
+.course-title-tooltip {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(29, 43, 38, 0.18);
+  color: var(--ink);
+  display: none;
+  left: 0;
+  max-width: min(32rem, calc(100vw - 2rem));
+  padding: 0.4rem 0.6rem;
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  white-space: normal;
+  z-index: 11;
+}
+.app-bar-course:has(.switcher-button:focus-visible:not([aria-expanded="true"]))
+  .course-title-tooltip {
+  display: block;
 }
 .switcher-panel {
   background: var(--surface-raised);
@@ -512,19 +531,22 @@ h2[tabindex="-1"]:focus {
 @media (max-width: 700px) {
   .app-bar.course .app-bar-inner {
     grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 0.5rem;
+    row-gap: 0.25rem;
+    width: 100%;
   }
   .app-bar.course .app-bar-start {
     display: contents;
   }
   .app-bar.course .wordmark {
-    grid-column: 1 / -1;
+    grid-column: 1;
     grid-row: 1;
   }
   .app-bar.course .account-controls {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    grid-column: 2 / -1;
+    grid-row: 1;
     min-width: 0;
-    width: 100%;
+    width: auto;
   }
   .app-bar.course .account-name {
     min-width: 0;
@@ -542,7 +564,7 @@ h2[tabindex="-1"]:focus {
   }
   .app-bar-back {
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 2;
   }
   .app-bar-start .app-bar-back {
     border-left: 0;
@@ -550,18 +572,37 @@ h2[tabindex="-1"]:focus {
   }
   .app-bar-course {
     grid-column: 2 / -1;
-    grid-row: 3;
+    grid-row: 2;
+  }
+  .app-bar-course h1 {
+    max-width: none;
   }
   .course-tabs {
     grid-column: 1 / -1;
-    grid-row: 4;
+    grid-row: 3;
     flex-wrap: wrap;
     justify-content: center;
     justify-self: stretch;
+    min-width: 0;
   }
   .course-tabs a {
     font-size: 0.85rem;
-    padding: 0.4rem 0.5rem;
+    min-height: 44px;
+    padding: 0.7rem 0.5rem;
+  }
+  .pulse-meta .text-button {
+    min-height: 44px;
+  }
+}
+@media (max-width: 360px) {
+  .course-tabs {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .course-tabs a {
+    flex: none;
   }
 }
 .discussion-header h1 {
@@ -1595,6 +1636,7 @@ h2[tabindex="-1"]:focus {
 }
 .post-markdown {
   line-height: 1.65;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 .post-markdown a {
@@ -1823,13 +1865,36 @@ h2[tabindex="-1"]:focus {
   padding: 0.7rem 0.8rem;
 }
 .post-markdown .katex-display {
+  max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
 }
-.post-markdown .table-scroll {
-  margin: 1rem 0;
+.post-markdown :not(.katex-display) > .katex {
+  display: inline-block;
   max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+}
+.table-wrap {
+  max-width: 100%;
+  min-width: 0;
+}
+.table-scroll-hint {
+  color: var(--ink-muted);
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: right;
+}
+.post-markdown .table-scroll {
+  margin: 0.25rem 0 1rem;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.post-markdown .table-scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 .post-markdown table {
   border-collapse: collapse;
@@ -1852,13 +1917,17 @@ h2[tabindex="-1"]:focus {
   text-align: right;
 }
 /* One-line card previews read a table's cells as running text. */
-.post-card-preview :is(.table-scroll, table, thead, tbody, tr, th, td) {
+.post-card-preview
+  :is(.table-wrap, .table-scroll, table, thead, tbody, tr, th, td) {
   background: none;
   border: 0;
   font-weight: inherit;
   display: inline;
   margin: 0;
   padding: 0 0.35em 0 0;
+}
+.post-card-preview .table-scroll-hint {
+  display: none;
 }
 .post-card-preview :is(th, td):empty {
   display: none;
@@ -4726,6 +4795,11 @@ main :is(.course-files, .course-information, .statistics-page) h3 {
   gap: var(--space-4);
   grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
 }
+@media (max-width: 700px) {
+  .pulse-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .pulse-columns .statistics-card {
   margin: 0;
 }
@@ -5276,7 +5350,7 @@ main input[type="file"]:hover::file-selector-button {
    wrap, so the placeholder reserves the same room. */
 @media (max-width: 700px) {
   .pulse-skeleton .pulse-meta {
-    min-height: 4.75rem;
+    min-height: 5.5rem;
   }
   .pulse-skeleton .pulse-tile {
     min-height: 8.3rem;
