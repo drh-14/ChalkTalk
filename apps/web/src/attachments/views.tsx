@@ -179,7 +179,14 @@ export function AttachmentManager({
         <ul className="attachment-documents">
           {documents.map((item) => (
             <li key={item.id}>
-              <a href={item.downloadUrl}>{item.fileName}</a> {remove(item)}
+              <a
+                href={item.downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {item.fileName}
+              </a>{" "}
+              {remove(item)}
             </li>
           ))}
         </ul>

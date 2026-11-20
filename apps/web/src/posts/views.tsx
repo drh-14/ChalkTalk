@@ -1,3 +1,4 @@
+import { useConfirm } from "../app/useConfirm.js";
 import {
   useCallback,
   useEffect,
@@ -170,6 +171,7 @@ function ScheduledNotice({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const confirm = useConfirm();
   const [rescheduling, setRescheduling] = useState(false);
   const [when, setWhen] = useState(() =>
     localInputValue(new Date(post.scheduledFor!)),
@@ -182,7 +184,7 @@ function ScheduledNotice({
     if (pending) return;
     if (
       scheduledFor === null &&
-      !window.confirm("Publish this announcement now and email the class?")
+      !(await confirm("Publish this announcement now and email the class?"))
     )
       return;
     setPending(true);
@@ -278,14 +280,15 @@ function PrivateNotice({
   csrfToken: string;
   onPublished: (post: Post) => void;
 }) {
+  const confirm = useConfirm();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   async function publish() {
     if (
       pending ||
-      !window.confirm(
+      !(await confirm(
         "Everyone in the course will be able to see this post. This cannot be undone.",
-      )
+      ))
     )
       return;
     setPending(true);
@@ -834,6 +837,7 @@ export function Composer({
   // Read by the stable draft-restore callback below.
   const anchored = useRef(false);
   anchored.current = Boolean(anchor);
+  const confirm = useConfirm();
   const [type, setType] = useState<"question" | "note" | "poll">("question");
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [selectionMode, setSelectionMode] = useState<"single" | "multiple">(
@@ -1115,7 +1119,7 @@ export function Composer({
 
   async function reloadDraft() {
     if (switchingDraft || savePromise.current) return;
-    if (!window.confirm("Replace local changes with the saved draft?")) return;
+    if (!(await confirm("Replace local changes with the saved draft?"))) return;
     setSwitchingDraft(true);
     window.clearTimeout(saveTimer.current);
     try {
@@ -1144,7 +1148,7 @@ export function Composer({
 
   async function overwriteDraft() {
     if (switchingDraft || savePromise.current) return;
-    if (!window.confirm("Overwrite the saved draft with your local changes?"))
+    if (!(await confirm("Overwrite the saved draft with your local changes?")))
       return;
     setSwitchingDraft(true);
     const local = contentRef.current;
@@ -1175,10 +1179,18 @@ export function Composer({
 
   async function discardDraft() {
     if (!revisionRef.current || switchingDraft || savePromise.current) return;
-    if (!window.confirm("Discard this saved draft?")) return;
+    if (
+      !(await confirm({
+        title: "Discard draft",
+        message: "Discard this saved draft?",
+        confirmLabel: "Discard",
+        destructive: true,
+      }))
+    )
+      return;
     if (
       attachmentQueue.files.length > 0 &&
-      !window.confirm("Queued attachments are not saved. Discard them too?")
+      !(await confirm("Queued attachments are not saved. Discard them too?"))
     )
       return;
     setSwitchingDraft(true);
@@ -1926,7 +1938,7 @@ function MergeControl({
   source: Post;
   courseId: string;
   csrfToken: string;
-  onBeforeMerge: () => boolean;
+  onBeforeMerge: () => Promise<boolean>;
   onPendingChange: (pending: boolean) => void;
   onMerged: (targetId: string) => void;
 }) {
@@ -1963,7 +1975,7 @@ function MergeControl({
     };
   }, [courseId, open, query, source.id]);
   async function confirm() {
-    if (!target || pending || !onBeforeMerge()) return;
+    if (!target || pending || !(await onBeforeMerge())) return;
     setPending(true);
     onPendingChange(true);
     setError("");
@@ -2047,7 +2059,7 @@ type DiscussionProps = {
   /** Feed filters from the URL; without onFiltersChange the feed keeps its own. */
   filters?: FeedFilters;
   onFiltersChange?: (filters: FeedFilters) => void;
-  onBeforeLeaveChange?: (guard: () => boolean) => void;
+  onBeforeLeaveChange?: (guard: () => Promise<boolean>) => void;
   /** Whether the viewer is course staff, when the caller already knows. */
   staff?: boolean;
 };
@@ -2356,6 +2368,7 @@ function FolderManager({
   folders: PostFolder[];
   onChanged: (deletedFolderId?: string) => void;
 }) {
+  const confirm = useConfirm();
   const [name, setName] = useState("");
   const [editing, setEditing] = useState<string>();
   const [editName, setEditName] = useState("");
@@ -2467,11 +2480,14 @@ function FolderManager({
                   type="button"
                   className="text-button danger"
                   disabled={pending}
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      window.confirm(
-                        `Delete ${folder.name}? Its posts will have no folder.`,
-                      )
+                      await confirm({
+                        title: "Delete folder",
+                        message: `Delete ${folder.name}? Its posts will have no folder.`,
+                        confirmLabel: "Delete",
+                        destructive: true,
+                      })
                     )
                       void run(
                         () => deletePostFolder(courseId, folder.id, csrfToken),
@@ -2505,6 +2521,7 @@ function DiscussionContent({
   onBeforeLeaveChange,
   staff: knownStaff,
 }: DiscussionProps) {
+  const confirm = useConfirm();
   const [localCourse, setCourse] = useState<Course>();
   const course = sharedCourse ?? localCourse;
   const [courseError, setCourseError] = useState("");
@@ -2986,9 +3003,9 @@ function DiscussionContent({
   }, [cursor, pageError, pagePending, loading]);
   loadMoreRef.current = loadMore;
   /** Switches between the feed and staff duplicate review, guarding drafts. */
-  function switchPostView(view: "posts" | "duplicates") {
+  async function switchPostView(view: "posts" | "duplicates") {
     if (view === postView) return true;
-    if (!leaveComposer()) return false;
+    if (!(await leaveComposer())) return false;
     setSelectedReviewId(undefined);
     setReviewDetail(undefined);
     setReviewDetailError("");
@@ -3063,13 +3080,13 @@ function DiscussionContent({
         }
       });
   }
-  function leaveComposer() {
+  async function leaveComposer() {
     if (mergePending || deletePending) return false;
     if (editingPostId) {
       if (editorState.current.pending) return false;
       if (
         editorState.current.dirty &&
-        !window.confirm("Discard your unsaved post edits?")
+        !(await confirm("Discard your unsaved post edits?"))
       )
         return false;
       editorState.current = { dirty: false, pending: false };
@@ -3080,14 +3097,14 @@ function DiscussionContent({
     if (!composerLeaveRequest.current()) return false;
     if (
       composerState.current.dirty &&
-      !window.confirm("Discard queued attachments before leaving?")
+      !(await confirm("Discard queued attachments before leaving?"))
     )
       return false;
     composerState.current = { dirty: false, pending: false };
     setComposerOpen(false);
     return true;
   }
-  function beforeMerge() {
+  async function beforeMerge() {
     if (
       deletePending ||
       editorState.current.pending ||
@@ -3095,7 +3112,7 @@ function DiscussionContent({
     )
       return false;
     if (editingPostId && editorState.current.dirty)
-      return window.confirm("Discard your unsaved post edits?");
+      return await confirm("Discard your unsaved post edits?");
     return true;
   }
   // The route shell consults the same guard used by post navigation.
@@ -3103,18 +3120,23 @@ function DiscussionContent({
     onBeforeLeaveChange?.(leaveComposer);
   });
   useEffect(
-    () => () => onBeforeLeaveChange?.(() => true),
+    () => () => onBeforeLeaveChange?.(async () => true),
     [onBeforeLeaveChange],
   );
-  function navigate(path: string) {
-    if (leaveComposer()) onNavigate(path);
+  async function navigate(path: string) {
+    if (await leaveComposer()) onNavigate(path);
   }
   async function deleteCurrentPost(post: Post) {
     if (
       deletePending ||
       mergePending ||
       editorState.current.pending ||
-      !window.confirm(`Delete “${post.title}”? This cannot be undone.`)
+      !(await confirm({
+        title: "Delete post",
+        message: `Delete “${post.title}”? This cannot be undone.`,
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
     )
       return;
     setDeletePending(true);
@@ -3174,9 +3196,9 @@ function DiscussionContent({
     clearQuery();
     changeFilters({});
   }
-  function openComposer(title?: string) {
+  async function openComposer(title?: string) {
     if (composerOpen && !title) return;
-    if ((composerOpen || editingPostId) && !leaveComposer()) return;
+    if ((composerOpen || editingPostId) && !(await leaveComposer())) return;
     if (!postId && !composerOpen) listScroll.current = window.scrollY;
     setComposerSeed(title ? { title, id: Date.now() } : undefined);
     setComposerOpen(true);
@@ -3452,7 +3474,8 @@ function DiscussionContent({
                 href={discussionPath(courseId)}
                 aria-current="page"
                 onClick={(event) => {
-                  if (!leaveComposer()) event.preventDefault();
+                  event.preventDefault();
+                  void navigate(discussionPath(courseId));
                 }}
               >
                 Discussion
@@ -3460,7 +3483,10 @@ function DiscussionContent({
               <a
                 href={`/courses/${encodeURIComponent(courseId)}/settings`}
                 onClick={(event) => {
-                  if (!leaveComposer()) event.preventDefault();
+                  event.preventDefault();
+                  void navigate(
+                    `/courses/${encodeURIComponent(courseId)}/settings`,
+                  );
                 }}
               >
                 Course settings
@@ -3495,8 +3521,8 @@ function DiscussionContent({
                   label: item.ariaLabel ?? item.label,
                   nested: item.nested,
                 }))}
-                onChange={(key) => {
-                  if (!switchPostView("posts")) return;
+                onChange={async (key) => {
+                  if (!(await switchPostView("posts"))) return;
                   const next = { ...activeFilters };
                   if (key === "all") delete next.filter;
                   else next.filter = key;
@@ -4103,8 +4129,8 @@ function DiscussionContent({
                   <button
                     type="button"
                     className="text-button narrow-back"
-                    onClick={() => {
-                      if (leaveComposer() && postId)
+                    onClick={async () => {
+                      if ((await leaveComposer()) && postId)
                         onNavigate(discussionPath(courseId, search));
                     }}
                   >
@@ -4122,12 +4148,12 @@ function DiscussionContent({
                       allowAnonymousPosting={course?.allowAnonymousPosting}
                       allowPrivatePosting={course?.allowPrivatePosting}
                       onClose={leaveComposer}
-                      onDiscardLocalChanges={() => {
+                      onDiscardLocalChanges={async () => {
                         if (
                           composerState.current.dirty &&
-                          !window.confirm(
+                          !(await confirm(
                             "Discard queued attachments before leaving?",
-                          )
+                          ))
                         )
                           return;
                         composerState.current = {
@@ -4335,8 +4361,8 @@ function DiscussionContent({
                               courseId={courseId}
                               postId={detail.id}
                               anchor={detail.anchor}
-                              onNavigate={(path) => {
-                                if (leaveComposer()) onNavigate(path);
+                              onNavigate={async (path) => {
+                                if (await leaveComposer()) onNavigate(path);
                               }}
                             />
                           )}

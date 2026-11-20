@@ -4,8 +4,6 @@ import { URL } from "node:url";
 import { createServer } from "vite";
 import { expect, test } from "@playwright/test";
 
-/* global window, PopStateEvent -- page.evaluate callbacks run in the browser. */
-
 const root = resolve(import.meta.dirname, "../..");
 const screenshots = resolve(
   root,

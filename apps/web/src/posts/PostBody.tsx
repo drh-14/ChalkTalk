@@ -19,6 +19,20 @@ const sanitizeSchema = {
 };
 const urlTransform = (url: string) =>
   MENTION.test(url) ? url : defaultUrlTransform(url);
+const opensSeparateTab = (href?: string) => {
+  if (!href) return false;
+  try {
+    const url = new URL(href, window.location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    return (
+      url.origin !== window.location.origin ||
+      /\/download\/?$/i.test(url.pathname) ||
+      /\.[a-z0-9]{1,10}$/i.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+};
 
 export function PostBody({
   bodyMarkdown,
@@ -50,7 +64,13 @@ export function PostBody({
           ) : inertLinks ? (
             <span>{children}</span>
           ) : (
-            <a href={href} title={title}>
+            <a
+              href={href}
+              title={title}
+              {...(opensSeparateTab(href)
+                ? { target: "_blank", rel: "noopener noreferrer" }
+                : {})}
+            >
               {children}
             </a>
           ),

@@ -116,6 +116,8 @@ export function SearchablePdfView({
             <a
               className="button secondary resource-action"
               href={data.downloadUrl}
+              target="_blank"
+              rel="noopener noreferrer"
             >
               Download searchable PDF
             </a>

@@ -97,8 +97,10 @@ test("a student and a TA edit, see each other, and end a live session", async ({
   ]);
 
   // The TA ends the session; both editors become read-only with the final text.
-  ta.page.once("dialog", (dialog) => void dialog.accept());
   await ta.page.getByRole("button", { name: "End session" }).click();
+  const confirmation = ta.page.getByRole("dialog", { name: "Confirm action" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "Confirm" }).click();
   for (const { page } of [ta, student]) {
     await expect(page.locator(".session-state")).toHaveText(
       "Session ended (read-only)",

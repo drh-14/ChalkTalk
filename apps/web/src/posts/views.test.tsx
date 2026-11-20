@@ -13,6 +13,13 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { getMathAnalysis } from "./mathDiagnostics.js";
 import { Discussion } from "./views.js";
 
+vi.mock("../app/useConfirm.js", () => ({
+  useConfirm: () => (request: string | { message: string }) =>
+    Promise.resolve(
+      window.confirm(typeof request === "string" ? request : request.message),
+    ),
+}));
+
 // Staff open merged duplicates from the Duplicates entry in the sidebar's
 // Show section; pressing it again returns to the posts feed.
 const DUPLICATES = { name: /^Duplicates/ };
@@ -987,7 +994,7 @@ it("keeps the controls above a focusable scroll region for posts and duplicates"
     screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
   ).toBe("true");
   expect(
-    within(listings).getByRole("button", { name: "Old question" }),
+    await within(listings).findByRole("button", { name: "Old question" }),
   ).toBeTruthy();
   screen.getByRole("button", DUPLICATES).focus();
   await user.keyboard("{Enter}");

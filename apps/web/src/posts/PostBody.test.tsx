@@ -16,9 +16,52 @@ it("renders Markdown and inline and display math from stored source", () => {
   expect(screen.getByRole("link", { name: "notes" }).getAttribute("href")).toBe(
     "https://example.edu",
   );
+  expect(screen.getByRole("link", { name: "notes" })).toHaveProperty(
+    "target",
+    "_blank",
+  );
+  expect(screen.getByRole("link", { name: "notes" }).getAttribute("rel")).toBe(
+    "noopener noreferrer",
+  );
   expect(container.querySelector(".katex:not(.katex-display)"))?.toBeTruthy();
   expect(container.querySelector(".katex-display"))?.toBeTruthy();
   expect(container.textContent).toContain("frac");
+});
+
+it("keeps in-app Markdown links in the current tab", () => {
+  render(
+    <PostBody
+      bodyMarkdown={`[course](/courses/course-1) and [absolute course](${window.location.origin}/courses/course-1)`}
+    />,
+  );
+  expect(
+    screen.getByRole("link", { name: "course" }).getAttribute("target"),
+  ).toBeNull();
+  expect(
+    screen
+      .getByRole("link", { name: "absolute course" })
+      .getAttribute("target"),
+  ).toBeNull();
+});
+
+it("opens relative and same-origin file links separately", () => {
+  render(
+    <PostBody
+      bodyMarkdown={`[notes](/documents/notes.pdf?download=1) and [slides](${window.location.origin}/files/slides.pptx) and [attachment](/api/v1/attachments/a1/download)`}
+    />,
+  );
+  for (const name of ["notes", "slides", "attachment"]) {
+    const link = screen.getByRole("link", { name });
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+  }
+});
+
+it("does not treat email links as website or file navigation", () => {
+  render(<PostBody bodyMarkdown="[email](mailto:teacher@example.edu)" />);
+  expect(
+    screen.getByRole("link", { name: "email" }).getAttribute("target"),
+  ).toBeNull();
 });
 
 it("keeps invalid math readable and hostile author content inert", () => {

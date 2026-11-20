@@ -29,6 +29,10 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    files: ["tests/browser/**/*.mjs"],
+    languageOptions: { globals: globals.browser },
+  },
+  {
     files: [
       "deployment/local/tests/**/*.test.mjs",
       "deployment/production/tests/**/*.test.mjs",

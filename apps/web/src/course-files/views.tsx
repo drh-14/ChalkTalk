@@ -1226,10 +1226,6 @@ function ResourceRow({
   );
 }
 
-/**
- * A resource title: PDFs open in the in-app viewer with a separate Download
- * link, other uploads download, and links open in a new tab.
- */
 function ResourceTitle({
   courseId,
   item,
@@ -1263,6 +1259,8 @@ function ResourceTitle({
         <a
           className="resource-download"
           href={filePath(courseId, item)}
+          target="_blank"
+          rel="noopener noreferrer"
           aria-label={`Download ${name}`}
         >
           Download
@@ -1273,9 +1271,8 @@ function ResourceTitle({
   return (
     <a
       href={item.kind === "upload" ? filePath(courseId, item) : item.url}
-      {...(item.kind === "link"
-        ? { target: "_blank", rel: "noopener noreferrer" }
-        : {})}
+      target="_blank"
+      rel="noopener noreferrer"
     >
       {name}
     </a>

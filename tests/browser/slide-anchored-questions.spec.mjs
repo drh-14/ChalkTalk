@@ -491,6 +491,11 @@ test("unified PDF modes preserve page and zoom, retry generation and expose sele
   await expect(
     page.getByRole("link", { name: "Download searchable PDF" }),
   ).toBeVisible();
+  for (const name of ["Download original", "Download searchable PDF"]) {
+    const link = page.getByRole("link", { name });
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  }
   await expect(
     page.locator(".slide-selectable-text span").first(),
   ).toBeVisible();

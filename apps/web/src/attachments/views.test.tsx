@@ -44,6 +44,8 @@ it("renders course-authenticated images as centered blocks and documents as down
   );
   const link = within(list).getByRole("link", { name: "lecture.pptx" });
   expect(link.getAttribute("href")).toBe(document.downloadUrl);
+  expect(link.getAttribute("target")).toBe("_blank");
+  expect(link.getAttribute("rel")).toBe("noopener noreferrer");
   expect(
     within(list).queryByRole("button", { name: /remove|add files/i }),
   ).toBeNull();

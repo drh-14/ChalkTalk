@@ -163,8 +163,10 @@ test("a student and a TA draw on the session whiteboard at once, then it becomes
   );
 
   // The TA ends the session; the board stays visible but can't be edited.
-  ta.page.once("dialog", (dialog) => void dialog.accept());
   await ta.page.getByRole("button", { name: "End session" }).click();
+  const confirmation = ta.page.getByRole("dialog", { name: "Confirm action" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "Confirm" }).click();
   for (const { page } of [ta, student]) {
     await expect(state(page)).toHaveText("Session ended (read-only)");
     await expect(summary(page)).toHaveText(

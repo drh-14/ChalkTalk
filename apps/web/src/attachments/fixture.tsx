@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { filtersFromSearch, type FeedFilters } from "../app/routes.js";
+import { ConfirmProvider } from "../app/ConfirmDialog.js";
 import { Discussion } from "../posts/views.js";
 import "../styles.css";
 
@@ -68,4 +69,8 @@ export function Fixture() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<Fixture />);
+createRoot(document.getElementById("root")!).render(
+  <ConfirmProvider>
+    <Fixture />
+  </ConfirmProvider>,
+);

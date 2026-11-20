@@ -49,7 +49,7 @@ Upload entries returned by catalog listing, search, single-resource reads and mu
 
 Staff cards show phase feedback and an accessible OCR work-page progress bar. Authorized open pending text panels share lightweight metadata checks and automatically fetch finished text once; Download .txt follows the completed text and chosen layout. Checks preserve edits, selected files, loaded catalog/search pages and snippets. Identical current course/resource/file identities share a check, with at most four active requests; resource edits that keep the file, such as rename or reorder, do not interrupt checks, and a replaced file stops the old check with a reload notice. Checks run every two seconds for thirty seconds, then every ten seconds, pause while hidden, and offer Check again after sixteen minutes or bounded transient retries. Returning to a visible tab starts a fresh cycle. Students receive no background card notices or checks. No completion-time estimate or partial text is published. See [Search course resources](#searchCourseResources) for how extraction affects matching.
 
-File titles download original bytes; named links open a new tab with `noopener noreferrer`.
+For browser navigation of resource and file links, see the [external link navigation specification](../../openspec/specs/external-link-navigation/spec.md). PDF titles retain the in-app viewer behavior described in the [organized resources specification](../../openspec/specs/organized-course-resources/spec.md).
 
 <a id="createResource"></a>
 

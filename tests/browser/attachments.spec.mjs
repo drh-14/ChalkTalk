@@ -249,11 +249,13 @@ test.describe("rendered discussion attachments", () => {
     });
     const answerCard = page.getByRole("region", { name: "Answer by Ada" });
     await answerCard.scrollIntoViewIfNeeded();
-    const [download] = await Promise.all([
-      page.waitForEvent("download"),
-      answerCard.getByRole("link", { name: "lecture.pptx" }).click(),
-    ]);
-    expect(download.suggestedFilename()).toBe("lecture.pptx");
+    await expect(
+      answerCard.getByRole("link", { name: "lecture.pptx" }),
+    ).toHaveAttribute("target", "_blank");
+    await expect(
+      answerCard.getByRole("link", { name: "lecture.pptx" }),
+    ).toHaveAttribute("rel", "noopener noreferrer");
+    expect(page.url()).toContain("attachments-fixture.html");
     await answerCard.screenshot({
       path: resolve(screenshotDirectory, "answer-document.png"),
     });

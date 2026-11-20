@@ -345,6 +345,9 @@ test("readable paragraphs and UTF-8 text download preserve the original option",
   );
   await expect(text).toContainText("Year Value\n1994 12\n1995 15");
   const readable = await text.textContent();
+  const textDownload = panel(page).getByRole("link", { name: "Download .txt" });
+  await expect(textDownload).toHaveAttribute("target", "_blank");
+  await expect(textDownload).toHaveAttribute("rel", "noopener noreferrer");
   const [download] = await Promise.all([
     page.waitForEvent("download"),
     panel(page).getByRole("link", { name: "Download .txt" }).click(),

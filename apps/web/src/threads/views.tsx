@@ -1,3 +1,4 @@
+import { useConfirm } from "../app/useConfirm.js";
 import {
   useCallback,
   useEffect,
@@ -98,6 +99,7 @@ export function CourseThreads(props: Props) {
     live,
     typingNames,
   } = props;
+  const confirm = useConfirm();
   const [boards, setBoards] = useState<ThreadBoard[]>([]);
   const [board, setBoard] = useState<ThreadBoard>();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -424,9 +426,12 @@ export function CourseThreads(props: Props) {
   async function removeBoard() {
     if (!board || !staff || !active || pending) return;
     if (
-      !window.confirm(
-        `Delete “${board.title}” and all its conversations and files? This cannot be undone.`,
-      )
+      !(await confirm({
+        title: "Delete thread",
+        message: `Delete “${board.title}” and all its conversations and files? This cannot be undone.`,
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
     )
       return;
     setPending(true);
@@ -444,9 +449,13 @@ export function CourseThreads(props: Props) {
     if (!boardId || !selectedConversation?.canDelete || !active || pending)
       return;
     if (
-      !window.confirm(
-        "Delete this conversation, all replies, and all files? This cannot be undone.",
-      )
+      !(await confirm({
+        title: "Delete conversation",
+        message:
+          "Delete this conversation, all replies, and all files? This cannot be undone.",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
     )
       return;
     setPending(true);
@@ -557,9 +566,13 @@ export function CourseThreads(props: Props) {
   async function removeMessage(message: ThreadMessage) {
     if (!boardId || !conversationId || pending || !active) return;
     if (
-      !window.confirm(
-        "Delete this message and its attachments? This cannot be undone.",
-      )
+      !(await confirm({
+        title: "Delete message",
+        message:
+          "Delete this message and its attachments? This cannot be undone.",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
     )
       return;
     setPending(true);
@@ -983,7 +996,13 @@ export function CourseThreads(props: Props) {
                     <ul className="threads-files">
                       {(item.attachments ?? []).map((file) => (
                         <li key={file.id}>
-                          <a href={file.downloadUrl}>{file.fileName}</a>
+                          <a
+                            href={file.downloadUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {file.fileName}
+                          </a>
                         </li>
                       ))}
                     </ul>

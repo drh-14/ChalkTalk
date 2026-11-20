@@ -178,6 +178,10 @@ async function open(
       });
     if (url.pathname === "/api/v1/courses")
       return respond({ data: [], page: { hasMore: false, nextCursor: null } });
+    if (url.pathname === "/api/v1/courses/course-1/threads/unread-count")
+      return respond({ data: { count: 0 } });
+    if (url.pathname === "/api/v1/users/me/collaboration-sessions")
+      return respond({ data: [], page: { hasMore: false, nextCursor: null } });
     throw new Error(`Unexpected API ${req.method()} ${url.pathname}`);
   });
   await page.goto(`${origin}/courses/course-1/resources`);
@@ -202,17 +206,64 @@ test("members see actual files and download original bytes", async ({
     "href",
     "/api/v1/courses/course-1/files/file-1/download",
   );
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
   await expect(page.getByText("1 KB", { exact: true })).toBeVisible();
   await shot(page, "populated");
-  const downloadEvent = page.waitForEvent("download");
-  await link.click();
-  const download = await downloadEvent;
-  expect(download.suggestedFilename()).toBe("Lecture notes.txt");
-  const chunks = [];
-  for await (const chunk of await download.createReadStream())
-    chunks.push(chunk);
-  expect(Buffer.concat(chunks).toString()).toBe("original bytes");
+  const bytes = await link.evaluate(async (anchor) =>
+    (await globalThis.fetch(anchor.href)).text(),
+  );
+  expect(bytes).toBe("original bytes");
   await shot(page, "download");
+});
+
+test("internal navigation replays production page entrance and honors reduced motion", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    globalThis.__pageEntrances = [];
+    const original = globalThis.Element.prototype.animate;
+    globalThis.Element.prototype.animate = function (frames, options) {
+      if (this.id === "root")
+        globalThis.__pageEntrances.push({ frames, options });
+      return original.call(this, frames, options);
+    };
+  });
+  await open(page);
+  await expect
+    .poll(() => page.evaluate(() => globalThis.__pageEntrances.length))
+    .toBeGreaterThan(0);
+  const first = await page.evaluate(() => globalThis.__pageEntrances[0]);
+  expect(first).toEqual({
+    frames: [{ opacity: 0 }, { opacity: 1 }],
+    options: { duration: 160, easing: "ease", fill: "both" },
+  });
+  await shot(page, "entrance-resources");
+  const before = await page.evaluate(() => globalThis.__pageEntrances.length);
+  await page.getByRole("link", { name: "All courses" }).click();
+  await expect
+    .poll(() => page.evaluate(() => globalThis.__pageEntrances.length))
+    .toBeGreaterThan(before);
+  await shot(page, "entrance-home");
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "Course resources" }),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => globalThis.__pageEntrances.length))
+    .toBeGreaterThan(before + 1);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reducedBefore = await page.evaluate(
+    () => globalThis.__pageEntrances.length,
+  );
+  await page.getByRole("link", { name: "All courses" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your courses" }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => globalThis.__pageEntrances.length)).toBe(
+    reducedBefore,
+  );
+  await shot(page, "entrance-reduced-motion");
 });
 
 test("empty state and list error can be retried", async ({ page }) => {

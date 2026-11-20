@@ -13,6 +13,13 @@ import {
   QuestionResponses,
 } from "./views.js";
 
+vi.mock("../app/useConfirm.js", () => ({
+  useConfirm: () => (request: string | { message: string }) =>
+    Promise.resolve(
+      window.confirm(typeof request === "string" ? request : request.message),
+    ),
+}));
+
 Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
 Range.prototype.getBoundingClientRect = () => new DOMRect();
 const props = {

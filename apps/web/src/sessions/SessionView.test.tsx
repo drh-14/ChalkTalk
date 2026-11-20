@@ -12,6 +12,13 @@ import type * as Y from "yjs";
 import type { ConnectOptions } from "./connection.js";
 import { SessionView } from "./SessionView.js";
 
+vi.mock("../app/useConfirm.js", () => ({
+  useConfirm: () => (request: string | { message: string }) =>
+    Promise.resolve(
+      window.confirm(typeof request === "string" ? request : request.message),
+    ),
+}));
+
 const whiteboard = vi.hoisted(() => ({ loaded: 0, mounted: 0 }));
 vi.mock("./Whiteboard.js", async () => {
   whiteboard.loaded += 1;
