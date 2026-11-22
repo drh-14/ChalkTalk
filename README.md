@@ -57,8 +57,8 @@ To delete a post you can read, open its detail view and select **Delete post**. 
 - **Jackie Lee** — frontend, UI components, resources, notifications, responsive design
 - **Darren Hamilton** — project management, testing coordination, documentation, integration
 
-## Project map and documentation
+## Documentation
 
-The React/Vite client (`apps/web`) is served through Caddy, which proxies to the Express API (`apps/api`) and collaboration service. PostgreSQL stores application data and background jobs; a separate worker sends mail and processes queued work. The API handles Threads WebSockets; a collaboration server handles live-session WebSockets. Uploaded files use S3-compatible storage (SeaweedFS locally). See the [architecture diagram](diagrams/architecture/architecture.svg), [design](documentation/design.md), [database reference](documentation/database.md), and [API reference](documentation/openapi.yaml). The [`documentation/api/`](documentation/api/) directory explains individual API areas.
+See the [architecture diagram](diagrams/architecture/architecture.svg), [design](documentation/design.md), [database reference](documentation/database.md), and [API reference](documentation/openapi.yaml). The [`documentation/api/`](documentation/api/) directory explains individual API areas.
 
-For configuration, startup, troubleshooting, and Piazza import, see the [local development guide](deployment/local/README.md). The [production deployment guide](deployment/production/README.md) covers the single-VM stack with Supabase PostgreSQL and Storage, Resend HTTPS, and private Grafana, Prometheus, Loki, and Alloy observability.
+For configuration, startup, troubleshooting, and Piazza import, see the [local development guide](deployment/local/README.md). The [production deployment guide](deployment/production/README.md) covers how to deploy ChalkTalk on a virtual machine.
