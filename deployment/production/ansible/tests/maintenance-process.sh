@@ -34,6 +34,7 @@ FROM ubuntu:$release
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update --error-on=any && apt-get install -y --no-install-recommends python3 python3-apt unattended-upgrades needrestart && apt-get clean
 COPY maintenance/ /usr/local/lib/chalktalk-maintenance/
+RUN install -d -o root -g root -m 0755 /var/lib/chalktalk-maintenance && python3 /usr/local/lib/chalktalk-maintenance/policy.py capture-exclusions
 COPY apt.conf /etc/apt/apt.conf.d/zz-chalktalk-maintenance
 COPY needrestart.conf /etc/needrestart/conf.d/99-chalktalk.conf
 COPY maintenance_process.py /opt/maintenance_process.py

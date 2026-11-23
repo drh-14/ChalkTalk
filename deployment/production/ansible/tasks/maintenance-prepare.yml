@@ -67,25 +67,6 @@
     - status.py
     - timer.py
 
-- name: Create this invocation's bootstrap token
-  ansible.builtin.command:
-    argv:
-      - python3
-      - -c
-      - import secrets; print(secrets.token_hex(24))
-  register: maintenance_bootstrap_token
-  changed_when: false
-
-- name: Establish persistent bootstrap hold under host lock
-  become: true
-  ansible.builtin.command:
-    argv:
-      - /usr/local/lib/chalktalk-maintenance/hold.sh
-      - set
-      - bootstrap
-      - "{{ maintenance_bootstrap_token.stdout }}"
-  changed_when: false
-
 - name: Create stock APT service drop-in directories before package work
   become: true
   ansible.builtin.file:
@@ -114,4 +95,32 @@
   become: true
   ansible.builtin.systemd_service:
     daemon_reload: true
+  changed_when: false
+
+- name: Create this invocation's bootstrap token
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - import secrets; print(secrets.token_hex(24))
+  register: maintenance_bootstrap_token
+  changed_when: false
+
+- name: Establish persistent bootstrap hold under host lock
+  become: true
+  ansible.builtin.command:
+    argv:
+      - /usr/local/lib/chalktalk-maintenance/hold.sh
+      - set
+      - bootstrap
+      - "{{ maintenance_bootstrap_token.stdout }}"
+  changed_when: false
+
+- name: Capture existing operator exclusions once before policy installation
+  become: true
+  ansible.builtin.command:
+    argv:
+      - python3
+      - /usr/local/lib/chalktalk-maintenance/policy.py
+      - capture-exclusions
   changed_when: false

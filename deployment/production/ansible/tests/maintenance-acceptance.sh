@@ -78,6 +78,14 @@ Unattended-Upgrade::Package-Blacklist { "^ct-operator$"; };
 EXCLUSION
 docker exec "$guest" test ! -e /etc/systemd/system/apt-daily.service.d/99-chalktalk.conf
 docker exec "$guest" test ! -e /etc/systemd/system/apt-daily-upgrade.service.d/99-chalktalk.conf
+docker exec "$guest" cp -p /usr/lib/apt/apt.systemd.daily /opt/acceptance-apt.systemd.daily
+docker exec -i "$guest" sh -c 'cat > /usr/lib/apt/apt.systemd.daily; chmod 755 /usr/lib/apt/apt.systemd.daily' <<'STOCK_START'
+#!/bin/sh
+printf '%s\n' "$1" >> /opt/stock-starts
+STOCK_START
+docker exec "$guest" systemctl start apt-daily.service apt-daily-upgrade.service
+docker exec "$guest" python3 -c 'from pathlib import Path; assert Path("/opt/stock-starts").read_text().splitlines() == ["update", "install"]'
+docker exec "$guest" cp -p /opt/acceptance-apt.systemd.daily /usr/lib/apt/apt.systemd.daily
 ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml"
 docker exec "$guest" /usr/local/lib/chalktalk-maintenance/hold.sh set update
 docker exec "$guest" sh -c 'find /usr/local/lib/chalktalk-maintenance /etc/systemd/system/apt-daily*.d -maxdepth 1 -type f -exec sha256sum {} \; ; sha256sum /etc/apt/apt.conf.d/zz-chalktalk-maintenance /etc/needrestart/conf.d/99-chalktalk.conf /etc/docker/daemon.json /etc/apt/apt.conf.d/50acceptance-exclusion' | sort > "$work/before.hashes"

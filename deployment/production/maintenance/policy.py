@@ -1,13 +1,62 @@
 #!/usr/bin/python3
 """Fail-closed effective APT policy verification; never changes configuration."""
 import json
+import os
+from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
+import tempfile
 
 RUNTIME = (r'^docker([.-].*)?$', r'^containerd([.-].*)?$', r'^runc([.-].*)?$')
 FALSE_KEYS = ('Automatic-Reboot', 'Automatic-Reboot-WithUsers', 'Remove-Unused-Dependencies',
               'Remove-New-Unused-Dependencies', 'Remove-Unused-Kernel-Packages')
+BASELINE = Path(os.environ.get('CHALKTALK_MAINTENANCE_STATE', '/var/lib/chalktalk-maintenance')) / 'exclusions.json'
+
+
+def exclusion_baseline():
+    metadata = BASELINE.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise ValueError('unsafe exclusion baseline')
+    data = json.loads(BASELINE.read_text(encoding='utf-8'))
+    if (not isinstance(data, dict) or data.get('version') != 1
+            or set(data) != {'version', 'patterns'} or not isinstance(data['patterns'], list)
+            or any(not isinstance(pattern, str) for pattern in data['patterns'])):
+        raise ValueError('invalid exclusion baseline')
+    return data['patterns']
+
+
+def capture_exclusions():
+    if os.geteuid() != 0:
+        raise PermissionError('root required')
+    directory = BASELINE.parent.stat()
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or stat.S_IMODE(directory.st_mode) != 0o755:
+        raise ValueError('unsafe maintenance state directory')
+    if BASELINE.exists() or BASELINE.is_symlink():
+        exclusion_baseline()
+        return
+    if Path('/etc/apt/apt.conf.d/zz-chalktalk-maintenance').exists():
+        raise ValueError('existing managed policy without exclusion baseline')
+    import apt_pkg
+    apt_pkg.init()
+    patterns = apt_pkg.config.value_list('Unattended-Upgrade::Package-Blacklist')
+    descriptor, temporary = tempfile.mkstemp(prefix='.exclusions-', dir=BASELINE.parent)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as output:
+            os.fchmod(output.fileno(), 0o600)
+            json.dump({'version': 1, 'patterns': patterns}, output)
+            output.write('\n')
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, BASELINE)
+        handle = os.open(BASELINE.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(handle)
+        finally:
+            os.close(handle)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def release():
@@ -34,6 +83,12 @@ def check():
     if config.value_list('Unattended-Upgrade::Allowed-Origins') or set(config.value_list('Unattended-Upgrade::Origins-Pattern')) != expected:
         issues.append('policy: unsafe security origins')
     exclusions = config.value_list('Unattended-Upgrade::Package-Blacklist')
+    try:
+        remaining = iter(exclusions)
+        if not all(any(value == pattern for value in remaining) for pattern in exclusion_baseline()):
+            issues.append('policy: missing operator exclusions')
+    except (OSError, ValueError, TypeError):
+        issues.append('policy: operator exclusions unavailable')
     if not set(RUNTIME).issubset(exclusions):
         issues.append('policy: missing runtime exclusions')
     try:
@@ -109,6 +164,13 @@ def candidates():
 
 
 if __name__ == '__main__':
+    if sys.argv[1:] == ['capture-exclusions']:
+        try:
+            capture_exclusions()
+        except Exception:
+            print('operator exclusion baseline unavailable', file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
     try:
         problems = check()
     except Exception:

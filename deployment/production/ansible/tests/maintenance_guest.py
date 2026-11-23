@@ -15,6 +15,42 @@ import apt_pkg
 
 
 class EffectiveMaintenancePolicyTest(unittest.TestCase):
+    def test_operator_exclusion_baseline_rejects_loss_and_corruption(self):
+        baseline = Path('/var/lib/chalktalk-maintenance/exclusions.json')
+        fragment = Path('/etc/apt/apt.conf.d/zzzz-acceptance-exclusions')
+        original = baseline.read_bytes()
+        verifier = '/usr/local/lib/chalktalk-maintenance/policy.py'
+
+        def verify():
+            return subprocess.run(['python3', verifier], capture_output=True).returncode
+
+        self.assertEqual(verify(), 0)
+        try:
+            fragment.write_text('Unattended-Upgrade::Package-Blacklist { "^ct-extra$"; };\n')
+            self.assertEqual(verify(), 0)
+            fragment.write_text('#clear Unattended-Upgrade::Package-Blacklist;\n'
+                                'Unattended-Upgrade::Package-Blacklist { '
+                                '"^docker([.-].*)?$"; "^containerd([.-].*)?$"; "^runc([.-].*)?$"; };\n')
+            self.assertNotEqual(verify(), 0)
+            fragment.unlink()
+            baseline.chmod(0o644)
+            self.assertNotEqual(verify(), 0)
+            baseline.chmod(0o600)
+            baseline.write_text('{broken')
+            self.assertNotEqual(verify(), 0)
+            baseline.unlink()
+            self.assertNotEqual(verify(), 0)
+            fragment.write_text('#clear Unattended-Upgrade::Package-Blacklist;\n'
+                                'Unattended-Upgrade::Package-Blacklist { "^ct-operator$"; };\n')
+            baseline.write_bytes(original)
+            baseline.chmod(0o600)
+            self.assertNotEqual(verify(), 0)
+        finally:
+            fragment.unlink(missing_ok=True)
+            baseline.write_bytes(original)
+            baseline.chmod(0o600)
+        self.assertEqual(verify(), 0)
+
     def test_timer_drift_blocks_both_distro_operations_before_mutation(self):
         for name in ('apt-daily', 'apt-daily-upgrade'):
             override = Path('/etc/systemd/system/' + name + '.timer.d/zz-acceptance-drift.conf')
