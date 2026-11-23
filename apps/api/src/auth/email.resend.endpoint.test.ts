@@ -42,10 +42,15 @@ describe("configured Resend API endpoint", () => {
     if (!address || typeof address === "string")
       throw new Error("No mock port");
     const environment = loadEnvironment({
-      AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
-      EMAIL_PROVIDER: "resend",
-      RESEND_API_KEY: "re_local_secret",
-      RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET:
+          "a-long-enough-authentication-secret-for-email-tests",
+        EMAIL_PROVIDER: "resend",
+        EMAIL_FROM: RESEND_EMAIL_FROM,
+        RESEND_API_KEY: "re_local_secret",
+        RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      },
     });
     await createEmailSender(environment).send(
       { to: "student@example.edu", subject: "Course update", text: "Hello" },
@@ -88,11 +93,15 @@ describe("configured Resend API endpoint", () => {
       throw new Error("No mock port");
     const sender = createEmailSender(
       loadEnvironment({
-        AUTH_TOKEN_SECRET:
-          "a-long-enough-authentication-secret-for-email-tests",
-        EMAIL_PROVIDER: "resend",
-        RESEND_API_KEY: "re_local_secret",
-        RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+        NODE_ENV: "test",
+        ...{
+          AUTH_TOKEN_SECRET:
+            "a-long-enough-authentication-secret-for-email-tests",
+          EMAIL_PROVIDER: "resend",
+          EMAIL_FROM: RESEND_EMAIL_FROM,
+          RESEND_API_KEY: "re_local_secret",
+          RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+        },
       }),
     );
     const message = await sender.prepare!({

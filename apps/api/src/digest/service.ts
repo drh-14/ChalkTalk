@@ -33,7 +33,7 @@ type ActivityRow = {
 
 type FrozenEmail = {
   version: 1;
-  provider: "smtp" | "resend";
+  provider: NonNullable<EmailSender["provider"]>;
   courseName: string;
   message: {
     to: string;
@@ -42,6 +42,7 @@ type FrozenEmail = {
     text: string;
     html?: string;
     rawMimeBase64Url?: string;
+    providerPayload?: string;
     attachments?: Array<{
       filename: string;
       contentBase64: string;
@@ -347,6 +348,9 @@ export class DigestService {
           html: frozenMessage.html,
           ...(frozenMessage.rawMimeBase64Url
             ? { rawMimeBase64Url: frozenMessage.rawMimeBase64Url }
+            : {}),
+          ...(frozenMessage.providerPayload
+            ? { providerPayload: frozenMessage.providerPayload }
             : {}),
           attachments: rendered.attachments?.map((attachment) => ({
             filename: attachment.filename,

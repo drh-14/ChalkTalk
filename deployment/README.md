@@ -1,6 +1,6 @@
 # ChalkTalk deployment setups
 
-- [Local development](local/README.md): PostgreSQL with pgvector and SeaweedFS in Docker Compose, with Resend HTTPS email. See the guide for setup and startup.
+- [Local development](local/README.md): independently bundled/external PostgreSQL and S3-compatible storage, with explicit Resend, SendGrid, or SES HTTPS email. See the guide for setup and startup.
 - [Single-VM production](production/README.md): frontend, API, collaboration, and worker containers backed by Supabase PostgreSQL/Storage and Resend.
 - [Production VM bootstrap](production/ansible/README.md): the Ansible playbook and manual GitHub Actions setup workflow.
 

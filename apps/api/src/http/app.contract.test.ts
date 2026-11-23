@@ -8,9 +8,12 @@ import type { PostService } from "../posts/service.js";
 import { createApp } from "./app.js";
 
 const environment = loadEnvironment({
-  AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-  FRONTEND_ORIGINS: "https://app.example.edu",
-  FRONTEND_BASE_URL: "https://app.example.edu",
+  NODE_ENV: "test",
+  ...{
+    AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+    FRONTEND_ORIGINS: "https://app.example.edu",
+    FRONTEND_BASE_URL: "https://app.example.edu",
+  },
 });
 
 const user = {
@@ -147,10 +150,14 @@ describe("authentication client IP behind Caddy", () => {
     async (hop, trusted) => {
       const recorded: string[] = [];
       const proxyEnvironment = loadEnvironment({
-        AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-        FRONTEND_ORIGINS: "https://app.example.edu",
-        FRONTEND_BASE_URL: "https://app.example.edu",
-        ...(hop ? { TRUST_PROXY_HOPS: hop } : {}),
+        NODE_ENV: "test",
+        ...{
+          AUTH_TOKEN_SECRET:
+            "a-secret-that-is-longer-than-thirty-two-characters",
+          FRONTEND_ORIGINS: "https://app.example.edu",
+          FRONTEND_BASE_URL: "https://app.example.edu",
+          ...(hop ? { TRUST_PROXY_HOPS: hop } : {}),
+        },
       });
       const authService = {
         checkLimit: async (_email: string, ip: string) => {

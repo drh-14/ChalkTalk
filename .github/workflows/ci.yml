@@ -92,7 +92,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: chalktalk
           POSTGRES_USER: chalktalk
@@ -108,6 +108,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
       TEST_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+      TEST_VECTOR_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
       AUTH_TOKEN_SECRET: ci-only-auth-token-secret-at-least-32-characters
 
     steps:
@@ -123,13 +124,32 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Start isolated S3 fixture for database tests
+        env:
+          TEST_S3_ENDPOINT: http://127.0.0.1:18333
+          TEST_S3_ACCESS_KEY_ID: chalktalk-verify-ci
+          TEST_S3_SECRET_ACCESS_KEY: chalktalk-verify-ci-secret
+        run: |
+          docker run -d --rm --name chalktalk-verify-s3-ci \
+            -e AWS_ACCESS_KEY_ID="$TEST_S3_ACCESS_KEY_ID" \
+            -e AWS_SECRET_ACCESS_KEY="$TEST_S3_SECRET_ACCESS_KEY" \
+            -p 127.0.0.1:18333:8333 chrislusf/seaweedfs:4.48 mini -dir=/data
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --max-time 2 --aws-sigv4 aws:amz:us-east-1:s3 \
+              --user "$TEST_S3_ACCESS_KEY_ID:$TEST_S3_SECRET_ACCESS_KEY" \
+              "$TEST_S3_ENDPOINT/" > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          docker logs chalktalk-verify-s3-ci
+          exit 1
+
       - name: Exercise k6 fixture safety against a separate PostgreSQL instance
         run: |
           docker run -d --rm --name chalktalk-k6-fixture-ci -e POSTGRES_PASSWORD=k6-ci-isolated -p 127.0.0.1:55432:5432 postgres:16
           trap 'docker stop chalktalk-k6-fixture-ci >/dev/null' EXIT
           until docker exec chalktalk-k6-fixture-ci pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
           export TEST_DATABASE_URL='postgresql://postgres:k6-ci-isolated@127.0.0.1:55432/postgres'
-          DATABASE_URL="$TEST_DATABASE_URL" npm run db:migrate
+          EMAIL_PROVIDER=resend EMAIL_FROM='CI <mail@example.test>' RESEND_API_KEY=synthetic-ci-key DATABASE_URL="$TEST_DATABASE_URL" npm run db:migrate
           RUN_K6_FIXTURE_INTEGRATION=1 npx vitest run apps/api/src/database/load-test-fixture.integration.test.ts
 
       - name: Install PDF validator
@@ -145,7 +165,23 @@ jobs:
         run: npm run typecheck
 
       - name: Apply migrations
+        env:
+          EMAIL_PROVIDER: resend
+          EMAIL_FROM: CI <mail@example.test>
+          RESEND_API_KEY: synthetic-ci-key
         run: npm run db:migrate
+
+      - name: Validate every applicable database suite without skips
+        env:
+          TEST_S3_ENDPOINT: http://127.0.0.1:18333
+          TEST_S3_ACCESS_KEY_ID: chalktalk-verify-ci
+          TEST_S3_SECRET_ACCESS_KEY: chalktalk-verify-ci-secret
+        run: |
+          npx vitest run apps/api/src/database \
+            --exclude apps/api/src/database/load-test-fixture.integration.test.ts \
+            --maxWorkers=1 --reporter=json --outputFile="$RUNNER_TEMP/database-results.json"
+          node deployment/local/tests/assert-database-results.mjs "$RUNNER_TEMP/database-results.json"
+          node --test deployment/local/tests/database-ci-scope.test.mjs
 
       - name: Test
         run: npm test
@@ -159,8 +195,18 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Remove isolated S3 fixture
+        if: always()
+        run: docker rm -f chalktalk-verify-s3-ci 2>/dev/null || true
+
   compose-smoke:
     runs-on: ubuntu-26.04
+    timeout-minutes: 55
+    env:
+      TEST_PROJECT_NAME: ct-modular-compose-ci
+      TEST_S3_ENDPOINT: http://127.0.0.1:8333
+      TEST_S3_ACCESS_KEY_ID: chalktalk-local
+      TEST_S3_SECRET_ACCESS_KEY: chalktalk-local-secret
 
     steps:
       - name: Check out repository
@@ -177,19 +223,28 @@ jobs:
           git ls-files --error-unmatch deployment/local/.env.example
           git check-ignore -q .env
           ! git check-ignore -q deployment/local/.env.example
-          cp deployment/local/.env.example .env
-          printf "\nRESEND_API_BASE_URL=http://127.0.0.1:9\n" >> .env
-          printf "METRICS_TOKEN=%s\nGRAFANA_ADMIN_PASSWORD=%s\n" "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" >> .env
+          cp deployment/local/.env.example deployment/local/.env
+          auth=$(openssl rand -hex 32); metrics=$(openssl rand -hex 32); grafana=$(openssl rand -hex 32)
+          sed -i "s/^AUTH_TOKEN_SECRET=.*/AUTH_TOKEN_SECRET=$auth/; s/^METRICS_TOKEN=.*/METRICS_TOKEN=$metrics/; s/^GRAFANA_ADMIN_PASSWORD=.*/GRAFANA_ADMIN_PASSWORD=$grafana/; s/^RESEND_API_KEY=.*/RESEND_API_KEY=synthetic-ci-key/" deployment/local/.env
+          # Replace rather than append duplicate keys: the operator parser is strict.
+          sed -i 's/^WEB_PORT=.*/WEB_PORT=5174/' deployment/local/.env
+          printf '\nLOCAL_DATABASE_HOST_PORT=5432\nLOCAL_OBJECT_STORE_HOST_PORT=8333\n' >> deployment/local/.env
+          printf 'TEST_GRAFANA_PASSWORD=%s\n' "$grafana" >> "$GITHUB_ENV"
+          printf '. "%s/deployment/local/tests/fixture-services.sh"\n' "$PWD" > "$RUNNER_TEMP/local-fixture.sh"
+          printf 'BASH_ENV=%s/local-fixture.sh\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Validate default Compose configuration
         run: |
           sh deployment/local/tests/test-default-local-compose.sh
-          docker compose -f deployment/local/compose.yml --env-file .env config --quiet
+          node --test deployment/local/tests/ci-start.test.mjs deployment/local/tests/mount-snapshot.test.mjs
 
       - name: Install browser-test dependencies
         run: |
           npm ci
           npx playwright install --with-deps chromium --only-shell
+
+      - name: Verify modular local startup and real phase boundaries
+        run: node --test deployment/local/tests/start.runtime.test.mjs
 
       - name: Verify legacy PORT startup preflight
         run: sh deployment/local/tests/test-local-legacy-port.sh
@@ -197,29 +252,29 @@ jobs:
       - name: Start local Compose stack
         env:
           WEB_PORT: 5174
-        run: docker compose -f deployment/local/compose.yml --env-file .env up --build --wait --wait-timeout 240
+        run: node deployment/local/tests/ci-start.mjs --env-file deployment/local/.env --project-name "$TEST_PROJECT_NAME"
 
       - name: Verify HTTPS API proxy and migrations
         env:
           WEB_PORT: 5174
         run: |
           curl --fail --insecure --retry 20 --retry-connrefused https://localhost:${WEB_PORT}/api/health
-          docker compose -f deployment/local/compose.yml --env-file .env ps --services --status running | grep -qx worker
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '005_text_posts.sql')" | grep -qx t
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')" | grep -qx t
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT to_regclass('public.post_embeddings') IS NOT NULL" | grep -qx t
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT count(*) FROM courses" | grep -qx 0
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT count(*) FROM users" | grep -qx 0
+          compose ps --services --status running | grep -qx worker
+          compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '005_text_posts.sql')" | grep -qx t
+          compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')" | grep -qx t
+          compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT to_regclass('public.post_embeddings') IS NOT NULL" | grep -qx t
+          compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT count(*) FROM courses" | grep -qx 0
+          compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT count(*) FROM users" | grep -qx 0
 
       - name: Guard the isolated browser-test database
         run: |
           node --test tests/browser/fixtures/isolation.test.mjs
           token=$(openssl rand -hex 24)
           echo "E2E_DB_GUARD_TOKEN=$token" >> "$GITHUB_ENV"
-          system_identifier=$(docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres \
+          system_identifier=$(compose exec -T postgres \
             psql -U chalktalk -d chalktalk -tA -v ON_ERROR_STOP=1 -c "SELECT system_identifier::text FROM pg_control_system()")
           echo "E2E_DB_SYSTEM_IDENTIFIER=$system_identifier" >> "$GITHUB_ENV"
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres \
+          compose exec -T postgres \
             psql -U chalktalk -d chalktalk -v ON_ERROR_STOP=1 \
             -c "CREATE TABLE chalktalk_e2e_guard (token text PRIMARY KEY); INSERT INTO chalktalk_e2e_guard VALUES ('$token');"
 
@@ -236,7 +291,7 @@ jobs:
       - name: Verify core flows against the real API and database
         env:
           E2E_BASE_URL: https://localhost:5174
-          E2E_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+          E2E_DATABASE_URL: postgresql://chalktalk:chalktalk@127.0.0.1:5432/chalktalk
         run: npm run test:browser:core
 
       - name: Upload core browser screenshots
@@ -250,7 +305,7 @@ jobs:
       - name: Verify two-browser concurrent collaboration
         env:
           E2E_BASE_URL: https://localhost:5174
-          E2E_DATABASE_URL: postgresql://chalktalk:chalktalk@localhost:5432/chalktalk
+          E2E_DATABASE_URL: postgresql://chalktalk:chalktalk@127.0.0.1:5432/chalktalk
         run: npx playwright test tests/browser/live-code-session.spec.mjs --workers=1
 
       - name: Upload collaboration browser evidence
@@ -264,7 +319,7 @@ jobs:
       - name: Verify local image PDF and OCR tools
         run: |
           for service in api worker; do
-            docker compose -f deployment/local/compose.yml --env-file .env exec -T "$service" sh -ec 'command -v qpdf; command -v pdfinfo; command -v pdftotext; command -v pdftoppm; command -v tesseract; tesseract --list-langs | grep -qx eng'
+            compose exec -T "$service" sh -ec 'command -v qpdf; command -v pdfinfo; command -v pdftotext; command -v pdftoppm; command -v tesseract; tesseract --list-langs | grep -qx eng'
           done
 
       - name: Verify SeaweedFS object storage
@@ -272,59 +327,66 @@ jobs:
 
       - name: Verify course and discussion file APIs against PostgreSQL and SeaweedFS
         run: |
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T api sh -c 'METRICS_TOKEN= TEST_DATABASE_URL="$DATABASE_URL" TEST_S3_ENDPOINT="$S3_ENDPOINT" npx vitest run --testTimeout 30000 apps/api/src/http/course-files.integration.test.ts apps/api/src/http/attachments.integration.test.ts apps/api/src/http/attachments.process.integration.test.ts apps/api/src/jobs/worker.integration.test.ts apps/api/src/jobs/process.integration.test.ts apps/api/src/course-files/validate.test.ts apps/api/src/http/resource-text.integration.test.ts apps/api/src/http/resource-text-ocr.integration.test.ts apps/api/src/jobs/extraction.integration.test.ts apps/api/src/resource-text/extract.test.ts'
+          compose exec -T api sh -c 'unset EMAIL_PROVIDER EMAIL_FROM RESEND_API_KEY RESEND_API_BASE_URL; NODE_ENV=test METRICS_TOKEN= TEST_DATABASE_URL="$DATABASE_URL" TEST_S3_ENDPOINT="$S3_ENDPOINT" npx vitest run --testTimeout 30000 apps/api/src/http/course-files.integration.test.ts apps/api/src/http/attachments.integration.test.ts apps/api/src/http/attachments.process.integration.test.ts apps/api/src/jobs/worker.integration.test.ts apps/api/src/jobs/process.integration.test.ts apps/api/src/course-files/validate.test.ts apps/api/src/http/resource-text.integration.test.ts apps/api/src/http/resource-text-ocr.integration.test.ts apps/api/src/jobs/extraction.integration.test.ts apps/api/src/resource-text/extract.test.ts apps/api/src/digest/service.integration.test.ts'
 
       - name: Verify stale application dependencies self-repair
         env:
           WEB_PORT: 5174
         run: |
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T web sh -c "rm -rf /app/node_modules/jsdom && printf '%s\\n' stale > /app/node_modules/.chalktalk-dependency-fingerprint"
-          docker compose -f deployment/local/compose.yml --env-file .env restart web
-          docker compose -f deployment/local/compose.yml --env-file .env up --wait --no-deps web
+          compose exec -T web sh -c "rm -rf /app/node_modules/jsdom && printf '%s\\n' stale > /app/node_modules/.chalktalk-dependency-fingerprint"
+          compose restart web
+          compose up --wait --no-deps web
           curl --fail --insecure --retry 20 --retry-connrefused https://localhost:${WEB_PORT}/api/health
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T web node -e "require.resolve('jsdom')"
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T web sh -c "! grep -qx stale /app/node_modules/.chalktalk-dependency-fingerprint"
-          docker compose -f deployment/local/compose.yml --env-file .env exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '005_text_posts.sql')" | grep -qx t
+          compose exec -T web node -e "require.resolve('jsdom')"
+          compose exec -T web sh -c "! grep -qx stale /app/node_modules/.chalktalk-dependency-fingerprint"
+          compose exec -T postgres psql -U chalktalk -d chalktalk -tA -c "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '005_text_posts.sql')" | grep -qx t
 
       - name: Collect Compose logs
         if: always()
-        run: docker compose -f deployment/local/compose.yml --env-file .env logs --no-color
+        run: compose logs --no-color
 
       - name: Stop Compose stack
         if: always()
-        run: docker compose -f deployment/local/compose.yml --env-file .env down --volumes --remove-orphans
+        run: compose down --volumes --remove-orphans
 
   observability-smoke:
     runs-on: ubuntu-26.04
+    env:
+      TEST_PROJECT_NAME: ct-modular-observability-ci
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
       - name: Prepare local-only secrets
         run: |
-          cp deployment/local/.env.example .env
-          printf "\nRESEND_API_BASE_URL=http://127.0.0.1:9\n" >> .env
-          cat >> .env <<EOF_CONFIG
-          METRICS_TOKEN=$(openssl rand -hex 32)
-          GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 32)
-          EOF_CONFIG
+          cp deployment/local/.env.example deployment/local/.env
+          auth=$(openssl rand -hex 32); metrics=$(openssl rand -hex 32); grafana=$(openssl rand -hex 32)
+          sed -i "s/^AUTH_TOKEN_SECRET=.*/AUTH_TOKEN_SECRET=$auth/; s/^METRICS_TOKEN=.*/METRICS_TOKEN=$metrics/; s/^GRAFANA_ADMIN_PASSWORD=.*/GRAFANA_ADMIN_PASSWORD=$grafana/; s/^RESEND_API_KEY=.*/RESEND_API_KEY=synthetic-ci-key/" deployment/local/.env
+          printf 'TEST_GRAFANA_PASSWORD=%s\n' "$grafana" >> "$GITHUB_ENV"
+          printf '. "%s/deployment/local/tests/fixture-services.sh"\n' "$PWD" > "$RUNNER_TEMP/local-fixture.sh"
+          printf 'BASH_ENV=%s/local-fixture.sh\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Validate local Compose stack
-        run: docker compose -f deployment/local/compose.yml --env-file .env config --quiet
+        run: node --test deployment/local/tests/start.test.mjs
 
       - name: Start observability stack
-        run: docker compose -f deployment/local/compose.yml --env-file .env up --build --wait --wait-timeout 240 --quiet-pull
+        run: node deployment/local/tests/ci-start.mjs --env-file deployment/local/.env --project-name "$TEST_PROJECT_NAME"
 
       - name: Exercise VM and host-network freshness, backlog recovery, and log privacy
         run: sh deployment/local/tests/test-observability.sh
 
       - name: Collect service logs
         if: failure()
-        run: docker compose -f deployment/local/compose.yml --env-file .env logs --no-color --tail 200
+        run: compose logs --no-color --tail 200
 
       - name: Stop observability stack
         if: always()
-        run: docker compose -f deployment/local/compose.yml --env-file .env down --volumes --remove-orphans
+        run: compose down --volumes --remove-orphans
   answer-browser:
     runs-on: ubuntu-24.04
 

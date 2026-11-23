@@ -25,7 +25,11 @@ describe("endpoint database totals", () => {
     const app = createApp({
       observability,
       environment: loadEnvironment({
-        AUTH_TOKEN_SECRET: "endpoint-test-auth-secret-more-than-32-characters",
+        NODE_ENV: "test",
+        ...{
+          AUTH_TOKEN_SECRET:
+            "endpoint-test-auth-secret-more-than-32-characters",
+        },
       }),
     });
     try {
@@ -76,7 +80,11 @@ describe("endpoint database totals", () => {
     const app = createApp({
       observability,
       environment: loadEnvironment({
-        AUTH_TOKEN_SECRET: "endpoint-test-auth-secret-more-than-32-characters",
+        NODE_ENV: "test",
+        ...{
+          AUTH_TOKEN_SECRET:
+            "endpoint-test-auth-secret-more-than-32-characters",
+        },
       }),
     });
     await request(app).post("/api/v1/sessions").send({});

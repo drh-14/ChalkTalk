@@ -1,0 +1,14 @@
+[
+  { "value": "arbitrary key # literal=a=b", "valid": true },
+  { "value": "+/_-=:;@%&!?()[]{}~", "valid": true },
+  { "value": "quoted\"key", "valid": false },
+  { "value": "apostrophe'key", "valid": false },
+  { "value": "dollar$key", "valid": false },
+  { "value": "back`tick", "valid": false },
+  { "value": "back\\slash", "valid": false },
+  { "value": " leading", "valid": false },
+  { "value": "trailing ", "valid": false },
+  { "value": "control\rkey", "valid": false },
+  { "value": "nonasciié", "valid": false },
+  { "value": "replace-with-a-resend-sending-key", "valid": false }
+]

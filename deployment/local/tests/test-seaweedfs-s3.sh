@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-endpoint=http://127.0.0.1:8333
-access_key=${SEAWEEDFS_ACCESS_KEY_ID:-chalktalk-local}
-secret_key=${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
+endpoint=${TEST_S3_ENDPOINT:?Set the owned fixture S3 endpoint}
+access_key=${TEST_S3_ACCESS_KEY_ID:?Set fixture credentials}
+secret_key=${TEST_S3_SECRET_ACCESS_KEY:?Set fixture credentials}
 bucket="chalktalk-smoke-$(date +%s)-$$"
 object=payload.txt
 temporary_directory=$(mktemp -d)
@@ -64,7 +64,8 @@ s3_request --output "$temporary_directory/actual" \
   "$endpoint/$bucket/$object"
 cmp "$temporary_directory/expected" "$temporary_directory/actual"
 
-docker compose -f deployment/local/compose.yml --env-file .env restart seaweedfs >/dev/null
+. "$(dirname "$0")/fixture-services.sh"
+compose restart seaweedfs >/dev/null
 s3_request --output "$temporary_directory/after-restart" \
   "$endpoint/$bucket/$object"
 cmp "$temporary_directory/expected" "$temporary_directory/after-restart"

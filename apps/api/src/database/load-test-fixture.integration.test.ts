@@ -48,11 +48,14 @@ integration("isolated PostgreSQL fixture lifecycle", () => {
         "ramp",
       );
       const environment = loadEnvironment({
-        AUTH_TOKEN_SECRET:
-          "isolated-load-test-secret-longer-than-32-characters",
-        FRONTEND_ORIGINS: "https://joinchalktalk.com",
-        FRONTEND_BASE_URL: "https://joinchalktalk.com",
-        DATABASE_URL: url!,
+        NODE_ENV: "test",
+        ...{
+          AUTH_TOKEN_SECRET:
+            "isolated-load-test-secret-longer-than-32-characters",
+          FRONTEND_ORIGINS: "https://joinchalktalk.com",
+          FRONTEND_BASE_URL: "https://joinchalktalk.com",
+          DATABASE_URL: url!,
+        },
       });
       const authService = new AuthService(
         pool,
@@ -512,11 +515,14 @@ integration("isolated PostgreSQL fixture lifecycle", () => {
       await pool.query("DELETE FROM organizations WHERE id=$1", [foreignOrg]);
 
       const environment = loadEnvironment({
-        AUTH_TOKEN_SECRET:
-          "isolated-load-test-secret-longer-than-32-characters",
-        FRONTEND_ORIGINS: "https://joinchalktalk.com",
-        FRONTEND_BASE_URL: "https://joinchalktalk.com",
-        DATABASE_URL: url!,
+        NODE_ENV: "test",
+        ...{
+          AUTH_TOKEN_SECRET:
+            "isolated-load-test-secret-longer-than-32-characters",
+          FRONTEND_ORIGINS: "https://joinchalktalk.com",
+          FRONTEND_BASE_URL: "https://joinchalktalk.com",
+          DATABASE_URL: url!,
+        },
       });
       const application = createApp({
         environment,

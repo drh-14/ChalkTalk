@@ -18,11 +18,17 @@ export async function ensureStorageBucket(
       !("$metadata" in error) ||
       (error.$metadata as { httpStatusCode?: number }).httpStatusCode !== 404
     )
-      throw error;
+      throw new Error(
+        "Object storage bucket is inaccessible; check endpoint, credentials and permissions",
+      );
     if (!localFileStore)
       throw new Error(
         `SUPABASE_STORAGE_BUCKET ${bucket} must exist before startup`,
       );
-    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+    try {
+      await client.send(new CreateBucketCommand({ Bucket: bucket }));
+    } catch {
+      throw new Error("Bundled object storage bucket preparation failed");
+    }
   }
 }

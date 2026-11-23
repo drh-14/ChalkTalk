@@ -111,6 +111,9 @@ test("load-test dashboard is provisioned in its own Grafana folder", () => {
             COMPOSE_ENV_FILE: composePath.includes("/local/")
               ? envFile
               : resolve(root, envFile),
+            ...(composePath.includes("/local/")
+              ? { LOCAL_APPLICATION_ENV_FILE: resolve(root, envFile) }
+              : {}),
             GRAFANA_ENV_FILE: resolve(
               root,
               "deployment/production/grafana.env.example",

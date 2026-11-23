@@ -21,9 +21,12 @@ const ids = {
   outsider: uuidv7(),
 };
 const environment = loadEnvironment({
-  AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-  FRONTEND_ORIGINS: "https://app.example.edu",
-  FRONTEND_BASE_URL: "https://app.example.edu",
+  NODE_ENV: "test",
+  ...{
+    AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+    FRONTEND_ORIGINS: "https://app.example.edu",
+    FRONTEND_BASE_URL: "https://app.example.edu",
+  },
 });
 let admin: Pool;
 let pool: Pool;

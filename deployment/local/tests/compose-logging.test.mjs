@@ -6,25 +6,9 @@ import { test } from "node:test";
 
 const config = JSON.parse(
   execFileSync(
-    "docker",
-    [
-      "compose",
-      "-f",
-      "deployment/local/compose.yml",
-      "--env-file",
-      "deployment/local/.env.example",
-      "config",
-      "--format",
-      "json",
-    ],
-    {
-      cwd: new URL("../../..", import.meta.url),
-      env: {
-        ...process.env,
-        COMPOSE_ENV_FILE: "deployment/local/.env.example",
-      },
-      encoding: "utf8",
-    },
+    process.execPath,
+    ["deployment/local/tests/render-compose.mjs"],
+    { cwd: new URL("../../..", import.meta.url), encoding: "utf8" },
   ),
 );
 
@@ -124,7 +108,11 @@ test("local network exporter reads Docker Linux VM PID 1 privately", () => {
   assert.deepEqual(exporter.security_opt, ["no-new-privileges:true"]);
   assert.equal(exporter.ports?.length ?? 0, 0);
   assert.deepEqual(
-    exporter.volumes.map(({ source, target, read_only }) => [source, target, read_only]),
+    exporter.volumes.map(({ source, target, read_only }) => [
+      source,
+      target,
+      read_only,
+    ]),
     [["/proc", "/host/proc", true]],
   );
   assert.deepEqual(exporter.command, [
@@ -133,6 +121,12 @@ test("local network exporter reads Docker Linux VM PID 1 privately", () => {
     "--collector.netdev",
     "--no-collector.netdev.netlink",
   ]);
-  assert.equal(config.services.api.depends_on?.["node-exporter-network"], undefined);
-  assert.equal(config.services.gateway.depends_on?.["node-exporter-network"], undefined);
+  assert.equal(
+    config.services.api.depends_on?.["node-exporter-network"],
+    undefined,
+  );
+  assert.equal(
+    config.services.gateway.depends_on?.["node-exporter-network"],
+    undefined,
+  );
 });

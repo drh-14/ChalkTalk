@@ -1,116 +1,147 @@
 # Local development
 
-Run these commands from the repository root in a Bash-compatible shell (Windows users can use WSL). You need Docker with the Compose plugin (`docker compose`). Compose and the explicit Piazza import do not require Node.js on the host; repository checks require an up-to-date Node.js **22** release and npm.
+This stack is for private local development, not public hosting. Production remains separately configured under [`deployment/production`](../production/README.md), with unchanged Supabase TLS/storage and Resend-only policy. The gateway can bind all host interfaces; protect your machine/network. Data ports are **unpublished by default**; Grafana binds loopback.
 
-This local development Compose stack is **not for public deployment**: its Caddy gateway may bind to all host interfaces, and its database and storage use development credentials. The GitHub production workflow uses [`deployment/production/compose.yml`](../production/compose.yml) instead.
+## Start
 
-## 1. Create local configuration
+The operator host needs **Docker and Docker Compose supporting raw env files (Compose 2.30+)**, a POSIX shell, and standard shell utilities. No host Node, npm, application dependencies, AWS SDK, or cloud CLI is required. Repository development/tests require Node 22 and npm; application dependencies run inside containers.
 
-```bash
-cp deployment/local/.env.example .env
-openssl rand -hex 32              # copy the output into AUTH_TOKEN_SECRET in .env
+```sh
+cp deployment/local/.env.example deployment/local/.env
+# Edit the ignored file: replace all three secrets and the selected provider key/sender.
+./deployment/local/start.sh
 ```
 
-Edit the ignored `.env` before starting. Replace `AUTH_TOKEN_SECRET`, `METRICS_TOKEN`, and `GRAFANA_ADMIN_PASSWORD` with separate random values, and configure `RESEND_API_KEY` with your team key. Real verification and notification emails will be sent from ChalkTalk's fixed sender. Set `DOMAIN` to the local hostname you will open (default `localhost`); Compose derives the frontend URLs. Use a valid email address for signup; accounts at the same exact domain share an organization, including at public providers. The template's local storage credentials are development placeholders, **not** deployment secrets. `.env` is ignored by Git; never commit it.
+To generate a random secret without host language dependencies, run `docker run --rm node:22-bookworm-slim node -e 'console.log(require("node:crypto").randomBytes(32).toString("hex"))'` separately for each secret. Never commit real credentials. Open `https://localhost:5173` after trusting the local CA below. The API listens privately on port 3000; the gateway proxies `/api` and `/collaboration`. `DOMAIN` and `WEB_PORT` derive both frontend URLs. No sample users/courses are created; signup uses real verification mail only when explicitly requested through the app.
 
-If reusing an older `.env`, remove its `PORT` entry. Local Compose requires the API's internal port 3000 and rejects `PORT` before migrations.
+The canonical entrypoint is:
 
-## 2. Start the local stack
-
-```bash
-docker compose -f deployment/local/compose.yml --env-file .env up --build --wait
+```text
+start.sh [--env-file PATH] [--project-name NAME] [--ack-external-migrations]
 ```
 
-This single command starts PostgreSQL, SeaweedFS, migrations, the API, worker, collaboration server, Caddy gateway, private Vite web client, Prometheus, Grafana, Loki, Alloy, and two private Node Exporters. A new database has no users or courses. Create a course in the app or explicitly import one from Piazza; startup never loads sample data. With the default `DOMAIN` and `WEB_PORT`, the web client is [https://localhost:5173](https://localhost:5173); otherwise open `https://<DOMAIN>:<WEB_PORT>` using your configured values. The first image build may take a few minutes. Re-running the command preserves named-volume data. For logs, run `docker compose -f deployment/local/compose.yml --env-file .env logs -f api` (or another service).
+It works from any directory. An explicit relative env path is relative to the caller; the default is always `deployment/local/.env`, never a root `.env`. File values win over supported inherited inputs, then documented non-secret defaults apply. Explicit blanks are not absence. Duplicate/unknown CLI options fail. The default project remains `chalktalk`, preserving `chalktalk_postgres-data`, `chalktalk_seaweedfs-data`, and `chalktalk_caddy-data`. Use a distinct explicit project name for isolated worktrees/tests; do not start another checkout against a project currently in use.
 
-## 3. Trust the local HTTPS certificate and open the app
+### Restricted literal configuration
 
-Caddy creates the local HTTPS certificate and its own CA automatically when Compose starts. No host certificate-generation command is needed. After the stack is running, export **only the CA's public root certificate**:
+Each line is `KEY=value`, a blank line, or a whole-line `#` comment. Keys are uppercase identifiers. Values are printable ASCII with no leading/trailing whitespace, quotes, backslashes, dollar signs, backticks, CR/NUL, continuation lines, or expansion. Interior spaces and `#` are literal; subsequent `=` characters are preserved. No `export`, shell code, inline comments, duplicate keys, or dotenv quoting. The parser never sources/evaluates the file. Use percent encoding in URL components rather than shell escaping.
 
-```bash
-docker compose -f deployment/local/compose.yml --env-file .env cp \
-  gateway:/data/caddy/pki/authorities/local/root.crt /tmp/chalktalk-local-root.crt
+Supported PostgreSQL URLs use `postgres://` or `postgresql://`, one user/password pair and database name, DNS/IPv4 or bracketed IPv6, and an optional canonical decimal port. The only supported query is one `sslmode=disable|require|verify-ca|verify-full`; preserve required TLS verification. Percent escapes must encode printable ASCII. Fragments, ambiguous raw credentials, duplicate TLS parameters, unsupported query options, and malformed escapes fail. S3 endpoints allow HTTP/HTTPS and service paths, but no userinfo, query, or fragment. HTTP is intended for private S3-compatible services, not email.
+
+## Select database and storage independently
+
+| LOCAL_DATABASE_ENABLED | LOCAL_OBJECT_STORE_ENABLED | Selected data services                  |
+| ---------------------- | -------------------------- | --------------------------------------- |
+| true (default)         | true (default)             | Bundled PostgreSQL + SeaweedFS          |
+| true                   | false                      | Bundled PostgreSQL + external S3        |
+| false                  | true                       | External PostgreSQL + bundled SeaweedFS |
+| false                  | false                      | Both external                           |
+
+Flags accept exactly `true` or `false`, not blanks. They control provisioning only; applications receive resolved connections, not flags or the operator file.
+
+- Bundled DB uses `LOCAL_DATABASE_USER`, `LOCAL_DATABASE_PASSWORD`, `LOCAL_DATABASE_NAME` (development defaults: `chalktalk`). **Any populated DATABASE_URL conflicts**, even an invalid/partial value.
+- Bundled store uses `LOCAL_OBJECT_STORE_ACCESS_KEY_ID`, `LOCAL_OBJECT_STORE_SECRET_ACCESS_KEY`, `LOCAL_OBJECT_STORE_BUCKET`, `LOCAL_OBJECT_STORE_REGION` (template defaults). **Any populated S3_ENDPOINT, S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, or S3_SESSION_TOKEN conflicts**, even alone.
+- External DB requires complete `DATABASE_URL`. External S3 requires all five explicit endpoint/bucket/region/access-key/secret settings; `S3_SESSION_TOKEN` is optional. Generic `AWS_*` values never substitute for S3 credentials or cause bundled S3 conflicts.
+- Optional `LOCAL_DATABASE_HOST_PORT` / `LOCAL_OBJECT_STORE_HOST_PORT` publish only an enabled bundled service on `127.0.0.1`. Ports must be decimal 1..65535, without leading zeroes, distinct from each other, `WEB_PORT`, and `GRAFANA_PORT`.
+
+## Choose HTTPS email explicitly
+
+Set `EMAIL_PROVIDER=resend|sendgrid|ses` and one valid `EMAIL_FROM` mailbox, optionally with an unquoted display name. Use your verified sender/domain. Remove **every** populated setting for other providers, including partial settings and all legacy `SMTP_*` settings. There is no fallback, SMTP delivery, gateway, arbitrary endpoint, or automatic test send.
+
+| Provider          | Required settings                                                                                                                             |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Resend            | `RESEND_API_KEY`                                                                                                                              |
+| SendGrid          | `SENDGRID_API_KEY`                                                                                                                            |
+| SES explicit      | `SES_REGION`, `SES_CREDENTIALS_MODE=explicit`, `SES_ACCESS_KEY_ID`, `SES_SECRET_ACCESS_KEY`; optional `SES_SESSION_TOKEN`                     |
+| SES default chain | `SES_REGION`, `SES_CREDENTIALS_MODE=default-chain`, an explicitly supplied container-accessible AWS source; no SES-prefixed credential fields |
+
+Normal startup uses only official HTTPS mail endpoints. `RESEND_API_BASE_URL`, if supplied, must be `https://api.resend.com` (an optional trailing slash is accepted). Isolated adapter tests inject controlled transports; these are not operator delivery settings. Production still ignores legacy `EMAIL_FROM` and retains its fixed verified Resend sender.
+
+SES explicit temporary credentials require operator renewal when expired. Default-chain clients retain the SDK provider function in each API/worker container, so refreshed sources can supply later credentials; resolved credentials are never exported to env files, another container, or queue snapshots. API and worker each resolve their own source. Standard explicit `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` and optional `AWS_SESSION_TOKEN` are supported independently of storage.
+
+For refreshable file sources, explicitly set `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, or `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE` to a single absolute host file. Only that file is mounted read-only at a fixed `/run/chalktalk-aws/` path; its corresponding variable is rewritten to that container path. Use `AWS_PROFILE`, `AWS_ROLE_ARN`, and `AWS_ROLE_SESSION_NAME` as needed. Keep files accessible and renew tokens in place; replacing a bind-mounted inode may require restarting. Any credential-process helper selected by a profile must already be available inside the container; startup never installs/runs a host bootstrap. An explicitly reachable workload-role source can use standard `AWS_CONTAINER_CREDENTIALS_FULL_URI` / `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` inputs. No home directory is mounted, host networking is not enabled, and implicit EC2 metadata discovery is disabled. Startup does not harvest host credentials or widen access to inaccessible sources.
+
+Successful source resolution does **not** prove SES send permission or inbox delivery. Runtime delivery failures remain sanitized and repairable. Verification/reset retain their existing immediate-mail semantics. Queued messages commit the provider, sender and frozen payload before handoff; retries revalidate eligibility and reuse identical content. Provider/sender changes cancel and scrub snapshots. Resend retains its bounded idempotency key; SendGrid/SES can duplicate after ambiguous acceptance and do **not** promise exactly-once delivery. Throttle/auth/transient failures remain observable through safe queue status, attempt count and next availability; raw provider bodies and credentials are not persisted.
+
+## Two-phase safety and upgrades
+
+1. **Static preflight** validates original inputs, flags, literal grammar, supported connections, provider exclusivity/sender, secrets, ports and legacy selectors before deriving internal settings. Invalid static input causes **zero build, pull, container-create/start, migration, bucket, or provider operations**. Read-only Compose rendering is explicit and its secret-bearing output is suppressed. Inherited Compose files/profiles/project/env discovery cannot change topology.
+2. **Container runtime checks** follow successful preflight. Images/containers may already exist. Existing application traffic/workers for the selected project are stopped before preparation. Credential-source resolution and read-only DB/schema/bucket checks gate traffic and worker claims; only afterward does authorized preparation run. A failure retains volumes and does not seed/reset/copy/delete data or broaden provisioning authority. Startup never sends an email permission probe.
+
+Bundled PostgreSQL automatically runs tracked ordinary and semantic migrations before applications start. Semantic version/checksum tracking adopts compatible existing objects without resetting them; mismatches fail for operator inspection. Without an embedding key, ordinary full-text/fuzzy search works without external embedding requests.
+
+External DB startup is **read-only by default**: pending ordinary migrations (including an absent ledger) refuse startup without creating a ledger/table. After reviewing/backing up your database, explicitly acknowledge ordinary migration changes for that invocation:
+
+```sh
+./deployment/local/start.sh --env-file /absolute/operator.env --ack-external-migrations
 ```
 
-Trust `/tmp/chalktalk-local-root.crt` once in your host OS or browser trust store (on macOS, open it in Keychain Access and set it to **Always Trust**; on Linux, use your distribution's CA-import procedure). Never export Caddy's `root.key` or mount its private CA data on the host. Its `/data` volume preserves the CA across restarts; if you delete volumes, export and trust the newly generated root. Until then, the browser will warn about the certificate. Open `https://<DOMAIN>:<WEB_PORT>` (defaults: `https://localhost:5173`) after trusting the root.
+An env value cannot grant consent, and later invocations default to read-only again. External semantic capability/schema is a separate explicit prerequisite when `EMBEDDING_API_KEY` is configured: provision [`database/optional/semantic_search.sql`](../../database/optional/semantic_search.sql) deliberately with the database owner, not via automatic local startup. External buckets must already exist and be accessible; only the bundled store preparation step may create a missing bucket. API/worker startup verifies rather than infers creation permission from development mode.
 
-| Local endpoint                                   | Purpose                                            |
-| ------------------------------------------------ | -------------------------------------------------- |
-| [https://localhost:5173](https://localhost:5173) | Web app; Caddy proxies `/api` and `/collaboration` |
-| `http://127.0.0.1:8333`                          | SeaweedFS S3-compatible object store               |
+For an old root `.env`, explicitly choose it or migrate values manually into the canonical local file. Remove `PORT`, old `SEAWEEDFS_*`, legacy selectors, and bundled-mode `DATABASE_URL`/`S3_*`; move local credentials to `LOCAL_*`. Add explicit provider and sender. Never copy over or automatically rewrite your original file. Changing env passwords does not rewrite initialized PostgreSQL users/volumes; repair credentials deliberately rather than deleting data. Back up valuable data before upgrading, inspect compatibility before downgrading, and retain existing volumes/CA. Startup performs no automatic rollback or schema downgrade.
 
-In full Compose mode, the API is not exposed on a host port; the Caddy gateway exposes its health route at `https://localhost:5173/api/health`. To create a new account, sign up using a valid email address that is not already registered, then follow the verification link delivered to your inbox through Resend. For an existing account, sign in or reset your password instead; see the [authentication API reference](../../documentation/api/auth.md). The collaboration WebSocket is reached through `wss://localhost:5173/collaboration`.
+## Trust HTTPS and inspect services
 
-## Environment variables
+Export only the CA public root certificate, explicitly:
 
-Copying `deployment/local/.env.example` provides the local defaults. The table identifies what to edit and which settings Compose deliberately overrides inside its containers.
-
-| Variable(s)                                                      | Local purpose / required change                                                                                                                       |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AUTH_TOKEN_SECRET`                                              | Replace the template with a random secret of at least 32 characters.                                                                                  |
-| `DOMAIN`                                                         | Browser hostname (default `localhost`). Compose derives the frontend URLs as `https://<DOMAIN>:<WEB_PORT>`.                                           |
-| `DATABASE_URL`                                                   | Local PostgreSQL connection; Compose uses the internal `postgres` hostname.                                                                           |
-| `EMAIL_PROVIDER`, `RESEND_API_KEY`                               | Compose selects Resend. Set a sending-only API key; the sender address is fixed in code.                                                              |
-| `SEAWEEDFS_ACCESS_KEY_ID`, `SEAWEEDFS_SECRET_ACCESS_KEY`, `S3_*` | Local SeaweedFS credentials, bucket, and endpoint. The template values are development placeholders; Compose uses the internal SeaweedFS hostname.    |
-| `METRICS_TOKEN`, `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_PORT`        | Set **different** random secrets for the metrics token and Grafana password. Grafana defaults to host port 3001.                                      |
-| `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`     | Optional semantic matching. Private text and search queries go to the configured provider; see [Optional semantic search](#optional-semantic-search). |
-
-Resource OCR is limited to 200 PDF pages needing OCR per file and uses English Tesseract data, as fixed in `apps/api/src/config/constants.ts`; it does not use environment variables.
-
-`WEB_PORT` is a Compose-only host-port override (default 5173), not an API variable. For local Compose, `COMPOSE_ENV_FILE` can point services to another env file relative to the repository root; pass the same file with Compose `--env-file` for interpolation. Most teammates should simply use `.env`. API rate limits and OCR limits are code constants rather than environment settings.
-
-For **real email delivery**, configure a sending-only `RESEND_API_KEY` for both API and worker. The sender is fixed as `ChalkTalk <notifications@joinchalktalk.com>` in API constants. Local Compose selects `EMAIL_PROVIDER=resend`. Use `RESEND_API_BASE_URL` only for isolated mock tests; omit it for real Resend. Queued retries use a frozen payload and stable Resend idempotency key; Resend’s bounded key window does not guarantee exactly-once delivery after expiry. For opt-out timing during delivery, see [course email preferences](../../documentation/api/courses.md#courseEmailPreferences). Never commit or share provider credentials.
-
-For a **manual live Resend acceptance check**, start a disposable PostgreSQL server bound to loopback and set `TEST_DATABASE_URL` to its administrative database. Set `RESEND_LIVE_CONFIRM=send-synthetic-mail`, `RESEND_LIVE_RECIPIENT` to the approved test inbox, and the normal Resend variables, then run `npm run test:email:live`. The command creates and removes its own uniquely named database, sends no more than twelve synthetic messages, and refuses a non-approved recipient, remote database, or mock Resend endpoint. This command is never part of regular CI; it checks provider acceptance, not inbox arrival. See [live validation design](../../documentation/design/2026-11-02-resend-live-validation.md).
-
-## Importing a Piazza class
-
-To populate a new installation with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to. Read the password without placing it in shell history:
-
-```bash
-export PIAZZA_EMAIL=you@school.edu
-printf 'Existing ChalkTalk owner email: '; read -r CHALKTALK_OWNER_EMAIL
-read -rsp 'Piazza password: ' PIAZZA_PASSWORD; printf '\n'
-export PIAZZA_PASSWORD
-docker compose -f deployment/local/compose.yml --env-file .env exec -T \
-  -e PIAZZA_EMAIL -e PIAZZA_PASSWORD api \
-  npm run db:import:piazza -- --owner "$CHALKTALK_OWNER_EMAIL" --class "CSE 416" --save piazza-cse416.json
-unset PIAZZA_PASSWORD
+```sh
+gateway=$(docker ps -q --filter label=com.docker.compose.project=chalktalk --filter label=com.docker.compose.service=gateway)
+docker cp "$gateway:/data/caddy/pki/authorities/local/root.crt" /tmp/chalktalk-local-root.crt
 ```
 
-Run this after the stack is up. `PIAZZA_EMAIL` signs in to Piazza; `CHALKTALK_OWNER_EMAIL` must be an existing ChalkTalk account and can be different. The API container already has the database connection and npm dependencies; `--save` writes into the repository's bind mount. To re-import a saved export, run `docker compose -f deployment/local/compose.yml --env-file .env exec -T api npm run db:import:piazza -- --owner "$CHALKTALK_OWNER_EMAIL" --from piazza-cse416.json`.
+Trust that public certificate in your OS/browser store. Never export `root.key` or mount private CA data on the host. The Caddy volume retains CA identity across restarts. Check `DOMAIN` matches your browser hostname. HTTPS health is `https://localhost:5173/api/health` by default; collaboration uses `/collaboration`.
 
-The `--owner` ChalkTalk account must already exist and becomes the course instructor; your own Piazza posts are attributed to it. Every other Piazza author becomes a course member with their Piazza name and role (professor → instructor, TA, student) and a placeholder `@piazza.invalid` email. These historical attribution accounts receive discarded random passwords; they are not shared demo logins. Questions, notes, instructor and student answers, followups and replies, folders (as tags), pins, endorsements, and helpful votes are imported with their original timestamps. Piazza HTML becomes Markdown, and images and attachments stay linked to Piazza. Polls become notes without their options. Piazza hides anonymous authors from students, so those posts belong to one shared "Anonymous Piazza user". A student account also sees only its own private posts and cannot read the roster or emails.
+Because runtime env files are private and temporary, use the launcher for startup rather than direct Compose commands. Inspect running containers by the explicit project label:
 
-The command fetches one request per second, so a large class takes several minutes. Run it again at any time: matching Piazza ids add new content and refresh edited content without duplicating anything, and content deleted in ChalkTalk stays deleted. `--save` keeps the fetched data, and `--from piazza-cse416.json` re-imports from that file without contacting Piazza. Piazza has no public API; this uses the internal API its own website calls, which may change without notice.
-
-## Optional semantic search
-
-The main local Compose stack uses PostgreSQL with pgvector and runs the vector migration alongside ordinary migrations. No separate semantic-search Compose file is needed. Ordinary full-text and fuzzy search still works without an external service. To add semantic matching, set `EMBEDDING_API_KEY` for an OpenAI-compatible embeddings endpoint in the ignored `.env` (and optionally `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL`), then start the usual stack with `docker compose -f deployment/local/compose.yml --env-file .env up --build --wait`.
-
-If you have an existing populated local volume created with the earlier `postgres:17-alpine` image, back it up before switching images. Search falls back to lexical/fuzzy when the optional provider or key is unavailable. Production remains separately configured against Supabase and does not run the optional vector migration automatically.
-
-## Local observability
-
-Prometheus, Grafana, Loki, and Alloy start with the rest of the local stack. Set `METRICS_TOKEN` and `GRAFANA_ADMIN_PASSWORD` in `.env` to **different** outputs of `openssl rand -hex 32` before starting. Open Grafana at [http://127.0.0.1:3001](http://127.0.0.1:3001) and sign in as `admin` with `GRAFANA_ADMIN_PASSWORD`. The separate **VM System Load** dashboard shows Docker Desktop's **Linux VM**, not physical macOS load or Supabase database-server load. After a login attempt warms HTTP and DB-client histograms and two one-minute scrapes have elapsed, run `docker compose -f deployment/local/compose.yml --env-file .env exec -T api node /app/deployment/observability/verify-metrics.cjs` to check scrape freshness. See the [observability reference](../../documentation/api/observability.md). Do not commit credentials or expose monitoring endpoints publicly.
-
-## Stop, troubleshoot, and check changes
-
-```bash
-docker compose -f deployment/local/compose.yml --env-file .env ps                    # service status
-docker compose -f deployment/local/compose.yml --env-file .env logs migrate          # migration failure details
-docker compose -f deployment/local/compose.yml --env-file .env run --rm migrate      # rerun tracked migrations
-docker compose -f deployment/local/compose.yml --env-file .env down                  # stop the stack; keep data
+```sh
+docker ps -a --filter label=com.docker.compose.project=chalktalk
+api=$(docker ps -q --filter label=com.docker.compose.project=chalktalk --filter label=com.docker.compose.service=api)
+docker logs "$api"
+# Explicit ordinary stop; retains all named volumes (IDs below come only from Docker).
+containers=$(docker ps -q --filter label=com.docker.compose.project=chalktalk)
+[ -z "$containers" ] || docker stop $containers
 ```
 
-`docker compose -f deployment/local/compose.yml --env-file .env down --volumes` also **deletes local PostgreSQL, object-store, and other named-volume data**, including Caddy's local CA; use it only to intentionally reset the environment. If ports 5432, 5173, or 8333 are occupied, stop the conflicting service or configure an explicit port override. If HTTPS is untrusted, repeat the [local HTTPS trust step](#3-trust-the-local-https-certificate-and-open-the-app) and confirm `DOMAIN` matches the hostname you opened. If API startup fails, inspect `migrate` and `api` logs before deleting data.
+Grafana is `http://127.0.0.1:3001` by default (`admin`, your `GRAFANA_ADMIN_PASSWORD`). Prometheus/Loki/Alloy and the existing VM dashboards remain part of the stack. The system dashboard measures Docker Desktop's Linux VM, not physical macOS or a managed DB server. See [observability](../../documentation/api/observability.md). Resource OCR remains fixed at 200 OCR pages and English Tesseract data; rate/OCR limits are code constants.
 
-Run the repository checks before submitting code:
+## Verification
 
-```bash
+Development checks (not operator-host prerequisites):
+
+```sh
+node --test deployment/local/tests/start.test.mjs
+node --test deployment/local/tests/start.runtime.test.mjs
 npm run format:check
 npm run lint
 npm run typecheck
 npm test
 npm run build
 ```
+
+The runtime suite owns distinct disposable projects/DB/storage and removes only its own fixtures. It does not send real mail or reuse the operator's default project. Never run live Resend acceptance checks as routine validation; any real inbox test requires separate explicit authorization.
+
+## Importing a Piazza class
+
+To populate a new installation with a real course, first create a normal ChalkTalk account, then import a Piazza class you belong to. Read the password without placing it in shell history:
+
+```bash
+api_container=$(docker ps -q --filter label=com.docker.compose.project=chalktalk --filter label=com.docker.compose.service=api)
+export PIAZZA_EMAIL=you@school.edu
+printf 'Existing ChalkTalk owner email: '; read -r CHALKTALK_OWNER_EMAIL
+read -rsp 'Piazza password: ' PIAZZA_PASSWORD; printf '\n'
+export PIAZZA_PASSWORD
+docker exec -i \
+  -e PIAZZA_EMAIL -e PIAZZA_PASSWORD "$api_container" \
+  npm run db:import:piazza -- --owner "$CHALKTALK_OWNER_EMAIL" --class "CSE 416" --save piazza-cse416.json
+unset PIAZZA_PASSWORD
+```
+
+Run this after the stack is up. `PIAZZA_EMAIL` signs in to Piazza; `CHALKTALK_OWNER_EMAIL` must be an existing ChalkTalk account and can be different. The API container already has the database connection and npm dependencies; `--save` writes into the repository's bind mount. To re-import a saved export, run `docker exec -i "$api_container" npm run db:import:piazza -- --owner "$CHALKTALK_OWNER_EMAIL" --from piazza-cse416.json`.
+
+The `--owner` ChalkTalk account must already exist and becomes the course instructor; your own Piazza posts are attributed to it. Every other Piazza author becomes a course member with their Piazza name and role (professor → instructor, TA, student) and a placeholder `@piazza.invalid` email. These historical attribution accounts receive discarded random passwords; they are not shared demo logins. Questions, notes, instructor and student answers, followups and replies, folders (as tags), pins, endorsements, and helpful votes are imported with their original timestamps. Piazza HTML becomes Markdown, and images and attachments stay linked to Piazza. Polls become notes without their options. Piazza hides anonymous authors from students, so those posts belong to one shared "Anonymous Piazza user". A student account also sees only its own private posts and cannot read the roster or emails.
+
+The command fetches one request per second, so a large class takes several minutes. Run it again at any time: matching Piazza ids add new content and refresh edited content without duplicating anything, and content deleted in ChalkTalk stays deleted. `--save` keeps the fetched data, and `--from piazza-cse416.json` re-imports from that file without contacting Piazza. Piazza has no public API; this uses the internal API its own website calls, which may change without notice.
+
+### CI-owned transport fixtures
+
+Existing CI browser and observability checks use `deployment/local/tests/ci-start.mjs` with an explicit `ct-modular-*` project. This development-only harness runs the canonical launcher and injects a test-only process preload into the owned API/worker commands. It accepts synthetic Resend sends in memory without provider network handoff; normal provider configuration still uses the official HTTPS origin. It is not imported by application startup and introduces no operator environment bypass. The harness requires development Node, unlike `start.sh`. Fixture inspection/teardown helpers refuse projects outside the reserved fixture namespace; CI cleanup is not product startup behavior.

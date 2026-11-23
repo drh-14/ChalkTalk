@@ -1,0 +1,8 @@
+[
+  { "value": "mail@example.test", "valid": true },
+  { "value": "ChalkTalk <mail@example.test>", "valid": true },
+  { "value": "mail@-bad.example.test", "valid": false },
+  { "value": "mail@example-.test", "valid": false },
+  { "value": "mail@example.test>", "valid": false },
+  { "value": "two@example.test,other@example.test", "valid": false }
+]

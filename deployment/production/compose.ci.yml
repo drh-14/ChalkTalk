@@ -15,6 +15,7 @@ x-api: &api
     FRONTEND_ORIGINS: https://localhost:5173
     FRONTEND_BASE_URL: https://localhost:5173
     EMAIL_PROVIDER: resend
+    EMAIL_FROM: CI <mail@example.test>
     RESEND_API_KEY: re_ci_only_mock_key
     RESEND_API_BASE_URL: http://host.docker.internal:3339
     S3_ENDPOINT: http://host.docker.internal:54321/storage/v1/s3

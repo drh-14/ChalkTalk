@@ -370,9 +370,12 @@ integration("CourseService PostgreSQL lifecycle", () => {
   });
   it("enforces explicit removal and empty idempotency keys through HTTP", async () => {
     const environment = loadEnvironment({
-      AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-      FRONTEND_ORIGINS: "https://app.example.edu",
-      FRONTEND_BASE_URL: "https://app.example.edu",
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+        FRONTEND_ORIGINS: "https://app.example.edu",
+        FRONTEND_BASE_URL: "https://app.example.edu",
+      },
     });
     const app = createApp({
       environment,
@@ -419,9 +422,12 @@ integration("CourseService PostgreSQL lifecycle", () => {
   });
   it("forbids self-targeted membership administration after If-Match checks through HTTP", async () => {
     const environment = loadEnvironment({
-      AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-      FRONTEND_ORIGINS: "https://app.example.edu",
-      FRONTEND_BASE_URL: "https://app.example.edu",
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+        FRONTEND_ORIGINS: "https://app.example.edu",
+        FRONTEND_BASE_URL: "https://app.example.edu",
+      },
     });
     const app = createApp({
       environment,
@@ -532,9 +538,12 @@ integration("CourseService PostgreSQL lifecycle", () => {
   });
   it("uses incarnation-aware HTTP validators and rejects stale deletion after rejoin", async () => {
     const environment = loadEnvironment({
-      AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-      FRONTEND_ORIGINS: "https://app.example.edu",
-      FRONTEND_BASE_URL: "https://app.example.edu",
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+        FRONTEND_ORIGINS: "https://app.example.edu",
+        FRONTEND_BASE_URL: "https://app.example.edu",
+      },
     });
     const app = createApp({
       environment,

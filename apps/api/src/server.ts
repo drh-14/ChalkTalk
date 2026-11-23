@@ -53,9 +53,9 @@ const semantic = embeddingConfig
   : undefined;
 const emailSender = createEmailSender(environment);
 const authService = new AuthService(pool, environment, emailSender);
-const { bucket, endpoint, client } = loadObjectStorageConfig();
+const { bucket, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
-if (endpoint) await ensureStorageBucket(s3, bucket, !environment.production);
+await ensureStorageBucket(s3, bucket, false);
 pool.on("error", () => {
   logApiEvent(observability, "database_pool_error");
 });

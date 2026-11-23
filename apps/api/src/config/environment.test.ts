@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadEnvironment, loadObjectStorageConfig } from "./environment.js";
-import { RESEND_EMAIL_FROM, RESOURCE_TEXT_OCR_CONFIG } from "./constants.js";
+import { RESOURCE_TEXT_OCR_CONFIG } from "./constants.js";
 
 const base = {
   AUTH_TOKEN_SECRET: "this-is-a-development-secret-that-is-long-enough",
@@ -16,16 +16,19 @@ const productionMonitoring = {
 describe("authentication environment", () => {
   it("uses fixed rate limits even when legacy environment values are overridden", () => {
     const environment = loadEnvironment({
-      ...base,
-      RATE_LIMIT_VERIFICATION_EMAIL: "999",
-      RATE_LIMIT_VERIFICATION_IP: "0",
-      RATE_LIMIT_LOGIN_EMAIL: "999",
-      RATE_LIMIT_LOGIN_IP: "0",
-      RATE_LIMIT_RESET_EMAIL: "999",
-      RATE_LIMIT_RESET_IP: "0",
-      RATE_LIMIT_SIGNUP_IP: "999",
-      RATE_LIMIT_COLLABORATION_CREATE_USER: "0",
-      RATE_LIMIT_COLLABORATION_TICKET_USER: "999",
+      NODE_ENV: "test",
+      ...{
+        ...base,
+        RATE_LIMIT_VERIFICATION_EMAIL: "999",
+        RATE_LIMIT_VERIFICATION_IP: "0",
+        RATE_LIMIT_LOGIN_EMAIL: "999",
+        RATE_LIMIT_LOGIN_IP: "0",
+        RATE_LIMIT_RESET_EMAIL: "999",
+        RATE_LIMIT_RESET_IP: "0",
+        RATE_LIMIT_SIGNUP_IP: "999",
+        RATE_LIMIT_COLLABORATION_CREATE_USER: "0",
+        RATE_LIMIT_COLLABORATION_TICKET_USER: "999",
+      },
     });
     expect(environment.rateLimits).toEqual({
       verificationPerEmail: 5,
@@ -42,53 +45,76 @@ describe("authentication environment", () => {
 
   it("uses localhost frontend defaults while retaining valid overrides", () => {
     const defaults = loadEnvironment({
-      AUTH_TOKEN_SECRET: base.AUTH_TOKEN_SECRET,
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET: base.AUTH_TOKEN_SECRET,
+      },
     });
     expect(defaults.frontendOrigins).toEqual(
       new Set(["https://localhost:5173"]),
     );
     expect(defaults.frontendBaseUrl).toBe("https://localhost:5173");
-    expect(loadEnvironment(base).frontendBaseUrl).toBe(
+    expect(loadEnvironment({ NODE_ENV: "test", ...base }).frontendBaseUrl).toBe(
       "https://app.example.edu",
     );
     expect(() =>
       loadEnvironment({
-        ...base,
-        FRONTEND_BASE_URL: "https://other.example.edu",
+        NODE_ENV: "test",
+        ...{
+          ...base,
+          FRONTEND_BASE_URL: "https://other.example.edu",
+        },
       }),
     ).toThrow("FRONTEND_BASE_URL");
   });
 
   it("selects local services by default and all managed services with NODE_ENV=production", () => {
-    expect(loadEnvironment(base).production).toBe(false);
+    expect(loadEnvironment({ NODE_ENV: "test", ...base }).production).toBe(
+      false,
+    );
     expect(
-      loadEnvironment({ ...base, NODE_ENV: "development" }).production,
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{
+          ...base,
+          NODE_ENV: "development",
+          EMAIL_PROVIDER: "resend",
+          EMAIL_FROM: "mail@example.test",
+          RESEND_API_KEY: "synthetic",
+        },
+      }).production,
     ).toBe(false);
 
     expect(
       loadEnvironment({
-        ...base,
-        NODE_ENV: "production",
-        DATABASE_URL:
-          "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
-        RESEND_API_KEY: "re_test",
-        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
-        ...productionMonitoring,
+        NODE_ENV: "test",
+        ...{
+          ...base,
+          NODE_ENV: "production",
+          DATABASE_URL:
+            "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
+          RESEND_API_KEY: "re_test",
+          EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+          ...productionMonitoring,
+        },
       }).production,
     ).toBe(true);
     for (const value of ["FALSE", "1", "yes", "", " true "])
-      expect(() => loadEnvironment({ ...base, NODE_ENV: value })).toThrow(
-        "NODE_ENV must be development, test, or production",
-      );
+      expect(() =>
+        loadEnvironment({ NODE_ENV: "test", ...{ ...base, NODE_ENV: value } }),
+      ).toThrow("NODE_ENV must be development, test, or production");
     for (const legacy of [
       "LOCAL_DATABASE",
       "LOCAL_FILE_STORE",
       "PRODUCTION",
       "PROD",
     ]) {
-      expect(() => loadEnvironment({ ...base, [legacy]: "false" })).toThrow(
-        `Remove ${legacy}; deployment mode comes from NODE_ENV`,
-      );
+      expect(() =>
+        loadEnvironment({
+          NODE_ENV: "test",
+          ...{ ...base, [legacy]: "false" },
+        }),
+      ).toThrow(`Remove ${legacy}; deployment mode comes from NODE_ENV`);
       expect(() =>
         loadObjectStorageConfig({
           [legacy]: "false",
@@ -112,9 +138,12 @@ describe("authentication environment", () => {
     ])
       expect(() =>
         loadEnvironment({
-          ...base,
-          NODE_ENV: "production",
-          DATABASE_URL: databaseUrl,
+          NODE_ENV: "test",
+          ...{
+            ...base,
+            NODE_ENV: "production",
+            DATABASE_URL: databaseUrl,
+          },
         }),
       ).toThrow("DATABASE_URL");
   });
@@ -140,20 +169,29 @@ describe("authentication environment", () => {
     ])
       expect(() =>
         loadEnvironment({
-          ...production,
-          DATABASE_URL: `${databaseUrl}${suffix}`,
+          NODE_ENV: "test",
+          ...{
+            ...production,
+            DATABASE_URL: `${databaseUrl}${suffix}`,
+          },
         }),
       ).toThrow("sslmode");
 
     expect(
       loadEnvironment({
-        ...production,
-        DATABASE_URL: `${databaseUrl}?sslmode=verify-full`,
+        NODE_ENV: "test",
+        ...{
+          ...production,
+          DATABASE_URL: `${databaseUrl}?sslmode=verify-full`,
+        },
       }).databaseUrl,
     ).toBe(`${databaseUrl}?sslmode=verify-full`);
 
     expect(
-      loadEnvironment({ ...base, DATABASE_URL: databaseUrl }).databaseUrl,
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, DATABASE_URL: databaseUrl },
+      }).databaseUrl,
     ).toBe(databaseUrl);
   });
   it("requires hostname-verifying TLS for production Supabase connections", () => {
@@ -162,20 +200,26 @@ describe("authentication environment", () => {
     for (const mode of ["require", "verify-ca"]) {
       expect(() =>
         loadEnvironment({
-          ...base,
-          NODE_ENV: "production",
-          RESEND_API_KEY: "re_test",
-          DATABASE_URL: `${databaseUrl}?sslmode=${mode}`,
+          NODE_ENV: "test",
+          ...{
+            ...base,
+            NODE_ENV: "production",
+            RESEND_API_KEY: "re_test",
+            DATABASE_URL: `${databaseUrl}?sslmode=${mode}`,
+          },
         }),
       ).toThrow("sslmode=verify-full");
     }
     expect(
       loadEnvironment({
-        ...base,
-        NODE_ENV: "production",
-        RESEND_API_KEY: "re_test",
-        DATABASE_URL: `${databaseUrl}?sslmode=verify-full`,
-        ...productionMonitoring,
+        NODE_ENV: "test",
+        ...{
+          ...base,
+          NODE_ENV: "production",
+          RESEND_API_KEY: "re_test",
+          DATABASE_URL: `${databaseUrl}?sslmode=verify-full`,
+          ...productionMonitoring,
+        },
       }).databaseUrl,
     ).toBe(`${databaseUrl}?sslmode=verify-full`);
   });
@@ -194,8 +238,10 @@ describe("authentication environment", () => {
       "postgresql://custom_role.abcdefghijklmnopqrst:secret@aws-12-eu-west-1.pooler.supabase.com:5432/postgres?sslmode=verify-full",
     ])
       expect(
-        loadEnvironment({ ...production, DATABASE_URL: databaseUrl })
-          .databaseUrl,
+        loadEnvironment({
+          NODE_ENV: "test",
+          ...{ ...production, DATABASE_URL: databaseUrl },
+        }).databaseUrl,
       ).toBe(databaseUrl);
     for (const databaseUrl of [
       "postgresql://postgres:secret@db.example.com:5432/postgres?sslmode=verify-full",
@@ -210,75 +256,109 @@ describe("authentication environment", () => {
       "postgresql://postgres:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full",
     ])
       expect(() =>
-        loadEnvironment({ ...production, DATABASE_URL: databaseUrl }),
+        loadEnvironment({
+          NODE_ENV: "test",
+          ...{ ...production, DATABASE_URL: databaseUrl },
+        }),
       ).toThrow("DATABASE_URL");
   });
   it("supports explicit local Resend and requires production credentials", () => {
-    expect(loadEnvironment(base).email.provider).toBe("smtp");
-    expect(() => loadEnvironment({ ...base, NODE_ENV: "production" })).toThrow(
-      "DATABASE_URL",
+    expect(loadEnvironment({ NODE_ENV: "test", ...base }).email.provider).toBe(
+      "smtp",
     );
+    expect(() =>
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, NODE_ENV: "production" },
+      }),
+    ).toThrow("DATABASE_URL");
     const production = {
       ...base,
       NODE_ENV: "production",
       DATABASE_URL:
         "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
     };
-    expect(() => loadEnvironment(production)).toThrow("RESEND_API_KEY");
+    expect(() => loadEnvironment({ NODE_ENV: "test", ...production })).toThrow(
+      "RESEND_API_KEY",
+    );
     expect(
       loadEnvironment({
-        ...production,
-        RESEND_API_KEY: "re_test",
-        ...productionMonitoring,
+        NODE_ENV: "test",
+        ...{
+          ...production,
+          RESEND_API_KEY: "re_test",
+          ...productionMonitoring,
+        },
       }).email,
     ).toMatchObject({
       provider: "resend",
       from: "ChalkTalk <notifications@joinchalktalk.com>",
     });
     expect(() =>
-      loadEnvironment({ ...production, EMAIL_PROVIDER: "smtp" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...production, EMAIL_PROVIDER: "smtp" },
+      }),
     ).toThrow("NODE_ENV=production requires Resend");
     expect(
       loadEnvironment({
-        ...production,
-        RESEND_API_KEY: "re_test",
-        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
-        ...productionMonitoring,
+        NODE_ENV: "test",
+        ...{
+          ...production,
+          RESEND_API_KEY: "re_test",
+          EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+          ...productionMonitoring,
+        },
       }).email.provider,
     ).toBe("resend");
     expect(() =>
-      loadEnvironment({ ...base, EMAIL_PROVIDER: "invalid" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, EMAIL_PROVIDER: "invalid" },
+      }),
     ).toThrow("EMAIL_PROVIDER");
     expect(() =>
-      loadEnvironment({ ...base, EMAIL_PROVIDER: "resend" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, EMAIL_PROVIDER: "resend" },
+      }),
     ).toThrow("RESEND_API_KEY");
+    expect(() =>
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{
+          ...base,
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "re_test",
+        },
+      }),
+    ).toThrow("EMAIL_FROM");
     expect(
       loadEnvironment({
-        ...base,
-        EMAIL_PROVIDER: "resend",
-        RESEND_API_KEY: "re_test",
-      }).email,
-    ).toMatchObject({ from: RESEND_EMAIL_FROM });
-    expect(
-      loadEnvironment({
-        ...base,
-        EMAIL_PROVIDER: "resend",
-        RESEND_API_KEY: "re_test",
-        EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+        NODE_ENV: "test",
+        ...{
+          ...base,
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "re_test",
+          EMAIL_FROM: "ChalkTalk <noreply@example.edu>",
+        },
       }).email,
     ).toEqual({
       provider: "resend",
-      from: RESEND_EMAIL_FROM,
+      from: "ChalkTalk <noreply@example.edu>",
       resendApiKey: "re_test",
       resendApiBaseUrl: "https://api.resend.com",
     });
     expect(
       loadEnvironment({
-        ...base,
-        EMAIL_PROVIDER: "resend",
-        RESEND_API_KEY: "re_test",
-        EMAIL_FROM: "sender@example.edu",
-        RESEND_API_BASE_URL: "http://127.0.0.1:4000/",
+        NODE_ENV: "test",
+        ...{
+          ...base,
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "re_test",
+          EMAIL_FROM: "sender@example.edu",
+          RESEND_API_BASE_URL: "http://127.0.0.1:4000/",
+        },
       }).email,
     ).toMatchObject({ resendApiBaseUrl: "http://127.0.0.1:4000" });
     for (const endpoint of [
@@ -290,11 +370,14 @@ describe("authentication environment", () => {
     ]) {
       expect(() =>
         loadEnvironment({
-          ...base,
-          EMAIL_PROVIDER: "resend",
-          RESEND_API_KEY: "re_test",
-          EMAIL_FROM: "sender@example.edu",
-          RESEND_API_BASE_URL: endpoint,
+          NODE_ENV: "test",
+          ...{
+            ...base,
+            EMAIL_PROVIDER: "resend",
+            RESEND_API_KEY: "re_test",
+            EMAIL_FROM: "sender@example.edu",
+            RESEND_API_BASE_URL: endpoint,
+          },
         }),
       ).toThrow("RESEND_API_BASE_URL");
     }
@@ -311,8 +394,11 @@ describe("authentication environment", () => {
     };
     expect(
       loadEnvironment({
-        ...production,
-        RESEND_API_BASE_URL: "https://api.resend.com/",
+        NODE_ENV: "test",
+        ...{
+          ...production,
+          RESEND_API_BASE_URL: "https://api.resend.com/",
+        },
       }).email,
     ).toMatchObject({ resendApiBaseUrl: "https://api.resend.com" });
     for (const endpoint of [
@@ -321,21 +407,32 @@ describe("authentication environment", () => {
       "http://api.resend.com",
     ])
       expect(() =>
-        loadEnvironment({ ...production, RESEND_API_BASE_URL: endpoint }),
+        loadEnvironment({
+          NODE_ENV: "test",
+          ...{ ...production, RESEND_API_BASE_URL: endpoint },
+        }),
       ).toThrow("RESEND_API_BASE_URL must be https://api.resend.com");
   });
   it("disables proxy trust by default and only accepts one explicit hop", () => {
-    expect(loadEnvironment(base).trustProxyHops).toBe(0);
+    expect(loadEnvironment({ NODE_ENV: "test", ...base }).trustProxyHops).toBe(
+      0,
+    );
     expect(
-      loadEnvironment({ ...base, TRUST_PROXY_HOPS: "1" }).trustProxyHops,
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, TRUST_PROXY_HOPS: "1" },
+      }).trustProxyHops,
     ).toBe(1);
     for (const value of ["2", "true", "-1", "localhost"])
       expect(() =>
-        loadEnvironment({ ...base, TRUST_PROXY_HOPS: value }),
+        loadEnvironment({
+          NODE_ENV: "test",
+          ...{ ...base, TRUST_PROXY_HOPS: value },
+        }),
       ).toThrow("TRUST_PROXY_HOPS");
   });
   it("parses configured origins and documented rate defaults", () => {
-    const environment = loadEnvironment(base);
+    const environment = loadEnvironment({ NODE_ENV: "test", ...base });
     expect(environment.frontendOrigins).toEqual(
       new Set(["https://app.example.edu"]),
     );
@@ -352,23 +449,37 @@ describe("authentication environment", () => {
 
   it("bounds the live session idle period", () => {
     expect(
-      loadEnvironment({ ...base, COLLABORATION_IDLE_END_MINUTES: "45" })
-        .collaboration.idleEndMinutes,
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, COLLABORATION_IDLE_END_MINUTES: "45" },
+      }).collaboration.idleEndMinutes,
     ).toBe(45);
     expect(() =>
-      loadEnvironment({ ...base, COLLABORATION_IDLE_END_MINUTES: "0" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, COLLABORATION_IDLE_END_MINUTES: "0" },
+      }),
     ).toThrow("COLLABORATION_IDLE_END_MINUTES");
     expect(() =>
-      loadEnvironment({ ...base, COLLABORATION_IDLE_END_MINUTES: "10081" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, COLLABORATION_IDLE_END_MINUTES: "10081" },
+      }),
     ).toThrow("one week");
   });
 
   it("rejects insecure origins and weak credential-hashing secrets", () => {
     expect(() =>
-      loadEnvironment({ ...base, FRONTEND_ORIGINS: "http://app.example.edu" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, FRONTEND_ORIGINS: "http://app.example.edu" },
+      }),
     ).toThrow("HTTPS");
     expect(() =>
-      loadEnvironment({ ...base, AUTH_TOKEN_SECRET: "too-short" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, AUTH_TOKEN_SECRET: "too-short" },
+      }),
     ).toThrow("32 characters");
   });
 });
@@ -516,26 +627,37 @@ describe("object storage environment", () => {
 
 describe("observability environment", () => {
   it("does not enable monitoring without a token", () => {
-    expect(loadEnvironment(base).observability.enabled).toBe(false);
+    expect(
+      loadEnvironment({ NODE_ENV: "test", ...base }).observability.enabled,
+    ).toBe(false);
   });
 
   it("rejects a short configured metrics token", () => {
     expect(() =>
-      loadEnvironment({ ...base, METRICS_TOKEN: "too-short" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...base, METRICS_TOKEN: "too-short" },
+      }),
     ).toThrow("METRICS_TOKEN");
   });
 
   it("enables local monitoring when token and spool are configured", () => {
     expect(() =>
       loadEnvironment({
-        ...base,
-        METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+        NODE_ENV: "test",
+        ...{
+          ...base,
+          METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+        },
       }),
     ).toThrow("LOG_SPOOL_DIRECTORY");
     const environment = loadEnvironment({
-      ...base,
-      METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
-      LOG_SPOOL_DIRECTORY: "/var/log/chalktalk",
+      NODE_ENV: "test",
+      ...{
+        ...base,
+        METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+        LOG_SPOOL_DIRECTORY: "/var/log/chalktalk",
+      },
     });
     expect(environment.observability).toEqual({
       enabled: true,
@@ -552,20 +674,31 @@ describe("observability environment", () => {
         "postgresql://app:secret@db.abcdefghijklmnopqrst.supabase.co:5432/chalktalk?sslmode=verify-full",
       RESEND_API_KEY: "re_test",
     };
-    expect(() => loadEnvironment(production)).toThrow("METRICS_TOKEN");
+    expect(() => loadEnvironment({ NODE_ENV: "test", ...production })).toThrow(
+      "METRICS_TOKEN",
+    );
     expect(() =>
-      loadEnvironment({ ...production, METRICS_TOKEN: "short" }),
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{ ...production, METRICS_TOKEN: "short" },
+      }),
     ).toThrow("METRICS_TOKEN");
     expect(() =>
       loadEnvironment({
-        ...production,
-        METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+        NODE_ENV: "test",
+        ...{
+          ...production,
+          METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+        },
       }),
     ).toThrow("LOG_SPOOL_DIRECTORY");
     const environment = loadEnvironment({
-      ...production,
-      METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
-      LOG_SPOOL_DIRECTORY: "/var/log/chalktalk",
+      NODE_ENV: "test",
+      ...{
+        ...production,
+        METRICS_TOKEN: "a-separate-operator-token-at-least-32-chars",
+        LOG_SPOOL_DIRECTORY: "/var/log/chalktalk",
+      },
     });
     expect(environment.observability).toEqual({
       enabled: true,
@@ -594,5 +727,121 @@ describe("resource text extraction configuration", () => {
         delete process.env.RESOURCE_OCR_LANGUAGES;
       else process.env.RESOURCE_OCR_LANGUAGES = previousLanguages;
     }
+  });
+});
+
+describe("local HTTPS email providers", () => {
+  const local = { ...base, EMAIL_FROM: "ChalkTalk <mail@example.test>" };
+  it.each([
+    { EMAIL_PROVIDER: "resend", RESEND_API_KEY: "synthetic-resend" },
+    { EMAIL_PROVIDER: "sendgrid", SENDGRID_API_KEY: "synthetic-sendgrid" },
+    {
+      EMAIL_PROVIDER: "ses",
+      SES_REGION: "us-east-1",
+      SES_CREDENTIALS_MODE: "explicit",
+      SES_ACCESS_KEY_ID: "synthetic-key",
+      SES_SECRET_ACCESS_KEY: "synthetic-secret",
+      SES_SESSION_TOKEN: "synthetic-token",
+    },
+    {
+      EMAIL_PROVIDER: "ses",
+      SES_REGION: "us-east-1",
+      SES_CREDENTIALS_MODE: "default-chain",
+      AWS_ACCESS_KEY_ID: "synthetic-aws",
+      AWS_SECRET_ACCESS_KEY: "synthetic-aws-secret",
+    },
+  ])("retains explicit local provider/sender: $EMAIL_PROVIDER", (settings) => {
+    const environment = loadEnvironment({
+      NODE_ENV: "test",
+      ...{ ...local, ...settings },
+    });
+    expect(environment.email.provider).toBe(settings.EMAIL_PROVIDER);
+    expect(environment.email.from).toBe(local.EMAIL_FROM);
+  });
+  it.each([
+    "SENDGRID_API_KEY",
+    "SES_REGION",
+    "SES_CREDENTIALS_MODE",
+    "SES_ACCESS_KEY_ID",
+    "SES_SECRET_ACCESS_KEY",
+    "SES_SESSION_TOKEN",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_SECURE",
+    "SMTP_USER",
+    "SMTP_PASSWORD",
+    "SMTP_FROM",
+  ])("rejects even one other-provider field %s without leaking it", (key) => {
+    expect(() =>
+      loadEnvironment({
+        NODE_ENV: "test",
+        ...{
+          ...local,
+          EMAIL_PROVIDER: "resend",
+          RESEND_API_KEY: "synthetic",
+          [key]: "sensitive-sentinel",
+        },
+      }),
+    ).toThrow(key);
+  });
+  it.each([
+    { EMAIL_PROVIDER: "sendgrid", SENDGRID_API_KEY: "" },
+    {
+      EMAIL_PROVIDER: "ses",
+      SES_REGION: "us-east-1",
+      SES_CREDENTIALS_MODE: "explicit",
+      SES_SESSION_TOKEN: "sensitive-sentinel",
+    },
+    {
+      EMAIL_PROVIDER: "ses",
+      SES_REGION: "us-east-1",
+      SES_CREDENTIALS_MODE: "default-chain",
+      SES_ACCESS_KEY_ID: "sensitive-sentinel",
+    },
+    {
+      EMAIL_PROVIDER: "ses",
+      SES_REGION: "us-east-1",
+      SES_CREDENTIALS_MODE: "invalid",
+    },
+  ])("rejects incomplete local configuration", (settings) => {
+    expect(() =>
+      loadEnvironment({ NODE_ENV: "test", ...{ ...local, ...settings } }),
+    ).toThrow();
+  });
+  it("requires and validates the local sender", () => {
+    for (const EMAIL_FROM of [
+      undefined,
+      "",
+      "not-a-mailbox",
+      "mail@example.test\r\nBcc: private@example.test",
+    ])
+      expect(() =>
+        loadEnvironment({
+          NODE_ENV: "test",
+          ...{
+            ...base,
+            EMAIL_PROVIDER: "resend",
+            RESEND_API_KEY: "synthetic",
+            EMAIL_FROM,
+          },
+        }),
+      ).toThrow("EMAIL_FROM");
+  });
+  it("passes explicit S3 session credentials independently of generic AWS", () => {
+    const storage = loadObjectStorageConfig({
+      S3_ENDPOINT: "https://store.example.test/path",
+      S3_BUCKET: "fixture",
+      S3_REGION: "us-east-1",
+      S3_ACCESS_KEY_ID: "fixture-key",
+      S3_SECRET_ACCESS_KEY: "fixture-secret",
+      S3_SESSION_TOKEN: "fixture-token",
+      AWS_ACCESS_KEY_ID: "unrelated",
+      AWS_SECRET_ACCESS_KEY: "unrelated",
+    });
+    expect(storage.client.credentials).toEqual({
+      accessKeyId: "fixture-key",
+      secretAccessKey: "fixture-secret",
+      sessionToken: "fixture-token",
+    });
   });
 });

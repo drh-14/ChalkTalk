@@ -345,7 +345,10 @@ integration("collaboration session lifecycle effects", () => {
       [authSession, fixture.users.bob, Buffer.from(`logout-${authSession}`)],
     );
     const environment = loadEnvironment({
-      AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+      },
     });
     await new AuthService(pool, environment, {
       send: async () => undefined,

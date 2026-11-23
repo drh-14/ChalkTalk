@@ -28,8 +28,9 @@ const url = process.env.TEST_DATABASE_URL,
     endpoint,
     forcePathStyle: true,
     credentials: {
-      accessKeyId: "chalktalk-local",
-      secretAccessKey: "chalktalk-local-secret",
+      accessKeyId: process.env.TEST_S3_ACCESS_KEY_ID ?? "chalktalk-local",
+      secretAccessKey:
+        process.env.TEST_S3_SECRET_ACCESS_KEY ?? "chalktalk-local-secret",
     },
   });
 const org = randomUUID(),
@@ -158,8 +159,9 @@ const clientFor = (at: string) =>
     forcePathStyle: true,
     maxAttempts: 1,
     credentials: {
-      accessKeyId: "chalktalk-local",
-      secretAccessKey: "chalktalk-local-secret",
+      accessKeyId: process.env.TEST_S3_ACCESS_KEY_ID ?? "chalktalk-local",
+      secretAccessKey:
+        process.env.TEST_S3_SECRET_ACCESS_KEY ?? "chalktalk-local-secret",
     },
   });
 /** Runs `work` with a real S3 client whose object store answers with `respond`, or refuses connections. */

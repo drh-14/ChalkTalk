@@ -32,9 +32,12 @@ const ids = {
 let admin: Pool;
 let pool: Pool;
 const environment = loadEnvironment({
-  AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-  FRONTEND_ORIGINS: "https://app.example.edu",
-  FRONTEND_BASE_URL: "https://app.example.edu",
+  NODE_ENV: "test",
+  ...{
+    AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+    FRONTEND_ORIGINS: "https://app.example.edu",
+    FRONTEND_BASE_URL: "https://app.example.edu",
+  },
 });
 const cookie = "__Host-chalktalk_session=opaque";
 const sessionId = "01a0e5cc-58af-7467-8ab1-740de2b8c8c3";

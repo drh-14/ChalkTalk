@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Run after `docker compose -f deployment/local/compose.yml --env-file .env up --build --wait` with a fresh local stack.
+# Run only against an explicitly owned launcher-started disposable fixture.
 node --test deployment/local/tests/api-dashboard.test.mjs deployment/local/tests/compose-logging.test.mjs
-compose() { docker compose -f deployment/local/compose.yml --env-file .env "$@"; }
+. "$(dirname "$0")/fixture-services.sh"
 api_request() {
   compose exec -T api node -e '
     fetch("http://localhost:3000/api/v1/never-a-real-route?private=do-not-log-this", {
@@ -136,7 +136,7 @@ if compose logs api | grep -Eq 'do-not-log-this|private@example.edu' ||
    [ "$(log_count api 'private@example.edu')" -ne 0 ]; then
   echo "Private request data appeared in local logs" >&2; exit 1
 fi
-password=$(sed -n 's/^GRAFANA_ADMIN_PASSWORD=//p' .env | tail -1)
+password=${TEST_GRAFANA_PASSWORD:?Set the owned fixture Grafana password}
 count=0
 until curl --fail --silent --show-error --user "admin:$password" "http://127.0.0.1:${GRAFANA_PORT:-3001}/api/dashboards/uid/chalktalk-api" | grep -q 'ChalkTalk API observability'; do
   count=$((count + 1))

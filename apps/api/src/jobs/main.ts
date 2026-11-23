@@ -1,3 +1,4 @@
+import { ensureStorageBucket } from "../course-files/bucket.js";
 import { S3Client } from "@aws-sdk/client-s3";
 import { join } from "node:path";
 import { createEmailSender } from "../auth/email.js";
@@ -52,6 +53,7 @@ pool.on("error", () => logApiEvent(observability, "database_pool_error"));
 const resourceText = RESOURCE_TEXT_OCR_CONFIG;
 const { bucket, client } = loadObjectStorageConfig();
 const s3 = new S3Client(client);
+await ensureStorageBucket(s3, bucket, false);
 const worker = new JobWorker(
   pool,
   undefined,

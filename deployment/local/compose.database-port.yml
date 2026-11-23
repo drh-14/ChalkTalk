@@ -1,0 +1,4 @@
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${LOCAL_DATABASE_HOST_PORT}:5432"

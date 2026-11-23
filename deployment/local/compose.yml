@@ -1,74 +1,20 @@
-name: ${COMPOSE_PROJECT_NAME:-chalktalk}
+name: chalktalk
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg17
-    environment:
-      POSTGRES_DB: chalktalk
-      POSTGRES_USER: chalktalk
-      POSTGRES_PASSWORD: chalktalk
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U chalktalk -d chalktalk"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-  seaweedfs:
-    image: chrislusf/seaweedfs:4.48
-    command: ["mini", "-dir=/data"]
-    environment:
-      AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:-chalktalk-local}
-      AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
-    ports:
-      - "127.0.0.1:8333:8333"
-    volumes:
-      - seaweedfs-data:/data
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'curl --fail --silent --show-error --max-time 2 --aws-sigv4 aws:amz:us-east-1:s3 --user "$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY" http://127.0.0.1:8333/ > /dev/null',
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-
   migrate:
     build: &api-development-build
       context: ../..
       dockerfile: deployment/local/Dockerfile.api
     working_dir: /app
     env_file:
-      - ../../${COMPOSE_ENV_FILE:-.env}
+      - path: ${LOCAL_APPLICATION_ENV_FILE:?Use deployment/local/start.sh}
+        format: raw
     environment: &api-environment
-      DATABASE_URL: postgresql://chalktalk:chalktalk@postgres:5432/chalktalk
-      FRONTEND_ORIGINS: https://${DOMAIN:-localhost}:${WEB_PORT:-5173}
-      FRONTEND_BASE_URL: https://${DOMAIN:-localhost}:${WEB_PORT:-5173}
       NODE_ENV: development
-      TRUST_PROXY_HOPS: "1"
-      EMAIL_PROVIDER: resend
-      S3_ENDPOINT: http://seaweedfs:8333
-      S3_BUCKET: chalktalk-resources
-      S3_REGION: us-east-1
-      S3_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:-chalktalk-local}
-      S3_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-chalktalk-local-secret}
-      METRICS_TOKEN: ${METRICS_TOKEN:-}
-      LOG_SPOOL_DIRECTORY: /var/log/chalktalk
-    command:
-      [
-        "sh",
-        "-c",
-        'if [ "$${PORT+x}" ]; then echo ''Local Compose: remove PORT from .env; the API uses internal port 3000.'' >&2; exit 1; fi; npm run db:migrate && npm run migrate:semantic --workspace=@chalktalk/api',
-      ]
+    command: ["node", "--import", "tsx", "deployment/local/runtime.ts"]
     volumes:
       - ../..:/app
       - api-node-modules:/app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   api:
     logging:
@@ -79,7 +25,8 @@ services:
     build: *api-development-build
     working_dir: /app
     env_file:
-      - ../../${COMPOSE_ENV_FILE:-.env}
+      - path: ${LOCAL_APPLICATION_ENV_FILE:?Use deployment/local/start.sh}
+        format: raw
     environment: *api-environment
     command: npm run dev --workspace=@chalktalk/api
     volumes:
@@ -88,11 +35,6 @@ services:
       - api-log-spool:/var/log/chalktalk
     expose:
       - "3000"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      seaweedfs:
-        condition: service_healthy
     healthcheck:
       test:
         [
@@ -118,7 +60,8 @@ services:
       dockerfile: deployment/local/Dockerfile.worker
     working_dir: /app
     env_file:
-      - ../../${COMPOSE_ENV_FILE:-.env}
+      - path: ${LOCAL_APPLICATION_ENV_FILE:?Use deployment/local/start.sh}
+        format: raw
     environment: *api-environment
     command: npm run dev:worker --workspace=@chalktalk/api
     volumes:
@@ -127,11 +70,6 @@ services:
       - worker-log-spool:/var/log/chalktalk
     expose:
       - "3000"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      seaweedfs:
-        condition: service_healthy
 
   collaboration:
     logging:
@@ -145,7 +83,8 @@ services:
       dockerfile: deployment/local/Dockerfile.collaboration
     working_dir: /app
     env_file:
-      - ../../${COMPOSE_ENV_FILE:-.env}
+      - path: ${LOCAL_APPLICATION_ENV_FILE:?Use deployment/local/start.sh}
+        format: raw
     environment: *api-environment
     command: npm run dev:collab --workspace=@chalktalk/api
     volumes:
@@ -153,9 +92,6 @@ services:
       - collaboration-node-modules:/app/node_modules
     expose:
       - "3100"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
     healthcheck:
       test:
         [
@@ -175,8 +111,6 @@ services:
       context: ../..
       dockerfile: deployment/local/Dockerfile.frontend
     working_dir: /app
-    env_file:
-      - ../../${COMPOSE_ENV_FILE:-.env}
     environment:
       VITE_API_PROXY_TARGET: http://api:3000
       VITE_COLLABORATION_PROXY_TARGET: ws://collaboration:3100

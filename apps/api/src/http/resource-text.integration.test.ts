@@ -32,8 +32,9 @@ const endpoint = process.env.TEST_S3_ENDPOINT,
     endpoint,
     forcePathStyle: true,
     credentials: {
-      accessKeyId: "chalktalk-local",
-      secretAccessKey: "chalktalk-local-secret",
+      accessKeyId: process.env.TEST_S3_ACCESS_KEY_ID ?? "chalktalk-local",
+      secretAccessKey:
+        process.env.TEST_S3_SECRET_ACCESS_KEY ?? "chalktalk-local-secret",
     },
   });
 const schema = `resource_text_http_${process.pid}_${Date.now()}`,
@@ -45,9 +46,12 @@ const schema = `resource_text_http_${process.pid}_${Date.now()}`,
   outsider = randomUUID();
 let pool: Pool, admin: Pool;
 const environment = loadEnvironment({
-  AUTH_TOKEN_SECRET: "secret-that-is-longer-than-thirty-two-characters",
-  FRONTEND_ORIGINS: "https://app.example.edu",
-  FRONTEND_BASE_URL: "https://app.example.edu",
+  NODE_ENV: "test",
+  ...{
+    AUTH_TOKEN_SECRET: "secret-that-is-longer-than-thirty-two-characters",
+    FRONTEND_ORIGINS: "https://app.example.edu",
+    FRONTEND_BASE_URL: "https://app.example.edu",
+  },
 });
 const app = (userId: string) =>
   createApp({

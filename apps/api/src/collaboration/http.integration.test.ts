@@ -11,9 +11,12 @@ import { createTestSchema, seedCourse } from "./test-fixtures.js";
 const url = process.env.TEST_DATABASE_URL;
 const integration = url ? describe : describe.skip;
 const environment = loadEnvironment({
-  AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-  FRONTEND_ORIGINS: "https://app.example.edu",
-  FRONTEND_BASE_URL: "https://app.example.edu",
+  NODE_ENV: "test",
+  ...{
+    AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+    FRONTEND_ORIGINS: "https://app.example.edu",
+    FRONTEND_BASE_URL: "https://app.example.edu",
+  },
 });
 const cookie = "__Host-chalktalk_session=opaque";
 
