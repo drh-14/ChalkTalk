@@ -20,3 +20,11 @@ class MaintenanceHarnessTest(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn('disposable GitHub-hosted Linux CI runner', result.stderr)
+
+    def test_partial_acceptance_modes_are_rejected(self):
+        for mode in ('--baseline', '--preflight-only'):
+            with self.subTest(mode=mode):
+                result = subprocess.run(['bash', str(RUNNER), '22.04', mode],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('Expected exactly one Ubuntu release', result.stderr)

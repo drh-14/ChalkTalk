@@ -12,6 +12,14 @@
         state: present
     - name: Establish bootstrap hold before applying maintenance
       ansible.builtin.import_tasks: ../tasks/maintenance-prepare.yml
+    - name: Observe bootstrap hold before package work
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "from pathlib import Path; import sys; sys.exit(Path('/var/lib/chalktalk-maintenance/bootstrap.hold').read_text().strip() != sys.argv[1])"
+          - "{{ maintenance_bootstrap_token.stdout }}"
+      changed_when: false
     - name: Apply managed security maintenance
       ansible.builtin.import_tasks: ../tasks/maintenance.yml
     - name: Clear only owned fixture bootstrap hold

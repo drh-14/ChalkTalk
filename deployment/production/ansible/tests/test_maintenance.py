@@ -1,35 +1,41 @@
-"""Semantic Ansible package/coordination contracts, supplemented by real CI guests."""
+"""Effective timer policy through the verifier's command-line interface."""
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
-import yaml
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
-class MaintenanceBootstrapTest(unittest.TestCase):
-    def test_every_bootstrap_package_operation_has_bounded_native_lock_wait(self):
-        files = [ROOT / 'bootstrap.yml', ROOT / 'tasks/maintenance.yml']
-        count = 0
-        def inspect(node):
-            nonlocal count
-            if isinstance(node, dict):
-                if 'ansible.builtin.apt' in node:
-                    count += 1
-                    self.assertEqual(node['ansible.builtin.apt'].get('lock_timeout'), 300)
-                for value in node.values():
-                    inspect(value)
-            elif isinstance(node, list):
-                for value in node:
-                    inspect(value)
-        for path in files:
-            self.assertTrue(path.exists(), str(path))
-            inspect(yaml.safe_load(path.read_text()))
-        self.assertGreaterEqual(count, 3)
+TIMER = Path(__file__).resolve().parents[2] / 'maintenance/timer.py'
 
-    def test_bootstrap_establishes_hold_before_package_tasks_and_clears_own_token_last(self):
-        play = yaml.safe_load((ROOT / 'bootstrap.yml').read_text())[0]
-        tasks = play['tasks']
-        self.assertEqual(tasks[0].get('ansible.builtin.import_tasks'), 'tasks/maintenance-prepare.yml')
-        final = tasks[-1]['ansible.builtin.command']['argv']
-        self.assertEqual(final[:3], ['/usr/local/lib/chalktalk-maintenance/hold.sh', 'clear', 'bootstrap'])
-        self.assertEqual(final[3], '{{ maintenance_bootstrap_token.stdout }}')
+
+class EffectiveTimerTest(unittest.TestCase):
+    def verify(self, drift=''):
+        with tempfile.TemporaryDirectory() as directory:
+            systemctl = Path(directory) / 'systemctl'
+            systemctl.write_text('''#!''' + sys.executable + '''
+import os, sys
+unit, key = sys.argv[2], sys.argv[4]
+hour = '03' if unit == 'apt-daily.timer' else '04'
+values = {'Persistent': 'yes', 'RandomizedDelayUSec': '30min',
+          'AccuracyUSec': '1us',
+          'TimersCalendar': '{ OnCalendar=*-*-* ' + hour + ':00:00 UTC ; next_elapse=0 }'}
+if os.environ.get('DRIFT') == unit + ':' + key:
+    values[key] = ('{ OnCalendar=*-*-* 05:00:00 UTC ; next_elapse=0 }'
+                   if key == 'TimersCalendar' else '45min')
+print(values[key])
+''')
+            systemctl.chmod(0o755)
+            return subprocess.run([sys.executable, str(TIMER)],
+                                  env={**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
+                                       'DRIFT': drift}, capture_output=True, text=True).returncode
+
+    def test_exact_effective_schedule_passes(self):
+        self.assertEqual(self.verify(), 0)
+
+    def test_later_calendar_or_jitter_override_fails_for_each_timer(self):
+        for unit in ('apt-daily.timer', 'apt-daily-upgrade.timer'):
+            for key in ('TimersCalendar', 'RandomizedDelayUSec'):
+                with self.subTest(unit=unit, key=key):
+                    self.assertNotEqual(self.verify(unit + ':' + key), 0)

@@ -15,6 +15,23 @@ import apt_pkg
 
 
 class EffectiveMaintenancePolicyTest(unittest.TestCase):
+    def test_later_effective_timer_drift_fails_read_only_status(self):
+        for name, setting in (('apt-daily', 'OnCalendar=*-*-* 05:00:00 UTC'),
+                              ('apt-daily-upgrade', 'RandomizedDelaySec=45m')):
+            override = Path('/etc/systemd/system/' + name + '.timer.d/zz-acceptance-drift.conf')
+            override.write_text('[Timer]\n' + setting + '\n')
+            try:
+                subprocess.run(['systemctl', 'daemon-reload'], check=True)
+                check = subprocess.run(['python3', '/usr/local/lib/chalktalk-maintenance/timer.py'])
+                self.assertNotEqual(check.returncode, 0)
+                status = subprocess.run(['python3', '/usr/local/lib/chalktalk-maintenance/status.py'],
+                                        capture_output=True, text=True)
+                self.assertNotEqual(status.returncode, 0)
+                self.assertIn('timers unhealthy', json.loads(status.stdout)['issues'])
+            finally:
+                override.unlink()
+                subprocess.run(['systemctl', 'daemon-reload'], check=True)
+
     def test_only_exact_security_origins_are_effectively_allowed(self):
         apt_pkg.init()
         release = subprocess.check_output(

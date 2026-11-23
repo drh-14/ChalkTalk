@@ -6,8 +6,7 @@ case "$release" in
   22.04|24.04|26.04) ;;
   *) echo 'Expected Ubuntu 22.04, 24.04 or 26.04' >&2; exit 2 ;;
 esac
-mode="${2:-acceptance}"
-[[ "$mode" == acceptance || "$mode" == --baseline || "$mode" == --preflight-only ]] || { echo 'Invalid acceptance mode' >&2; exit 2; }
+[[ $# == 1 ]] || { echo 'Expected exactly one Ubuntu release' >&2; exit 2; }
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted && "${RUNNER_OS:-}" == Linux ]] || {
   echo 'Privileged systemd acceptance requires a disposable GitHub-hosted Linux CI runner' >&2
   exit 2
@@ -62,40 +61,49 @@ docker exec "$guest" sh -eu -c '
   apt-cache policy >/dev/null
   systemd-run --wait --pipe /bin/true
 '
-if [[ "$mode" == --preflight-only ]]; then
-  echo "Ubuntu $release prerequisite preflight passed; NOT full maintenance acceptance"
-  exit 0
-fi
-if [[ "$mode" != --baseline ]]; then
-  command -v ansible-playbook >/dev/null
-  ssh-keygen -q -t ed25519 -N '' -f "$work/key"
-  docker exec -i "$guest" sh -c 'cat > /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys' < "$work/key.pub"
-  docker exec "$guest" systemctl start ssh
-  port="$(docker port "$guest" 22/tcp | cut -d: -f2)"
-  docker exec "$guest" cat /etc/ssh/ssh_host_ed25519_key.pub | awk -v port="$port" '{print "[127.0.0.1]:" port, $1, $2}' > "$work/known_hosts"
-  printf '[guest]\n127.0.0.1 ansible_user=root ansible_port=%s ansible_python_interpreter=/usr/bin/python3\n' "$port" > "$work/inventory"
-  export ANSIBLE_SSH_ARGS="-o UserKnownHostsFile=$work/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
-  docker exec "$guest" install -d -m 0755 /etc/docker
-  docker exec -i "$guest" sh -c 'cat > /etc/docker/daemon.json' <<'DOCKER_SENTINEL'
+command -v ansible-playbook >/dev/null
+ssh-keygen -q -t ed25519 -N '' -f "$work/key"
+docker exec -i "$guest" sh -c 'cat > /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys' < "$work/key.pub"
+docker exec "$guest" systemctl start ssh
+port="$(docker port "$guest" 22/tcp | cut -d: -f2)"
+docker exec "$guest" cat /etc/ssh/ssh_host_ed25519_key.pub | awk -v port="$port" '{print "[127.0.0.1]:" port, $1, $2}' > "$work/known_hosts"
+printf '[guest]\n127.0.0.1 ansible_user=root ansible_port=%s ansible_python_interpreter=/usr/bin/python3\n' "$port" > "$work/inventory"
+export ANSIBLE_SSH_ARGS="-o UserKnownHostsFile=$work/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
+docker exec "$guest" install -d -m 0755 /etc/docker
+docker exec -i "$guest" sh -c 'cat > /etc/docker/daemon.json' <<'DOCKER_SENTINEL'
 {"live-restore":true,"labels":["disposable-acceptance-preserve"]}
 DOCKER_SENTINEL
-  docker exec -i "$guest" sh -c 'cat > /etc/apt/apt.conf.d/50acceptance-exclusion' <<'EXCLUSION'
+docker exec -i "$guest" sh -c 'cat > /etc/apt/apt.conf.d/50acceptance-exclusion' <<'EXCLUSION'
 Unattended-Upgrade::Package-Blacklist { "^ct-operator$"; };
 EXCLUSION
-  ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml"
-  docker exec "$guest" /usr/local/lib/chalktalk-maintenance/hold.sh set update
-  docker exec "$guest" sh -c 'find /usr/local/lib/chalktalk-maintenance /etc/systemd/system/apt-daily*.d -maxdepth 1 -type f -exec sha256sum {} \; ; sha256sum /etc/apt/apt.conf.d/zz-chalktalk-maintenance /etc/needrestart/conf.d/99-chalktalk.conf /etc/docker/daemon.json /etc/apt/apt.conf.d/50acceptance-exclusion' | sort > "$work/before.hashes"
-  ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml" | tee "$work/second-apply.log"
-  grep -Eq 'changed=0[[:space:]]+unreachable=0[[:space:]]+failed=0' "$work/second-apply.log" || { echo 'Second Ansible application was not idempotent' >&2; exit 1; }
-  docker exec "$guest" sh -c 'find /usr/local/lib/chalktalk-maintenance /etc/systemd/system/apt-daily*.d -maxdepth 1 -type f -exec sha256sum {} \; ; sha256sum /etc/apt/apt.conf.d/zz-chalktalk-maintenance /etc/needrestart/conf.d/99-chalktalk.conf /etc/docker/daemon.json /etc/apt/apt.conf.d/50acceptance-exclusion' | sort > "$work/after.hashes"
-  diff -u "$work/before.hashes" "$work/after.hashes"
-  docker exec "$guest" test -f /var/lib/chalktalk-maintenance/update.hold
-  docker exec "$guest" /usr/local/lib/chalktalk-maintenance/hold.sh clear update
-fi
+ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml"
+docker exec "$guest" /usr/local/lib/chalktalk-maintenance/hold.sh set update
+docker exec "$guest" sh -c 'find /usr/local/lib/chalktalk-maintenance /etc/systemd/system/apt-daily*.d -maxdepth 1 -type f -exec sha256sum {} \; ; sha256sum /etc/apt/apt.conf.d/zz-chalktalk-maintenance /etc/needrestart/conf.d/99-chalktalk.conf /etc/docker/daemon.json /etc/apt/apt.conf.d/50acceptance-exclusion' | sort > "$work/before.hashes"
+ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml" | tee "$work/second-apply.log"
+grep -Eq 'changed=0[[:space:]]+unreachable=0[[:space:]]+failed=0' "$work/second-apply.log" || { echo 'Second Ansible application was not idempotent' >&2; exit 1; }
+docker exec "$guest" sh -c 'find /usr/local/lib/chalktalk-maintenance /etc/systemd/system/apt-daily*.d -maxdepth 1 -type f -exec sha256sum {} \; ; sha256sum /etc/apt/apt.conf.d/zz-chalktalk-maintenance /etc/needrestart/conf.d/99-chalktalk.conf /etc/docker/daemon.json /etc/apt/apt.conf.d/50acceptance-exclusion' | sort > "$work/after.hashes"
+diff -u "$work/before.hashes" "$work/after.hashes"
+docker exec "$guest" test -f /var/lib/chalktalk-maintenance/update.hold
+docker exec "$guest" /usr/local/lib/chalktalk-maintenance/hold.sh clear update
 docker exec -i "$guest" sh -c 'cat > /opt/maintenance_repository.py' < "$script_dir/maintenance_repository.py"
 docker exec -i "$guest" sh -c 'cat > /opt/maintenance_process.py' < "$script_dir/maintenance_process.py"
 docker exec -i "$guest" sh -c 'cat > /opt/maintenance-deploy.sh' < "$script_dir/../../deploy.sh"
 docker exec -e PYTHONPATH=/opt -i "$guest" python3 - -v < "$script_dir/maintenance_guest.py"
+
+docker exec -i "$guest" sh -c 'cat > /etc/systemd/system/apt-daily-upgrade.timer.d/zz-acceptance-drift.conf' <<'TIMER_DRIFT'
+[Timer]
+RandomizedDelaySec=45m
+TIMER_DRIFT
+docker exec "$guest" systemctl daemon-reload
+if ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml"; then
+  echo 'Unsafe later timer configuration was incorrectly accepted' >&2
+  exit 1
+fi
+docker exec "$guest" test -f /var/lib/chalktalk-maintenance/bootstrap.hold
+docker exec "$guest" test -f /etc/systemd/system/apt-daily-upgrade.timer.d/zz-acceptance-drift.conf
+docker exec "$guest" sh -c '/usr/local/lib/chalktalk-maintenance/hold.sh clear bootstrap "$(cat /var/lib/chalktalk-maintenance/bootstrap.hold)"'
+docker exec "$guest" rm /etc/systemd/system/apt-daily-upgrade.timer.d/zz-acceptance-drift.conf
+docker exec "$guest" systemctl daemon-reload
 
 # An unsafe later operator fragment must fail verification and leave the bootstrap hold.
 docker exec -i "$guest" sh -c 'cat > /etc/apt/apt.conf.d/zzzz-acceptance-drift' <<'DRIFT'

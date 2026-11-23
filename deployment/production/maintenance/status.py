@@ -110,6 +110,7 @@ def command(*args):
 def collect():
     sys.dont_write_bytecode = True
     import policy
+    import timer
     state = Path('/var/lib/chalktalk-maintenance')
     result = {'version': 1, 'operations': {}, 'holds': [], 'policy_issues': [],
               'timers_healthy': False, 'dpkg_audit_clean': False, 'reboot_required': None,
@@ -143,7 +144,7 @@ def collect():
         result.update(policy.candidates())
     attempt('policy', policy_state)
     def timers():
-        healthy = True
+        healthy = timer.check()
         for unit in ('apt-daily', 'apt-daily-upgrade'):
             enabled = command('systemctl', 'is-enabled', '--quiet', unit + '.timer')
             active = command('systemctl', 'is-active', '--quiet', unit + '.timer')

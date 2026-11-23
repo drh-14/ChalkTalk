@@ -45,6 +45,13 @@
       - /usr/local/lib/chalktalk-maintenance/policy.py
   changed_when: false
 
+- name: Verify effective timer schedule before enabling timers
+  ansible.builtin.command:
+    argv:
+      - python3
+      - /usr/local/lib/chalktalk-maintenance/timer.py
+  changed_when: false
+
 - name: Enable persistent maintenance timers after policy verification
   ansible.builtin.systemd_service:
     name: "{{ item }}.timer"
