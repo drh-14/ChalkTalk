@@ -116,6 +116,13 @@
       - "{{ maintenance_bootstrap_token.stdout }}"
   changed_when: false
 
+- name: Install APT Python bindings after bootstrap hold enforcement
+  become: true
+  ansible.builtin.apt:
+    name: python3-apt
+    state: present
+    lock_timeout: 300
+
 - name: Capture existing operator exclusions once before policy installation
   become: true
   ansible.builtin.command:

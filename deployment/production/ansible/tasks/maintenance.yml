@@ -4,7 +4,6 @@
     name:
       - unattended-upgrades
       - needrestart
-      - python3-apt
     state: present
     lock_timeout: 300
 

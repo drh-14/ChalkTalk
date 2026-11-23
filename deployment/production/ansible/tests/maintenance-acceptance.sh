@@ -34,7 +34,7 @@ printf 'Pinned guest base: %s\n' "$base"
 cat > "$work/Dockerfile" <<EOF_DOCKER
 FROM $base
 ENV DEBIAN_FRONTEND=noninteractive container=docker
-RUN apt-get update --error-on=any && apt-get install -y --no-install-recommends systemd systemd-sysv dbus python3 python3-apt unattended-upgrades needrestart openssh-server gnupg apt-utils dpkg-dev gcc libc6-dev && apt-get clean
+RUN apt-get update --error-on=any && apt-get install -y --no-install-recommends systemd systemd-sysv dbus python3 openssh-server gnupg apt-utils dpkg-dev gcc libc6-dev && apt-get clean
 STOPSIGNAL SIGRTMIN+3
 RUN mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
 CMD ["/sbin/init"]
@@ -56,7 +56,8 @@ fi
 docker exec "$guest" sh -eu -c '
   test "$(cat /proc/1/comm)" = systemd
   cat /etc/os-release
-  dpkg-query -W apt systemd unattended-upgrades needrestart python3-apt
+  dpkg-query -W apt systemd
+  ! dpkg-query -s python3-apt 2>/dev/null | grep -q "Status: install ok installed"
   apt-config dump >/dev/null
   apt-cache policy >/dev/null
   systemd-run --wait --pipe /bin/true
@@ -65,6 +66,7 @@ command -v ansible-playbook >/dev/null
 ssh-keygen -q -t ed25519 -N '' -f "$work/key"
 docker exec -i "$guest" sh -c 'cat > /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys' < "$work/key.pub"
 docker exec "$guest" systemctl start ssh
+docker exec "$guest" sh -c '! dpkg-query -s python3-apt 2>/dev/null | grep -q "Status: install ok installed"'
 port="$(docker port "$guest" 22/tcp | cut -d: -f2)"
 docker exec "$guest" cat /etc/ssh/ssh_host_ed25519_key.pub | awk -v port="$port" '{print "[127.0.0.1]:" port, $1, $2}' > "$work/known_hosts"
 printf '[chalktalk]\n127.0.0.1 ansible_user=root ansible_port=%s ansible_python_interpreter=/usr/bin/python3\n' "$port" > "$work/inventory"
@@ -86,7 +88,25 @@ STOCK_START
 docker exec "$guest" systemctl start apt-daily.service apt-daily-upgrade.service
 docker exec "$guest" python3 -c 'from pathlib import Path; assert Path("/opt/stock-starts").read_text().splitlines() == ["update", "install"]'
 docker exec "$guest" cp -p /opt/acceptance-apt.systemd.daily /usr/lib/apt/apt.systemd.daily
+docker exec -i "$guest" sh -c 'cat > /etc/apt/sources.list.d/acceptance-bootstrap-failure.list' <<'BOOTSTRAP_FAILURE'
+deb [trusted=yes] file:/opt/absent-acceptance-bootstrap ./
+BOOTSTRAP_FAILURE
+docker exec "$guest" touch -d '2 hours ago' /var/lib/apt/lists
+if DOMAIN=fixture.invalid DATABASE_URL=fixture SUPABASE_STORAGE_ENDPOINT=fixture SUPABASE_STORAGE_BUCKET=fixture SUPABASE_STORAGE_REGION=fixture SUPABASE_STORAGE_ACCESS_KEY_ID=fixture SUPABASE_STORAGE_SECRET_ACCESS_KEY=fixture AUTH_TOKEN_SECRET=0123456789abcdef0123456789abcdef RESEND_API_KEY=fixture METRICS_TOKEN=0123456789abcdef0123456789abcdef GRAFANA_ADMIN_PASSWORD=0123456789abcdef0123456789abcdef ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/../bootstrap.yml" > "$work/fresh-bootstrap.log" 2>&1; then
+  echo 'Fresh bootstrap unexpectedly passed broken package sources' >&2
+  exit 1
+fi
+grep -Fq 'TASK [Install host prerequisites]' "$work/fresh-bootstrap.log" || {
+  cat "$work/fresh-bootstrap.log" >&2
+  echo 'Fresh bootstrap failed before capturing operator exclusions' >&2
+  exit 1
+}
+docker exec "$guest" python3 -c 'import apt_pkg, json; from pathlib import Path; assert "^ct-operator$" in json.loads(Path("/var/lib/chalktalk-maintenance/exclusions.json").read_text())["patterns"]'
+docker exec "$guest" test -s /var/lib/chalktalk-maintenance/bootstrap.hold
+docker exec "$guest" sh -c '/usr/local/lib/chalktalk-maintenance/hold.sh clear bootstrap "$(cat /var/lib/chalktalk-maintenance/bootstrap.hold)"'
+docker exec "$guest" rm /etc/apt/sources.list.d/acceptance-bootstrap-failure.list
 ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml"
+docker exec "$guest" python3 -c 'import apt_pkg; assert apt_pkg.config.value_list("Unattended-Upgrade::Package-Blacklist")'
 docker exec "$guest" /usr/local/lib/chalktalk-maintenance/hold.sh set update
 docker exec "$guest" sh -c 'find /usr/local/lib/chalktalk-maintenance /etc/systemd/system/apt-daily*.d -maxdepth 1 -type f -exec sha256sum {} \; ; sha256sum /etc/apt/apt.conf.d/zz-chalktalk-maintenance /etc/needrestart/conf.d/99-chalktalk.conf /etc/docker/daemon.json /etc/apt/apt.conf.d/50acceptance-exclusion' | sort > "$work/before.hashes"
 ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml" | tee "$work/second-apply.log"
