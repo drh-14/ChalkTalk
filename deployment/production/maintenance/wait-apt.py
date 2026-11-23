@@ -8,6 +8,30 @@ import sys
 import time
 
 
+WRAPPER = b'/usr/local/lib/chalktalk-maintenance/apt-run.sh'
+
+
+def stock_service_busy(service):
+    result = subprocess.run(
+        ['systemctl', 'show', service, '-p', 'ActiveState', '-p', 'ControlPID', '-p', 'MainPID'],
+        capture_output=True, text=True)
+    if result.returncode:
+        return True
+    properties = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    if properties.get('ActiveState') in ('inactive', 'failed'):
+        return False
+    try:
+        pid = int(properties.get('ControlPID') or '0') or int(properties.get('MainPID') or '0')
+        if pid <= 0:
+            return True
+        args = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+    except (OSError, ValueError):
+        return True
+    mode = b'update' if service == 'apt-daily.service' else b'install'
+    return not (len(args) >= 3 and args[0].rsplit(b'/', 1)[-1] == b'bash'
+                and args[1] == WRAPPER and args[2] == mode)
+
+
 def main():
     deadline = time.monotonic() + float(os.environ.get('CHALKTALK_LOCK_WAIT', '600'))
     root = Path(os.environ.get('CHALKTALK_APT_LOCK_ROOT', '/'))
@@ -33,10 +57,7 @@ def main():
                     break
             if not busy:
                 for service in ('apt-daily.service', 'apt-daily-upgrade.service'):
-                    result = subprocess.run(
-                        ['systemctl', 'show', service, '-p', 'ActiveState', '--value'],
-                        capture_output=True, text=True)
-                    if result.returncode or result.stdout.strip() not in ('inactive', 'failed'):
+                    if stock_service_busy(service):
                         busy = True
                         break
             if not busy:
