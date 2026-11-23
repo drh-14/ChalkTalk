@@ -107,11 +107,43 @@ esac
     def calls(self):
         return self.log.read_text() if self.log.exists() else ""
 
+    def test_deployment_hold_blocks_stage_before_mutation_but_not_finish(self):
+        state = self.root / 'maintenance'
+        state.mkdir()
+        (state / 'deployment.hold').write_text('operator\n')
+        failed = self.run_script('stage', CHALKTALK_MAINTENANCE_STATE=str(state))
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertFalse((self.root / 'releases').exists())
+        self.assertEqual(self.calls(), '')
+        (state / 'deployment.hold').unlink()
+        self.assertEqual(self.run_script('stage', CHALKTALK_MAINTENANCE_STATE=str(state)).returncode, 0)
+        (state / 'deployment.hold').write_text('operator\n')
+        self.assertEqual(self.run_script('finish', CHALKTALK_MAINTENANCE_STATE=str(state)).returncode, 0)
+        self.assertTrue((state / 'deployment.hold').exists())
+
+    def test_update_hold_does_not_block_deployment(self):
+        state = self.root / 'maintenance'
+        state.mkdir()
+        (state / 'update.hold').write_text('operator\n')
+        result = self.run_script('stage', CHALKTALK_MAINTENANCE_STATE=str(state))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((state / 'update.hold').exists())
+
+    def test_host_lock_failure_is_bounded_and_has_no_release_mutation(self):
+        self.write_executable('flock', '#!/bin/sh\necho "$*" >> "$TEST_CALLS"\nexit 1\n')
+        for phase in ('stage', 'finish'):
+            with self.subTest(phase=phase):
+                result = self.run_script(phase)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / 'releases').exists())
+                self.assertFalse((self.root / 'shared/pending.sha').exists())
+                self.assertIn('-w 600', self.calls())
+
     def test_exact_release_build_smoke_finish_and_repeat(self):
         result = self.run_script("stage")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(" build web api collaboration worker", self.calls())
-        self.assertLess(self.calls().index("flock -x 9"), self.calls().index(" build web"))
+        self.assertLess(self.calls().index("flock -x -w 600 9"), self.calls().index(" build web"))
         self.assertIn(" up -d --wait", self.calls())
         self.assertIn("apps/api/dist/deployment/smoke.js " + SHA, self.calls())
         self.assertEqual((self.root / "shared" / "pending.sha").read_text().strip(), SHA)

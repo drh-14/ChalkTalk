@@ -1,0 +1,31 @@
+name: Check VM maintenance
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: vars.PRODUCTION_VM_MAINTENANCE_CHECK_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 5
+    concurrency:
+      group: chalktalk-production-vm
+      cancel-in-progress: false
+    steps:
+      - name: Check out trusted main code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Read maintenance status with pinned SSH identity
+        env:
+          MAINTENANCE_ENABLED: ${{ vars.PRODUCTION_VM_MAINTENANCE_CHECK_ENABLED }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+        run: bash deployment/production/maintenance/check.sh

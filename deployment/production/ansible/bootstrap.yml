@@ -50,9 +50,13 @@
       ansible.builtin.import_tasks: tasks/validate-env.yml
 
   tasks:
+    - name: Establish maintenance coordination before package mutations
+      ansible.builtin.import_tasks: tasks/maintenance-prepare.yml
+
     - name: Install host prerequisites
       become: true
       ansible.builtin.apt:
+        lock_timeout: 300
         name:
           - ca-certificates
           - git
@@ -103,6 +107,7 @@
     - name: Install Docker Engine and Compose plugin
       become: true
       ansible.builtin.apt:
+        lock_timeout: 300
         name:
           - docker-ce
           - docker-ce-cli
@@ -279,6 +284,10 @@
         fail_msg: Production environment file permissions are not private.
       no_log: true
 
+    - name: Establish verified automatic security maintenance
+      become: true
+      ansible.builtin.import_tasks: tasks/maintenance.yml
+
     - name: Detect pending reboot
       become: true
       ansible.builtin.stat:
@@ -288,3 +297,13 @@
     - name: Report reboot status without rebooting
       ansible.builtin.debug:
         msg: "VM bootstrap complete. Reboot required: {{ bootstrap_reboot_required.stat.exists }}. No release was deployed."
+
+    - name: Clear only this successful invocation's bootstrap hold
+      become: true
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/chalktalk-maintenance/hold.sh
+          - clear
+          - bootstrap
+          - "{{ maintenance_bootstrap_token.stdout }}"
+      changed_when: false

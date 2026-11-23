@@ -1,0 +1,67 @@
+---
+- name: Install authoritative security origin policy
+  ansible.builtin.template:
+    src: "{{ maintenance_template_root | default(playbook_dir ~ '/templates') }}/maintenance-apt.conf.j2"
+    dest: /etc/apt/apt.conf.d/zz-chalktalk-maintenance
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install narrowly deferred runtime restart policy
+  ansible.builtin.template:
+    src: "{{ maintenance_template_root | default(playbook_dir ~ '/templates') }}/maintenance-needrestart.conf.j2"
+    dest: /etc/needrestart/conf.d/99-chalktalk.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Create managed APT timer drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.timer.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - apt-daily
+    - apt-daily-upgrade
+
+- name: Configure persistent UTC APT timers
+  ansible.builtin.template:
+    src: "{{ maintenance_template_root | default(playbook_dir ~ '/templates') }}/maintenance-timer.conf.j2"
+    dest: "/etc/systemd/system/{{ item.name }}.timer.d/99-chalktalk.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { name: apt-daily, hour: "03" }
+    - { name: apt-daily-upgrade, hour: "04" }
+  register: maintenance_timers
+
+- name: Reload verified timer definitions without stopping package services
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  changed_when: false
+
+- name: Create root-owned maintenance helper directory
+  ansible.builtin.file:
+    path: /usr/local/lib/chalktalk-maintenance
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install root-controlled hold helpers
+  ansible.builtin.copy:
+    src: "{{ maintenance_source_root | default(playbook_dir ~ '/../maintenance') }}/{{ item }}"
+    dest: "/usr/local/lib/chalktalk-maintenance/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - common.sh
+    - hold.sh
+    - apt-run.sh
+    - policy.py
+    - run.py
+    - status.py

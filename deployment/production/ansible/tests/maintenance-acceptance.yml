@@ -1,0 +1,24 @@
+---
+- name: Apply maintenance policy to disposable Ubuntu guest
+  hosts: all
+  gather_facts: true
+  vars:
+    maintenance_source_root: "{{ playbook_dir }}/../../maintenance"
+    maintenance_template_root: "{{ playbook_dir }}/../templates"
+  tasks:
+    - name: Create disposable bootstrap identity
+      ansible.builtin.user:
+        name: ubuntu
+        state: present
+    - name: Establish bootstrap hold before applying maintenance
+      ansible.builtin.import_tasks: ../tasks/maintenance-prepare.yml
+    - name: Apply managed security maintenance
+      ansible.builtin.import_tasks: ../tasks/maintenance.yml
+    - name: Clear only owned fixture bootstrap hold
+      ansible.builtin.command:
+        argv:
+          - /usr/local/lib/chalktalk-maintenance/hold.sh
+          - clear
+          - bootstrap
+          - "{{ maintenance_bootstrap_token.stdout }}"
+      changed_when: false

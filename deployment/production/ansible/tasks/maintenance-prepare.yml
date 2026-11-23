@@ -1,0 +1,82 @@
+---
+- name: Inspect existing host coordination directories
+  become: true
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /srv/chalktalk
+    - /srv/chalktalk/shared
+  register: maintenance_directories
+
+- name: Create absent coordination directories without changing existing permissions
+  become: true
+  ansible.builtin.file:
+    path: "{{ item.item }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: "{{ '0700' if item.item.endswith('/shared') else '0750' }}"
+  when: not item.stat.exists
+  loop: "{{ maintenance_directories.results }}"
+
+- name: Inspect host deployment lock
+  become: true
+  ansible.builtin.stat:
+    path: /srv/chalktalk/shared/deploy.lock
+  register: maintenance_host_lock
+
+- name: Reject unsafe existing host lock
+  ansible.builtin.assert:
+    that:
+      - not maintenance_host_lock.stat.exists or (maintenance_host_lock.stat.isreg and not maintenance_host_lock.stat.islnk)
+    fail_msg: The host deployment lock must be a regular file.
+
+- name: Create absent host lock with existing deployment identity
+  become: true
+  ansible.builtin.copy:
+    content: ""
+    dest: /srv/chalktalk/shared/deploy.lock
+    owner: ubuntu
+    group: ubuntu
+    mode: "0600"
+    force: false
+
+- name: Create root-controlled maintenance helper directory
+  become: true
+  ansible.builtin.file:
+    path: /usr/local/lib/chalktalk-maintenance
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install bootstrap coordination helpers before package work
+  become: true
+  ansible.builtin.copy:
+    src: "{{ maintenance_source_root | default(playbook_dir ~ '/../maintenance') }}/{{ item }}"
+    dest: "/usr/local/lib/chalktalk-maintenance/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - common.sh
+    - hold.sh
+
+- name: Create this invocation's bootstrap token
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - import secrets; print(secrets.token_hex(24))
+  register: maintenance_bootstrap_token
+  changed_when: false
+
+- name: Establish persistent bootstrap hold under host lock
+  become: true
+  ansible.builtin.command:
+    argv:
+      - /usr/local/lib/chalktalk-maintenance/hold.sh
+      - set
+      - bootstrap
+      - "{{ maintenance_bootstrap_token.stdout }}"
+  changed_when: false
