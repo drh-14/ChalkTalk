@@ -64,7 +64,9 @@ test("actual Mailpit emails preview answer, followup, and nested reply and open 
     .click();
   await expect(student.page.getByText("Email preference saved")).toBeVisible();
   await student.page.goto(`${BASE}/courses/${courseId}`);
-  await student.page.getByRole("button", { name: "Create post" }).click();
+  await student.page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await student.page.getByRole("textbox", { name: "Post title" }).fill(title);
   await student.page
     .getByRole("textbox", { name: "Post body" })

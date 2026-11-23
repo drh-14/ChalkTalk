@@ -211,7 +211,9 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole("heading", { name: course.name });
-    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.click(
+      screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+    );
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
       "My draft",
@@ -374,7 +376,7 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(
-      await screen.findByRole("button", { name: "Create post" }),
+      await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
     );
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
@@ -417,7 +419,9 @@ describe("ChalkTalk auth entry", () => {
       name: "ChalkTalk",
     });
     expect(logo.getAttribute("href")).toBe("/home");
-    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.click(
+      screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+    );
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
       "My draft",
@@ -451,7 +455,7 @@ describe("ChalkTalk auth entry", () => {
     await screen.findByRole("heading", { name: course.name });
     const banner = within(screen.getByRole("banner"));
     expect(banner.getByRole("link", { name: "ChalkTalk" })).toBeTruthy();
-    expect(banner.getByRole("link", { name: "All courses" })).toBeTruthy();
+    expect(banner.queryByRole("link", { name: "All courses" })).toBeNull();
     expect(screen.getByRole("banner").querySelector(".course-icon")).toBeNull();
     const accountMenu = banner.getByRole("button", {
       name: "Account menu for Ada Lovelace",
@@ -459,7 +463,9 @@ describe("ChalkTalk auth entry", () => {
     await user.click(accountMenu);
     expect(banner.getByText("Ada Lovelace")).toBeTruthy();
     expect(banner.getByRole("button", { name: "Sign out" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.click(
+      screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+    );
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
       "My draft",
@@ -583,7 +589,7 @@ describe("ChalkTalk auth entry", () => {
         .parentElement!.classList.contains("discussion"),
     ).toBe(false);
   });
-  it("guards drafts from All courses and Course resources before requesting unified resources", async () => {
+  it("guards drafts from the logo and Course resources before requesting unified resources", async () => {
     setPath(`/courses/${course.id}`);
     const fetchMock = vi.fn(async (url: string) => {
       if (url.endsWith("/sessions/current"))
@@ -601,12 +607,14 @@ describe("ChalkTalk auth entry", () => {
     render(<App />);
     const banner = within(await screen.findByRole("banner"));
     await banner.findByRole("heading", { name: course.name });
-    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.click(
+      screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+    );
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
       "My draft",
     );
-    await user.click(banner.getByRole("link", { name: "All courses" }));
+    await user.click(banner.getByRole("link", { name: "ChalkTalk" }));
     expect(window.location.pathname).toBe(`/courses/${course.id}`);
     expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
       "value",
@@ -659,6 +667,60 @@ describe("ChalkTalk auth entry", () => {
     expect(screen.queryByText(/Data Structures/)).toBeNull();
     vi.useRealTimers();
   });
+  it("uses the mobile current-section dropdown with existing links and guarded navigation", async () => {
+    setPath(`/courses/${course.id}`);
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    vi.stubGlobal("fetch", withPostDrafts(courseRoutesFetch()));
+    const user = userEvent.setup();
+    render(<App />);
+    const trigger = await screen.findByRole("button", {
+      name: "Current section: Discussion",
+    });
+    expect(screen.queryByRole("link", { name: "Course resources" })).toBeNull();
+    await user.click(trigger);
+    const navigation = screen.getByRole("navigation", {
+      name: "Course navigation",
+    });
+    expect(
+      within(navigation)
+        .getAllByRole("link")
+        .map((n) => n.textContent),
+    ).toEqual([
+      "Discussion",
+      "Threads",
+      "Collaboration",
+      "Course resources",
+      "Course settings",
+      "Statistics",
+    ]);
+    expect(
+      within(navigation)
+        .getByRole("link", { name: "Discussion" })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(trigger);
+    await user.click(trigger);
+    await user.click(screen.getByRole("link", { name: "Discussion" }));
+    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole("link", { name: "Discussion" })).toBeNull();
+    await user.click(trigger);
+    await user.click(screen.getByRole("link", { name: "Course resources" }));
+    await screen.findByRole("button", {
+      name: "Current section: Course resources",
+    });
+    expect(window.location.pathname).toBe(`/courses/${course.id}/resources`);
+    expect(screen.queryByRole("link", { name: "Course resources" })).toBeNull();
+  });
+
   function courseRoutesFetch(options: { posts?: unknown[] } = {}) {
     const member = {
       id: "membership_123",
@@ -722,63 +784,28 @@ describe("ChalkTalk auth entry", () => {
     expect(
       within(panel).queryByRole("link", { name: "All courses" }),
     ).toBeNull();
-    expect(screen.getAllByRole("link", { name: "All courses" })).toHaveLength(
-      1,
-    );
+    expect(screen.queryByRole("link", { name: "All courses" })).toBeNull();
     await user.click(screen.getByRole("link", { name: /Calculus II/ }));
     expect(window.location.pathname).toBe("/courses/course_456");
     await screen.findByRole("heading", { name: "Calculus II" });
     expect(screen.queryByRole("link", { name: /Calculus II/ })).toBeNull();
   });
 
-  it("moves the course tabs to their own row only when one row no longer fits", async () => {
+  it("keeps desktop sections visible without a redundant home button", async () => {
     setPath(`/courses/${course.id}`);
     vi.stubGlobal("fetch", courseRoutesFetch());
-    const resized: (() => void)[] = [];
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(callback: () => void) {
-          resized.push(callback);
-        }
-        observe() {}
-        disconnect() {}
-      },
-    );
-    const rowWidth = 1240;
-    let barWidth = 1500;
-    const scrollWidth = vi
-      .spyOn(Element.prototype, "scrollWidth", "get")
-      .mockImplementation(function (this: Element) {
-        return this.classList.contains("measuring") ? rowWidth : 0;
-      });
-    const clientWidth = vi
-      .spyOn(Element.prototype, "clientWidth", "get")
-      .mockImplementation(function (this: Element) {
-        return this.classList.contains("app-bar") ? barWidth : 0;
-      });
-    const resize = (width: number) => {
-      barWidth = width;
-      act(() => resized.forEach((callback) => callback()));
-    };
-    try {
-      render(<App />);
-      await screen.findByRole("heading", { name: course.name });
-      const bar = document.querySelector("header.app-bar")!;
-      expect(bar.classList.contains("tabs-stacked")).toBe(false);
-      resize(1200);
-      expect(bar.classList.contains("tabs-stacked")).toBe(true);
-      expect(
-        document
-          .querySelector(".app-bar-inner")!
-          .classList.contains("measuring"),
-      ).toBe(false);
-      resize(1240);
-      expect(bar.classList.contains("tabs-stacked")).toBe(false);
-    } finally {
-      scrollWidth.mockRestore();
-      clientWidth.mockRestore();
-    }
+    render(<App />);
+    await screen.findByRole("heading", { name: course.name });
+    expect(
+      screen.queryByRole("button", { name: "Current section: Discussion" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("navigation", { name: "Course navigation" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "All courses" })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "ChalkTalk" }).getAttribute("href"),
+    ).toBe("/home");
   });
 
   it("loads later course pages in the switcher and retries a failed page", async () => {
@@ -975,7 +1002,7 @@ describe("ChalkTalk auth entry", () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(
-      await screen.findByRole("button", { name: "Create post" }),
+      await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
     );
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
@@ -1028,6 +1055,7 @@ describe("ChalkTalk auth entry", () => {
     render(<App />);
     await screen.findByText("Kept question");
     const length = window.history.length;
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     const questions = screen.getByRole("radio", {
       name: "Questions",
     }) as HTMLInputElement;
@@ -1078,6 +1106,7 @@ describe("ChalkTalk auth entry", () => {
     await screen.findByRole("link", {
       name: /Kept pinned note/,
     });
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     const notes = screen.getByRole("radio", {
       name: "Notes",
     }) as HTMLInputElement;
@@ -1197,7 +1226,7 @@ describe("ChalkTalk auth entry", () => {
     render(<App />);
     await user.click(await screen.findByRole("link", { name: "Discussion" }));
     await user.click(
-      await screen.findByRole("button", { name: "Create post" }),
+      await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
     );
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
@@ -1208,7 +1237,9 @@ describe("ChalkTalk auth entry", () => {
     });
     await screen.findByText("Draft saved.");
     expect(confirm).not.toHaveBeenCalled();
-    expect(window.location.pathname).toBe(`/courses/${course.id}`);
+    await waitFor(() =>
+      expect(window.location.pathname).toBe(`/courses/${course.id}`),
+    );
     expect(screen.getByRole("textbox", { name: "Post title" })).toHaveProperty(
       "value",
       "Keep this",
@@ -1406,8 +1437,10 @@ describe("ChalkTalk auth entry", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole("button", { name: "Create post" });
-    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+    await user.click(
+      screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+    );
     await user.type(
       screen.getByRole("textbox", { name: "Post title" }),
       "Unsent draft",

@@ -494,7 +494,10 @@ for (const [size, viewport] of [
       const api = await mockApi(page, { failUpload: true });
       await page.goto(`${origin}/attachments-fixture.html?post=`);
       await page
-        .getByRole("button", { name: "Create post", exact: true })
+        .getByRole("button", {
+          name: /^(?:Create post|New post)$/,
+          exact: true,
+        })
         .click();
       await page
         .getByRole("combobox", { name: "Post type" })

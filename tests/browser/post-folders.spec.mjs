@@ -36,6 +36,12 @@ async function open(
 ) {
   let folders = initialFolders;
   let delayNextSave = Boolean(saveGate);
+  let draft = {
+    courseId: "course-1",
+    content: null,
+    updatedAt: "2026-10-25T00:00:00Z",
+    version: 0,
+  };
   let post = {
     id: "p1",
     courseId: "course-1",
@@ -69,10 +75,22 @@ async function open(
       url = new URL(req.url());
     const path = url.pathname,
       method = req.method();
-    const respond = (data, status = 200) =>
-      route.fulfill({ status, json: { data } });
+    const respond = (data, status = 200, headers = {}) =>
+      route.fulfill({ status, json: { data }, headers });
     if (path === "/api/v1/courses/course-1/members/u1")
       return respond({ role });
+    if (path === "/api/v1/courses/course-1/post-draft") {
+      if (method === "GET")
+        return respond(draft, 200, { ETag: `"v${draft.version}"` });
+      if (method === "PUT") {
+        draft = {
+          ...draft,
+          content: req.postDataJSON().content,
+          version: draft.version + 1,
+        };
+        return respond(draft, 200, { ETag: `"v${draft.version}"` });
+      }
+    }
     if (path === "/api/v1/courses/course-1/post-folders") {
       if (method === "GET") return respond(folders);
       if (method === "POST") {
@@ -183,13 +201,26 @@ async function open(
   return { requests };
 }
 
+async function showFilters(page) {
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  const filters = page.getByRole("dialog", { name: "Post filters" });
+  await expect(filters).toBeVisible();
+  return filters;
+}
+
+async function confirmFolderDeletion(page) {
+  const confirmation = page.getByRole("dialog", { name: "Delete folder" });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "Delete" }).click();
+}
+
 test("staff rename and delete a folder on desktop", async ({ page }) => {
-  page.on("dialog", (dialog) => dialog.accept());
   const state = await open(page, "ta");
-  const filter = page.getByRole("group", { name: "Filter by folder" });
+  const filters = await showFilters(page);
+  const filter = filters.getByRole("group", { name: "Filter by folder" });
   await filter.getByRole("checkbox", { name: "Week 1" }).check();
   await expect.poll(() => state.requests.at(-1)?.folders).toContain(folderId);
-  await page.getByText("Manage folders").click();
+  await filters.getByText("Manage folders").click();
   await page.getByRole("button", { name: "Rename" }).click();
   await page.getByRole("textbox", { name: "Rename Week 1" }).fill("Week A");
   await page.getByRole("button", { name: "Save name" }).click();
@@ -199,6 +230,7 @@ test("staff rename and delete a folder on desktop", async ({ page }) => {
       .locator("xpath=..", { hasText: "Week A" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await confirmFolderDeletion(page);
   await expect(
     filter.getByRole("checkbox", { name: "All posts" }),
   ).not.toBeChecked();
@@ -228,7 +260,8 @@ test("staff folder names count supplementary letters as characters", async ({
 }) => {
   const state = await open(page, "ta", false);
   const letter = "𐐀";
-  await page.getByText("Manage folders").click();
+  const filters = await showFilters(page);
+  await filters.getByText("Manage folders").click();
   const name = page.getByRole("textbox", { name: "New folder name" });
   await name.fill(letter.repeat(65));
   await expect(page.getByRole("button", { name: "Add folder" })).toBeDisabled();
@@ -264,7 +297,9 @@ test("staff folder names count supplementary letters as characters", async ({
   const detailName = page.locator(".post-folder-label", { hasText: longName });
   await expect(filterName).toBeVisible();
   await expect(cardName).toHaveAttribute("title", longName);
+  await filters.getByRole("button", { name: "Close filters" }).click();
   await page.locator(".post-card").first().click();
+  await showFilters(page);
   await expect(detailName).toBeVisible();
   for (const label of [filterName, cardName, detailName]) {
     expect(
@@ -293,7 +328,6 @@ test("staff folder names count supplementary letters as characters", async ({
 });
 
 test("folder management preserves an unsaved post edit", async ({ page }) => {
-  page.on("dialog", (dialog) => dialog.accept());
   const state = await open(page, "ta");
   await page.getByRole("button", { name: "Edit post" }).click();
   const detailReads = state.requests.filter(
@@ -305,7 +339,8 @@ test("folder management preserves an unsaved post edit", async ({ page }) => {
   await expect(editorFolder.locator("option").first()).toHaveText("No folder");
   await title.fill("Unsaved chapter draft");
   await tags.fill("draft-tag");
-  await page.getByText("Manage folders").click();
+  const filters = await showFilters(page);
+  await filters.getByText("Manage folders").click();
   await page.getByRole("textbox", { name: "New folder name" }).fill("Week Two");
   await page.getByRole("button", { name: "Add folder" }).click();
   await expect(
@@ -325,6 +360,7 @@ test("folder management preserves an unsaved post edit", async ({ page }) => {
     .filter({ hasText: "Week A" })
     .getByRole("button", { name: "Delete", exact: true })
     .click();
+  await confirmFolderDeletion(page);
   await expect(editorFolder).toHaveValue("");
   await expect(title).toHaveValue("Unsaved chapter draft");
   await expect(tags).toHaveValue("draft-tag");
@@ -360,7 +396,6 @@ test("folder management preserves an unsaved post edit", async ({ page }) => {
 test("a late save response retains the deleted folder's newer revision", async ({
   page,
 }) => {
-  page.on("dialog", (dialog) => dialog.accept());
   let releaseSave;
   const saveGate = new Promise((resolve) => {
     releaseSave = resolve;
@@ -380,8 +415,10 @@ test("a late save response retains the deleted folder's newer revision", async (
         ).length,
     )
     .toBe(1);
-  await page.getByText("Manage folders").click();
+  const filters = await showFilters(page);
+  await filters.getByText("Manage folders").click();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await confirmFolderDeletion(page);
   await expect(page.getByRole("combobox", { name: "Post folder" })).toHaveValue(
     "",
   );
@@ -419,9 +456,10 @@ test("a late save response retains the deleted folder's newer revision", async (
 test("deleting a composer folder preserves its other draft fields", async ({
   page,
 }) => {
-  page.on("dialog", (dialog) => dialog.accept());
   const state = await open(page, "ta", false);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   const title = page.getByRole("textbox", { name: "Post title" });
   const body = page.getByRole("textbox", { name: "Post body" });
   const tags = page.getByRole("textbox", { name: "Tags (comma-separated)" });
@@ -431,8 +469,10 @@ test("deleting a composer folder preserves its other draft fields", async ({
   await tags.fill("physics");
   await page.getByRole("checkbox", { name: "Post anonymously" }).check();
   await composerFolder.selectOption(folderId);
-  await page.getByText("Manage folders").click();
+  const filters = await showFilters(page);
+  await filters.getByText("Manage folders").click();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await confirmFolderDeletion(page);
   await expect(composerFolder).toHaveValue("");
   await expect(title).toHaveValue("Unsent folder question");
   await expect(body).toHaveText("Please explain this step.");
@@ -461,38 +501,36 @@ test("deleting a composer folder preserves its other draft fields", async ({
 test("folder deletion preserves filters changed while pending", async ({
   page,
 }) => {
-  page.on("dialog", (dialog) => dialog.accept());
   let releaseDelete;
   const deleteGate = new Promise((resolve) => {
     releaseDelete = resolve;
   });
   const state = await open(page, "ta", true, deleteGate);
-  const filter = page.getByRole("group", { name: "Filter by folder" });
+  const filters = await showFilters(page);
+  const filter = filters.getByRole("group", { name: "Filter by folder" });
   await filter.getByRole("checkbox", { name: "Week 1" }).check();
-  await page.getByText("Manage folders").click();
-  const deleteClick = page
-    .getByRole("button", { name: "Delete", exact: true })
-    .click();
+  await filters.getByText("Manage folders").click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await confirmFolderDeletion(page);
   await expect
     .poll(() => state.requests.some((request) => request.method === "DELETE"))
     .toBe(true);
   await filter.getByRole("checkbox", { name: "Week 1" }).uncheck();
-  const sortToggle = page.getByRole("button", { name: /^Sort by/ });
+  const sortToggle = filters.getByRole("button", { name: /^Sort by/ });
   if ((await sortToggle.getAttribute("aria-expanded")) === "false")
     await sortToggle.click();
-  await page
+  await filters
     .getByRole("group", { name: "Sort by" })
     .getByText("Oldest")
     .click();
   await expect.poll(() => state.requests.at(-1)?.sort).toBe("oldest");
   releaseDelete();
-  await deleteClick;
   await expect(page.locator(".post-card-folder")).toHaveCount(0);
   await expect(
     filter.getByRole("checkbox", { name: "All posts" }),
   ).not.toBeChecked();
   await expect(
-    page
+    filters
       .getByRole("group", { name: "Sort by" })
       .getByRole("radio", { name: "Oldest" }),
   ).toBeChecked();
@@ -517,8 +555,9 @@ test("folder deletion preserves filters changed while pending", async ({
 test("student filters a folder on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const state = await open(page, "student", false);
-  await page.getByRole("button", { name: /Folders/ }).click();
-  await page
+  const filters = await showFilters(page);
+  await filters.getByRole("button", { name: /Folders/ }).click();
+  await filters
     .getByRole("group", { name: "Filter by folder" })
     .getByRole("checkbox", { name: "Week 1" })
     .check();
@@ -532,14 +571,15 @@ test("student filters a folder on mobile", async ({ page }) => {
   });
 });
 
-test("sidebar combines named folders, then clears to no folder or all posts", async ({
+test("Filters combines named folders, then clears to no folder or all posts", async ({
   page,
 }) => {
   const state = await open(page, "ta", false);
-  await page.getByText("Manage folders").click();
+  const filters = await showFilters(page);
+  await filters.getByText("Manage folders").click();
   await page.getByRole("textbox", { name: "New folder name" }).fill("Week Two");
   await page.getByRole("button", { name: "Add folder" }).click();
-  const filter = page.getByRole("group", { name: "Filter by folder" });
+  const filter = filters.getByRole("group", { name: "Filter by folder" });
   const allPosts = filter.getByRole("checkbox", { name: "All posts" });
   await expect(allPosts).toBeChecked();
   await filter.getByRole("checkbox", { name: "Week 1" }).check();
@@ -579,7 +619,8 @@ test("a legacy mixed folder URL keeps one named folder without a folderless choi
   await page.goto(
     `${origin}/attachments-fixture.html?post=none&sharedFilters=1&folder=${folderId.toUpperCase()}&folder=unfiled&folder=${folderId}`,
   );
-  const filter = page.getByRole("group", { name: "Filter by folder" });
+  const filters = await showFilters(page);
+  const filter = filters.getByRole("group", { name: "Filter by folder" });
   await expect(filter.getByRole("checkbox", { name: "Week 1" })).toBeChecked();
   await expect(
     filter.getByRole("checkbox", { name: "All posts" }),
@@ -612,7 +653,8 @@ test("a deleted folder link settles on the folderless feed", async ({
   await page.goto(
     `${origin}/attachments-fixture.html?post=none&sharedFilters=1&folder=${secondFolderId}`,
   );
-  const filter = page.getByRole("group", { name: "Filter by folder" });
+  const filters = await showFilters(page);
+  const filter = filters.getByRole("group", { name: "Filter by folder" });
   await expect(
     filter.getByRole("checkbox", { name: "All posts" }),
   ).not.toBeChecked();
@@ -630,7 +672,7 @@ test("a deleted folder link settles on the folderless feed", async ({
   });
 });
 
-test("the sidebar never selects more folders than the feed accepts", async ({
+test("Filters never selects more folders than the feed accepts", async ({
   page,
 }) => {
   const manyFolders = Array.from({ length: 101 }, (_, index) => ({
@@ -649,7 +691,8 @@ test("the sidebar never selects more folders than the feed accepts", async ({
   for (const item of manyFolders.slice(0, 100))
     selected.append("folder", item.id);
   await page.goto(`${origin}/attachments-fixture.html?${selected}`);
-  const filter = page.getByRole("group", { name: "Filter by folder" });
+  const filters = await showFilters(page);
+  const filter = filters.getByRole("group", { name: "Filter by folder" });
   await expect.poll(() => state.requests.at(-1)?.folders.length).toBe(100);
   await expect(
     filter.getByRole("checkbox", { name: "Folder 101" }),
@@ -668,7 +711,9 @@ test("the sidebar never selects more folders than the feed accepts", async ({
 
 test("student publishes a post in a staff-created folder", async ({ page }) => {
   const state = await open(page, "student", false);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page
     .getByRole("textbox", { name: "Post title" })
     .fill("Folder question");

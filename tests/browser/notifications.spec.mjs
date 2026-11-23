@@ -39,7 +39,9 @@ test("a student follows their question, sees a TA's answer in the bell, feed, an
 
   // The student asks and follows the question automatically.
   await student.page.goto(`${BASE}/courses/${courseId}`);
-  await student.page.getByRole("button", { name: "Create post" }).click();
+  await student.page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await student.page.getByRole("textbox", { name: "Post title" }).fill(title);
   await student.page.getByRole("textbox", { name: "Post body" }).click();
   await student.page.keyboard.type("It keeps calling itself.");

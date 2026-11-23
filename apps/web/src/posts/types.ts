@@ -20,7 +20,7 @@ export type PostTypeConfig = {
 
 /**
  * Every post type the frontend knows. Adding a type here gives it a card badge,
- * statuses, and a sidebar filter. Register a type only once the API accepts it
+ * statuses, and a filter overlay choice. Register a type only once the API accepts it
  * as a list filter; until then its posts render with the fallback below.
  */
 export const POST_TYPES: Record<string, PostTypeConfig> = {
@@ -114,7 +114,6 @@ export type FeedFilter = {
   options: PostListOptions;
   nested: boolean;
 };
-/** Sidebar filters: all posts, author filters, then each supported post type. */
 export const feedFilters = (userId?: string, staff = false): FeedFilter[] => [
   { key: "all", label: "All posts", options: {}, nested: false },
   ...(userId

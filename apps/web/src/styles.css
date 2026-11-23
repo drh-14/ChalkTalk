@@ -2,6 +2,7 @@
 
 :root {
   --page-width: 72rem;
+  --discussion-feed-track: clamp(20rem, 28.8%, 24rem);
   color: var(--ink);
   background: var(--surface);
   font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
@@ -152,17 +153,8 @@ h2[tabindex="-1"]:focus {
 /* The sides share space equally to center the tabs, but never shrink below their content. */
 .app-bar.course .app-bar-inner {
   display: grid;
-  grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+  grid-template-columns: minmax(0, max-content) auto minmax(max-content, 1fr);
   padding-inline: clamp(0.75rem, 1.5vw, 1.25rem);
-}
-/* Lays the row out at its natural width so the app bar can tell whether it fits. */
-.app-bar.course .app-bar-inner.measuring {
-  display: flex;
-  flex-wrap: nowrap;
-  width: max-content;
-}
-.app-bar.course .app-bar-inner.measuring > * {
-  flex: none;
 }
 .app-bar.course .app-bar-start {
   min-width: 0;
@@ -514,20 +506,6 @@ h2[tabindex="-1"]:focus {
   color: #617167;
   margin: 0;
 }
-@media (min-width: 701px) {
-  .app-bar.course.tabs-stacked .app-bar-inner {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  .app-bar.course.tabs-stacked .account-controls {
-    grid-column: 2;
-    grid-row: 1;
-  }
-  .app-bar.course.tabs-stacked .course-tabs {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-self: center;
-  }
-}
 @media (max-width: 700px) {
   .app-bar.course .app-bar-inner {
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -636,88 +614,16 @@ h2[tabindex="-1"]:focus {
   color: var(--ink);
 }
 .discussion-columns {
-  --filter-track-width: clamp(11.5rem, 13%, 13rem);
   display: grid;
-  grid-template-columns:
-    var(--filter-track-width) clamp(18rem, 26%, 24rem)
-    minmax(0, 1fr);
+  grid-template-columns: var(--discussion-feed-track) minmax(0, 1fr);
   position: relative;
-  transition: grid-template-columns 220ms ease;
-}
-.discussion-columns.filters-collapsed {
-  --filter-track-width: 0px;
 }
 .discussion-sidebar {
   background: var(--surface-sunken);
-  border-right: 1px solid #dde3d9;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
   padding: 1.25rem 0.9rem;
-}
-.discussion-columns.filters-collapsed .discussion-sidebar {
-  border-right: 0;
-  overflow: hidden;
-  padding-inline: 0;
-}
-/* The filters toggle is one circle, level with search. Expanded, the full
-   circle sits on the sidebar's edge; collapsed, it slides to the page edge
-   so only its right half shows, with the arrows turned outward. */
-.filter-collapse-toggle {
-  align-items: center;
-  background: var(--surface-raised);
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  color: var(--accent-ink);
-  cursor: pointer;
-  display: flex;
-  height: 2.4rem;
-  justify-content: center;
-  left: calc(var(--filter-track-width) - 1.2rem);
-  padding: 0;
-  position: absolute;
-  top: 1.2rem;
-  transition:
-    left 220ms ease,
-    width 150ms ease,
-    border-radius 220ms ease;
-  width: 2.4rem;
-  z-index: 2;
-}
-.filter-collapse-toggle:hover {
-  background: var(--surface);
-}
-.filter-collapse-toggle svg {
-  height: 1rem;
-  transition: transform 220ms ease;
-  width: 1rem;
-}
-.discussion-columns.filters-collapsed .filter-collapse-toggle {
-  border-left: 0;
-  border-radius: 0 999px 999px 0;
-  justify-content: flex-end;
-  left: 0;
-  padding-right: 0.2rem;
-  width: 1.5rem;
-}
-.discussion-columns.filters-collapsed
-  .filter-collapse-toggle:is(:hover, :focus-visible) {
-  width: 1.85rem;
-}
-.discussion-columns.filters-collapsed .filter-collapse-toggle svg {
-  transform: scaleX(-1);
-}
-/* The filter sidebar scrolls without drawing a scrollbar: it is a short
-   list, and a bar that appears on hover flashes as the pointer crosses it. */
-.discussion-columns .discussion-sidebar {
-  scrollbar-width: none;
-}
-.discussion-columns .discussion-sidebar::-webkit-scrollbar {
-  display: none;
-}
-.filter-collapse-toggle:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 2px;
 }
 .discussion-sidebar fieldset {
   border: 0;
@@ -913,14 +819,6 @@ h2[tabindex="-1"]:focus {
 .discussion-feed > .discussion-toolbar,
 .discussion-feed > [role="alert"] {
   margin-inline: 1.25rem;
-}
-.discussion-feed > .post-view-picker,
-.discussion-feed > .discussion-toolbar {
-  transition: margin-left 220ms ease;
-}
-.discussion-columns.filters-collapsed .discussion-feed > .post-view-picker,
-.discussion-columns.filters-collapsed .discussion-feed > .discussion-toolbar {
-  margin-left: 2.1rem;
 }
 .discussion-detail {
   background: var(--surface-raised);
@@ -2057,9 +1955,6 @@ h2[tabindex="-1"]:focus {
   display: none;
 }
 @media (max-width: 850px) {
-  .filter-collapse-toggle {
-    display: none;
-  }
   .discussion-header {
     display: block;
   }
@@ -2069,24 +1964,8 @@ h2[tabindex="-1"]:focus {
   .discussion-columns {
     display: block;
   }
-  .discussion-columns.has-selection .discussion-feed,
-  .discussion-columns.has-selection .discussion-sidebar {
+  .discussion-columns.has-selection .discussion-feed {
     display: none;
-  }
-  .discussion-sidebar {
-    background: none;
-    border-bottom: 1px solid var(--line);
-    border-right: 0;
-    overflow: visible;
-    padding: 0.9rem 1rem;
-  }
-  .discussion-columns.filters-collapsed .discussion-sidebar {
-    overflow: visible;
-    padding: 0.9rem 1rem;
-  }
-  .discussion-columns.filters-collapsed .discussion-feed > .post-view-picker,
-  .discussion-columns.filters-collapsed .discussion-feed > .discussion-toolbar {
-    margin-left: 1.25rem;
   }
   .filter-section + .filter-section {
     margin-top: 0.35rem;
@@ -5152,12 +5031,6 @@ main input[type="file"]:hover::file-selector-button {
   outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
-/* The search row clears the filters tab in both states. */
-@media (min-width: 851px) {
-  .discussion-columns .discussion-feed > .discussion-toolbar {
-    margin-left: clamp(1rem, 3vw, 2.5rem);
-  }
-}
 /* Search and New post share one shape so the row reads as one control. */
 .discussion-toolbar > .search-field,
 .discussion-toolbar > .button {
@@ -5941,4 +5814,268 @@ main input[type="file"]:hover::file-selector-button {
 }
 .shared-answer-slot {
   min-width: 0;
+}
+
+/* Filters cover content rather than reserving a sidebar or changing the feed. */
+.filter-overlay {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 40px rgba(29, 43, 38, 0.18);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  z-index: 40;
+  overflow: hidden;
+}
+.filter-overlay[hidden] {
+  display: none;
+}
+.filter-overlay-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  flex: none;
+  padding: 0.65rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--accent-ink);
+}
+.filter-overlay-heading button {
+  min-height: 44px;
+}
+.filter-overlay-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.discussion-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: stretch;
+}
+.discussion-toolbar > .create-post {
+  grid-row: 1;
+  grid-column: 3;
+  justify-self: start;
+  min-height: 44px;
+}
+.discussion-toolbar > .search-field {
+  grid-row: 1;
+  grid-column: 1;
+  min-width: 0;
+}
+.discussion-toolbar > .search-field[hidden] {
+  display: none;
+}
+.discussion-toolbar.mobile-tools {
+  grid-template-columns: 44px 44px minmax(0, 1fr);
+}
+.mobile-tools > .mobile-search-toggle {
+  grid-row: 1;
+  grid-column: 1;
+}
+.mobile-tools > .create-post {
+  grid-row: 1;
+  grid-column: 2;
+}
+.mobile-tools > .filter-overlay-trigger {
+  grid-row: 1;
+  grid-column: 3;
+  justify-self: start;
+}
+.mobile-tools > .search-field {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.mobile-tools > button {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mobile-tools > .create-post,
+.mobile-search-toggle {
+  padding-inline: 0.75rem;
+}
+
+.discussion-toolbar > .filter-overlay-trigger {
+  grid-row: 1;
+  grid-column: 2;
+  min-height: 44px;
+}
+.course-navigation {
+  display: contents;
+}
+.course-navigation.pending {
+  visibility: hidden;
+}
+.course-tabs[hidden] {
+  display: none;
+}
+.course-navigation.compact {
+  display: block;
+  position: relative;
+}
+.section-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  max-width: 11rem;
+  background: transparent;
+  color: #fffdf7;
+  border: 1px solid rgba(255, 253, 247, 0.28);
+  border-radius: var(--radius-md);
+  padding: 0.4rem 0.5rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.compact .course-tabs {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 45;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 0.35rem;
+  box-shadow: 0 16px 40px rgba(29, 43, 38, 0.18);
+}
+.compact .course-tabs[hidden] {
+  display: none;
+}
+.compact .course-tabs a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--ink);
+}
+.compact .course-tabs a[aria-current] {
+  color: var(--accent-ink);
+  background: var(--surface-sunken);
+}
+
+.section-trigger[hidden] {
+  display: none;
+}
+@media (max-width: 850px) {
+  .app-bar.course .app-bar-inner {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 0.35rem 0.5rem;
+  }
+  .app-bar.course .app-bar-start {
+    display: contents;
+  }
+  .app-bar.course .wordmark {
+    grid-row: 1;
+    grid-column: 1;
+  }
+  .app-bar.course .account-controls {
+    grid-row: 1;
+    grid-column: 3;
+    width: auto;
+    gap: 0.35rem;
+  }
+  .app-bar.course .app-bar-course {
+    grid-row: 2;
+    grid-column: 1 / 3;
+    padding-left: 0;
+  }
+  .app-bar-course h1 {
+    max-width: 100%;
+  }
+  .course-navigation.compact {
+    display: block;
+    grid-row: 2;
+    grid-column: 3;
+    position: relative;
+  }
+  .filter-overlay .filter-section-toggle,
+  .filter-overlay .filter-choice {
+    min-height: 44px;
+  }
+}
+
+@media (min-width: 851px) {
+  .app-bar.course .app-bar-inner {
+    grid-template-columns:
+      auto minmax(0, var(--course-title-width, max-content))
+      auto minmax(max-content, 1fr);
+    column-gap: clamp(0.4rem, 1vw, 1rem);
+  }
+  .app-bar.course .app-bar-start {
+    display: contents;
+  }
+  .app-bar.course .wordmark {
+    grid-column: 1;
+  }
+  .app-bar.course .app-bar-course {
+    grid-column: 2;
+    width: max-content;
+    max-width: 100%;
+  }
+  .app-bar.course .course-tabs {
+    grid-column: 3;
+    margin-left: var(--course-nav-offset, 0px);
+    flex-wrap: nowrap;
+  }
+  .app-bar.course .account-controls {
+    grid-column: 4;
+  }
+  .app-bar.course .app-bar-course {
+    padding-inline: 0.25rem;
+  }
+  .app-bar.course .course-tabs {
+    gap: 0;
+  }
+  .app-bar.course .course-tabs a {
+    font-size: clamp(0.75rem, 0.95vw, 0.9rem);
+    padding-inline: clamp(0.3rem, 0.65vw, 0.7rem);
+  }
+  .app-bar.course .wordmark {
+    font-size: clamp(1.1rem, 1.5vw, 1.35rem);
+  }
+  .app-bar.course .account-controls {
+    gap: 0.4rem;
+  }
+}
+
+.discussion-toolbar.mobile-tools > .filter-overlay-trigger {
+  grid-column: 3;
+}
+
+.discussion-toolbar > .create-post {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mobile-search-toggle {
+  border: 1px solid transparent;
+}
+.mobile-search-toggle[aria-expanded="true"] {
+  border-color: var(--accent-ink);
+}
+
+/* Resolve the shared split for course sections without a discussion grid. */
+.app-bar.course {
+  position: relative;
+}
+.course-split-boundary {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--discussion-feed-track);
+  max-width: 100%;
+  height: 0;
+  visibility: hidden;
+  pointer-events: none;
 }

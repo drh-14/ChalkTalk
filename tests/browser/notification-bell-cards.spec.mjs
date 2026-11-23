@@ -252,3 +252,52 @@ test("page failure preserves cards and offers retry", async ({ page }) => {
   await panel.getByRole("button", { name: "Load more" }).click();
   await expect(panel.getByRole("listitem")).toHaveCount(5);
 });
+
+for (const [startWidth, endWidth] of [
+  [1024, 390],
+  [390, 1024],
+]) {
+  test(`notification interaction survives ${startWidth} to ${endWidth} breakpoint`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: startWidth, height: 844 });
+    let listRequests = 0;
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/v1/users/me/notifications") listRequests++;
+    });
+    await open(page);
+    const panel = page.getByRole("region", { name: "Notifications" });
+    const cardButton = panel.getByRole("listitem").first().getByRole("button");
+    await cardButton.focus();
+    await expect(cardButton).toBeFocused();
+    expect(listRequests).toBe(1);
+
+    await page.setViewportSize({ width: endWidth, height: 844 });
+    await expect(panel.getByRole("listitem")).toHaveCount(3);
+    await expect(cardButton).toBeFocused();
+    await expect(
+      page.getByRole("button", { name: "Notifications, 5 unread" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(listRequests).toBe(1);
+
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect(
+      page.getByRole("button", { name: "Notifications, 5 unread" }),
+    ).toBeFocused();
+    await page.getByRole("button", { name: "Notifications, 5 unread" }).click();
+    await expect(panel).toBeVisible();
+    await page
+      .getByRole("button", { name: "Account menu for Student" })
+      .click();
+    await expect(panel).toBeHidden();
+    await expect(
+      page.getByRole("link", { name: "Account settings" }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: resolve(screenshots, `breakpoint-${startWidth}-${endWidth}.png`),
+      fullPage: true,
+    });
+  });
+}

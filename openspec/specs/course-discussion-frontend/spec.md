@@ -22,17 +22,17 @@ The protected `/courses/{courseId}` route SHALL show question and note post card
 
 ### Requirement: Desktop post listings scroll independently
 
-On screens wider than 850px, the discussion route SHALL fill the viewport below the course header with three full-height columns (the feed filter sidebar, the post list, and the post detail pane), separated by single dividers and without enclosing rounded panels. The page itself SHALL not scroll on this route. The left-hand post cards SHALL occupy a visibly scrollable region. The search field and Create post button SHALL remain above that region. The region SHALL have an accessible name and be keyboard-focusable. The same structure SHALL apply to normal posts and staff duplicate review cards. The right-hand detail pane SHALL scroll independently of the post list, SHALL keep its accessible name, and SHALL be keyboard-focusable so its content can be scrolled without a pointer. Scrolling either column SHALL not move the other or the filter sidebar. On screens at or below 850px, the cards and the detail pane SHALL use natural page scrolling rather than nested scroll areas.
+On screens wider than 850px, the discussion route SHALL fill the viewport below the course header with two full-height columns (the post list and the post detail pane), separated by single dividers and without enclosing rounded panels. The page itself SHALL not scroll on this route. The left-hand post cards SHALL occupy a visibly scrollable region. The search field and New post button SHALL remain above that region. The region SHALL have an accessible name and be keyboard-focusable. The same structure SHALL apply to normal posts and staff duplicate review cards. The right-hand detail pane SHALL scroll independently of the post list, SHALL keep its accessible name, and SHALL be keyboard-focusable so its content can be scrolled without a pointer. Scrolling either column SHALL not move the other. On screens at or below 850px, the cards and the detail pane SHALL use natural page scrolling rather than nested scroll areas.
 
 #### Scenario: A member browses a long post list
 
 - **WHEN** a member scrolls the desktop post list
-- **THEN** post cards move within the post list column while its controls remain available above the list, and the filter sidebar and post detail pane do not move
+- **THEN** post cards move within the post list column while its controls remain available above the list, and the post detail pane do not move
 
 #### Scenario: A member reads a long post
 
 - **WHEN** a member scrolls a selected post whose content is taller than the desktop window
-- **THEN** only the detail pane scrolls, the post list, filter sidebar, and course header stay in place, and the page itself does not scroll
+- **THEN** only the detail pane scrolls, the post list and course header stay in place, and the page itself does not scroll
 
 #### Scenario: A keyboard user scrolls the post detail
 
@@ -167,7 +167,7 @@ Search SHALL update after approximately 300 ms without input changes, with no Se
 
 ### Requirement: Course discussion and settings share a stable frame
 
-The protected course routes for the same course SHALL render one persistent course header in the app bar. From the start of the bar, it shows the ChalkTalk logo and an "All courses" link followed by the course name, as a breadcrumb; the course name SHALL be the page's top-level heading, and a course that is not active SHALL also show its status. The course name and a chevron SHALL together form one "Switch course" control: activating anywhere on the name opens the switcher. It SHALL load the member's courses only when first opened, mark the current course, link to each course, and close on Escape or an outside click. It SHALL not repeat the All courses link, which remains available from the breadcrumb at every width. Course tab placement SHALL follow the [responsive course navigation](../responsive-course-ui/spec.md). Switching between course routes SHALL use same-document navigation, not reload the application or re-run session restoration. The active tab SHALL be identifiable visually and to assistive technology. When the route changes, focus SHALL move to the course heading for screen-reader announcement without a visible focus ring. Following a tab, All courses, the logo, a course in the switcher, or Sign out SHALL ask before discarding an unsent post draft. The switcher list SHALL fit within the screen. The bar SHALL show the member's account as an avatar button that opens a menu with their name and email, Account settings, and Sign out, closing on Escape or an outside click.
+The protected course routes for the same course SHALL render one persistent course header in the app bar. On desktop, the breadcrumb retains the ChalkTalk logo and course name order; on mobile, the logo shares its row with notifications and avatar and the course name occupies the following row; the course name SHALL be the page's top-level heading, and a course that is not active SHALL also show its status. The course name and a chevron SHALL together form one "Switch course" control: activating anywhere on the name opens the switcher. It SHALL load the member's courses only when first opened, mark the current course, link to each course, and close on Escape or an outside click. The All courses button SHALL be removed; the ChalkTalk logo SHALL link to `/home` at every width with the existing draft guard. Course tab placement SHALL follow the [responsive course navigation](../responsive-course-ui/spec.md). Switching between course routes SHALL use same-document navigation, not reload the application or re-run session restoration. The active section SHALL be identifiable visually and to assistive technology. Desktop SHALL retain all existing section links inline beside the course identity on the ChalkTalk logo row, compacting header spacing and control presentation as needed without unreadable labels or horizontal overflow. The section dropdown SHALL be mobile-only. On screens 850px or narrower, a compact current-section button SHALL open a dropdown of the same available section links instead of displaying the full tab list. Nested course-resource routes SHALL indicate Course resources and course-session routes SHALL indicate Collaboration. Thread unread counts and existing role visibility SHALL be preserved. The dropdown SHALL close on selection, outside pointer or Escape; Escape SHALL return focus to its trigger. All navigation paths SHALL retain same-document navigation, draft-discard guards and modified-link behavior. When the route changes, focus SHALL move to the course heading for screen-reader announcement without a visible focus ring. Following a tab, the logo, a course in the switcher, or Sign out SHALL ask before discarding an unsent post draft. Desktop navigation SHALL remain on the logo row with every section link visible. At 850px or narrower, the ChalkTalk logo SHALL share its row with notifications and avatar, while the course name/switcher and current-section dropdown share the following row. Controls and switcher lists SHALL fit 320px and 390px viewports without horizontal overflow or hidden navigation. The bar SHALL show the member's account as an avatar button that opens a menu with their name and email, Account settings, and Sign out, closing on Escape or an outside click.
 
 #### Scenario: A member opens Course settings from Discussion
 
@@ -186,7 +186,7 @@ The protected course routes for the same course SHALL render one persistent cour
 
 #### Scenario: A member leaves with an unsent draft
 
-- **WHEN** a member with an unsent post draft follows a tab, All courses, the logo, or Sign out and declines the discard prompt
+- **WHEN** a member with an unsent post draft follows a tab, the logo, or Sign out and declines the discard prompt
 - **THEN** the draft, route, and session remain unchanged
 
 #### Scenario: A member switches course
@@ -197,7 +197,7 @@ The protected course routes for the same course SHALL render one persistent cour
 #### Scenario: The switcher lists only courses
 
 - **WHEN** a member opens the course switcher
-- **THEN** the panel lists the member's courses and offers no All courses link, while the breadcrumb's All courses link stays visible
+- **THEN** the panel lists the member's courses and offers no All courses link, while the ChalkTalk logo remains the guarded home link and no All courses button is shown
 
 #### Scenario: A member with a draft declines to switch course
 
@@ -208,6 +208,16 @@ The protected course routes for the same course SHALL render one persistent cour
 
 - **WHEN** a signed-in member activates the avatar in the app bar
 - **THEN** a menu shows their name and email with Account settings and Sign out, and Escape or an outside click closes it
+
+#### Scenario: Desktop sections remain on the logo row
+
+- **WHEN** a member opens a course on desktop or resizes the viewport
+- **THEN** all existing section links remain visible on the logo row beside the course identity, using compact readable presentation without a desktop dropdown, horizontal overflow or lost keyboard focus
+
+#### Scenario: Compact mobile section navigation
+
+- **WHEN** a member opens a course at 320px or 390px and opens the section dropdown
+- **THEN** its current section and existing available links/unread count are exposed, the logo links home without an All courses button, notifications/avatar remain reachable, and selecting a link respects draft guards
 
 ### Requirement: Settings load and fail inside the shared course frame
 
@@ -225,7 +235,7 @@ On the settings route, course-specific membership and administration data SHALL 
 
 ### Requirement: Staff can merge and review duplicate posts
 
-The discussion page SHALL show TAs and instructors a canonical-post selection control for the current post and a **Duplicates** entry, marked as staff-only, at the end of the filter sidebar's Show section. The entry SHALL be a toggle button that exposes whether duplicate review is on; pressing it again, or choosing any Show filter, SHALL return to the posts feed with that filter. While duplicate review is on, no Show filter SHALL be selected. Each staff review card SHALL show only the duplicate's title and “Merged into” followed by a link named for its canonical post, never the post type or retained source body. Selecting the card or its title SHALL be keyboard-accessible and show the retained source in the right pane, where staff see the source body, staff-visible author, tags, canonical target link, and unmerge action. Selecting the card's canonical link SHALL open the canonical post in a new tab and leave the duplicate review unchanged. The merge-as-duplicate control SHALL not appear in this mode. Students SHALL not see these controls. Following an old merged-post route SHALL navigate to the canonical post route.
+The discussion page SHALL show TAs and instructors a canonical-post selection control for the current post and a **Duplicates** entry, marked as staff-only, at the end of the filter overlay's Show section. The entry SHALL be a toggle button that exposes whether duplicate review is on; pressing it again, or choosing any Show filter, SHALL return to the posts feed with that filter. While duplicate review is on, no Show filter SHALL be selected. Each staff review card SHALL show only the duplicate's title and “Merged into” followed by a link named for its canonical post, never the post type or retained source body. Selecting the card or its title SHALL be keyboard-accessible and show the retained source in the right pane, where staff see the source body, staff-visible author, tags, canonical target link, and unmerge action. Selecting the card's canonical link SHALL open the canonical post in a new tab and leave the duplicate review unchanged. The merge-as-duplicate control SHALL not appear in this mode. Students SHALL not see these controls. Following an old merged-post route SHALL navigate to the canonical post route.
 
 #### Scenario: Staff review and unmerge
 
@@ -237,7 +247,7 @@ The discussion page SHALL show TAs and instructors a canonical-post selection co
 - **WHEN** a TA selects a different canonical post from course search and confirms
 - **THEN** the client sends a conditional merge request and navigates to the canonical post
 
-#### Scenario: Staff leave duplicate review from the sidebar
+#### Scenario: Staff leave duplicate review from the filter overlay
 
 - **WHEN** a TA reviewing duplicates chooses Questions in the Show section
 - **THEN** the feed returns to posts filtered to questions and Duplicates is no longer pressed
@@ -405,7 +415,7 @@ Post cards in the left-hand list, including staff duplicate review cards, SHALL 
 
 ### Requirement: Members can filter and sort the course feed
 
-The discussion route SHALL show a filter sidebar, a landmark named "Post filters". It SHALL contain a Show section and a Sort by section, each built as an accordion section.
+The discussion route SHALL offer a labelled nonmodal dialog named "Post filters", opened by Filters as specified below. It SHALL contain a Show section and a Sort by section, each built as an accordion section.
 
 Each section SHALL have a header button named for the section. The button SHALL expose whether its section is expanded and SHALL open or close the section. While a section is closed, its header SHALL show the section name with the current choice, such as "Show · Questions". While open, a section SHALL present its choices as a single-choice group of rows. The selected row SHALL be distinguished by accent-colored bold text and a leading accent bar, so selection is not conveyed by color alone, and SHALL be identified as selected to assistive technology. Section headers SHALL read as section labels, visually distinct from the rows they control. Choosing a row SHALL apply it without closing the section. Opening or closing a section SHALL not change any filter, sort, or tag, or send a feed request.
 
@@ -430,17 +440,17 @@ A type SHALL be added to the list only once the API accepts it as a list filter.
 - **Oldest:** `sort=oldest`.
 - **Best match:** `sort=relevance`; offered only while a search is applied, and the default then.
 
-Selecting a tag chip on a card or in the post view SHALL add that tag to the active tags, alongside the active sidebar filter. Selecting a chip whose tag is already active SHALL remove it. Selecting a tag SHALL not close the selected post.
+Selecting a tag chip on a card or in the post view SHALL add that tag to the active tags, alongside the active filter. Selecting a chip whose tag is already active SHALL remove it. Selecting a tag SHALL not close the selected post.
 
-While any tag is active, the sidebar SHALL show a Tags section listing each active tag as a removable chip, named "Remove tag filter {tag}", with a Clear all control that removes every active tag. At most 10 tags SHALL be active at once. Selecting an inactive chip while 10 tags are active SHALL leave the tags and feed unchanged and SHALL announce that at most 10 tags can be combined.
+While any tag is active, the filter overlay SHALL show a Tags section listing each active tag as a removable chip, named "Remove tag filter {tag}", with a Clear all control that removes every active tag. At most 10 tags SHALL be active at once. Selecting an inactive chip while 10 tags are active SHALL leave the tags and feed unchanged and SHALL announce that at most 10 tags can be combined.
 
 The feed request SHALL send each active tag as a repeated `tag` parameter. While two or more tags are active, the Tags section SHALL show a Match control with Any and All choices. All SHALL be the default and send `tagMatch=all`, returning posts that carry every active tag. Any SHALL send `tagMatch=any`, returning posts that carry at least one active tag. With fewer than two active tags, the browser SHALL omit `tagMatch`.
 
 A sort chosen during one applied search SHALL apply only to that query; a new or cleared search SHALL return to its default. Changing the filter, tags, tag match, or sort SHALL reset pagination and ignore stale responses exactly as a query change does. Load more SHALL keep the active filter, tags, tag match, and sort. In staff duplicate review, the filter and sort choices, tag chips, and Match control SHALL be disabled and SHALL not affect review requests; the section headers MAY still open and close.
 
-On the course discussion and post routes, the active sidebar filter, tags, tag match, and chosen sort SHALL be stored in the URL beside `q`: `filter`, one `tag` parameter per active tag in the order they were added, `tagMatch=any` only when Any is chosen with two or more tags, and `sort`. They SHALL be updated by replacing the current history entry rather than adding one, restored when the page loads or the member navigates Back or Forward, and preserved on post links. Unknown or invalid values SHALL be ignored. Tags beyond the first 10 distinct values SHALL be ignored.
+On the course discussion and post routes, the active filter, tags, tag match, and chosen sort SHALL be stored in the URL beside `q`: `filter`, one `tag` parameter per active tag in the order they were added, `tagMatch=any` only when Any is chosen with two or more tags, and `sort`. They SHALL be updated by replacing the current history entry rather than adding one, restored when the page loads or the member navigates Back or Forward, and preserved on post links. Unknown or invalid values SHALL be ignored. Tags beyond the first 10 distinct values SHALL be ignored.
 
-On screens at or below 850px, the Show and Sort by sections, and the Tags section while any tag is active, SHALL appear above the feed and SHALL be hidden while a post is selected.
+On screens at or below 850px, the Show and Sort by sections, and the Tags section while any tag is active, SHALL appear in the Filters overlay after it is opened. They SHALL be hidden while the overlay is closed or a post is selected.
 
 #### Scenario: A member sees filters for each post type
 
@@ -474,8 +484,8 @@ On screens at or below 850px, the Show and Sort by sections, and the Tags sectio
 
 #### Scenario: Sections start closed on a phone
 
-- **WHEN** a member opens the discussion route on a screen 850px wide or less
-- **THEN** Show and Sort by appear above the feed with their headers closed and showing "Show · All posts" and "Sort by · Last updated"
+- **WHEN** a member opens the discussion route on a screen 850px wide or less and then opens Filters
+- **THEN** Show and Sort by appear in the overlay with their headers closed and showing "Show · All posts" and "Sort by · Last updated"
 
 #### Scenario: A member loads more filtered posts
 
@@ -490,11 +500,11 @@ On screens at or below 850px, the Show and Sort by sections, and the Tags sectio
 #### Scenario: Staff review duplicates
 
 - **WHEN** a TA or instructor turns on Duplicates
-- **THEN** the sidebar's sort choices, tag chips, and Match control are disabled, and the Show choices stay enabled with none selected
+- **THEN** the filter overlay's sort choices, tag chips, and Match control are disabled, and the Show choices stay enabled with none selected
 
 #### Scenario: A member filters by a tag
 
-- **WHEN** a member selects the `midterm` chip on a card while viewing a post, then removes it from the sidebar
+- **WHEN** a member selects the `midterm` chip on a card while viewing a post, then removes it from the filter overlay
 - **THEN** the feed is requested with `tag=midterm` while the post stays open, and then requested again without `tag`
 
 #### Scenario: A member combines tags
@@ -632,7 +642,7 @@ Each ordinary post card in the feed SHALL show these elements in this order:
 - **Footer:** the viewer-projected author and the post's creation time together, with an optional type-specific summary at the trailing edge.
 - **Tags:** the post's tags as chips, when it has any, below the footer and outside the card's link, starting at the same leading edge as the card's text.
 
-The title SHALL be the most prominent text on the card. The badge's label, icon, and color and the card's statuses SHALL come from the same post type list that generates the sidebar filters. Questions SHALL show Answered or Unanswered from the API's `answered` value. Any pinned post SHALL show Pinned. Notes SHALL show no answer status. A post whose type is not in the list SHALL render with a neutral "Post" badge and no type-specific status instead of failing. The detail pane SHALL label a post's type from the same list and show the post's tag chips below the byline. When no post is selected, its prompt SHALL not name specific post types. Staff duplicate review cards keep their restricted title and merged-into content.
+The title SHALL be the most prominent text on the card. The badge's label, icon, and color and the card's statuses SHALL come from the same post type list that generates the filter overlay filters. Questions SHALL show Answered or Unanswered from the API's `answered` value. Any pinned post SHALL show Pinned. Notes SHALL show no answer status. A post whose type is not in the list SHALL render with a neutral "Post" badge and no type-specific status instead of failing. The detail pane SHALL label a post's type from the same list and show the post's tag chips below the byline. When no post is selected, its prompt SHALL not name specific post types. Staff duplicate review cards keep their restricted title and merged-into content.
 
 #### Scenario: A member scans an unanswered question
 
@@ -918,7 +928,7 @@ The course header SHALL show a placeholder for the course name, and the course t
 #### Scenario: A slow feed
 
 - **WHEN** the first feed page takes a second to load
-- **THEN** placeholder post cards appear in the list, the status announces "Loading posts…", and the cards replace them without moving the search row or sidebar
+- **THEN** placeholder post cards appear in the list, the status announces "Loading posts…", and the cards replace them without moving the search row or filter overlay
 
 #### Scenario: A fast load
 
@@ -928,7 +938,7 @@ The course header SHALL show a placeholder for the course name, and the course t
 #### Scenario: A staff member reloads the discussion
 
 - **WHEN** a TA reloads a course page
-- **THEN** the course tabs, Statistics tab, and the Duplicates entry appear together with the course name, and nothing in the header or sidebar shifts afterward
+- **THEN** the course tabs, Statistics tab, and the Duplicates entry appear together with the course name, and nothing in the header or overlay shifts afterward
 
 ### Requirement: The course header stays in view
 
@@ -939,15 +949,6 @@ On screens wider than 700px, the course header SHALL stay at the top of the wind
 - **WHEN** a member scrolls course settings on a wide screen
 - **THEN** the course header and tabs remain visible at the top
 
-### Requirement: The filter sidebar collapses behind a pull tab
-
-On screens wider than 850px, a round button on the boundary between the filter sidebar and the post list SHALL collapse and expand the sidebar, exposing its state with `aria-expanded`. When collapsed, half of the button SHALL remain visible at the left edge as a pull tab, aligned with the search row, so the sidebar can be reopened.
-
-#### Scenario: A member hides the filters
-
-- **WHEN** a member collapses the filter sidebar
-- **THEN** the post list widens, the half-round tab remains at the left edge, and activating it reopens the sidebar with the same filters selected
-
 ### Requirement: Note detail presents followup discussions
 
 A note's detail SHALL show the same followup discussion section as a question's, with its root count, compose prompt, roots, replies, votes, and edit rules, so discussions imported from Piazza or started in ChalkTalk are visible on notes. A note SHALL still show no students' or instructors' answer areas.
@@ -956,3 +957,63 @@ A note's detail SHALL show the same followup discussion section as a question's,
 
 - **WHEN** a member opens a note that has two followup discussions, each with an instructor reply
 - **THEN** the detail shows both discussions with their replies, and no answer areas
+
+### Requirement: Course filters open as a bounded overlay
+
+The actual current ChalkTalk UI SHALL be the style source of truth. Existing typography, palette, spacing conventions, icons, control appearance, content and role visibility SHALL be preserved except for the requested layout/interaction changes. Mockups SHALL NOT introduce alternate styling or invented content.
+
+On desktop, a Filters button immediately right of the full Search field SHALL open a labelled nonmodal filter overlay over the interface without moving or resizing feed/detail content. Filters SHALL start closed on a fresh course discussion mount. The overlay SHALL reuse existing immediate filter, sort, folder, tag and staff-only controls, retaining selected filters/post detail across closing and reopening, without requesting feed data solely for opening or closing. Existing URL/filter persistence SHALL remain unchanged. No left filter column, mobile height panel, collapse strip, resize handle or saved dimension read/write SHALL remain. The overlay SHALL remain inside the viewport with a reachable close header and internally scrollable contents on 320px mobile, landscape and desktop, without horizontal page overflow. Opening SHALL focus a usable filter control. Explicit close or Escape SHALL close and return focus to Filters; outside pointer SHALL close without stealing focus from the clicked target. The trigger SHALL expose expanded state and controlled panel identity, and closed contents SHALL not remain keyboard- or assistive-technology reachable.
+
+#### Scenario: Filters overlay does not shift content
+
+- **WHEN** a member opens or closes Filters beside Search on desktop or mobile
+- **THEN** the overlay changes visibility, feed/detail geometry remains unchanged, and no layout-only feed request occurs
+
+#### Scenario: Filter changes take effect immediately
+
+- **WHEN** a member selects an existing filter in the overlay and closes then reopens it
+- **THEN** the feed applies the existing filter behavior immediately without Apply/Save and the selection is retained
+
+#### Scenario: Small-screen filters remain reachable
+
+- **WHEN** the overlay opens at 320px or after orientation/viewport changes
+- **THEN** it remains viewport-bounded, the close control stays reachable and internal scrolling reaches lower folders/tags
+
+#### Scenario: Keyboard and outside dismissal
+
+- **WHEN** a member opens by keyboard and presses Escape or activates Close
+- **THEN** the overlay closes and focus returns to Filters; outside pointer dismissal instead preserves the intended clicked target's focus
+
+#### Scenario: Legacy dimensions do not affect overlays
+
+- **WHEN** old desktop/mobile dimension preferences exist or storage is unavailable
+- **THEN** overlay sizing follows the viewport, no resize control appears and existing filter interaction remains usable
+
+### Requirement: Mobile discussion tools share a compact toolbar
+
+At 850px or narrower, Search and New post SHALL be icon buttons with accessible names and touch-friendly targets, sharing one row with the text Filters button in that order. Activating Search SHALL reveal and focus a search field below the toolbar without changing existing query/filter semantics. Escape SHALL close the field and return focus to Search; closing and reopening SHALL retain its query. The existing slash shortcut SHALL reveal and focus mobile search. Desktop SHALL retain a full search field with Filters immediately to its right and New post on the same row, with no button wrapping or horizontal overflow. Desktop New post SHALL be a 44px plus icon button with accessible name New post, preserving composer, disabled and archived saved-draft behavior. Mobile Search SHALL show a green border if and only if its input is open/aria-expanded true, even with an empty query. Outside pointer dismissal SHALL hide the input and remove this border without clearing the query or stealing outside-target focus. Interactions inside the input region including Clear SHALL NOT dismiss it. No yellow active treatment SHALL be used. Breakpoint changes SHALL NOT strand focus in hidden controls.
+
+#### Scenario: A member searches on a phone
+
+- **WHEN** a member opens Discussion at 320px or 390px and activates the Search icon
+- **THEN** Search, New post and Filters remain on one row, a labelled search field opens below that row and receives focus, and existing searching/filtering behavior remains available
+
+#### Scenario: A member closes mobile search
+
+- **WHEN** a member presses Escape in mobile search and later reopens it
+- **THEN** focus returns to the Search icon on close and the query remains intact on reopen
+
+#### Scenario: Desktop discussion controls remain inline
+
+- **WHEN** a member opens Discussion on desktop at 851px or wider
+- **THEN** the full Search field, Filters and New post share one row, the search input remains usable, and no obsolete filter column or arrow appears
+
+#### Scenario: Desktop plus opens the composer
+
+- **WHEN** a member activates the desktop New post plus icon
+- **THEN** the existing composer opens and the button is 44px with accessible name New post; deleting/loading disablement and archived saved-draft access remain unchanged
+
+#### Scenario: Mobile search open state is explicit
+
+- **WHEN** a member opens Search with an empty or populated query
+- **THEN** its green border and aria-expanded true identify the open field, input/Clear interactions keep it open, and outside dismissal hides it/removes the border while retaining query and outside focus; reopening restores the border and query

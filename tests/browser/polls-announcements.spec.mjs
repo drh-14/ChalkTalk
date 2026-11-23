@@ -19,7 +19,9 @@ mkdirSync(screenshots, { recursive: true });
 
 async function compose(page, courseId, { type, title, body }) {
   await page.goto(`${BASE}/courses/${courseId}`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page.getByRole("combobox", { name: "Post type" }).selectOption(type);
   await page.getByRole("textbox", { name: "Post title" }).fill(title);
   await page.getByRole("textbox", { name: "Post body" }).click();

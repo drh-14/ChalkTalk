@@ -162,7 +162,7 @@ it("omits disallowed anonymous and private choices from the new-post composer", 
     vi.fn(async () => page([])),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={{
@@ -174,7 +174,9 @@ it("omits disallowed anonymous and private choices from the new-post composer", 
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: /Create post/ }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   expect(
     screen.queryByRole("checkbox", { name: "Post anonymously" }),
   ).toBeNull();
@@ -192,7 +194,7 @@ it("lets an open anonymous draft switch to named if policy changes", async () =>
     vi.fn(async () => page([])),
   );
   const user = userEvent.setup();
-  const { rerender } = render(
+  const { rerender } = renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -200,7 +202,9 @@ it("lets an open anonymous draft switch to named if policy changes", async () =>
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: /Create post/ }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.click(screen.getByRole("checkbox", { name: "Post anonymously" }));
   rerender(
     <Discussion
@@ -218,9 +222,33 @@ it("lets an open anonymous draft switch to named if policy changes", async () =>
   ).toBeNull();
 });
 
+/** Existing filter scenarios start after the member explicitly expands the panel. */
+function renderWithFilters(ui: Parameters<typeof render>[0]) {
+  const view = render(ui);
+  const toggle = screen.queryByRole("button", { name: "Filters" });
+  if (toggle) fireEvent.click(toggle);
+  return view;
+}
+
 type FilterSection = "Show" | "Sort by";
 /** The single-choice group inside an open sidebar section. */
+function openFilters() {
+  const trigger = screen.getByRole("button", { name: "Filters" });
+  if (trigger.getAttribute("aria-expanded") === "false")
+    fireEvent.click(trigger);
+}
+async function findDuplicateChoice() {
+  openFilters();
+  return screen.findByRole("button", DUPLICATES);
+}
+function duplicateChoice() {
+  openFilters();
+  return screen.getByRole("button", DUPLICATES);
+}
 function filterSection(name: FilterSection) {
+  const trigger = screen.getByRole("button", { name: "Filters" });
+  if (trigger.getAttribute("aria-expanded") === "false")
+    fireEvent.click(trigger);
   return screen.getByRole("group", { name });
 }
 function filterChoices(name: FilterSection) {
@@ -244,7 +272,7 @@ it("collapses desktop filters with an accessible boundary control without fetchi
   const fetchMock = vi.fn(async () => page([post("p1", "First post")]));
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -254,13 +282,13 @@ it("collapses desktop filters with an accessible boundary control without fetchi
   );
   await screen.findByText("First post");
   const sidebar = document.querySelector(".discussion-sidebar")!;
-  const toggle = screen.getByRole("button", { name: "Collapse filters" });
+  const toggle = screen.getByRole("button", { name: "Filters" });
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  expect(toggle.getAttribute("aria-controls")).toBe(sidebar.id);
+  expect(toggle.getAttribute("aria-controls")).toBe("post-filters");
   expect(sidebar.hasAttribute("inert")).toBe(false);
   const requests = fetchMock.mock.calls.length;
   await user.click(toggle);
-  expect(screen.getByRole("button", { name: "Expand filters" })).toBe(toggle);
+  expect(screen.getByRole("button", { name: "Filters" })).toBe(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   expect(sidebar.hasAttribute("inert")).toBe(true);
   expect(fetchMock.mock.calls.length).toBe(requests);
@@ -278,7 +306,7 @@ it("keeps the selected filter and post detail while desktop filters collapse", a
   );
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -296,69 +324,96 @@ it("keeps the selected filter and post detail while desktop filters collapse", a
   );
   await screen.findByRole("heading", { name: "Kept note" });
   const requests = fetchMock.mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Collapse filters" }));
+  await user.click(screen.getByRole("button", { name: "Filters" }));
   expect(noteChoice.checked).toBe(true);
   expect(screen.getByRole("heading", { name: "Kept note" })).toBeTruthy();
   expect(fetchMock.mock.calls.length).toBe(requests);
-  await user.click(screen.getByRole("button", { name: "Expand filters" }));
+  await user.click(screen.getByRole("button", { name: "Filters" }));
   expect(noteChoice.checked).toBe(true);
 });
 
-it("starts desktop filters expanded on each discussion mount", async () => {
-  mockDesktopViewport();
+it("can leave the Filters toggle when matchMedia is unavailable", async () => {
+  vi.stubGlobal("matchMedia", undefined);
+  stubFetch(vi.fn(async () => page([])));
+  const errors: unknown[] = [];
+  const captureError = (event: ErrorEvent) => {
+    errors.push(event.error);
+    event.preventDefault();
+  };
+  window.addEventListener("error", captureError);
+  try {
+    render(
+      <Discussion
+        courseId={course.id}
+        course={course}
+        csrfToken="csrf"
+        onNavigate={vi.fn()}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: "Filters" });
+    fireEvent.focus(toggle);
+    fireEvent.blur(toggle);
+    expect(errors).toEqual([]);
+  } finally {
+    window.removeEventListener("error", captureError);
+  }
+});
+
+it("keeps collapse state across desktop/mobile breakpoint changes", async () => {
+  const resize = mockDesktopViewport();
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
+  renderWithFilters(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Filters" }));
+  resize(false);
+  expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
+  expect(document.getElementById("post-filters")?.hasAttribute("hidden")).toBe(
+    true,
+  );
+  await user.click(screen.getByRole("button", { name: "Filters" }));
+  resize(true);
+  expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
+});
+
+it("closes filters when a post route changes without focusing its hidden trigger", async () => {
+  stubFetch(
+    vi.fn(async (url: string) =>
+      url.endsWith("/posts/p1")
+        ? json({ data: post("p1", "First post") })
+        : page([post("p1", "First post")]),
+    ),
+  );
   const props = {
     courseId: course.id,
     course,
     csrfToken: "csrf",
     onNavigate: vi.fn(),
   };
-  const view = render(<Discussion {...props} />);
-  await screen.findByText("No posts yet.");
-  await user.click(screen.getByRole("button", { name: "Collapse filters" }));
-  expect(
-    document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
-  ).toBe(true);
-  view.unmount();
-  render(<Discussion {...props} />);
-  expect(screen.getByRole("button", { name: "Collapse filters" })).toBeTruthy();
-  expect(
-    document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
-  ).toBe(false);
-});
-
-it("shows mobile filters after resize and restores desktop collapse state", async () => {
-  const resize = mockDesktopViewport();
-  stubFetch(vi.fn(async () => page([])));
-  const user = userEvent.setup();
-  render(
-    <Discussion
-      courseId={course.id}
-      course={course}
-      csrfToken="csrf"
-      onNavigate={vi.fn()}
-    />,
-  );
-  await screen.findByText("No posts yet.");
-  await user.click(screen.getByRole("button", { name: "Collapse filters" }));
-  resize(false);
-  expect(screen.queryByRole("button", { name: "Expand filters" })).toBeNull();
-  expect(
-    document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
-  ).toBe(false);
-  expect(filterSection("Show")).toBeTruthy();
-  resize(true);
-  expect(screen.getByRole("button", { name: "Expand filters" })).toBeTruthy();
-  expect(
-    document.querySelector(".discussion-sidebar")?.hasAttribute("inert"),
-  ).toBe(true);
+  const { rerender } = render(<Discussion {...props} />);
+  const toggle = screen.getByRole("button", { name: "Filters" });
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  screen.getByRole("button", { name: "Close filters" }).focus();
+  rerender(<Discussion {...props} postId="p1" />);
+  await screen.findByRole("heading", { name: "First post" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(document.getElementById("post-filters")?.hidden).toBe(true);
+  expect(document.activeElement).not.toBe(toggle);
+  rerender(<Discussion {...props} />);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
 });
 
 it("offers formatting controls and previews the unsent post body", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -366,7 +421,9 @@ it("offers formatting controls and previews the unsent post body", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "Equation",
@@ -397,7 +454,7 @@ it.each([
 ])("wraps a real editor selection with %s syntax", async (button, expected) => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -405,7 +462,9 @@ it.each([
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "ptr");
   await user.keyboard(`{Shift>}${"{ArrowLeft}".repeat(3)}{/Shift}`);
@@ -417,7 +476,7 @@ it.each([
 it("places the link destination under the caret for immediate typing", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -425,7 +484,9 @@ it("places the link destination under the caret for immediate typing", async () 
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "notes");
   await user.keyboard(`{Shift>}${"{ArrowLeft}".repeat(5)}{/Shift}`);
@@ -443,7 +504,7 @@ it.each([
 ])("formats selected lines with %s in the editor", async (button, expected) => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -451,7 +512,9 @@ it.each([
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "one{enter}two");
   await user.keyboard(`{Shift>}${"{ArrowLeft}".repeat(7)}{/Shift}`);
@@ -468,7 +531,7 @@ it.each([
 it("inserts math at the editor caret and removes a live LaTeX error when corrected", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -476,7 +539,9 @@ it("inserts math at the editor caret and removes a live LaTeX error when correct
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.click(screen.getByRole("button", { name: "Inline math" }));
   const body = screen.getByRole("textbox", { name: "Post body" });
   expect(document.activeElement).toBe(body);
@@ -495,7 +560,7 @@ it("inserts math at the editor caret and removes a live LaTeX error when correct
 it("renders complete inline math in the editable body and reveals source on activation", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -503,7 +568,9 @@ it("renders complete inline math in the editable body and reveals source on acti
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$x^2$ tail");
   await waitFor(() =>
@@ -518,7 +585,7 @@ it("renders complete inline math in the editable body and reveals source on acti
 it("renders standalone block math and reveals its source when a selection reaches it", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -526,7 +593,9 @@ it("renders standalone block math and reveals its source when a selection reache
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$${enter}x^2{enter}$${enter}tail");
   await waitFor(() =>
@@ -540,7 +609,7 @@ it("renders standalone block math and reveals its source when a selection reache
 it("reveals inline source when the keyboard caret reaches either formula boundary", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -548,7 +617,9 @@ it("reveals inline source when the keyboard caret reaches either formula boundar
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "a $x^2$ z");
   await waitFor(() =>
@@ -562,7 +633,7 @@ it("reveals inline source when the keyboard caret reaches either formula boundar
 it("shows source and an accessible error when rendered math becomes invalid, then rerenders after correction", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -570,7 +641,9 @@ it("shows source and an accessible error when rendered math becomes invalid, the
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$x^2$ tail");
   await waitFor(() =>
@@ -598,7 +671,7 @@ it("submits the original math Markdown even while its formula is rendered in the
   );
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -606,7 +679,9 @@ it("submits the original math Markdown even while its formula is rendered in the
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "Math question",
@@ -636,7 +711,7 @@ it("publishes the exact indented Markdown body with trailing whitespace", async 
   );
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -644,7 +719,9 @@ it("publishes the exact indented Markdown body with trailing whitespace", async 
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(screen.getByRole("textbox", { name: "Post title" }), "Code");
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "    code  ");
@@ -664,7 +741,7 @@ it("rejects a whitespace-only Markdown body", async () => {
   const fetchMock = vi.fn<typeof fetch>(async () => page([]));
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -672,7 +749,9 @@ it("rejects a whitespace-only Markdown body", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(screen.getByRole("textbox", { name: "Post title" }), "Code");
   await user.type(screen.getByRole("textbox", { name: "Post body" }), "    ");
   await user.click(screen.getByRole("button", { name: "Publish post" }));
@@ -687,7 +766,7 @@ it("rejects a whitespace-only Markdown body", async () => {
 it("copies, pastes, and undoes formula source rather than rendered math", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -695,7 +774,9 @@ it("copies, pastes, and undoes formula source rather than rendered math", async 
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$x^2$ tail");
   await waitFor(() =>
@@ -716,7 +797,7 @@ it("copies, pastes, and undoes formula source rather than rendered math", async 
 it("applies toolbar syntax at the raw caret after a rendered formula is opened", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -724,7 +805,9 @@ it("applies toolbar syntax at the raw caret after a rendered formula is opened",
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$x^2$ tail");
   await waitFor(() =>
@@ -760,7 +843,7 @@ it("ignores older worker diagnostics after the author edits the body again", asy
   vi.stubGlobal("Worker", FakeWorker);
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -768,7 +851,9 @@ it("ignores older worker diagnostics after the author edits the body again", asy
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$\\badcommand$");
   const old = messages.at(-1)!;
@@ -807,7 +892,7 @@ it("keeps the post body editable if LaTeX checking fails", async () => {
   vi.stubGlobal("Worker", BrokenWorker);
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -815,7 +900,9 @@ it("keeps the post body editable if LaTeX checking fails", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "Still editable");
   expect(body.textContent).toBe("Still editable");
@@ -840,7 +927,7 @@ it("keeps raw Markdown editable when the math worker cannot be constructed", asy
   );
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -848,7 +935,9 @@ it("keeps raw Markdown editable when the math worker cannot be constructed", asy
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$x^2$ $\\badcommand$");
   expect(body.textContent).toBe("$x^2$ $\\badcommand$");
@@ -875,7 +964,7 @@ it("reveals previously rendered source if the math worker later fails", async ()
   vi.stubGlobal("Worker", FakeWorker);
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -883,7 +972,9 @@ it("reveals previously rendered source if the math worker later fails", async ()
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$x^2$ tail");
   const activeWorker = workers.at(-1)!;
@@ -922,7 +1013,7 @@ it("reveals raw source when the external math renderer fails in the editor", asy
   });
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -930,7 +1021,9 @@ it("reveals raw source when the external math renderer fails in the editor", asy
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const body = screen.getByRole("textbox", { name: "Post body" });
   await user.type(body, "$x^2$ tail");
   await waitFor(() => expect(body.textContent).toBe("$x^2$ tail"));
@@ -959,7 +1052,7 @@ it("keeps the controls above a focusable scroll region for posts and duplicates"
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -977,30 +1070,24 @@ it("keeps the controls above a focusable scroll region for posts and duplicates"
   ).toBeTruthy();
   expect(within(listings).queryByRole("searchbox")).toBeNull();
   expect(
-    within(listings).queryByRole("button", { name: "Create post" }),
+    within(listings).queryByRole("button", {
+      name: /^(?:Create post|New post)$/,
+    }),
   ).toBeNull();
   expect(
     within(feed).getByRole("searchbox", { name: "Search posts" }),
   ).toBeTruthy();
-  await screen.findByRole("button", DUPLICATES);
-  expect(
-    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
-  ).toBe("false");
-  expect(
-    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
-  ).toBe("false");
-  await user.click(screen.getByRole("button", DUPLICATES));
-  expect(
-    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
-  ).toBe("true");
+  await findDuplicateChoice();
+  expect(duplicateChoice().getAttribute("aria-pressed")).toBe("false");
+  expect(duplicateChoice().getAttribute("aria-pressed")).toBe("false");
+  await user.click(duplicateChoice());
+  expect(duplicateChoice().getAttribute("aria-pressed")).toBe("true");
   expect(
     await within(listings).findByRole("button", { name: "Old question" }),
   ).toBeTruthy();
-  screen.getByRole("button", DUPLICATES).focus();
+  duplicateChoice().focus();
   await user.keyboard("{Enter}");
-  expect(
-    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
-  ).toBe("false");
+  expect(duplicateChoice().getAttribute("aria-pressed")).toBe("false");
   expect(await within(listings).findByText("First")).toBeTruthy();
 });
 
@@ -1031,7 +1118,7 @@ it("paginates duplicate posts with the active query and resets them after switch
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1041,10 +1128,10 @@ it("paginates duplicate posts with the active query and resets them after switch
       onNavigate={vi.fn()}
     />,
   );
-  await screen.findByRole("button", DUPLICATES);
+  await findDuplicateChoice();
   const listings = screen.getByRole("region", { name: "Post listings" });
   await within(listings).findByText("Active post");
-  await user.click(screen.getByRole("button", DUPLICATES));
+  await user.click(duplicateChoice());
   await within(listings).findByRole("button", { name: "First duplicate" });
   await user.click(
     within(listings).getByRole("button", { name: "Load more posts" }),
@@ -1068,10 +1155,10 @@ it("paginates duplicate posts with the active query and resets them after switch
       .getAllByRole("button", { name: /duplicate$/ })
       .map((button) => button.textContent),
   ).toEqual(["First duplicate", "Second duplicate"]);
-  await user.click(screen.getByRole("button", DUPLICATES));
+  await user.click(duplicateChoice());
   await within(listings).findByText("Active post");
   expect(within(listings).queryByText("Second duplicate")).toBeNull();
-  await user.click(screen.getByRole("button", DUPLICATES));
+  await user.click(duplicateChoice());
   await waitFor(() => expect(duplicateRequests()).toHaveLength(3));
   expect(duplicateRequests().at(-1)!.searchParams.has("cursor")).toBe(false);
   await within(listings).findByRole("button", { name: "First duplicate" });
@@ -1153,7 +1240,7 @@ it("lets staff review merged posts without exposing their body and unmerge one",
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1162,7 +1249,7 @@ it("lets staff review merged posts without exposing their body and unmerge one",
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", DUPLICATES));
+  await user.click(await findDuplicateChoice());
   expect(await screen.findByText("Old question")).toBeTruthy();
   const listings = screen.getByRole("region", { name: "Post listings" });
   expect(
@@ -1201,7 +1288,7 @@ it("lets staff review merged posts without exposing their body and unmerge one",
       .getAllByRole("button", { name: /Earlier duplicate|Old question/ })
       .map((button) => button.getAttribute("aria-label")),
   ).toEqual(["Earlier duplicate"]);
-  await user.click(await screen.findByRole("button", DUPLICATES));
+  await user.click(await findDuplicateChoice());
   await within(listings).findByText("Old question");
   expect(
     within(listings)
@@ -1248,7 +1335,7 @@ it("opens a duplicate card's canonical post in a new tab without replacing revie
   );
   const user = userEvent.setup();
   const onNavigate = vi.fn();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1257,7 +1344,7 @@ it("opens a duplicate card's canonical post in a new tab without replacing revie
       onNavigate={onNavigate}
     />,
   );
-  await user.click(await screen.findByRole("button", DUPLICATES));
+  await user.click(await findDuplicateChoice());
   const canonicalLink = await screen.findByRole("link", {
     name: "Canonical question",
   });
@@ -1316,7 +1403,7 @@ it("shows the selected duplicate's retained detail instead of the canonical post
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1326,7 +1413,7 @@ it("shows the selected duplicate's retained detail instead of the canonical post
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", DUPLICATES));
+  await user.click(await findDuplicateChoice());
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   const card = screen
     .getByRole("button", { name: "Old question" })
@@ -1387,7 +1474,7 @@ it("does not show a late duplicate review after switching back to posts", async 
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1396,14 +1483,12 @@ it("does not show a late duplicate review after switching back to posts", async 
       onNavigate={vi.fn()}
     />,
   );
-  await screen.findByRole("button", DUPLICATES);
-  await user.click(screen.getByRole("button", DUPLICATES));
+  await findDuplicateChoice();
+  await user.click(duplicateChoice());
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   await waitFor(() => expect(finishReview).toBeDefined());
-  await user.click(screen.getByRole("button", DUPLICATES));
-  expect(
-    screen.getByRole("button", DUPLICATES).getAttribute("aria-pressed"),
-  ).toBe("false");
+  await user.click(duplicateChoice());
+  expect(duplicateChoice().getAttribute("aria-pressed")).toBe("false");
   finishReview!(
     json({
       data: {
@@ -1427,7 +1512,7 @@ it("does not offer merged-post review to students", async () => {
         : page([]),
     ),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1453,7 +1538,7 @@ it("only offers merging while staff are viewing posts", async () => {
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1466,15 +1551,15 @@ it("only offers merging while staff are viewing posts", async () => {
   expect(
     await screen.findByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
-  await screen.findByRole("button", DUPLICATES);
-  await user.click(screen.getByRole("button", DUPLICATES));
+  await findDuplicateChoice();
+  await user.click(duplicateChoice());
   expect(
     screen.getByRole("heading", { name: "Select a duplicate post" }),
   ).toBeTruthy();
   expect(
     screen.queryByRole("button", { name: "Merge as duplicate" }),
   ).toBeNull();
-  await user.click(screen.getByRole("button", DUPLICATES));
+  await user.click(duplicateChoice());
   expect(
     screen.getByRole("button", { name: "Merge as duplicate" }),
   ).toBeTruthy();
@@ -1492,7 +1577,7 @@ it("navigates an old merged-post route to its canonical post", async () => {
     ),
   );
   const onNavigate = vi.fn();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1578,7 +1663,7 @@ it("lets staff find a canonical post and confirm a merge from post detail", asyn
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1646,7 +1731,7 @@ it("lets staff find a canonical post and confirm a merge from post detail", asyn
           link.textContent?.match(/Unaffected post|Course cutoff guide/)?.[0],
       ),
   ).toEqual(["Unaffected post", "Course cutoff guide"]);
-  await user.click(await screen.findByRole("button", DUPLICATES));
+  await user.click(await findDuplicateChoice());
   expect(
     await within(listings).findByRole("button", {
       name: "Old cutoff question",
@@ -1685,7 +1770,7 @@ it("guards merge before discarding an unsaved edit or sending its mutation", asy
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const onNavigate = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1753,7 +1838,7 @@ it("blocks opening Edit while a merge request is pending", async () => {
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1809,7 +1894,7 @@ it("does not start a merge while an edit Save is pending", async () => {
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -1850,7 +1935,7 @@ it("keeps search syntax accessible without showing explanatory copy", async () =
       url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
     ),
   );
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
   await screen.findByRole("searchbox", { name: "Search posts" });
@@ -1881,7 +1966,7 @@ it("searches live after 300 ms, preserves syntax, and removes the Search button"
   );
   const replaceQuery = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -1914,7 +1999,7 @@ it("clears a live search immediately and retains the unfiltered feed", async () 
     ),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -1935,7 +2020,7 @@ it("does not replace newer typing with an earlier debounced URL update", async (
       url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
     ),
   );
-  const view = render(
+  const view = renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -1966,7 +2051,7 @@ it("does not replace new typing after a clear with the delayed empty URL query",
       url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
     ),
   );
-  const view = render(
+  const view = renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -1997,7 +2082,7 @@ it("bounds the live query to 500 characters", async () => {
       url.endsWith("/courses/course-1") ? json({ data: course }) : page([]),
     ),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2033,7 +2118,7 @@ it("retains first-page cards and retries the same cursor without duplicates", as
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
   await screen.findByText("First");
@@ -2064,7 +2149,7 @@ it("restarts a stale semantic page from the first lexical page with search filte
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2106,7 +2191,7 @@ it("discards an old cursor response when a new live query begins", async () => {
     }),
   );
   const user = userEvent.setup();
-  const view = render(
+  const view = renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2145,7 +2230,7 @@ it("offers retry after an initial feed error", async () => {
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
   await screen.findByText("Feed unavailable");
@@ -2163,7 +2248,7 @@ it("opens the composer in the detail panel and restores the selected post when c
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2173,7 +2258,9 @@ it("opens the composer in the detail panel and restores the selected post when c
   );
   const detail = screen.getByRole("region", { name: "Post detail" });
   await screen.findByRole("heading", { name: "Selected question" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   expect(
     detail.contains(screen.getByRole("textbox", { name: "Post title" })),
   ).toBe(true);
@@ -2215,11 +2302,13 @@ it("saves the latest draft before navigating to another post", async () => {
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const navigate = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={navigate} />,
   );
   await screen.findByText("First question");
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(screen.getByRole("textbox", { name: "Post title" }), "Draft");
   await user.click(screen.getByRole("link", { name: /First question/ }));
   expect(confirm).not.toHaveBeenCalled();
@@ -2263,11 +2352,13 @@ it("shows a mobile Back to posts action that waits for draft autosave", async ()
   );
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   expect(
     document
       .querySelector(".discussion-columns")
@@ -2301,11 +2392,13 @@ it("keeps a failed creation draft and navigates to the returned post after retry
   stubFetch(fetchMock);
   const navigate = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={navigate} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "My question",
@@ -2356,11 +2449,13 @@ it("prevents a second create while the first request is pending", async () => {
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "Waiting",
@@ -2390,7 +2485,7 @@ it("uses submitted search text and server relevance order without parsing syntax
         : page([post("p2", "Second result"), post("p1", "First result")]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2430,7 +2525,7 @@ it("renders Markdown and LaTeX in feed cards without nested links", async () => 
     ),
   );
   const onNavigate = vi.fn();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2470,10 +2565,12 @@ it("renders Markdown and LaTeX in related questions without nested links", async
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "Formula cutoff",
@@ -2502,7 +2599,7 @@ it("shows a direct post with viewer-projected author and blocks hostile Markdown
       return page([]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2536,11 +2633,13 @@ it("bounds debounced related-question requests to ten results while title and bo
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "A cutoff for the course",
@@ -2592,11 +2691,13 @@ it.each([
       }),
     );
     const user = userEvent.setup();
-    render(
+    renderWithFilters(
       <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
     );
-    await screen.findByRole("button", { name: "Create post" });
-    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+    await user.click(
+      screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+    );
     await user.type(screen.getByRole("textbox", { name: "Post title" }), title);
     fireEvent.paste(screen.getByRole("textbox", { name: "Post body" }), {
       clipboardData: { getData: () => body },
@@ -2629,7 +2730,7 @@ it("does not show an obsolete feed response after the submitted query changes", 
     }),
   );
   const navigate = vi.fn();
-  const view = render(
+  const view = renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2666,7 +2767,7 @@ it("shows deleted and wrong-course details without previous identity or content"
     }),
   );
   const navigate = vi.fn();
-  const view = render(
+  const view = renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2700,7 +2801,7 @@ it("shows an unavailable state for a hidden post returned as 404", async () => {
       return page([]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -2721,11 +2822,13 @@ it("rejects blank composer fields and caps title length before creation", async 
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.click(screen.getByRole("button", { name: "Publish post" }));
   expect(screen.getByRole("alert").textContent).toContain("Post title");
   await user.type(
@@ -2750,11 +2853,13 @@ it("keeps related questions visible after pointer exit, focus departure, and Esc
     ),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "Question title",
@@ -2797,11 +2902,13 @@ it("rejects an overlong body before sending creation", async () => {
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "Question title",
@@ -2831,11 +2938,13 @@ it("ignores an older related-question response after the draft changes", async (
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "cutoff",
@@ -2871,11 +2980,13 @@ it("creates a note without requesting related questions", async () => {
   stubFetch(fetchMock);
   const user = userEvent.setup();
   const navigate = vi.fn();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={navigate} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.selectOptions(screen.getByLabelText("Post type"), "note");
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
@@ -2917,11 +3028,13 @@ it("uses the whole long title and caps body-derived suggestion terms", async () 
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
-  await screen.findByRole("button", { name: "Create post" });
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await screen.findByRole("button", { name: /^(?:Create post|New post)$/ });
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const title = `alpha ${"x".repeat(184)} tail`;
   fireEvent.change(screen.getByRole("textbox", { name: "Post title" }), {
     target: { value: title },
@@ -2976,7 +3089,7 @@ it("shows each post's creation time beside its author in the feed and detail", a
       ]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3017,7 +3130,7 @@ it("shows an anonymous post's time without identifying its author", async () => 
       return page([]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3065,7 +3178,7 @@ it("shows a duplicate's time in staff review detail but not on its review card",
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -3074,7 +3187,7 @@ it("shows a duplicate's time in staff review detail but not on its review card",
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", DUPLICATES));
+  await user.click(await findDuplicateChoice());
   await user.click(await screen.findByRole("button", { name: "Old question" }));
   const detail = screen.getByRole("region", { name: "Post detail" });
   await waitFor(() => expect(timeIn(detail)?.textContent).toBe("2 hours ago"));
@@ -3107,7 +3220,7 @@ it("shows no time for a deleted post or a related-question suggestion", async ()
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3118,7 +3231,9 @@ it("shows no time for a deleted post or a related-question suggestion", async ()
   await screen.findByText("This post was deleted.");
   const detail = screen.getByRole("region", { name: "Post detail" });
   expect(timeIn(detail)).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.type(
     screen.getByRole("textbox", { name: "Post title" }),
     "A cutoff question",
@@ -3140,7 +3255,7 @@ it("makes the post detail a focusable region beside the post listings and marks 
       return page([post("p1", "First"), post("p2", "Second")]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3183,7 +3298,7 @@ it("shows shared answer areas for questions and hides them for notes and tombsto
     return page([]);
   });
   stubFetch(fetchMock);
-  const view = render(
+  const view = renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -3254,7 +3369,7 @@ it("maps every Show option to its exact feed request parameters", async () => {
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3297,7 +3412,7 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3306,7 +3421,7 @@ it("filters the feed from the sidebar and keeps the filter when loading more", a
     />,
   );
   const sidebar = await screen.findByRole("complementary", {
-    name: "Post filters",
+    name: "Filter choices",
   });
   expect(within(sidebar).getByRole("group", { name: "Show" })).toBeTruthy();
   expect(choiceLabels("Show")).toEqual([
@@ -3357,7 +3472,7 @@ it("retains a type filter on pagination and resets the cursor when Show changes"
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
   await screen.findByText("First question");
@@ -3395,7 +3510,7 @@ it("sorts the feed and offers best match only while searching", async () => {
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  const view = render(
+  const view = renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
   expect(choiceLabels("Show")).not.toContain("My posts");
@@ -3469,7 +3584,7 @@ it("keeps the newest selected sort and cursor when an older sort request finishe
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -3514,7 +3629,7 @@ it("keeps a section open while choosing and summarizes it when closed without fe
   const fetchMock = vi.fn(async () => page([]));
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -3557,13 +3672,13 @@ it("starts sections open on wide screens or without media queries and keeps that
     csrfToken: "csrf",
     onNavigate: vi.fn(),
   };
-  const view = render(<Discussion {...props} />);
+  const view = renderWithFilters(<Discussion {...props} />);
   await screen.findByText("No posts yet.");
   expect(filterSection("Show")).toBeTruthy();
   expect(filterSection("Sort by")).toBeTruthy();
   view.unmount();
   const resize = mockDesktopViewport();
-  render(<Discussion {...props} />);
+  renderWithFilters(<Discussion {...props} />);
   await screen.findByText("No posts yet.");
   resize(false);
   expect(
@@ -3576,7 +3691,7 @@ it("starts sections closed on phones with the current choices in their headers",
   const resize = mockDesktopViewport(false);
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -3603,7 +3718,7 @@ it("falls back to All posts for an unknown Show filter", async () => {
     return page([]);
   });
   stubFetch(fetchMock);
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3631,7 +3746,7 @@ it("disables the sidebar filters in the staff duplicate view", async () => {
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -3640,8 +3755,8 @@ it("disables the sidebar filters in the staff duplicate view", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", DUPLICATES));
-  const sidebar = screen.getByRole("complementary", { name: "Post filters" });
+  await user.click(await findDuplicateChoice());
+  const sidebar = screen.getByRole("complementary", { name: "Filter choices" });
   // Show stays usable, with nothing chosen, so picking a filter leaves review.
   expect(
     filterChoices("Show").every(
@@ -3680,7 +3795,7 @@ it("lays out each card with a type badge, status, preview, and byline from the p
       ]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion courseId={course.id} csrfToken="csrf" onNavigate={vi.fn()} />,
   );
   const listings = await screen.findByRole("region", { name: "Post listings" });
@@ -3746,7 +3861,7 @@ it("labels the post type in the detail pane from the post type list", async () =
       return page([]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3766,7 +3881,7 @@ it("restores filters from props and keeps them on post links", async () => {
   });
   stubFetch(fetchMock);
   const onFiltersChange = vi.fn();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3807,7 +3922,7 @@ it("filters by a tag from a row or the post, keeps the selected post, and remove
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3830,6 +3945,7 @@ it("filters by a tag from a row or the post, keeps the selected post, and remove
     ),
   );
   expect(screen.getByRole("heading", { name: "Selected" })).toBeTruthy();
+  openFilters();
   await user.click(
     screen.getByRole("button", { name: "Remove tag filter midterm" }),
   );
@@ -3852,7 +3968,7 @@ it("combines tags, matches all by default, and switches to any or clears them", 
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3879,6 +3995,7 @@ it("combines tags, matches all by default, and switches to any or clears them", 
     expect(lastParams().getAll("tag")).toEqual(["recursion", "exam-2"]),
   );
   expect(lastParams().get("tagMatch")).toBe("all");
+  openFilters();
   const match = screen.getByRole("group", { name: "Match" });
   expect(
     (within(match).getByRole("radio", { name: "All" }) as HTMLInputElement)
@@ -3911,6 +4028,7 @@ it("combines tags, matches all by default, and switches to any or clears them", 
   expect(lastParams().has("tagMatch")).toBe(false);
   expect(screen.queryByRole("group", { name: "Match" })).toBeNull();
   expect(screen.getByRole("heading", { name: "Selected" })).toBeTruthy();
+  openFilters();
   await user.click(screen.getByRole("button", { name: "Clear all" }));
   await waitFor(() => expect(lastParams().has("tag")).toBe(false));
   expect(screen.queryByRole("button", { name: /^Tags/ })).toBeNull();
@@ -3926,7 +4044,7 @@ it("announces the tag limit and leaves ten active tags unchanged", async () => {
   stubFetch(fetchMock);
   const onFiltersChange = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -3942,9 +4060,11 @@ it("announces the tag limit and leaves ten active tags unchanged", async () => {
     screen.getByRole("button", { name: "Filter by tag eleventh" }),
   );
   expect(onFiltersChange).not.toHaveBeenCalled();
+  openFilters();
   const limit = await screen.findByText("At most 10 tags can be combined.");
   expect(limit.getAttribute("role")).toBe("status");
   expect(feedRequests(fetchMock)).toHaveLength(requests);
+  openFilters();
   await user.click(screen.getByRole("button", { name: "Tags" }));
   expect(screen.getByRole("button", { name: "Tags · 10" })).toBeTruthy();
 });
@@ -3958,7 +4078,7 @@ it("disables tag chips and the tag match in the staff duplicate view", async () 
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -3969,7 +4089,7 @@ it("disables tag chips and the tag match in the staff duplicate view", async () 
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", DUPLICATES));
+  await user.click(await findDuplicateChoice());
   expect(
     screen
       .getByRole("button", { name: "Remove tag filter a" })
@@ -4012,7 +4132,7 @@ function pinFixture(options: {
       return page([current()]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={{ ...course, status: options.status ?? "active" }}
@@ -4143,7 +4263,7 @@ it.each(["oldest", "newest", "recent_activity", "relevance"] as const)(
     });
     stubFetch(fetchMock);
     const user = userEvent.setup();
-    render(
+    renderWithFilters(
       <Discussion
         courseId={course.id}
         course={course}
@@ -4222,7 +4342,7 @@ it("keeps an unpinned post in the Questions feed and retains its detail", async 
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4273,7 +4393,7 @@ it("keeps a newly pinned detail in the matching Questions feed", async () => {
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4319,7 +4439,7 @@ it("keeps a newly pinned detail out of a Questions feed whose tag does not match
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4419,7 +4539,7 @@ it("shows the last activity time in the post view when it differs from the creat
       return page([]);
     }),
   );
-  const view = render(
+  const view = renderWithFilters(
     <Discussion
       courseId={course.id}
       csrfToken="csrf"
@@ -4447,7 +4567,7 @@ it("shows the last activity time in the post view when it differs from the creat
 it("distinguishes an empty course from filters that match nothing and clears them", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4478,7 +4598,7 @@ it("returns from a post to the list with the same search and filters", async () 
   );
   const navigate = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4516,7 +4636,7 @@ it("restores the page scroll position when returning from a post", async () => {
       csrfToken: "csrf",
       onNavigate: navigate,
     };
-    const view = render(<Discussion {...props} />);
+    const view = renderWithFilters(<Discussion {...props} />);
     await user.click(await screen.findByRole("link", { name: /Row/ }));
     expect(navigate).toHaveBeenCalledWith("/courses/course-1/posts/p1");
     view.rerender(<Discussion {...props} postId="p1" />);
@@ -4533,7 +4653,7 @@ it("clears an applied search with the Clear search control and refocuses the fie
   stubFetch(vi.fn(async () => page([post("p1", "Cutoff post")])));
   const onQueryChange = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4559,7 +4679,7 @@ it("clears an applied search with the Clear search control and refocuses the fie
 it("focuses search on slash except while typing in a field", async () => {
   stubFetch(vi.fn(async () => page([post("p1", "Row")])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4573,7 +4693,9 @@ it("focuses search on slash except while typing in a field", async () => {
   const searchbox = screen.getByRole("searchbox", { name: "Search posts" });
   expect(document.activeElement).toBe(searchbox);
   expect((searchbox as HTMLInputElement).value).toBe("");
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const title = screen.getByRole("textbox", { name: "Post title" });
   await user.type(title, "a/b");
   expect(document.activeElement).toBe(title);
@@ -4608,7 +4730,7 @@ it("asks an unmatched search as a new question with the body focused", async () 
   );
   const confirm = vi.spyOn(window, "confirm");
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4649,7 +4771,7 @@ it("asks an unmatched search as a new question with the body focused", async () 
 it("prompts to choose or start a post when nothing is selected", async () => {
   stubFetch(vi.fn(async () => page([])));
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4676,7 +4798,7 @@ it("renders Markdown previews without dropping ordinary punctuation", async () =
       ]),
     ),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4729,7 +4851,7 @@ it("keeps a created note and retries only its failed attachment", async () => {
   stubFetch(fetchMock);
   const navigate = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4737,7 +4859,9 @@ it("keeps a created note and retries only its failed attachment", async () => {
       onNavigate={navigate}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.selectOptions(
     screen.getByRole("combobox", { name: "Post type" }),
     "note",
@@ -4827,7 +4951,7 @@ it("retains an existing post's failed file after refreshing a successful sibling
       return page([current]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4882,7 +5006,7 @@ it("shows post Edit for its author but keeps viewing attachments read-only", asy
       return page([current]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -4931,7 +5055,7 @@ it("keeps post edits local until Save, sends If-Match, and Cancel discards text"
     return page([current]);
   });
   stubFetch(fetchMock);
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5014,7 +5138,7 @@ it("retains a failed post draft and requires explicit latest-version review afte
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5083,7 +5207,7 @@ it.each([
         return page([current]);
       }),
     );
-    render(
+    renderWithFilters(
       <Discussion
         courseId={course.id}
         course={{ ...course, status: status as "active" | "archived" }}
@@ -5140,7 +5264,7 @@ it("removes files only in Edit and overwrites remote text only on explicit Save"
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5240,7 +5364,7 @@ it("saves text before files and retains text typed during uploads for the next v
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5284,7 +5408,7 @@ it("guards unsaved post edits when opening Create or switching duplicate views",
   );
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5299,13 +5423,15 @@ it("guards unsaved post edits when opening Create or switching duplicate views",
     screen.getByRole("textbox", { name: "Post title" }),
     " unsaved",
   );
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   expect(confirm).toHaveBeenCalledWith("Discard your unsaved post edits?");
   expect(
     (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
       .value,
   ).toBe("Note unsaved");
-  await user.click(screen.getByRole("button", DUPLICATES));
+  await user.click(duplicateChoice());
   expect(
     (screen.getByRole("textbox", { name: "Post title" }) as HTMLInputElement)
       .value,
@@ -5328,7 +5454,7 @@ it("returns an active editor to read-only viewing when the course is archived", 
     postId: "p1",
     onNavigate: vi.fn(),
   };
-  const view = render(<Discussion {...props} course={course} />);
+  const view = renderWithFilters(<Discussion {...props} course={course} />);
   await userEvent
     .setup()
     .click(await screen.findByRole("button", { name: "Edit post" }));
@@ -5357,7 +5483,7 @@ it.each(["question", "note"])(
         return page([current]);
       }),
     );
-    render(
+    renderWithFilters(
       <Discussion
         courseId={course.id}
         course={course}
@@ -5397,7 +5523,7 @@ it("lets staff compose a poll with its options", async () => {
   stubFetch(fetchMock);
   const user = userEvent.setup();
   const onNavigate = vi.fn();
-  const { rerender } = render(
+  const { rerender } = renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5406,7 +5532,9 @@ it("lets staff compose a poll with its options", async () => {
       onNavigate={onNavigate}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const type = screen.getByRole("combobox", { name: "Post type" });
   await waitFor(() =>
     expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
@@ -5476,7 +5604,7 @@ it("sends advanced poll configuration from the staff composer", async () => {
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5485,7 +5613,9 @@ it("sends advanced poll configuration from the staff composer", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const type = screen.getByRole("combobox", { name: "Post type" });
   await waitFor(() =>
     expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
@@ -5559,7 +5689,7 @@ it("retries the same poll create after its deadline with its original key", asyn
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5568,7 +5698,9 @@ it("retries the same poll create after its deadline with its original key", asyn
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const type = screen.getByRole("combobox", { name: "Post type" });
   await waitFor(() =>
     expect(within(type).queryByRole("option", { name: "Poll" })).toBeTruthy(),
@@ -5609,7 +5741,7 @@ it("lets staff post a note as a non-anonymous announcement", async () => {
   stubFetch(fetchMock);
   const user = userEvent.setup();
   const onNavigate = vi.fn();
-  const { rerender } = render(
+  const { rerender } = renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5618,7 +5750,9 @@ it("lets staff post a note as a non-anonymous announcement", async () => {
       onNavigate={onNavigate}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.selectOptions(
     screen.getByRole("combobox", { name: "Post type" }),
     "note",
@@ -5689,7 +5823,7 @@ it("offers students neither polls nor announcements, and badges announcements", 
     ),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5701,7 +5835,9 @@ it("offers students neither polls nor announcements, and badges announcements", 
     "li, article, a",
   )!;
   expect(card.textContent).toContain("Announcement");
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const type = screen.getByRole("combobox", { name: "Post type" });
   expect(within(type).queryByRole("option", { name: "Poll" })).toBeNull();
   await user.selectOptions(type, "note");
@@ -5729,7 +5865,7 @@ it("follows and unfollows a post from its detail", async () => {
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5766,7 +5902,7 @@ it("marks unread posts in the feed, clears one on opening, and marks all read", 
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5818,7 +5954,7 @@ it("posts privately to staff and turns off the announcement option meanwhile", a
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5827,7 +5963,9 @@ it("posts privately to staff and turns off the announcement option meanwhile", a
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.selectOptions(
     screen.getByRole("combobox", { name: "Post type" }),
     "note",
@@ -5874,7 +6012,7 @@ it("offers no private visibility choice for polls", async () => {
     ),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5883,7 +6021,9 @@ it("offers no private visibility choice for polls", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   expect(screen.getByRole("combobox", { name: "Visibility" })).toBeTruthy();
   await user.selectOptions(
     await screen.findByRole("combobox", { name: "Post type" }),
@@ -5899,7 +6039,7 @@ it("badges private posts and lists them with the Private filter", async () => {
   stubFetch(fetchMock);
   const user = userEvent.setup();
   mockDesktopViewport();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -5952,7 +6092,7 @@ it("shows the private notice and lets the author make the post public after conf
   );
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6000,7 +6140,7 @@ it("hides Make public from a student who is not the author", async () => {
       return page([]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6025,7 +6165,7 @@ it("shows the unresolved count on question cards and gives staff an Unresolved f
   stubFetch(fetchMock);
   mockDesktopViewport();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6054,7 +6194,7 @@ it("offers students no Unresolved filter and shows no badge without unresolved d
     ),
   );
   mockDesktopViewport();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6091,7 +6231,7 @@ it("automatically restores the one saved draft over a suggested search title", a
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6130,7 +6270,7 @@ it("keeps a failed initial draft load locked until retry restores the draft", as
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6139,7 +6279,9 @@ it("keeps a failed initial draft load locked until retry restores the draft", as
     />,
   );
   await screen.findByText(/No posts/);
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   const retry = await screen.findByRole("button", {
     name: "Retry loading draft",
   });
@@ -6235,7 +6377,7 @@ it.each(["GET", "PUT"])(
     );
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
-    render(
+    renderWithFilters(
       <Discussion
         courseId={course.id}
         course={course}
@@ -6244,7 +6386,9 @@ it.each(["GET", "PUT"])(
       />,
     );
     await screen.findByText(/No posts/);
-    await user.click(screen.getByRole("button", { name: "Create post" }));
+    await user.click(
+      screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+    );
     const title = screen.getByRole("textbox", { name: "Post title" });
     await user.type(title, "Local title");
     await screen.findByText(/This draft changed elsewhere/);
@@ -6304,7 +6448,7 @@ it("offers draft conflict recovery when publishing with a stale version", async 
     }),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6313,7 +6457,9 @@ it("offers draft conflict recovery when publishing with a stale version", async 
     />,
   );
   await screen.findByText(/No posts/);
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await screen.findByText("Saved draft restored for this course.");
   await user.click(screen.getByRole("button", { name: "Publish post" }));
   await screen.findByText(/This draft changed elsewhere/);
@@ -6369,7 +6515,7 @@ it("offers draft conflict recovery when discard uses a stale version", async () 
   );
   vi.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6378,7 +6524,9 @@ it("offers draft conflict recovery when discard uses a stale version", async () 
     />,
   );
   await screen.findByText(/No posts/);
-  await user.click(screen.getByRole("button", { name: "Create post" }));
+  await user.click(
+    screen.getByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await screen.findByText("Saved draft restored for this course.");
   await user.click(screen.getByRole("button", { name: "Discard draft" }));
   await screen.findByText(/This draft changed elsewhere/);
@@ -6418,7 +6566,7 @@ it.each([
       return page([current]);
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(
+    renderWithFilters(
       <Discussion
         courseId={course.id}
         course={course}
@@ -6468,7 +6616,7 @@ it.each(["success", "failure"])(
       onNavigate: vi.fn(),
     };
     const user = userEvent.setup();
-    const view = render(<Discussion {...props} postId="a" />);
+    const view = renderWithFilters(<Discussion {...props} postId="a" />);
     await screen.findByRole("heading", { name: "First post" });
     await user.click(
       await screen.findByRole("button", { name: "Lock discussion" }),
@@ -6542,7 +6690,7 @@ it("preserves following and unread state when a lock response arrives", async ()
     onNavigate: vi.fn(),
   };
   const user = userEvent.setup();
-  const view = render(<Discussion {...props} postId="a" />);
+  const view = renderWithFilters(<Discussion {...props} postId="a" />);
   await user.click(
     await screen.findByRole("button", { name: "Lock discussion" }),
   );
@@ -6604,7 +6752,7 @@ it("ignores a stale lock response after newer detail and feed versions load", as
     onNavigate: vi.fn(),
   };
   const user = userEvent.setup();
-  const view = render(<Discussion {...props} postId="a" />);
+  const view = renderWithFilters(<Discussion {...props} postId="a" />);
   await user.click(
     await screen.findByRole("button", { name: "Lock discussion" }),
   );
@@ -6645,7 +6793,7 @@ it("lets readable staff confirm post deletion and leaves the discussion list", a
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   const onNavigate = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6689,7 +6837,7 @@ it("does not restore a deleted post from an in-flight initial feed", async () =>
   vi.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
   const onNavigate = vi.fn();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6730,7 +6878,7 @@ it("does not restore a deleted post from an in-flight Load more page", async () 
   vi.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
   const onNavigate = vi.fn();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6777,7 +6925,7 @@ it("does not delete when the author cancels confirmation", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(false);
   const onNavigate = vi.fn();
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6823,16 +6971,16 @@ it("offers post deletion to its author but not to another student or in an archi
     postId: "post-1",
     onNavigate: vi.fn(),
   };
-  const view = render(<Discussion {...props} userId="author" />);
+  const view = renderWithFilters(<Discussion {...props} userId="author" />);
   expect(
     await screen.findByRole("button", { name: "Delete post" }),
   ).toBeTruthy();
   view.unmount();
-  render(<Discussion {...props} userId="other" />);
+  renderWithFilters(<Discussion {...props} userId="other" />);
   await screen.findByRole("heading", { name: "Owner post" });
   expect(screen.queryByRole("button", { name: "Delete post" })).toBeNull();
   cleanup();
-  render(
+  renderWithFilters(
     <Discussion
       {...props}
       course={{ ...course, status: "archived" }}
@@ -6882,7 +7030,7 @@ it("keeps an unsaved edit through a delete conflict and refreshes the version on
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
   const onNavigate = vi.fn();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -6952,7 +7100,7 @@ it("shows a passive matching new-post status without personal-state filters", as
       return page([]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -7004,7 +7152,7 @@ it("does not replace a newer new-post count with a stalled poll", async () => {
       return page([]);
     }),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -7051,7 +7199,7 @@ it("schedules an announcement for a local time", async () => {
   });
   stubFetch(fetchMock);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -7060,7 +7208,9 @@ it("schedules an announcement for a local time", async () => {
       onNavigate={vi.fn()}
     />,
   );
-  await user.click(await screen.findByRole("button", { name: "Create post" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^(?:Create post|New post)$/ }),
+  );
   await user.selectOptions(
     screen.getByRole("combobox", { name: "Post type" }),
     "note",
@@ -7131,7 +7281,7 @@ it("badges a scheduled announcement and lets staff publish it now or reschedule"
   );
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -7195,7 +7345,7 @@ it("groups the date-sorted feed into collapsible pinned and week sections", asyn
     ),
   );
   const user = userEvent.setup();
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -7234,7 +7384,7 @@ it("keeps search results in one ranked list without date sections", async () => 
       ]),
     ),
   );
-  render(
+  renderWithFilters(
     <Discussion
       courseId={course.id}
       course={course}
@@ -7245,4 +7395,102 @@ it("keeps search results in one ranked list without date sections", async () => 
   );
   await screen.findByText("Cutoff extension");
   expect(document.querySelector(".feed-section-heading")).toBeNull();
+});
+
+it.each([true, false])(
+  "opens a nonmodal Filters overlay without fetching (desktop=%s)",
+  async (desktop) => {
+    mockDesktopViewport(desktop);
+    const reads = vi.fn<(key: string) => string>(() => "9999");
+    const writes = vi.fn<(key: string, value: string) => void>(() => {});
+    vi.stubGlobal("localStorage", { getItem: reads, setItem: writes });
+    const fetchMock = vi.fn(async () => page([]));
+    stubFetch(fetchMock);
+    const user = userEvent.setup();
+    const props = {
+      courseId: course.id,
+      course,
+      csrfToken: "csrf",
+      onNavigate: vi.fn(),
+    };
+    const view = render(<Discussion {...props} />);
+    await screen.findByText("No posts yet.");
+    const trigger = screen.getByRole("button", {
+      name: "Filters",
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("dialog", { name: "Post filters" })).toBeNull();
+    const requests = fetchMock.mock.calls.length;
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Post filters" });
+    expect(trigger.getAttribute("aria-controls")).toBe(dialog.id);
+    expect(dialog.getAttribute("aria-modal")).not.toBe("true");
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(
+      screen.queryByRole("separator", { name: "Resize filters" }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole("dialog", { name: "Post filters" })).toBeNull();
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Close filters" }));
+    expect(document.activeElement).toBe(trigger);
+    if (!desktop)
+      await user.click(screen.getByRole("button", { name: "Search posts" }));
+    await user.click(trigger);
+    if (!desktop) {
+      expect(screen.queryByRole("searchbox")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Search posts" }));
+    }
+    const search = screen.getByRole("searchbox");
+    await user.click(search);
+    expect(document.activeElement).toBe(search);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(fetchMock.mock.calls.length).toBe(requests);
+    expect(
+      reads.mock.calls.some(([key]) =>
+        String(key).startsWith("chalktalk:filters:"),
+      ),
+    ).toBe(false);
+    expect(
+      writes.mock.calls.some(([key]) =>
+        String(key).startsWith("chalktalk:filters:"),
+      ),
+    ).toBe(false);
+    view.unmount();
+    render(<Discussion {...props} />);
+    expect(screen.queryByRole("dialog", { name: "Post filters" })).toBeNull();
+  },
+);
+
+it("expands mobile search below its icon toolbar and retains query and focus", async () => {
+  const resize = mockDesktopViewport(false);
+  stubFetch(vi.fn(async () => page([])));
+  const user = userEvent.setup();
+  render(
+    <Discussion
+      courseId={course.id}
+      course={course}
+      csrfToken="csrf"
+      onNavigate={vi.fn()}
+    />,
+  );
+  const toggle = screen.getByRole("button", { name: "Search posts" });
+  expect(screen.queryByRole("searchbox", { name: "Search posts" })).toBeNull();
+  await user.click(toggle);
+  const input = screen.getByRole("searchbox", { name: "Search posts" });
+  expect(document.activeElement).toBe(input);
+  await user.type(input, "office hours");
+  await user.keyboard("{Escape}");
+  expect(document.activeElement).toBe(toggle);
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  await user.click(toggle);
+  expect(input).toHaveProperty("value", "office hours");
+  resize(true);
+  expect(document.activeElement).toBe(input);
+  resize(false);
+  expect(document.activeElement).toBe(input);
+  await user.keyboard("{Escape}");
+  await user.keyboard("/");
+  expect(document.activeElement).toBe(input);
 });

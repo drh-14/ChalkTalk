@@ -36,7 +36,9 @@ test("a TA schedules an announcement that students only see once it publishes", 
 
   // The TA writes the announcement and schedules it.
   await ta.page.goto(`${BASE}/courses/${courseId}`);
-  await ta.page.getByRole("button", { name: "Create post" }).click();
+  await ta.page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await ta.page
     .getByRole("combobox", { name: "Post type" })
     .selectOption("note");

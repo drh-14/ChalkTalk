@@ -75,14 +75,14 @@ The course feed SHALL accept zero or more folder IDs and/or `unfiled` as repeate
 
 ### Requirement: Browser controls are accessible
 
-The discussion UI SHALL provide an accessible, separate All posts control and a group of staff-created folder checkboxes in the left sidebar. All posts SHALL be the initial course feed mode. Choosing it SHALL clear named folder selections; choosing a named folder SHALL clear All posts. Zero selected controls SHALL show only folderless posts. The folder UI SHALL not display “Unfiled”; it SHALL use “No folder” only for a missing-folder choice in create/edit pickers or filter mode. Folderless posts SHALL omit folder text on feed cards and detail pages. Accessible create/edit folder pickers and staff-only management controls remain.
+The discussion filter overlay SHALL provide an accessible, separate All posts control and a group of staff-created folder checkboxes. All posts SHALL be the initial course feed mode. Choosing it SHALL clear named folder selections; choosing a named folder SHALL clear All posts. Zero selected controls SHALL show only folderless posts. The folder UI SHALL not display “Unfiled”; it SHALL use “No folder” only for a missing-folder choice in create/edit pickers or filter mode. Folderless posts SHALL omit folder text on feed cards and detail pages. Accessible create/edit folder pickers and staff-only management controls remain.
 
 #### Scenario: Switch between all, named, and folderless posts
 
 - **WHEN** a reader opens the course feed, selects two folders, then unchecks both and finally chooses All posts
-- **THEN** the sidebar and shareable URL represent each mode, with no page reload or ambiguous checked state
+- **THEN** the filter controls and shareable URL represent each mode, with no page reload or ambiguous checked state
 
-#### Scenario: Multi-select sidebar
+#### Scenario: Multi-select folders
 
 - **WHEN** a reader checks and unchecks several named folders
 - **THEN** the feed and URL reflect their OR selection, and clearing the last folder shows only folderless posts
@@ -90,7 +90,7 @@ The discussion UI SHALL provide an accessible, separate All posts control and a 
 #### Scenario: Legacy mixed folder link
 
 - **WHEN** a reader opens a link containing named folders and `folder=unfiled`
-- **THEN** the browser retains only the named-folder selection, since the sidebar cannot represent that combination
+- **THEN** the browser retains only the named-folder selection, since the filter controls cannot represent that combination
 
 #### Scenario: Member organizes a post
 

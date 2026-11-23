@@ -239,7 +239,7 @@ for (const [size, viewport] of [
 test.describe("discussion", () => {
   test.use({ viewport: { width: 1536, height: 864 } });
 
-  test("placeholder cards hold the feed, and staff review duplicates from the sidebar", async ({
+  test("placeholder cards hold the feed, and staff review duplicates from Filters", async ({
     page,
   }) => {
     let release;
@@ -270,17 +270,19 @@ test.describe("discussion", () => {
     ).toBe(search.y);
     await expect(page.getByText("All caught up")).toBeVisible();
 
-    const sidebar = page.getByRole("complementary", { name: "Post filters" });
-    const duplicates = sidebar.getByRole("button", { name: /^Duplicates/ });
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    const filters = page.getByRole("dialog", { name: "Post filters" });
+    await expect(filters).toBeVisible();
+    const duplicates = filters.getByRole("button", { name: /^Duplicates/ });
     await expect(duplicates).toHaveAttribute("aria-pressed", "false");
     await duplicates.click();
     await expect(duplicates).toHaveAttribute("aria-pressed", "true");
     await expect(
       page.getByRole("button", { name: "Old question" }),
     ).toBeVisible();
-    await shot(page, "desktop-duplicates-sidebar", false);
+    await shot(page, "desktop-duplicates-overlay", false);
 
-    await sidebar
+    await filters
       .getByRole("radio", { name: "All posts" })
       .click({ force: true });
     await expect(duplicates).toHaveAttribute("aria-pressed", "false");

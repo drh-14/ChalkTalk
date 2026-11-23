@@ -178,6 +178,11 @@ for (const [size, viewport] of [
     }) => {
       await mockApp(page);
       await page.goto(`${origin}/courses/course-1`);
+      const openMobileNavigation = async () => {
+        if (size === "mobile")
+          await page.getByRole("button", { name: /^Current section:/ }).click();
+      };
+      await openMobileNavigation();
       await page
         .getByRole("link", { name: "Threads", exact: true })
         .first()
@@ -199,6 +204,7 @@ for (const [size, viewport] of [
       await page.screenshot({
         path: resolve(screenshots, `${size}-threads-empty.png`),
       });
+      await openMobileNavigation();
       await page
         .getByRole("link", { name: "Collaboration", exact: true })
         .first()
