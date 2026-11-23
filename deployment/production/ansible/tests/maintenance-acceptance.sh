@@ -88,11 +88,49 @@ STOCK_START
 docker exec "$guest" systemctl start apt-daily.service apt-daily-upgrade.service
 docker exec "$guest" python3 -c 'from pathlib import Path; assert Path("/opt/stock-starts").read_text().splitlines() == ["update", "install"]'
 docker exec "$guest" cp -p /opt/acceptance-apt.systemd.daily /usr/lib/apt/apt.systemd.daily
+docker exec -i "$guest" sh -c 'cat > /usr/lib/apt/apt.systemd.daily; chmod 755 /usr/lib/apt/apt.systemd.daily' <<'ACTIVE_STOCK'
+#!/bin/sh
+python3 - <<'PY'
+import fcntl
+from pathlib import Path
+import time
+with open('/var/lib/dpkg/lock-frontend', 'r+') as lock:
+    fcntl.lockf(lock, fcntl.LOCK_EX)
+    Path('/opt/stock-active').touch()
+    while not Path('/opt/stock-release').exists():
+        time.sleep(0.1)
+PY
+ACTIVE_STOCK
+docker exec "$guest" systemctl --no-block start apt-daily.service
+for _ in {1..100}; do
+  if docker exec "$guest" test -e /opt/stock-active; then break; fi
+  sleep 0.1
+done
+docker exec "$guest" test -e /opt/stock-active
+docker exec "$guest" cp -p /opt/acceptance-apt.systemd.daily /usr/lib/apt/apt.systemd.daily
 docker exec -i "$guest" sh -c 'cat > /etc/apt/sources.list.d/acceptance-bootstrap-failure.list' <<'BOOTSTRAP_FAILURE'
 deb [trusted=yes] file:/opt/absent-acceptance-bootstrap ./
 BOOTSTRAP_FAILURE
 docker exec "$guest" touch -d '2 hours ago' /var/lib/apt/lists
-if DOMAIN=fixture.invalid DATABASE_URL=fixture SUPABASE_STORAGE_ENDPOINT=fixture SUPABASE_STORAGE_BUCKET=fixture SUPABASE_STORAGE_REGION=fixture SUPABASE_STORAGE_ACCESS_KEY_ID=fixture SUPABASE_STORAGE_SECRET_ACCESS_KEY=fixture AUTH_TOKEN_SECRET=0123456789abcdef0123456789abcdef RESEND_API_KEY=fixture METRICS_TOKEN=0123456789abcdef0123456789abcdef GRAFANA_ADMIN_PASSWORD=0123456789abcdef0123456789abcdef ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/../bootstrap.yml" > "$work/fresh-bootstrap.log" 2>&1; then
+DOMAIN=fixture.invalid DATABASE_URL=fixture SUPABASE_STORAGE_ENDPOINT=fixture SUPABASE_STORAGE_BUCKET=fixture SUPABASE_STORAGE_REGION=fixture SUPABASE_STORAGE_ACCESS_KEY_ID=fixture SUPABASE_STORAGE_SECRET_ACCESS_KEY=fixture AUTH_TOKEN_SECRET=0123456789abcdef0123456789abcdef RESEND_API_KEY=fixture METRICS_TOKEN=0123456789abcdef0123456789abcdef GRAFANA_ADMIN_PASSWORD=0123456789abcdef0123456789abcdef ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/../bootstrap.yml" > "$work/fresh-bootstrap.log" 2>&1 &
+bootstrap_pid=$!
+for _ in {1..300}; do
+  if grep -Fq 'TASK [Establish persistent bootstrap hold under host lock]' "$work/fresh-bootstrap.log"; then break; fi
+  sleep 0.1
+done
+grep -Fq 'TASK [Establish persistent bootstrap hold under host lock]' "$work/fresh-bootstrap.log"
+docker exec "$guest" test -e /usr/local/lib/chalktalk-maintenance/wait-apt.py
+docker exec -e CHALKTALK_LOCK_WAIT=0.2 "$guest" python3 /usr/local/lib/chalktalk-maintenance/wait-apt.py && {
+  echo 'Native APT wait accepted active stock transaction' >&2
+  exit 1
+}
+docker exec "$guest" test ! -e /var/lib/chalktalk-maintenance/bootstrap.hold
+docker exec "$guest" sh -c '! dpkg-query -s python3-apt 2>/dev/null | grep -q "Status: install ok installed"'
+kill -0 "$bootstrap_pid"
+docker exec "$guest" test -e /opt/stock-active
+docker exec "$guest" test ! -e /opt/stock-release
+docker exec "$guest" touch /opt/stock-release
+if wait "$bootstrap_pid"; then
   echo 'Fresh bootstrap unexpectedly passed broken package sources' >&2
   exit 1
 fi

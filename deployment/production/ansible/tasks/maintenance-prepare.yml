@@ -61,6 +61,7 @@
   loop:
     - common.sh
     - hold.sh
+    - wait-apt.py
     - apt-run.sh
     - policy.py
     - run.py

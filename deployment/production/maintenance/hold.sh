@@ -16,6 +16,9 @@ if [[ "$operation" == set ]]; then
     echo "$kind hold already present"
     exit 0
   fi
+  if [[ "$kind" == bootstrap ]]; then
+    python3 "$(dirname "$0")/wait-apt.py"
+  fi
   python3 - "$marker" "$token" <<'PY_HOLD'
 import os
 from pathlib import Path
