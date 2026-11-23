@@ -27,8 +27,11 @@ function fixture() {
   return {
     app: createApp({
       environment: loadEnvironment({
-        AUTH_TOKEN_SECRET:
-          "unit-test-auth-secret-more-than-thirty-two-characters",
+        NODE_ENV: "test",
+        ...{
+          AUTH_TOKEN_SECRET:
+            "unit-test-auth-secret-more-than-thirty-two-characters",
+        },
       }),
       observability,
     }),
@@ -51,7 +54,7 @@ describe("API observability", () => {
         `import request from "supertest";
          import { createApp } from ${JSON.stringify(appUrl)};
          import { loadEnvironment } from ${JSON.stringify(environmentUrl)};
-         const environment = loadEnvironment({ AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters" });
+         const environment = loadEnvironment({ NODE_ENV: "test", AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters" });
          const authService = { requestVerificationIdempotently: async () => { throw new Error("private-secret"); } };
          const response = await request(createApp({ environment, authService }))
            .post("/api/v1/account-verification-requests")
@@ -198,8 +201,11 @@ describe("API observability", () => {
       createApp({
         observability,
         environment: loadEnvironment({
-          AUTH_TOKEN_SECRET:
-            "unit-test-auth-secret-more-than-thirty-two-characters",
+          NODE_ENV: "test",
+          ...{
+            AUTH_TOKEN_SECRET:
+              "unit-test-auth-secret-more-than-thirty-two-characters",
+          },
         }),
       }),
       createWorkerMetricsApp(observability),

@@ -24,9 +24,13 @@ vi.mock("resend", () => ({
 }));
 
 const environment = loadEnvironment({
-  AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
-  EMAIL_PROVIDER: "resend",
-  RESEND_API_KEY: "re_secret_test",
+  NODE_ENV: "test",
+  ...{
+    AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
+    EMAIL_PROVIDER: "resend",
+    EMAIL_FROM: RESEND_EMAIL_FROM,
+    RESEND_API_KEY: "re_secret_test",
+  },
 });
 
 describe("Resend HTTPS email sender", () => {
@@ -84,10 +88,15 @@ describe("Resend HTTPS email sender", () => {
 
   it("uses the configured Resend API endpoint without changing message delivery", async () => {
     const custom = loadEnvironment({
-      AUTH_TOKEN_SECRET: "a-long-enough-authentication-secret-for-email-tests",
-      EMAIL_PROVIDER: "resend",
-      RESEND_API_KEY: "re_secret_test",
-      RESEND_API_BASE_URL: "http://127.0.0.1:4000",
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET:
+          "a-long-enough-authentication-secret-for-email-tests",
+        EMAIL_PROVIDER: "resend",
+        EMAIL_FROM: RESEND_EMAIL_FROM,
+        RESEND_API_KEY: "re_secret_test",
+        RESEND_API_BASE_URL: "http://127.0.0.1:4000",
+      },
     });
     await createEmailSender(custom).send({
       to: "r@example.edu",
@@ -96,6 +105,25 @@ describe("Resend HTTPS email sender", () => {
     });
     expect(options).toEqual([{ baseUrl: "http://127.0.0.1:4000" }]);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("redacts unexpected SDK errors and provider-controlled names", async () => {
+    const sender = createEmailSender(environment);
+    send.mockRejectedValueOnce(new Error("sensitive-sentinel"));
+    await expect(
+      sender.send({ to: "r@example.edu", subject: "Synthetic", text: "body" }),
+    ).rejects.not.toThrow("sensitive-sentinel");
+    send.mockResolvedValueOnce({
+      data: null,
+      error: {
+        statusCode: 503,
+        name: "sensitive-sentinel",
+        message: "sensitive-sentinel",
+      },
+    });
+    await expect(
+      sender.send({ to: "r@example.edu", subject: "Synthetic", text: "body" }),
+    ).rejects.not.toThrow("sensitive-sentinel");
   });
 
   it("fails rather than treating an error or malformed success as delivered", async () => {
@@ -160,13 +188,13 @@ describe("Resend HTTPS email sender", () => {
     }
   });
 
-  it("preserves a network failure and does not send when already aborted", async () => {
+  it("reports a sanitized network failure and does not send when already aborted", async () => {
     const sender = createEmailSender(environment);
     const networkError = new Error("network dropped");
     send.mockRejectedValueOnce(networkError);
     await expect(
       sender.send({ to: "r@example.edu", subject: "Hi", text: "body" }),
-    ).rejects.toBe(networkError);
+    ).rejects.toThrow("Resend delivery unavailable");
     const controller = new AbortController();
     controller.abort();
     await expect(

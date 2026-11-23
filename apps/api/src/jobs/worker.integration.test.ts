@@ -377,6 +377,108 @@ integration("JobWorker PostgreSQL lifecycle", () => {
     ).toEqual({ status: "succeeded", attempts: 2 });
   });
 
+  for (const provider of ["resend", "sendgrid", "ses"] as const) {
+    it.each([
+      "none",
+      "sender",
+      "provider",
+      "recipient",
+      "identity",
+      "content",
+      "access",
+    ] as const)(
+      `${provider} freezes retries and cancels changed %s before handoff`,
+      async (change) => {
+        const attempts: Array<Parameters<EmailSender["send"]>[0]> = [];
+        const tagged: EmailSender = {
+          provider,
+          defaultFrom: "mail@example.test",
+          prepare: async (message) => ({
+            ...message,
+            providerPayload: JSON.stringify({ text: message.text }),
+          }),
+          send: async (message) => {
+            attempts.push(message);
+            if (attempts.length === 1) throw new Error("ambiguous acceptance");
+          },
+        };
+        const seeded = await seedMerge();
+        const first = new JobWorker(
+          pool,
+          "matrix-worker",
+          tagged,
+          "https://app.example.edu",
+        );
+        expect(await first.runOnce()).toBe(true);
+        const frozen = (
+          await pool.query(
+            "SELECT status,attempts,available_at,locked_by,frozen_email FROM jobs WHERE id=$1",
+            [seeded.jobId],
+          )
+        ).rows[0];
+        expect(frozen).toMatchObject({
+          status: "queued",
+          attempts: 1,
+          locked_by: null,
+          frozen_email: {
+            provider,
+            message: { providerPayload: expect.any(String) },
+          },
+        });
+        if (change === "recipient")
+          await pool.query("UPDATE users SET email=$2 WHERE id=$1", [
+            seeded.authorId,
+            `changed-${seeded.authorId}@example.test`,
+          ]);
+        if (change === "identity")
+          await pool.query(
+            "UPDATE users SET display_name='Changed Staff' WHERE id=$1",
+            [seeded.staffId],
+          );
+        if (change === "content")
+          await pool.query(
+            "UPDATE posts SET title='Changed title' WHERE id=$1",
+            [seeded.source.value.id],
+          );
+        if (change === "access")
+          await pool.query("UPDATE posts SET private=true WHERE id=$1", [
+            seeded.canonical.value.id,
+          ]);
+        const next = {
+          ...tagged,
+          ...(change === "sender"
+            ? { defaultFrom: "replacement@example.test" }
+            : {}),
+          ...(change === "provider" ? { provider: "smtp" as const } : {}),
+        };
+        await pool.query("UPDATE jobs SET available_at=now() WHERE id=$1", [
+          seeded.jobId,
+        ]);
+        expect(
+          await new JobWorker(
+            pool,
+            "matrix-worker",
+            next,
+            "https://app.example.edu",
+          ).runOnce(),
+        ).toBe(true);
+        const final = (
+          await pool.query(
+            "SELECT status,frozen_email,locked_by FROM jobs WHERE id=$1",
+            [seeded.jobId],
+          )
+        ).rows[0];
+        expect(final).toEqual({
+          status: change === "none" ? "succeeded" : "canceled",
+          frozen_email: null,
+          locked_by: null,
+        });
+        expect(attempts).toHaveLength(change === "none" ? 2 : 1);
+        if (change === "none") expect(attempts[1]).toEqual(attempts[0]);
+      },
+    );
+  }
+
   it("commits a frozen duplicate email before network send", async () => {
     delivered.length = 0;
     deliveryAttempts.length = 0;
@@ -581,10 +683,13 @@ integration("JobWorker PostgreSQL lifecycle", () => {
           AUTH_TOKEN_SECRET:
             "test-secret-that-is-longer-than-thirty-two-characters",
           EMAIL_PROVIDER: "resend",
+          EMAIL_FROM: RESEND_EMAIL_FROM,
           RESEND_API_KEY: "re_mock_secret",
           RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
         };
-        const sender = createEmailSender(loadEnvironment(environmentSource));
+        const sender = createEmailSender(
+          loadEnvironment({ NODE_ENV: "test", ...environmentSource }),
+        );
         const liveWorker = new JobWorker(
           pool,
           "http-provider-worker",
@@ -612,14 +717,15 @@ integration("JobWorker PostgreSQL lifecycle", () => {
         const retrySender =
           change === "sender" || change === "provider"
             ? createEmailSender(
-                loadEnvironment(
-                  change === "provider"
+                loadEnvironment({
+                  NODE_ENV: "test",
+                  ...(change === "provider"
                     ? {
                         AUTH_TOKEN_SECRET: environmentSource.AUTH_TOKEN_SECRET,
                         SMTP_FROM: RESEND_EMAIL_FROM,
                       }
-                    : environmentSource,
-                ),
+                    : environmentSource),
+                }),
               )
             : sender;
         const retryWorker =
@@ -1897,11 +2003,15 @@ integration("JobWorker PostgreSQL lifecycle", () => {
             "invitation-http-worker",
             createEmailSender(
               loadEnvironment({
-                AUTH_TOKEN_SECRET:
-                  "test-secret-that-is-longer-than-thirty-two-characters",
-                EMAIL_PROVIDER: "resend",
-                RESEND_API_KEY: "re_mock_secret",
-                RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+                NODE_ENV: "test",
+                ...{
+                  AUTH_TOKEN_SECRET:
+                    "test-secret-that-is-longer-than-thirty-two-characters",
+                  EMAIL_PROVIDER: "resend",
+                  EMAIL_FROM: RESEND_EMAIL_FROM,
+                  RESEND_API_KEY: "re_mock_secret",
+                  RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+                },
               }),
             ),
             "https://app.example.edu",

@@ -91,6 +91,36 @@ async function readMigrations(directory: string): Promise<Migration[]> {
   );
 }
 
+/** Read-only compatibility inspection. In particular, never bootstrap a ledger. */
+export async function pendingMigrations(
+  pool: Pool,
+  directory: string,
+): Promise<string[]> {
+  const migrations = await readMigrations(directory);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    const exists = await client.query(
+      "SELECT to_regclass('schema_migrations') AS ledger",
+    );
+    const completed = exists.rows[0].ledger
+      ? await client.query<{ name: string }>(
+          "SELECT name FROM schema_migrations",
+        )
+      : { rows: [] };
+    const names = new Set(completed.rows.map((row) => row.name));
+    await client.query("COMMIT");
+    return migrations
+      .filter((migration) => !names.has(migration.name))
+      .map((migration) => migration.name);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function runMigrations(
   pool: Pool,
   directory: string,

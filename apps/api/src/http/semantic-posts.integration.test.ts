@@ -29,9 +29,12 @@ const config = readEmbeddingConfig({
   EMBEDDING_MODEL: "test",
 })!;
 const environment = loadEnvironment({
-  AUTH_TOKEN_SECRET: "long-secret-for-semantic-search-tests-only",
-  FRONTEND_ORIGINS: "https://app.example.edu",
-  FRONTEND_BASE_URL: "https://app.example.edu",
+  NODE_ENV: "test",
+  ...{
+    AUTH_TOKEN_SECRET: "long-secret-for-semantic-search-tests-only",
+    FRONTEND_ORIGINS: "https://app.example.edu",
+    FRONTEND_BASE_URL: "https://app.example.edu",
+  },
 });
 const cookie = "__Host-chalktalk_session=opaque";
 function app(viewerId = userId) {

@@ -191,9 +191,12 @@ integrationTest("AuthService PostgreSQL integration", () => {
     pool = await schemaPool();
     await runMigrations(pool, getMigrationDirectory());
     environment = loadEnvironment({
-      AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
-      FRONTEND_ORIGINS: "https://app.example.edu",
-      FRONTEND_BASE_URL: "https://app.example.edu",
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET: "a-secret-that-is-longer-than-thirty-two-characters",
+        FRONTEND_ORIGINS: "https://app.example.edu",
+        FRONTEND_BASE_URL: "https://app.example.edu",
+      },
     });
     emailSender = new RecordingEmailSender();
     service = new AuthService(
@@ -953,9 +956,12 @@ integrationTest("AuthService PostgreSQL integration", () => {
 
   it("enforces profile email-change ETags and rejects a verified cross-school replacement", async () => {
     const emailChangeEnvironment = loadEnvironment({
-      AUTH_TOKEN_SECRET: environment.authTokenSecret,
-      FRONTEND_ORIGINS: environment.frontendBaseUrl,
-      FRONTEND_BASE_URL: environment.frontendBaseUrl,
+      NODE_ENV: "test",
+      ...{
+        AUTH_TOKEN_SECRET: environment.authTokenSecret,
+        FRONTEND_ORIGINS: environment.frontendBaseUrl,
+        FRONTEND_BASE_URL: environment.frontendBaseUrl,
+      },
     });
     const emailChangeService = new AuthService(
       pool,

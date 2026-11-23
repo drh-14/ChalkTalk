@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getMigrationDirectory, runMigrations } from "./migrate.js";
+import {
+  getMigrationDirectory,
+  runMigrations,
+  pendingMigrations,
+} from "./migrate.js";
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const integrationTest = testDatabaseUrl ? describe : describe.skip;
@@ -75,6 +79,42 @@ integrationTest("runMigrations", () => {
     }
     await pool.end();
     await rm(migrationDirectory, { force: true, recursive: true });
+  });
+
+  it("checks missing/pending/current ledgers read-only without catalog changes", async () => {
+    const schema = `migration_readonly_${process.pid}_${Date.now()}`;
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    const isolated = new Pool({
+      connectionString: testDatabaseUrl,
+      options: `-c search_path=${schema}`,
+    });
+    const catalog = async () =>
+      (
+        await isolated.query(
+          "SELECT relname,relkind FROM pg_class WHERE relnamespace=current_schema()::regnamespace ORDER BY relname",
+        )
+      ).rows;
+    try {
+      const before = await catalog();
+      expect(
+        await pendingMigrations(isolated, migrationDirectory),
+      ).toHaveLength(2);
+      expect(await catalog()).toEqual(before);
+      await runMigrations(isolated, migrationDirectory);
+      const after = await catalog();
+      const ledger = (
+        await isolated.query("SELECT * FROM schema_migrations ORDER BY name")
+      ).rows;
+      expect(await pendingMigrations(isolated, migrationDirectory)).toEqual([]);
+      expect(await catalog()).toEqual(after);
+      expect(
+        (await isolated.query("SELECT * FROM schema_migrations ORDER BY name"))
+          .rows,
+      ).toEqual(ledger);
+    } finally {
+      await isolated.end();
+      await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+    }
   });
 
   it("applies ordered migrations exactly once", async () => {

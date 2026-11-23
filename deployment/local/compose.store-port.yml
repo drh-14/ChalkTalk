@@ -1,0 +1,4 @@
+services:
+  seaweedfs:
+    ports:
+      - "127.0.0.1:${LOCAL_OBJECT_STORE_HOST_PORT}:8333"

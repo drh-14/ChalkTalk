@@ -44,7 +44,7 @@ type OutboundMessage = Parameters<EmailSender["send"]>[0];
 type EmailCandidate = { message: OutboundMessage; guard: string };
 type FrozenEmail = {
   version: 1;
-  provider: "smtp" | "resend";
+  provider: NonNullable<EmailSender["provider"]>;
   message: OutboundMessage;
   guard: string;
 };

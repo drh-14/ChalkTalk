@@ -1,0 +1,62 @@
+{
+  "before": [
+    {
+      "Type": "volume",
+      "Name": "ct-modular-fixture_api-log-spool",
+      "Source": "/var/lib/docker/volumes/ct-modular-fixture_api-log-spool/_data",
+      "Destination": "/var/log/chalktalk",
+      "Driver": "local",
+      "Mode": "rw",
+      "RW": true,
+      "Propagation": ""
+    },
+    {
+      "Type": "bind",
+      "Source": "/workspace/chalktalk",
+      "Destination": "/app",
+      "Mode": "rw",
+      "RW": true,
+      "Propagation": "rprivate"
+    },
+    {
+      "Type": "volume",
+      "Name": "ct-modular-fixture_api-node-modules",
+      "Source": "/var/lib/docker/volumes/ct-modular-fixture_api-node-modules/_data",
+      "Destination": "/app/node_modules",
+      "Driver": "local",
+      "Mode": "rw",
+      "RW": true,
+      "Propagation": ""
+    }
+  ],
+  "after": [
+    {
+      "Type": "volume",
+      "Name": "ct-modular-fixture_api-node-modules",
+      "Source": "/var/lib/docker/volumes/ct-modular-fixture_api-node-modules/_data",
+      "Destination": "/app/node_modules",
+      "Driver": "local",
+      "Mode": "rw",
+      "RW": true,
+      "Propagation": ""
+    },
+    {
+      "Type": "volume",
+      "Name": "ct-modular-fixture_api-log-spool",
+      "Source": "/var/lib/docker/volumes/ct-modular-fixture_api-log-spool/_data",
+      "Destination": "/var/log/chalktalk",
+      "Driver": "local",
+      "Mode": "rw",
+      "RW": true,
+      "Propagation": ""
+    },
+    {
+      "Type": "bind",
+      "Source": "/workspace/chalktalk",
+      "Destination": "/app",
+      "Mode": "rw",
+      "RW": true,
+      "Propagation": "rprivate"
+    }
+  ]
+}

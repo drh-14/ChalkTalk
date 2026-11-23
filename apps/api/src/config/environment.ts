@@ -1,3 +1,5 @@
+import { validateLocalConnection } from "./local-connections.js";
+import { localEmailConfig, type LocalHttpsEmail } from "./local-email.js";
 import type { S3ClientConfig } from "@aws-sdk/client-s3";
 import {
   FRONTEND_BASE_URL_DEFAULT,
@@ -147,6 +149,7 @@ export function loadObjectStorageConfig(
         ? "SUPABASE_STORAGE_BUCKET and SUPABASE_STORAGE_REGION are required"
         : "S3_BUCKET and S3_REGION are required",
     );
+  if (!production && endpoint) validateLocalConnection("S3_ENDPOINT", endpoint);
   if (endpoint && !["http:", "https:"].includes(new URL(endpoint).protocol))
     throw new Error(
       `${production ? "SUPABASE_STORAGE_ENDPOINT" : "S3_ENDPOINT"} must use HTTP or HTTPS`,
@@ -158,7 +161,15 @@ export function loadObjectStorageConfig(
       region,
       ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
       ...(accessKeyId && secretAccessKey
-        ? { credentials: { accessKeyId, secretAccessKey } }
+        ? {
+            credentials: {
+              accessKeyId,
+              secretAccessKey,
+              ...(!production && source.S3_SESSION_TOKEN
+                ? { sessionToken: source.S3_SESSION_TOKEN }
+                : {}),
+            },
+          }
         : {}),
     },
   };
@@ -194,6 +205,7 @@ export interface Environment {
     idleEndMinutes: number;
   };
   email:
+    | LocalHttpsEmail
     | { provider: "smtp"; from: string }
     | {
         provider: "resend";
@@ -218,6 +230,8 @@ export function loadEnvironment(
   const databaseUrl = production
     ? remoteDatabaseUrl(source.DATABASE_URL)
     : source.DATABASE_URL;
+  if (!production && source.NODE_ENV !== "test" && databaseUrl)
+    validateLocalConnection("DATABASE_URL", databaseUrl);
   const port = Number(source.PORT ?? "3000");
   const smtpPort = Number(source.SMTP_PORT ?? "1025");
   if (production && source.EMAIL_PROVIDER && source.EMAIL_PROVIDER !== "resend")
@@ -225,10 +239,18 @@ export function loadEnvironment(
   const emailProvider = production
     ? "resend"
     : (source.EMAIL_PROVIDER ?? "smtp");
-  if (emailProvider !== "smtp" && emailProvider !== "resend")
+  if (!production && emailProvider === "smtp" && source.NODE_ENV !== "test")
+    throw new Error(
+      "EMAIL_PROVIDER must explicitly select resend, sendgrid, or ses; SMTP is an isolated test transport only",
+    );
+  if (!["smtp", "resend", "sendgrid", "ses"].includes(emailProvider))
     throw new Error("EMAIL_PROVIDER must be smtp or resend");
   if (emailProvider === "resend" && !source.RESEND_API_KEY?.trim())
     throw new Error("RESEND_API_KEY is required when EMAIL_PROVIDER=resend");
+  const localEmail =
+    !production && emailProvider !== "smtp"
+      ? localEmailConfig(source)
+      : undefined;
   let resendApiBaseUrl = "https://api.resend.com";
   if (emailProvider === "resend" && source.RESEND_API_BASE_URL !== undefined) {
     let endpoint: URL;
@@ -249,6 +271,14 @@ export function loadEnvironment(
     if (production && endpoint.origin !== "https://api.resend.com")
       throw new Error(
         "RESEND_API_BASE_URL must be https://api.resend.com when NODE_ENV=production",
+      );
+    if (
+      !production &&
+      source.NODE_ENV !== "test" &&
+      endpoint.origin !== "https://api.resend.com"
+    )
+      throw new Error(
+        "RESEND_API_BASE_URL must be https://api.resend.com for normal local delivery",
       );
     resendApiBaseUrl = endpoint.origin;
   }
@@ -350,8 +380,12 @@ export function loadEnvironment(
       publicUrl: collaborationPublicUrl,
       idleEndMinutes,
     },
-    email:
-      emailProvider === "resend"
+    email: localEmail
+      ? {
+          ...localEmail,
+          ...(localEmail.provider === "resend" ? { resendApiBaseUrl } : {}),
+        }
+      : emailProvider === "resend"
         ? {
             provider: "resend",
             from: RESEND_EMAIL_FROM,

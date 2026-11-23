@@ -41,8 +41,8 @@ describe("object storage bucket startup", () => {
     expect(send.mock.calls[0]?.[0]).toBeInstanceOf(HeadBucketCommand);
   });
 
-  it("propagates other bucket access failures", async () => {
-    const denied = Object.assign(new Error("denied"), {
+  it("redacts other bucket access failures", async () => {
+    const denied = Object.assign(new Error("sensitive-sentinel"), {
       $metadata: { httpStatusCode: 403 },
     });
     const send = vi.fn().mockRejectedValue(denied);
@@ -52,7 +52,29 @@ describe("object storage bucket startup", () => {
         "course-files",
         false,
       ),
-    ).rejects.toBe(denied);
+    ).rejects.toThrow("Object storage bucket is inaccessible");
     expect(send).toHaveBeenCalledTimes(1);
   });
+});
+
+it("creates a bundled missing bucket once across repeated preparation", async () => {
+  let exists = false;
+  let creates = 0;
+  const send = vi.fn(async (command: unknown) => {
+    if (command instanceof HeadBucketCommand) {
+      if (!exists) throw missing;
+      return {};
+    }
+    if (command instanceof CreateBucketCommand) {
+      exists = true;
+      creates++;
+      return {};
+    }
+    throw new Error("Unexpected storage operation");
+  });
+  const client = { send } as unknown as S3Client;
+  await ensureStorageBucket(client, "fixture", true);
+  await ensureStorageBucket(client, "fixture", true);
+  expect(creates).toBe(1);
+  expect(send).toHaveBeenCalledTimes(3);
 });

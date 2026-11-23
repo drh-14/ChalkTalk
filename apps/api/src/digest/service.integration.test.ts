@@ -42,9 +42,12 @@ const integration = databaseUrl ? describe : describe.skip;
 const schema = `digest_${process.pid}_${Date.now()}`;
 const secret = "test-secret-that-is-longer-than-thirty-two-characters";
 const environment = loadEnvironment({
-  AUTH_TOKEN_SECRET: secret,
-  FRONTEND_ORIGINS: "https://app.example.edu",
-  FRONTEND_BASE_URL: "https://app.example.edu",
+  NODE_ENV: "test",
+  ...{
+    AUTH_TOKEN_SECRET: secret,
+    FRONTEND_ORIGINS: "https://app.example.edu",
+    FRONTEND_BASE_URL: "https://app.example.edu",
+  },
 });
 
 class RecordingSender implements EmailSender {
@@ -1082,6 +1085,104 @@ integration("daily course email digest", () => {
     ).toBe("canceled");
   });
 
+  for (const provider of ["resend", "sendgrid", "ses"] as const) {
+    it.each([
+      "none",
+      "sender",
+      "provider",
+      "recipient",
+      "content",
+      "optout",
+    ] as const)(
+      `${provider} persists its prepared payload and revalidates %s on retry`,
+      async (change) => {
+        const post = await addQuestion(
+          ids.physics,
+          ids.bob,
+          "2026-10-14T12:00:00Z",
+          "Frozen title",
+        );
+        const attempts: Array<Parameters<EmailSender["send"]>[0]> = [];
+        const prepared = {
+          providerPayload: "frozen-provider-payload",
+          rawMimeBase64Url: "c3ludGhldGlj",
+        };
+        const adapter: EmailSender = {
+          provider,
+          defaultFrom: "mail@example.test",
+          prepare: async (message) => ({ ...message, ...prepared }),
+          send: async (message) => {
+            attempts.push(message);
+            if (attempts.length === 1) throw new Error("ambiguous acceptance");
+          },
+        };
+        const first = new DigestService(
+          pool,
+          adapter,
+          environment.frontendBaseUrl,
+          "provider-matrix",
+        );
+        await first.schedule(new Date("2026-10-15T00:00:00Z"));
+        await first.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+        expect(
+          (
+            await pool.query(
+              "SELECT status,frozen_email,locked_by FROM digest_outbox",
+            )
+          ).rows[0],
+        ).toMatchObject({
+          status: "queued",
+          locked_by: null,
+          frozen_email: { provider, message: prepared },
+        });
+        if (change === "recipient")
+          await pool.query(
+            "UPDATE users SET email='changed@example.test' WHERE id=$1",
+            [ids.alice],
+          );
+        if (change === "content")
+          await pool.query(
+            "UPDATE posts SET title='Changed title' WHERE id=$1",
+            [post],
+          );
+        if (change === "optout")
+          await pool.query(
+            "UPDATE course_memberships SET digest_emails=false WHERE user_id=$1",
+            [ids.alice],
+          );
+        await pool.query(
+          "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+        );
+        const replacement = {
+          ...adapter,
+          ...(change === "sender"
+            ? { defaultFrom: "changed@example.test" }
+            : {}),
+          ...(change === "provider" ? { provider: "smtp" as const } : {}),
+        };
+        await new DigestService(
+          pool,
+          replacement,
+          environment.frontendBaseUrl,
+          "provider-matrix",
+        ).deliverOnce(new Date("2026-10-15T00:00:03Z"));
+        expect(attempts).toHaveLength(change === "none" ? 2 : 1);
+        if (change === "none") expect(attempts[1]).toEqual(attempts[0]);
+        expect(
+          (
+            await pool.query(
+              "SELECT status,frozen_email,locked_by FROM digest_outbox",
+            )
+          ).rows[0],
+        ).toEqual({
+          status: change === "none" ? "sent" : "canceled",
+          frozen_email: null,
+          locked_by: null,
+        });
+      },
+    );
+  }
+
   it("freezes digest bytes before a failed handoff, then retries exactly", async () => {
     await addQuestion(
       ids.physics,
@@ -1112,6 +1213,139 @@ integration("daily course email digest", () => {
       frozen_email: null,
     });
   });
+
+  for (const provider of ["resend", "sendgrid", "ses"] as const)
+    (process.env.TEST_S3_ENDPOINT ? it : it.skip)(
+      `${provider} freezes real inline image bytes and cancels a deleted image before retry`,
+      async () => {
+        const bucket = `digest-provider-${provider}-${process.pid}-${Date.now()}`;
+        const key = "owned-inline.png";
+        const store = new S3Client({
+          endpoint: process.env.TEST_S3_ENDPOINT,
+          region: "us-east-1",
+          forcePathStyle: true,
+          credentials: {
+            accessKeyId: process.env.TEST_S3_ACCESS_KEY_ID ?? "chalktalk-local",
+            secretAccessKey:
+              process.env.TEST_S3_SECRET_ACCESS_KEY ?? "chalktalk-local-secret",
+          },
+        });
+        try {
+          await store.send(new CreateBucketCommand({ Bucket: bucket }));
+          const image = await sharp({
+            create: {
+              width: 16,
+              height: 16,
+              channels: 4,
+              background: "#17814c",
+            },
+          })
+            .png()
+            .toBuffer();
+          await store.send(
+            new PutObjectCommand({
+              Bucket: bucket,
+              Key: key,
+              Body: image,
+              ContentType: "image/png",
+            }),
+          );
+          const post = await addQuestion(
+            ids.physics,
+            ids.bob,
+            "2026-10-14T12:00:00Z",
+            "Provider image",
+          );
+          const attachmentId = uuidv7();
+          await pool.query(
+            "INSERT INTO content_attachments (id,course_id,post_id,object_key,file_name,media_type,size_bytes,checksum_sha256) VALUES ($1,$2,$3,$4,'inline.png','image/png',$5,$6)",
+            [
+              attachmentId,
+              ids.physics,
+              post,
+              key,
+              image.length,
+              createHash("sha256").update(image).digest(),
+            ],
+          );
+          const configured = loadEnvironment({
+            NODE_ENV: "test",
+            AUTH_TOKEN_SECRET: secret,
+            EMAIL_PROVIDER: provider,
+            EMAIL_FROM: "mail@example.test",
+            ...(provider === "resend"
+              ? { RESEND_API_KEY: "synthetic" }
+              : provider === "sendgrid"
+                ? { SENDGRID_API_KEY: "synthetic" }
+                : {
+                    SES_REGION: "us-east-1",
+                    SES_CREDENTIALS_MODE: "explicit",
+                    SES_ACCESS_KEY_ID: "synthetic",
+                    SES_SECRET_ACCESS_KEY: "synthetic",
+                  }),
+          });
+          const actual = createEmailSender(configured);
+          const attempts: Array<Parameters<EmailSender["send"]>[0]> = [];
+          const adapter: EmailSender = {
+            ...actual,
+            send: async (message) => {
+              attempts.push(message);
+              throw new Error("controlled ambiguous handoff");
+            },
+          };
+          const service = new DigestService(
+            pool,
+            adapter,
+            environment.frontendBaseUrl,
+            "image-provider-fixture",
+            undefined,
+            s3DigestImageReader(store, bucket),
+          );
+          await service.schedule(new Date("2026-10-15T00:00:00Z"));
+          await service.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+          expect(attempts).toHaveLength(1);
+          expect(attempts[0].attachments?.length).toBeGreaterThan(0);
+          const frozen = (
+            await pool.query("SELECT frozen_email FROM digest_outbox")
+          ).rows[0].frozen_email;
+          expect(frozen.provider).toBe(provider);
+          expect(frozen.imageIds).toContain(attachmentId);
+          if (provider === "ses")
+            expect(frozen.message.rawMimeBase64Url).toEqual(expect.any(String));
+          if (provider === "sendgrid")
+            expect(
+              JSON.parse(frozen.message.providerPayload).attachments[0]
+                .content_id,
+            ).toBe(frozen.message.attachments[0].cid);
+          await pool.query(
+            "UPDATE content_attachments SET deleted_at=now() WHERE id=$1",
+            [attachmentId],
+          );
+          await pool.query(
+            "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
+          );
+          await service.deliverOnce(new Date("2026-10-15T00:00:03Z"));
+          expect(attempts).toHaveLength(1);
+          expect(
+            (
+              await pool.query(
+                "SELECT status,frozen_email,locked_by FROM digest_outbox",
+              )
+            ).rows[0],
+          ).toEqual({
+            status: "canceled",
+            frozen_email: null,
+            locked_by: null,
+          });
+        } finally {
+          await store.send(
+            new DeleteObjectCommand({ Bucket: bucket, Key: key }),
+          );
+          await store.send(new DeleteBucketCommand({ Bucket: bucket }));
+          store.destroy();
+        }
+      },
+    );
 
   it("ignores edits to activity omitted by the HTML cap on retry", async () => {
     const link = `[Open](https://example.edu/${"x".repeat(95_000)})`;
@@ -1239,12 +1473,13 @@ integration("daily course email digest", () => {
         const source = {
           AUTH_TOKEN_SECRET: secret,
           EMAIL_PROVIDER: "resend",
+          EMAIL_FROM: RESEND_EMAIL_FROM,
           RESEND_API_KEY: "re_mock_secret",
           RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
         };
         const first = new DigestService(
           pool,
-          createEmailSender(loadEnvironment(source)),
+          createEmailSender(loadEnvironment({ NODE_ENV: "test", ...source })),
           environment.frontendBaseUrl,
           "digest-http-sender",
         );
@@ -1271,11 +1506,12 @@ integration("daily course email digest", () => {
           "UPDATE digest_outbox SET available_at='2026-10-15T00:00:02Z'",
         );
         const retrySender = createEmailSender(
-          loadEnvironment(
-            change === "provider"
+          loadEnvironment({
+            NODE_ENV: "test",
+            ...(change === "provider"
               ? { AUTH_TOKEN_SECRET: secret, SMTP_FROM: RESEND_EMAIL_FROM }
-              : source,
-          ),
+              : source),
+          }),
         );
         const retry = new DigestService(
           pool,
@@ -1574,10 +1810,14 @@ integration("daily course email digest", () => {
         throw new Error("No mock port");
       const liveSender = createEmailSender(
         loadEnvironment({
-          AUTH_TOKEN_SECRET: secret,
-          EMAIL_PROVIDER: "resend",
-          RESEND_API_KEY: "re_mock_secret",
-          RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+          NODE_ENV: "test",
+          ...{
+            AUTH_TOKEN_SECRET: secret,
+            EMAIL_PROVIDER: "resend",
+            EMAIL_FROM: RESEND_EMAIL_FROM,
+            RESEND_API_KEY: "re_mock_secret",
+            RESEND_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+          },
         }),
       );
       const liveDigest = new DigestService(

@@ -1,9 +1,7 @@
 #!/bin/sh
 set -eu
 
-compose() {
-  docker compose -f deployment/local/compose.yml --env-file .env "$@"
-}
+. "$(dirname "$0")/fixture-services.sh"
 
 root=$(mktemp)
 api_stopped=false

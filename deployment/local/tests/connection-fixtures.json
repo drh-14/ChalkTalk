@@ -1,0 +1,132 @@
+[
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@db.example.test:5432/database",
+    "valid": true
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgres://u%40name:p%3Aword@[::1]:5432/d%2Fname?sslmode=verify-full",
+    "valid": true
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://u:p@[:1::2]/d",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://u:p@[1::2:]/d",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://u:p@[1:2:3:4:5:6:7::8]/d",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@127.0.0.1/database?sslmode=require",
+    "valid": true
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@db.example.test/database?sslmode=disable&sslmode=require",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@db.example.test/database?ssl=false",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@db.example.test:/database",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@[:::1]/database",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@999.1.1.1/database",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@db.example.test/database%0A",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@db.example.test/database%GG",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@db.example.test/database#fragment",
+    "valid": false
+  },
+  {
+    "field": "DATABASE_URL",
+    "value": "postgresql://user:secret@db.example.test/database/other",
+    "valid": false
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "https://s3.example.test/service/path",
+    "valid": true
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "http://[2001:db8::1]:8333/",
+    "valid": true
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "http://[:1::2]:8333/",
+    "valid": false
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "http://[1::2:]:8333/",
+    "valid": false
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "http://[1:2:3:4:5:6:7::8]:8333/",
+    "valid": false
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "https://s3.example.test/service%20path",
+    "valid": true
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "https://user:secret@s3.example.test/path",
+    "valid": false
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "https://s3.example.test/path?query=secret",
+    "valid": false
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "https://s3.example.test:00080/path",
+    "valid": false
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "https://s3.example.test/path%00",
+    "valid": false
+  },
+  {
+    "field": "S3_ENDPOINT",
+    "value": "https://s3.example.test/path%",
+    "valid": false
+  }
+]

@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,9 +23,20 @@ let admin: Pool;
 let pool: Pool;
 let emptyPath: string;
 let worker: ChildProcess | undefined;
+const storage = createServer((_request, response) =>
+  response.writeHead(200).end(),
+);
+let storagePort: number;
 
 integration("worker without the extraction toolchain", () => {
   beforeAll(async () => {
+    await new Promise<void>((resolve) =>
+      storage.listen(0, "127.0.0.1", resolve),
+    );
+    const address = storage.address();
+    if (!address || typeof address === "string")
+      throw new Error("No storage fixture port");
+    storagePort = address.port;
     emptyPath = await mkdtemp(join(tmpdir(), "chalktalk-empty-path-"));
     admin = new Pool({ connectionString: url });
     await admin.query(`CREATE SCHEMA "${schema}"`);
@@ -71,6 +83,7 @@ integration("worker without the extraction toolchain", () => {
     await pool?.end();
     await admin?.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await admin?.end();
+    await new Promise<void>((resolve) => storage.close(() => resolve()));
     await rm(emptyPath, { recursive: true, force: true });
   });
 
@@ -83,7 +96,7 @@ integration("worker without the extraction toolchain", () => {
         AUTH_TOKEN_SECRET: "test-secret-with-at-least-32-characters",
         S3_BUCKET: "test-course-files",
         S3_REGION: "us-east-1",
-        S3_ENDPOINT: "http://127.0.0.1:1",
+        S3_ENDPOINT: `http://127.0.0.1:${storagePort}`,
         S3_ACCESS_KEY_ID: "test-access-key",
         S3_SECRET_ACCESS_KEY: "test-secret-key",
       },
