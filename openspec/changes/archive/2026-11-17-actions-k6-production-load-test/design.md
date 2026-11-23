@@ -1,6 +1,6 @@
 ## Context
 
-The approved architecture is recorded in `docs/design/2026-11-16-k6-production-load-testing.md` (2026-11-17 amendment). The existing PR has a privileged fixture CLI, bounded k6 script, loopback Prometheus receiver, and dashboard. This change replaces the local operator runner, not application API/database behavior.
+The approved architecture is recorded in `openspec/changes/archive/2026-11-16-bounded-production-k6-load-test/2026-11-16-k6-production-load-testing.md` (2026-11-17 amendment). The existing PR has a privileged fixture CLI, bounded k6 script, loopback Prometheus receiver, and dashboard. This change replaces the local operator runner, not application API/database behavior.
 
 ## Decisions
 

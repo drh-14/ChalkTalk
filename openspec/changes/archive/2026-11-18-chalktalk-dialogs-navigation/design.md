@@ -1,6 +1,6 @@
 ## Context
 
-See proposal.md and dated design records in `docs/design/2026-11-18-chalktalk-confirmation-dialogs.md` and `docs/design/2026-11-18-internal-navigation-page-entrance.md`.
+See proposal.md and dated design records in `openspec/changes/archive/2026-11-18-chalktalk-dialogs-navigation/2026-11-18-chalktalk-confirmation-dialogs.md` and `openspec/changes/archive/2026-11-18-chalktalk-dialogs-navigation/2026-11-18-internal-navigation-page-entrance.md`.
 
 ## Decisions
 

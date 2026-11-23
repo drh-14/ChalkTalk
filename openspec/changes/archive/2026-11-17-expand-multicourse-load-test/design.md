@@ -1,6 +1,6 @@
 ## Context
 
-See the approved detailed design in `docs/design/2026-11-17-multicourse-journey-load-test.md`. The existing independent Ramp has one course, one writer, and a 20-user ceiling; cleanup relies on an explicit table allowlist.
+See the approved detailed design in `openspec/changes/archive/2026-11-17-expand-multicourse-load-test/2026-11-17-multicourse-journey-load-test.md`. The existing independent Ramp has one course, one writer, and a 20-user ceiling; cleanup relies on an explicit table allowlist.
 
 ## Goals / Non-Goals
 

@@ -1,6 +1,6 @@
 # Independent bounded Ramp with session-like user flows
 
-Status: historical design; Ramp profile and traffic mix superseded by the [multicourse design](2026-11-17-multicourse-journey-load-test.md). Current operator procedure: [load-test runbook](../../deployment/load-test/README.md).
+Status: historical design; Ramp profile and traffic mix superseded by the [multicourse design](../2026-11-17-expand-multicourse-load-test/2026-11-17-multicourse-journey-load-test.md). Current operator procedure: [load-test runbook](../../../../deployment/load-test/README.md).
 Date: 2026-11-17
 
 ## Context
