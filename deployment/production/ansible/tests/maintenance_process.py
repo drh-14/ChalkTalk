@@ -80,6 +80,7 @@ class MaintenanceRunnerTest(unittest.TestCase):
             timed_out_evidence = json.loads(security.read_text())
             self.assertEqual(timed_out_evidence['disposition'], 'failed')
             self.assertEqual(timed_out_evidence['last_success'], initial['last_success'])
+            self.assertGreater(timed_out_evidence['last_failure'], initial['last_success'])
             self.assertIsNone(child.poll())
             self.assertEqual(child.wait(), 0)
             child.stdout.close()
@@ -88,6 +89,7 @@ class MaintenanceRunnerTest(unittest.TestCase):
             held = json.loads(security.read_text())
             self.assertEqual(held['disposition'], 'held')
             self.assertEqual(held['last_success'], initial['last_success'])
+            self.assertEqual(held['last_failure'], timed_out_evidence['last_failure'])
             (state / 'update.hold').unlink()
             daily.write_text('#!/bin/sh\necho SECRET_MUST_NOT_ESCAPE >&2\nexit 0\n')
             failed = run()
@@ -96,6 +98,7 @@ class MaintenanceRunnerTest(unittest.TestCase):
             evidence = json.loads(security.read_text())
             self.assertEqual(evidence['last_success'], initial['last_success'])
             self.assertEqual(evidence['disposition'], 'failed')
+            self.assertGreaterEqual(evidence['last_failure'], held['last_failure'])
             drift = Path('/etc/apt/apt.conf.d/zzzz-acceptance-drift')
             drift.write_text('Unattended-Upgrade::Automatic-Reboot "true";\n')
             try:
@@ -104,6 +107,30 @@ class MaintenanceRunnerTest(unittest.TestCase):
                 self.assertIn('policy', failed.stdout + failed.stderr)
             finally:
                 drift.unlink()
+            prior_failure = json.loads(security.read_text())['last_failure']
+            release = root / 'release'
+            daily.write_text('#!/bin/sh\ntouch "$CHALKTALK_APT_PERIODIC/entered"\n'
+                             'while [ ! -e "' + str(release) + '" ]; do sleep 0.05; done\n'
+                             'touch "$CHALKTALK_APT_PERIODIC/update-stamp"\n'
+                             '[ "$1" != install ] || touch "$CHALKTALK_APT_PERIODIC/upgrade-stamp"\n')
+            active = subprocess.Popen(['bash', helper, 'install'], env=env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    if (periodic / 'entered').exists() and json.loads(security.read_text())['disposition'] == 'running':
+                        break
+                    time.sleep(0.05)
+                self.assertTrue((periodic / 'entered').exists())
+                running = json.loads(security.read_text())
+                self.assertEqual(running['disposition'], 'running')
+                self.assertEqual(running['last_success'], initial['last_success'])
+                self.assertEqual(running['last_failure'], prior_failure)
+            finally:
+                release.touch()
+                stdout, stderr = active.communicate(timeout=5)
+            self.assertEqual(active.returncode, 0, stdout + stderr)
+            self.assertIsNone(json.loads(security.read_text())['last_failure'])
 
 
 class RealDeploymentLockTest(unittest.TestCase):

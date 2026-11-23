@@ -8,6 +8,7 @@ import tempfile
 import datetime
 import hashlib
 import json
+import fcntl
 
 import maintenance_repository
 
@@ -136,6 +137,64 @@ class EffectiveMaintenancePolicyTest(unittest.TestCase):
 
 
 from maintenance_process import HoldControlTest, MaintenanceRunnerTest, RealDeploymentLockTest
+
+
+class WrappedStockServiceTest(unittest.TestCase):
+    def test_both_real_services_start_while_bootstrap_owns_host_lock(self):
+        lock = Path('/srv/chalktalk/shared/deploy.lock')
+        hold = Path('/var/lib/chalktalk-maintenance/bootstrap.hold')
+        services = ('apt-daily.service', 'apt-daily-upgrade.service')
+        for service in services:
+            subprocess.run(['systemctl', 'reset-failed', service], check=True)
+            self.assertEqual(subprocess.check_output(
+                ['systemctl', 'show', service, '-p', 'ActiveState', '--value'], text=True).strip(), 'inactive')
+        self.assertFalse(hold.exists())
+        def wrapper_waiting(service):
+            properties = subprocess.check_output(
+                ['systemctl', 'show', service, '-p', 'ActiveState', '-p', 'MainPID', '-p', 'ControlPID'],
+                text=True)
+            values = dict(line.split('=', 1) for line in properties.splitlines() if '=' in line)
+            pid = int(values.get('ControlPID', '0')) or int(values.get('MainPID', '0'))
+            if values.get('ActiveState') != 'activating' or not pid:
+                return False
+            try:
+                return b'apt-run.sh' in Path('/proc/' + str(pid) + '/cmdline').read_bytes()
+            except FileNotFoundError:
+                return False
+        with lock.open('a+') as descriptor:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                for service in services:
+                    subprocess.run(['systemctl', '--no-block', 'start', service], check=True)
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    if all(wrapper_waiting(service) for service in services):
+                        break
+                    time.sleep(0.05)
+                for service in services:
+                    self.assertTrue(wrapper_waiting(service), service)
+                waited = subprocess.run(['python3', '/usr/local/lib/chalktalk-maintenance/wait-apt.py'],
+                                        env={**os.environ, 'CHALKTALK_LOCK_WAIT': '2'},
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(waited.returncode, 0, waited.stderr)
+            finally:
+                hold.write_text('disposable-bootstrap-fixture\n')
+                hold.chmod(0o644)
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        try:
+            for service, mode in zip(services, ('update', 'install')):
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    if subprocess.check_output(['systemctl', 'show', service, '-p', 'ActiveState', '--value'],
+                                               text=True).strip() == 'inactive':
+                        break
+                    time.sleep(0.05)
+                self.assertEqual(subprocess.check_output(
+                    ['systemctl', 'show', service, '-p', 'Result', '--value'], text=True).strip(), 'success')
+                self.assertEqual(json.loads(Path('/var/lib/chalktalk-maintenance/' + mode + '.json').read_text())
+                                 ['disposition'], 'held')
+        finally:
+            hold.unlink()
 
 
 class RealResolverSelectionTest(unittest.TestCase):

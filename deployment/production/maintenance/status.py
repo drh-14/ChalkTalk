@@ -36,26 +36,33 @@ def evaluate(snapshot, now):
         attempt = data.get('attempt')
         disposition = data.get('disposition')
         success = data.get('last_success')
+        failure = data.get('last_failure')
         valid = (type(data.get('version')) is int and data['version'] == 1
                  and number(attempt) and 0 <= attempt <= now
                  and disposition in ('success', 'running', 'held', 'failed')
-                 and (success is None or number(success) and 0 <= success <= now))
+                 and (success is None or number(success) and 0 <= success <= now)
+                 and (failure is None or number(failure) and 0 <= failure <= attempt)
+                 and (disposition != 'success' or failure is None))
         if valid:
             valid = (number(success) and attempt <= success if disposition == 'success'
                      else success is None or success <= attempt)
         if not valid:
             issues.append(mode + ': unknown evidence')
             success = None
+            failure = None
             disposition = None
         if not number(success) or success < 0 or success > now:
             issues.append(mode + ': unknown success time')
         elif now - success > AGE:
             issues.append(mode + ': stale')
         operation_report[mode] = {'last_success': success if number(success) and 0 <= success <= now else None,
+                                  'last_failure': failure if number(failure) and 0 <= failure <= now else None,
                                   'disposition': disposition if disposition in ('success', 'running', 'held', 'failed') else 'unknown'}
         if disposition in ('held', 'failed'):
             issues.append(mode + ': ' + disposition)
-        elif disposition not in ('success', 'running'):
+        if failure is not None:
+            issues.append(mode + ': failed')
+        if disposition not in ('success', 'running', 'held', 'failed'):
             issues.append(mode + ': unknown disposition')
     for key in ('holds', 'policy_issues', 'runtime_restarts', 'pending_security', 'excluded_security', 'detector_errors', 'disks'):
         if not isinstance(snapshot[key], list):

@@ -24,8 +24,14 @@ def record(state, mode, disposition, started, success=None):
     saved = previous.get('last_success')
     if type(saved) not in (int, float) or not math.isfinite(saved) or not 0 <= saved <= started:
         saved = None
+    failure = previous.get('last_failure')
+    if previous.get('disposition') == 'failed' and failure is None:
+        failure = previous.get('attempt')
+    if type(failure) not in (int, float) or not math.isfinite(failure) or not 0 <= failure <= started:
+        failure = None
     data = {'version': 1, 'attempt': started, 'disposition': disposition,
-            'last_success': success if success is not None else saved}
+            'last_success': success if success is not None else saved,
+            'last_failure': None if disposition == 'success' else started if disposition == 'failed' else failure}
     descriptor, temporary = tempfile.mkstemp(prefix='.state-', dir=state)
     try:
         with os.fdopen(descriptor, 'w') as output:

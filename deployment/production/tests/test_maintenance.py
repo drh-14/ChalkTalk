@@ -93,6 +93,22 @@ class MaintenanceStatusTest(unittest.TestCase):
             self.assertNotEqual(code, 0)
             self.assertIn('install: stale', result['issues'])
 
+    def test_running_or_held_preserves_prior_failure_with_recent_success(self):
+        for disposition in ('running', 'held'):
+            snapshot = healthy()
+            snapshot['operations']['install'].update(
+                disposition=disposition, attempt=NOW - 1,
+                last_success=NOW - 100, last_failure=NOW - 50)
+            snapshot['holds'] = ['update']
+            snapshot['pending_security'] = ['example-package']
+            code, result = self.assess(snapshot)
+            self.assertNotEqual(code, 0)
+            self.assertEqual(result['operations']['install']['last_failure'], NOW - 50)
+            for issue in ('install: failed', 'hold: update', 'pending security: example-package'):
+                self.assertIn(issue, result['issues'])
+            if disposition == 'held':
+                self.assertIn('install: held', result['issues'])
+
     def test_either_block_threshold_fails_independently(self):
         for changes in ({'available_bytes': 2 * 1024 ** 3 - 1},
                         {'total_bytes': 21 * 1024 ** 3}, {'available_inodes': 9}):
