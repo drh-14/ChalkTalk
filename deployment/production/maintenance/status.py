@@ -33,12 +33,24 @@ def evaluate(snapshot, now):
         data = operations.get(mode, {}) if isinstance(operations, dict) else {}
         if not isinstance(data, dict):
             data = {}
+        attempt = data.get('attempt')
+        disposition = data.get('disposition')
         success = data.get('last_success')
+        valid = (type(data.get('version')) is int and data['version'] == 1
+                 and number(attempt) and 0 <= attempt <= now
+                 and disposition in ('success', 'running', 'held', 'failed')
+                 and (success is None or number(success) and 0 <= success <= now))
+        if valid:
+            valid = (number(success) and attempt <= success if disposition == 'success'
+                     else success is None or success <= attempt)
+        if not valid:
+            issues.append(mode + ': unknown evidence')
+            success = None
+            disposition = None
         if not number(success) or success < 0 or success > now:
             issues.append(mode + ': unknown success time')
         elif now - success > AGE:
             issues.append(mode + ': stale')
-        disposition = data.get('disposition')
         operation_report[mode] = {'last_success': success if number(success) and 0 <= success <= now else None,
                                   'disposition': disposition if disposition in ('success', 'running', 'held', 'failed') else 'unknown'}
         if disposition in ('held', 'failed'):

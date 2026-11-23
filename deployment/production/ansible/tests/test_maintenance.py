@@ -19,11 +19,11 @@ import os, sys
 unit, key = sys.argv[2], sys.argv[4]
 hour = '03' if unit == 'apt-daily.timer' else '04'
 values = {'Persistent': 'yes', 'RandomizedDelayUSec': '30min',
-          'AccuracyUSec': '1us',
+          'AccuracyUSec': '1us', 'Unit': unit.removesuffix('.timer') + '.service',
           'TimersCalendar': '{ OnCalendar=*-*-* ' + hour + ':00:00 UTC ; next_elapse=0 }'}
 if os.environ.get('DRIFT') == unit + ':' + key:
     values[key] = ('{ OnCalendar=*-*-* 05:00:00 UTC ; next_elapse=0 }'
-                   if key == 'TimersCalendar' else '45min')
+                   if key == 'TimersCalendar' else 'other.service' if key == 'Unit' else '45min')
 print(values[key])
 ''')
             systemctl.chmod(0o755)
@@ -36,6 +36,6 @@ print(values[key])
 
     def test_later_calendar_or_jitter_override_fails_for_each_timer(self):
         for unit in ('apt-daily.timer', 'apt-daily-upgrade.timer'):
-            for key in ('TimersCalendar', 'RandomizedDelayUSec'):
+            for key in ('TimersCalendar', 'RandomizedDelayUSec', 'Unit'):
                 with self.subTest(unit=unit, key=key):
                     self.assertNotEqual(self.verify(unit + ':' + key), 0)

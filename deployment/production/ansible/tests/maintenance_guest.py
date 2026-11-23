@@ -15,6 +15,32 @@ import apt_pkg
 
 
 class EffectiveMaintenancePolicyTest(unittest.TestCase):
+    def test_timer_drift_blocks_both_distro_operations_before_mutation(self):
+        for name in ('apt-daily', 'apt-daily-upgrade'):
+            override = Path('/etc/systemd/system/' + name + '.timer.d/zz-acceptance-drift.conf')
+            override.write_text('[Timer]\nUnit=other.service\n')
+            try:
+                subprocess.run(['systemctl', 'daemon-reload'], check=True)
+                for mode in ('update', 'install'):
+                    with self.subTest(timer=name, mode=mode), tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        (root / 'deploy.lock').touch()
+                        (root / 'periodic').mkdir()
+                        daily = root / 'daily'
+                        daily.write_text('#!/bin/sh\ntouch "$CHALKTALK_APT_PERIODIC/invoked"\n')
+                        daily.chmod(0o755)
+                        environment = {**os.environ, 'CHALKTALK_DEPLOY_LOCK': str(root / 'deploy.lock'),
+                                       'CHALKTALK_MAINTENANCE_STATE': str(root / 'state'),
+                                       'CHALKTALK_APT_PERIODIC': str(root / 'periodic'),
+                                       'CHALKTALK_APT_DAILY': str(daily)}
+                        result = subprocess.run(['bash', '/usr/local/lib/chalktalk-maintenance/apt-run.sh', mode],
+                                                env=environment, capture_output=True, text=True)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertFalse((root / 'periodic/invoked').exists())
+            finally:
+                override.unlink()
+                subprocess.run(['systemctl', 'daemon-reload'], check=True)
+
     def test_later_effective_timer_drift_fails_read_only_status(self):
         for name, setting in (('apt-daily', 'OnCalendar=*-*-* 05:00:00 UTC'),
                               ('apt-daily-upgrade', 'RandomizedDelaySec=45m')):

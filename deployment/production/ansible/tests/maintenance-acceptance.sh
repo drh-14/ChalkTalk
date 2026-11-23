@@ -67,7 +67,7 @@ docker exec -i "$guest" sh -c 'cat > /root/.ssh/authorized_keys; chmod 600 /root
 docker exec "$guest" systemctl start ssh
 port="$(docker port "$guest" 22/tcp | cut -d: -f2)"
 docker exec "$guest" cat /etc/ssh/ssh_host_ed25519_key.pub | awk -v port="$port" '{print "[127.0.0.1]:" port, $1, $2}' > "$work/known_hosts"
-printf '[guest]\n127.0.0.1 ansible_user=root ansible_port=%s ansible_python_interpreter=/usr/bin/python3\n' "$port" > "$work/inventory"
+printf '[chalktalk]\n127.0.0.1 ansible_user=root ansible_port=%s ansible_python_interpreter=/usr/bin/python3\n' "$port" > "$work/inventory"
 export ANSIBLE_SSH_ARGS="-o UserKnownHostsFile=$work/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes"
 docker exec "$guest" install -d -m 0755 /etc/docker
 docker exec -i "$guest" sh -c 'cat > /etc/docker/daemon.json' <<'DOCKER_SENTINEL'
@@ -120,4 +120,20 @@ if ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/
   echo 'Bootstrap incorrectly took over a previous failure hold' >&2
   exit 1
 fi
+docker exec "$guest" sh -c '/usr/local/lib/chalktalk-maintenance/hold.sh clear bootstrap "$(cat /var/lib/chalktalk-maintenance/bootstrap.hold)"'
+docker exec "$guest" rm /etc/apt/apt.conf.d/zzzz-acceptance-drift
+docker exec -i "$guest" sh -c 'cat > /etc/apt/sources.list.d/acceptance-bootstrap-failure.list' <<'BOOTSTRAP_FAILURE'
+deb [trusted=yes] file:/opt/absent-acceptance-bootstrap ./
+BOOTSTRAP_FAILURE
+docker exec "$guest" sh -c 'rm -rf /var/lib/apt/lists/*'
+if DOMAIN=fixture.invalid DATABASE_URL=fixture SUPABASE_STORAGE_ENDPOINT=fixture SUPABASE_STORAGE_BUCKET=fixture SUPABASE_STORAGE_REGION=fixture SUPABASE_STORAGE_ACCESS_KEY_ID=fixture SUPABASE_STORAGE_SECRET_ACCESS_KEY=fixture AUTH_TOKEN_SECRET=0123456789abcdef0123456789abcdef RESEND_API_KEY=fixture METRICS_TOKEN=0123456789abcdef0123456789abcdef GRAFANA_ADMIN_PASSWORD=0123456789abcdef0123456789abcdef ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/../bootstrap.yml" > "$work/bootstrap.log" 2>&1; then
+  echo 'Actual bootstrap unexpectedly passed broken package sources' >&2
+  exit 1
+fi
+grep -Fq 'TASK [Install host prerequisites]' "$work/bootstrap.log" || {
+  cat "$work/bootstrap.log" >&2
+  echo 'Actual bootstrap failed before its package task' >&2
+  exit 1
+}
+docker exec "$guest" test -s /var/lib/chalktalk-maintenance/bootstrap.hold
 echo "Ubuntu $release maintenance acceptance passed"

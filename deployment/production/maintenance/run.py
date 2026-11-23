@@ -10,6 +10,7 @@ import tempfile
 import time
 
 import policy
+import timer
 
 
 def record(state, mode, disposition, started, success=None):
@@ -56,7 +57,7 @@ def main(mode):
         return 0
     operation = mode
     try:
-        if policy.check():
+        if policy.check() or not timer.check():
             raise RuntimeError('policy')
         record(state, mode, 'running', started)
         # Catch-up refreshes metadata before installation, under the same held lock.

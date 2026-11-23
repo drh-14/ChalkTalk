@@ -13,7 +13,8 @@ NOW = 2000000000
 
 
 def healthy():
-    return {'version': 1, 'operations': {mode: {'disposition': 'success', 'last_success': NOW - 10}
+    return {'version': 1, 'operations': {mode: {'version': 1, 'attempt': NOW - 48 * 3600 - 20,
+                                                'disposition': 'success', 'last_success': NOW - 10}
                                         for mode in ('update', 'install')},
             'holds': [], 'policy_issues': [], 'timers_healthy': True, 'dpkg_audit_clean': True,
             'reboot_required': False, 'runtime_restarts': [], 'pending_security': [],
@@ -47,6 +48,7 @@ class MaintenanceStatusTest(unittest.TestCase):
         snapshot = healthy()
         snapshot['operations']['update']['last_success'] = NOW - 48 * 3600 - 1
         snapshot['operations']['install']['disposition'] = 'failed'
+        snapshot['operations']['install']['attempt'] = NOW - 1
         snapshot.update(holds=['update'], reboot_required=True, runtime_restarts=['docker.service'],
                         pending_security=['example-package'], excluded_security=['containerd'],
                         timers_healthy=False, dpkg_audit_clean=False)
@@ -70,6 +72,18 @@ class MaintenanceStatusTest(unittest.TestCase):
         code, result = self.assess({'secret': 'SECRET_MUST_NOT_ESCAPE'})
         self.assertNotEqual(code, 0)
         self.assertIn('unknown snapshot', result['issues'])
+
+    def test_incomplete_success_records_cannot_establish_health(self):
+        for mode in ('update', 'install'):
+            for field, value in (('version', None), ('attempt', None),
+                                 ('attempt', NOW + 1), ('attempt', 'bad'),
+                                 ('disposition', None)):
+                with self.subTest(mode=mode, field=field, value=value):
+                    snapshot = healthy()
+                    snapshot['operations'][mode][field] = value
+                    code, result = self.assess(snapshot)
+                    self.assertNotEqual(code, 0)
+                    self.assertIn(mode + ': unknown evidence', result['issues'])
 
     def test_hold_running_or_error_never_masks_stale_previous_success(self):
         for disposition in ('held', 'running', 'failed'):
