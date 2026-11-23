@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 
 ISSUE = re.compile(
-    r'(?:(?:update|install): (?:unknown success time|stale|held|failed|unknown disposition)'
+    r'(?:(?:update|install): (?:unknown evidence|unknown success time|stale|held|failed|unknown disposition)'
     r'|hold: (?:update|deployment|bootstrap)|reboot required|runtime restart: (?:docker|containerd)\.service'
     r'|(?:pending|excluded) security: [a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?'
     r'|(?:low blocks|low inodes|unknown capacity): [0-9]+'

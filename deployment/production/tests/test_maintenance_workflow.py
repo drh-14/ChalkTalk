@@ -81,3 +81,35 @@ class MaintenanceWorkflowTest(unittest.TestCase):
                 'VM_KNOWN_HOSTS': 'other.example ssh-ed25519 AAAAFixtureOnly\n'}, capture_output=True, text=True)
             self.assertNotEqual(unpinned.returncode, 0)
             self.assertFalse(calls.exists(), 'SSH attempted with no pinned host entry')
+
+    def test_unknown_evidence_preserves_all_reasons_without_admitting_host_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ssh = root / 'ssh'
+            ssh.write_text('#!/bin/sh\nprintf "%s" "$REPORT"\n')
+            ssh.chmod(0o755)
+            summary = root / 'summary'
+            reasons = ['update: unknown evidence', 'install: unknown evidence',
+                       'reboot required', 'low blocks: 123']
+            env = {**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
+                   'MAINTENANCE_ENABLED': 'true', 'GITHUB_REF': 'refs/heads/main',
+                   'SSH_PRIVATE_KEY': 'DISPOSABLE_FAKE_KEY', 'VM_HOST': 'vm.example',
+                   'VM_KNOWN_HOSTS': 'vm.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureOnly\n',
+                   'GITHUB_STEP_SUMMARY': str(summary)}
+            report = {'version': 1, 'healthy': False, 'issues': reasons}
+            result = subprocess.run(['bash', str(CHECK)], env={**env, 'REPORT': json.dumps(report)},
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            written = summary.read_text()
+            for reason in reasons:
+                self.assertIn(reason, written)
+            summary.unlink()
+            report['issues'].append('raw host secret 123')
+            result = subprocess.run(['bash', str(CHECK)], env={**env, 'REPORT': json.dumps(report)},
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            written = summary.read_text()
+            self.assertNotIn('raw host secret', written)
+            for reason in reasons:
+                self.assertNotIn(reason, written)
+            self.assertIn('Maintenance status unavailable', written)
