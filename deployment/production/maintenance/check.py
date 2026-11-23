@@ -79,6 +79,8 @@ def main():
                     'ubuntu@' + host, 'sudo -n python3 /usr/local/lib/chalktalk-maintenance/status.py'],
                     stdin=subprocess.DEVNULL, stdout=response, stderr=subprocess.DEVNULL,
                     timeout=180, check=False)
+                if checked.returncode:
+                    raise ValueError('ssh failed')
                 if response.tell() > 262144:
                     raise ValueError('oversized report')
                 response.seek(0)
@@ -93,7 +95,7 @@ def main():
             if report['healthy'] != (not issues):
                 raise ValueError('inconsistent report')
             summarize(issues, report['healthy'], report)
-            return int(bool(checked.returncode) or not report['healthy'])
+            return int(not report['healthy'])
     except Exception:
         summarize(['Maintenance status unavailable; check SSH identity/connectivity and host detectors'], False)
         print('Maintenance status unavailable; no host output or credentials disclosed')

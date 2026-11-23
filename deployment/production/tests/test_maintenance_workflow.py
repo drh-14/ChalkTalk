@@ -67,8 +67,18 @@ class MaintenanceWorkflowTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 output = result.stdout + result.stderr + (summary.read_text() if summary.exists() else '')
                 self.assertNotIn('SECRET_MUST_NOT_ESCAPE', output)
+            summary.unlink()
+            healthy_report = json.dumps({'version': 1, 'healthy': True, 'issues': []})
+            failed_transport = subprocess.run(['bash', str(CHECK)], env={**env, 'REPORT': healthy_report},
+                                              capture_output=True, text=True)
+            self.assertEqual(failed_transport.returncode, 1)
+            written = summary.read_text()
+            self.assertIn('VM maintenance: action required', written)
+            self.assertIn('Maintenance status unavailable', written)
+            self.assertNotIn('VM maintenance: healthy', written)
+            summary.unlink()
             good = subprocess.run(['bash', str(CHECK)], env={**env, 'SSH_RESULT': '0',
-                                  'REPORT': json.dumps({'version': 1, 'healthy': True, 'issues': []})},
+                                  'REPORT': healthy_report},
                                   capture_output=True, text=True)
             self.assertEqual(good.returncode, 0, good.stderr)
             command = calls.read_text()
