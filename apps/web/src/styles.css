@@ -104,6 +104,9 @@ h2[tabindex="-1"]:focus {
   max-width: 64rem;
   padding-inline: var(--space-5);
 }
+.app-bar.home:has(+ .home-shell) .app-bar-inner {
+  max-width: none;
+}
 .app-bar-start {
   align-items: center;
   display: flex;
@@ -2807,6 +2810,9 @@ a:focus-visible {
   gap: var(--space-3);
   margin-top: var(--space-4);
 }
+.home-shell .course-actions {
+  flex-wrap: nowrap;
+}
 .course-form {
   border-top: 1px solid var(--line);
   display: grid;
@@ -3980,6 +3986,13 @@ a:focus-visible {
   top: calc(100% + 0.5rem);
   width: min(24rem, calc(100vw - 2rem));
   z-index: 40;
+}
+.app-bar.home:has(+ .home-shell) .notification-panel {
+  /* Keep the panel bell-aligned, reserving the gutters, avatar and control gap. */
+  width: min(
+    24rem,
+    calc(100vw - var(--space-5) - var(--space-5) - 2rem - 0.8rem)
+  );
 }
 .notification-panel-head {
   align-items: center;
