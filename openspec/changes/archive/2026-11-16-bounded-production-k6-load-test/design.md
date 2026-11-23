@@ -1,6 +1,6 @@
 ## Context
 
-This change implements the approved [production k6 design](../../../docs/design/2026-11-16-k6-production-load-testing.md) on top of merged VM metrics. Public API contracts remain unchanged. Production DB access is high risk because local port 5432 may be an SSH tunnel to production.
+This change implements the approved [production k6 design](2026-11-16-k6-production-load-testing.md) on top of merged VM metrics. Public API contracts remain unchanged. Production DB access is high risk because local port 5432 may be an SSH tunnel to production.
 
 ## Decisions
 

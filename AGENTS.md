@@ -18,6 +18,10 @@ When starting or resuming subagent work, create a current-chat heartbeat automat
 
 At each subagent completion and heartbeat, check whether any subagent is still active. Once none are active, send any final handoff that is due and delete the heartbeat. Start a new heartbeat if subagent work resumes later. If heartbeat automation is unavailable, say so rather than promising automatic updates.
 
+## OpenSpec artifact locations
+
+Keep all OpenSpec proposals, designs, specs, tasks, and supporting design or planning artifacts under `openspec/`, following the existing change and archive conventions. Do not create or use root `docs/design/` or any other parallel root-level design folder for OpenSpec work. General documentation unrelated to OpenSpec retains its existing locations.
+
 ## Change workflow
 
 1. For product, API, database, or UI behavior changes, create or update an OpenSpec change before implementation. Complete and validate its proposal, affected specs, design, and tasks; resolve material decisions with the user before coding. Wording-only documentation, formatting, and mechanical changes that do not alter behavior do not require an OpenSpec change.
