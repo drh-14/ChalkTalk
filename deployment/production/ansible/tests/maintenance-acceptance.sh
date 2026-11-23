@@ -76,6 +76,8 @@ DOCKER_SENTINEL
 docker exec -i "$guest" sh -c 'cat > /etc/apt/apt.conf.d/50acceptance-exclusion' <<'EXCLUSION'
 Unattended-Upgrade::Package-Blacklist { "^ct-operator$"; };
 EXCLUSION
+docker exec "$guest" test ! -e /etc/systemd/system/apt-daily.service.d/99-chalktalk.conf
+docker exec "$guest" test ! -e /etc/systemd/system/apt-daily-upgrade.service.d/99-chalktalk.conf
 ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/maintenance-acceptance.yml"
 docker exec "$guest" /usr/local/lib/chalktalk-maintenance/hold.sh set update
 docker exec "$guest" sh -c 'find /usr/local/lib/chalktalk-maintenance /etc/systemd/system/apt-daily*.d -maxdepth 1 -type f -exec sha256sum {} \; ; sha256sum /etc/apt/apt.conf.d/zz-chalktalk-maintenance /etc/needrestart/conf.d/99-chalktalk.conf /etc/docker/daemon.json /etc/apt/apt.conf.d/50acceptance-exclusion' | sort > "$work/before.hashes"
@@ -122,6 +124,10 @@ if ansible-playbook -i "$work/inventory" --private-key "$work/key" "$script_dir/
 fi
 docker exec "$guest" sh -c '/usr/local/lib/chalktalk-maintenance/hold.sh clear bootstrap "$(cat /var/lib/chalktalk-maintenance/bootstrap.hold)"'
 docker exec "$guest" rm /etc/apt/apt.conf.d/zzzz-acceptance-drift
+docker exec "$guest" rm /etc/systemd/system/apt-daily.service.d/99-chalktalk.conf /etc/systemd/system/apt-daily-upgrade.service.d/99-chalktalk.conf
+docker exec "$guest" systemctl daemon-reload
+docker exec "$guest" test ! -e /etc/systemd/system/apt-daily.service.d/99-chalktalk.conf
+docker exec "$guest" test ! -e /etc/systemd/system/apt-daily-upgrade.service.d/99-chalktalk.conf
 docker exec -i "$guest" sh -c 'cat > /etc/apt/sources.list.d/acceptance-bootstrap-failure.list' <<'BOOTSTRAP_FAILURE'
 deb [trusted=yes] file:/opt/absent-acceptance-bootstrap ./
 BOOTSTRAP_FAILURE
@@ -136,4 +142,6 @@ grep -Fq 'TASK [Install host prerequisites]' "$work/bootstrap.log" || {
   exit 1
 }
 docker exec "$guest" test -s /var/lib/chalktalk-maintenance/bootstrap.hold
+docker exec "$guest" systemctl start apt-daily.service apt-daily-upgrade.service
+docker exec "$guest" python3 -c 'import json; from pathlib import Path; state=Path("/var/lib/chalktalk-maintenance"); assert all(json.loads((state / (mode + ".json")).read_text())["disposition"] == "held" for mode in ("update", "install"))'
 echo "Ubuntu $release maintenance acceptance passed"

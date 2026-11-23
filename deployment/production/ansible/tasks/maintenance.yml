@@ -11,33 +11,6 @@
 - name: Install managed policy and helpers
   ansible.builtin.import_tasks: maintenance-policy.yml
 
-- name: Create APT service drop-in directories
-  ansible.builtin.file:
-    path: "/etc/systemd/system/{{ item }}.service.d"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  loop:
-    - apt-daily
-    - apt-daily-upgrade
-
-- name: Wrap distro services with retained host lock and evidence checks
-  ansible.builtin.template:
-    src: "{{ maintenance_template_root | default(playbook_dir ~ '/templates') }}/maintenance-service.conf.j2"
-    dest: "/etc/systemd/system/{{ item.name }}.service.d/99-chalktalk.conf"
-    owner: root
-    group: root
-    mode: "0644"
-  loop:
-    - { name: apt-daily, mode: update }
-    - { name: apt-daily-upgrade, mode: install }
-
-- name: Reload definitions without interrupting package transactions
-  ansible.builtin.systemd_service:
-    daemon_reload: true
-  changed_when: false
-
 - name: Verify effective policy before enabling timers
   ansible.builtin.command:
     argv:

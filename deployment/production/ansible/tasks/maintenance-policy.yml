@@ -42,27 +42,3 @@
   ansible.builtin.systemd_service:
     daemon_reload: true
   changed_when: false
-
-- name: Create root-owned maintenance helper directory
-  ansible.builtin.file:
-    path: /usr/local/lib/chalktalk-maintenance
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Install root-controlled hold helpers
-  ansible.builtin.copy:
-    src: "{{ maintenance_source_root | default(playbook_dir ~ '/../maintenance') }}/{{ item }}"
-    dest: "/usr/local/lib/chalktalk-maintenance/{{ item }}"
-    owner: root
-    group: root
-    mode: "0755"
-  loop:
-    - common.sh
-    - hold.sh
-    - apt-run.sh
-    - policy.py
-    - run.py
-    - status.py
-    - timer.py

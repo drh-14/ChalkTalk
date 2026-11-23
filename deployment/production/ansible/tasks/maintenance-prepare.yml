@@ -50,7 +50,7 @@
     group: root
     mode: "0755"
 
-- name: Install bootstrap coordination helpers before package work
+- name: Install maintenance helpers before package work
   become: true
   ansible.builtin.copy:
     src: "{{ maintenance_source_root | default(playbook_dir ~ '/../maintenance') }}/{{ item }}"
@@ -61,6 +61,11 @@
   loop:
     - common.sh
     - hold.sh
+    - apt-run.sh
+    - policy.py
+    - run.py
+    - status.py
+    - timer.py
 
 - name: Create this invocation's bootstrap token
   ansible.builtin.command:
@@ -79,4 +84,34 @@
       - set
       - bootstrap
       - "{{ maintenance_bootstrap_token.stdout }}"
+  changed_when: false
+
+- name: Create stock APT service drop-in directories before package work
+  become: true
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - apt-daily
+    - apt-daily-upgrade
+
+- name: Enforce bootstrap hold for stock APT service starts
+  become: true
+  ansible.builtin.template:
+    src: "{{ maintenance_template_root | default(playbook_dir ~ '/templates') }}/maintenance-service.conf.j2"
+    dest: "/etc/systemd/system/{{ item.name }}.service.d/99-chalktalk.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { name: apt-daily, mode: update }
+    - { name: apt-daily-upgrade, mode: install }
+
+- name: Activate stock APT service hold enforcement before package work
+  become: true
+  ansible.builtin.systemd_service:
+    daemon_reload: true
   changed_when: false

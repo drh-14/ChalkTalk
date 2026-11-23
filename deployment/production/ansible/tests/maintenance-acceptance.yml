@@ -20,6 +20,33 @@
           - "from pathlib import Path; import sys; sys.exit(Path('/var/lib/chalktalk-maintenance/bootstrap.hold').read_text().strip() != sys.argv[1])"
           - "{{ maintenance_bootstrap_token.stdout }}"
       changed_when: false
+    - name: Verify both stock APT starts honor bootstrap hold before package work
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import json
+        from pathlib import Path
+        import subprocess
+
+        state = Path('/var/lib/chalktalk-maintenance')
+        periodic = Path('/var/lib/apt/periodic')
+        lists = Path('/var/lib/apt/lists')
+        watched = [Path('/var/lib/dpkg/status'), periodic / 'update-stamp',
+                   periodic / 'upgrade-stamp', *lists.glob('*')]
+        def snapshot():
+            return {str(path): (path.stat().st_size, path.stat().st_mtime_ns)
+                    for path in watched if path.is_file()}
+        before = snapshot()
+        for service, mode in (('apt-daily.service', 'update'),
+                              ('apt-daily-upgrade.service', 'install')):
+            subprocess.run(['systemctl', 'start', service], check=True)
+            evidence = json.loads((state / (mode + '.json')).read_text())
+            assert evidence['disposition'] == 'held', (service, evidence)
+            assert evidence['last_success'] is None, (service, evidence)
+        assert snapshot() == before, 'APT metadata or package state changed under bootstrap hold'
+        PY
+      args:
+        executable: /bin/bash
+      changed_when: false
     - name: Apply managed security maintenance
       ansible.builtin.import_tasks: ../tasks/maintenance.yml
     - name: Clear only owned fixture bootstrap hold
