@@ -17,7 +17,7 @@ export type RouteName =
   | "course-session";
 
 export type FeedSort = "relevance" | "newest" | "oldest" | "recent_activity";
-/** Feed state kept in the URL: a sidebar filter key, tags, a tag match, and a chosen sort. */
+/** Feed state kept in the URL: a filter key, tags, a tag match, and a chosen sort. */
 export type FeedFilters = {
   filter?: string;
   tags?: string[];

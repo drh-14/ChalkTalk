@@ -228,7 +228,9 @@ test("autosaves one draft, restores automatically, and clears it on publish", as
 }) => {
   const state = await mockApi(page);
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page.getByRole("textbox", { name: "Post title" }).fill("Durable idea");
   await page.getByRole("textbox", { name: "Post body" }).fill("Saved body");
   await expect(page.getByText("Draft saved.", { exact: true })).toBeVisible();
@@ -243,7 +245,9 @@ test("autosaves one draft, restores automatically, and clears it on publish", as
     page.getByRole("list", { name: "Selected files" }),
   ).toContainText("device-only.txt");
   await page.reload();
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await expect(
     page.getByText("Saved draft restored for this course."),
   ).toBeVisible();
@@ -275,7 +279,9 @@ test("conflict preserves local text and offers confirmed overwrite", async ({
     conflict: true,
   });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await expect(page.getByRole("textbox", { name: "Post title" })).toHaveValue(
     "Original",
   );
@@ -296,7 +302,9 @@ test("can reload remote after conflict", async ({ page }) => {
     conflict: true,
   });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await expect(page.getByRole("textbox", { name: "Post title" })).toHaveValue(
     "Original",
   );
@@ -318,7 +326,9 @@ test("confirmed discard clears the singleton draft", async ({ page }) => {
     version: 1,
   });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await expect(page.getByRole("textbox", { name: "Post title" })).toHaveValue(
     "Discard me",
   );
@@ -334,7 +344,9 @@ test("confirmed discard clears the singleton draft", async ({ page }) => {
 test("failed save keeps local text for retry", async ({ page }) => {
   await mockApi(page, { failOnce: true });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page.getByRole("textbox", { name: "Post title" }).fill("Retry idea");
   await expect(
     page.getByRole("button", { name: "Retry draft save" }),
@@ -382,7 +394,9 @@ test("failed initial load stays locked until a single retry restores the draft",
     failGetOnce: true,
   });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   const retry = page.getByRole("button", { name: "Retry loading draft" });
   await expect(retry).toBeVisible();
   await expect(
@@ -409,7 +423,9 @@ test("transient overwrite error retains local text and both recovery actions", a
     failOverwriteOnce: true,
   });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page.getByRole("textbox", { name: "Post title" }).fill("Local change");
   await expect(
     page.getByRole("button", { name: "Overwrite saved draft" }),
@@ -442,7 +458,9 @@ test("stale publish keeps text and exposes conflict recovery", async ({
     stalePublish: true,
   });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await expect(page.getByRole("textbox", { name: "Post title" })).toHaveValue(
     "Local title",
   );
@@ -472,7 +490,9 @@ test("stale discard keeps text and exposes conflict recovery", async ({
     staleDiscard: true,
   });
   await page.goto(`${origin}/attachments-fixture.html?post=none`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page.getByRole("button", { name: "Discard draft" }).click();
   await acceptConfirmation(page, "Discard");
   await expect(

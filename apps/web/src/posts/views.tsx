@@ -1,8 +1,10 @@
+import { useFilterOverlay } from "./useFilterOverlay.js";
 import { useConfirm } from "../app/useConfirm.js";
 import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -501,7 +503,7 @@ const SORT_LABELS: Record<PostSort, string> = {
   oldest: "Oldest",
 };
 
-/** Sidebar sections open on wide screens and start closed on phones, decided once per visit. */
+/** Filter sections open on wide screens and start closed on phones, decided once per visit. */
 function initiallyOpen() {
   return !(
     typeof window !== "undefined" &&
@@ -510,7 +512,7 @@ function initiallyOpen() {
   );
 }
 
-/** An accordion section of the filter sidebar; a closed header also names the current choice. */
+/** An accordion section of the filter overlay; a closed header also names the current choice. */
 function FilterSection({
   name,
   summary,
@@ -2531,14 +2533,15 @@ function DiscussionContent({
     () => new Set(),
   );
   const [mergedItems, setMergedItems] = useState<MergedPost[]>([]);
-  // Start from the caller's answer so staff-only sidebar entries do not pop in.
+  // Start from the caller's answer so staff-only filter entries do not pop in.
   const [staff, setStaff] = useState(knownStaff ?? false);
   const [folders, setFolders] = useState<PostFolder[]>([]);
   const [folderError, setFolderError] = useState("");
   const [folderCycle, setFolderCycle] = useState(0);
   const [role, setRole] = useState<"student" | "ta" | "instructor">();
   const [postView, setPostView] = useState<"posts" | "duplicates">("posts");
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const filterOverlay = useFilterOverlay(courseId, postId);
+  const closeFilterOverlay = filterOverlay.close;
   const [tagLimitReached, setTagLimitReached] = useState(false);
   const [openSections, setOpenSections] = useState(() => {
     const open = initiallyOpen();
@@ -2550,12 +2553,6 @@ function DiscussionContent({
       [section]: !current[section],
     }));
   }
-  const [desktopFilters, setDesktopFilters] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(min-width: 851px)").matches,
-  );
   const [localFilters, setLocalFilters] = useState<FeedFilters>({});
   // Locally, a chosen sort belongs to the search it was chosen for; the URL drops it on a new search.
   const [localSortQuery, setLocalSortQuery] = useState<string>();
@@ -2591,6 +2588,17 @@ function DiscussionContent({
   const [editingPostId, setEditingPostId] = useState<string>();
   const [mergePending, setMergePending] = useState(false);
   const [selectedReviewId, setSelectedReviewId] = useState<string>();
+  const detailRegion = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (!postId && !selectedReviewId && !composerOpen) return;
+    closeFilterOverlay();
+    if (
+      (typeof window.matchMedia !== "function" ||
+        window.matchMedia("(max-width: 850px)").matches) &&
+      document.activeElement?.closest(".discussion-feed, .filter-overlay")
+    )
+      detailRegion.current?.focus();
+  }, [postId, selectedReviewId, composerOpen, closeFilterOverlay]);
   const [reviewDetail, setReviewDetail] = useState<Post>();
   const [reviewDetailError, setReviewDetailError] = useState("");
   const [composerSeed, setComposerSeed] = useState<{
@@ -2602,14 +2610,66 @@ function DiscussionContent({
   const editorState = useRef({ dirty: false, pending: false });
   const listScroll = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
+  const searchClear = useRef<HTMLButtonElement>(null);
+  const [desktopTools, setDesktopTools] = useState(
+    () =>
+      typeof window.matchMedia !== "function" ||
+      window.matchMedia("(min-width: 851px)").matches,
+  );
+  const [searchExpanded, setSearchExpanded] = useState(!!query);
+  const searchToggle = useRef<HTMLButtonElement>(null);
+  const searchRegion = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (desktopTools || !searchExpanded) return;
+    const dismissSearch = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !searchRegion.current?.contains(event.target) &&
+        !searchToggle.current?.contains(event.target)
+      )
+        setSearchExpanded(false);
+    };
+    document.addEventListener("pointerdown", dismissSearch);
+    return () => document.removeEventListener("pointerdown", dismissSearch);
+  }, [desktopTools, searchExpanded]);
+  const requestSearchFocus = useRef<"input" | "clear" | null>(null);
+  const showSearch = useCallback(() => {
+    if (desktopTools || searchExpanded) searchInput.current?.focus();
+    else {
+      requestSearchFocus.current = "input";
+      setSearchExpanded(true);
+    }
+  }, [desktopTools, searchExpanded]);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const viewport = window.matchMedia("(min-width: 851px)");
-    const update = () => setDesktopFilters(viewport.matches);
-    viewport.addEventListener("change", update);
-    update();
-    return () => viewport.removeEventListener("change", update);
+    const media = window.matchMedia("(min-width: 851px)");
+    const update = () => {
+      if (document.activeElement === searchInput.current) {
+        requestSearchFocus.current = "input";
+        if (!media.matches) setSearchExpanded(true);
+      } else if (document.activeElement === searchClear.current) {
+        requestSearchFocus.current = "clear";
+        if (!media.matches) setSearchExpanded(true);
+      } else if (
+        media.matches &&
+        document.activeElement === searchToggle.current
+      ) {
+        requestSearchFocus.current = "input";
+      }
+      setDesktopTools(media.matches);
+    };
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
+  useLayoutEffect(() => {
+    if (requestSearchFocus.current) {
+      (requestSearchFocus.current === "clear"
+        ? searchClear
+        : searchInput
+      ).current?.focus();
+      requestSearchFocus.current = null;
+    }
+  }, [desktopTools, searchExpanded]);
   // "/" focuses search unless the reader is typing somewhere.
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -2629,11 +2689,11 @@ function DiscussionContent({
       )
         return;
       event.preventDefault();
-      searchInput.current?.focus();
+      showSearch();
     };
     document.addEventListener("keydown", focusSearch);
     return () => document.removeEventListener("keydown", focusSearch);
-  }, []);
+  }, [showSearch]);
   const lastRequestedQuery = useRef<string | undefined>(undefined);
   const pageBusy = useRef(false);
   // Scrolling near the end of the feed loads the next page automatically.
@@ -3456,6 +3516,132 @@ function DiscussionContent({
       setReviewError(message(caught));
     }
   }
+  const toolControls = {
+    search: (
+      <div
+        key="search"
+        ref={searchRegion}
+        id="post-search-region"
+        role="search"
+        className="search-field"
+        hidden={!desktopTools && !searchExpanded}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !desktopTools) {
+            event.preventDefault();
+            setSearchExpanded(false);
+            searchToggle.current?.focus();
+          }
+        }}
+      >
+        <label className="visually-hidden" htmlFor="post-search">
+          Search posts
+        </label>
+        <input
+          ref={searchInput}
+          id="post-search"
+          type="search"
+          aria-describedby="post-search-help"
+          value={draftQuery}
+          maxLength={500}
+          onChange={(event) => {
+            const next = event.target.value.slice(0, 500);
+            setDraftQuery(next);
+            if (!next.trim() && query) {
+              lastRequestedQuery.current = "";
+              onQueryChange?.("");
+            }
+          }}
+          placeholder="Search posts"
+        />
+        {draftQuery && (
+          <button
+            ref={searchClear}
+            type="button"
+            className="search-clear"
+            aria-label="Clear search"
+            onClick={clearSearch}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        )}
+      </div>
+    ),
+    create: (
+      <button
+        key="create"
+        type="button"
+        className="button primary create-post"
+        disabled={!course || course.status === "deleting"}
+        onClick={() => openComposer()}
+        aria-label={
+          course?.status === "archived"
+            ? "View saved draft"
+            : desktopTools
+              ? "New post"
+              : "Create post"
+        }
+      >
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        >
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+    ),
+    filters: (
+      <button
+        key="filters"
+        type="button"
+        className="button secondary filter-overlay-trigger"
+        ref={filterOverlay.trigger}
+        aria-expanded={filterOverlay.open}
+        aria-controls="post-filters"
+        onClick={() =>
+          filterOverlay.open ? filterOverlay.close(true) : filterOverlay.show()
+        }
+      >
+        Filters
+      </button>
+    ),
+    toggle: (
+      <button
+        key="toggle"
+        ref={searchToggle}
+        type="button"
+        className="button secondary mobile-search-toggle"
+        aria-label="Search posts"
+        aria-expanded={searchExpanded}
+        aria-controls="post-search-region"
+        onClick={() => {
+          if (searchExpanded) {
+            setSearchExpanded(false);
+            searchToggle.current?.focus();
+          } else showSearch();
+        }}
+      >
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          width="20"
+          height="20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        >
+          <circle cx="10.5" cy="10.5" r="6.5" />
+          <path d="m16 16 4 4" />
+        </svg>
+      </button>
+    ),
+  };
   return (
     <MentionContext.Provider value={postMentions}>
       <section
@@ -3496,337 +3682,302 @@ function DiscussionContent({
         )}
         {courseError && <p role="alert">{courseError}</p>}
         <div
-          className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}${desktopFilters && filtersCollapsed ? " filters-collapsed" : ""}`}
+          className={`discussion-columns${postId || selectedReviewId || composerOpen ? " has-selection" : ""}`}
         >
-          <aside
+          <div
             id="post-filters"
-            className="discussion-sidebar"
+            ref={filterOverlay.panel}
+            role="dialog"
             aria-label="Post filters"
-            aria-hidden={desktopFilters && filtersCollapsed ? true : undefined}
-            inert={desktopFilters && filtersCollapsed}
+            hidden={!filterOverlay.open}
+            className="filter-overlay"
+            style={filterOverlay.style}
           >
-            <FilterSection
-              name="Show"
-              summary={
-                activeFilter?.ariaLabel ?? activeFilter?.label ?? "All posts"
-              }
-              open={openSections.show}
-              onToggle={() => toggleSection("show")}
-            >
-              <ChoiceGroup
-                name="Show"
-                value={postView === "duplicates" ? "" : filter}
-                choices={filterOptions.map((item) => ({
-                  value: item.key,
-                  label: item.ariaLabel ?? item.label,
-                  nested: item.nested,
-                }))}
-                onChange={async (key) => {
-                  if (!(await switchPostView("posts"))) return;
-                  const next = { ...activeFilters };
-                  if (key === "all") delete next.filter;
-                  else next.filter = key;
-                  changeFilters(next);
-                }}
-              />
-              {staff && (
-                <button
-                  type="button"
-                  className={`filter-choice review-choice${postView === "duplicates" ? " active" : ""}`}
-                  aria-pressed={postView === "duplicates"}
-                  onClick={() =>
-                    switchPostView(
-                      postView === "duplicates" ? "posts" : "duplicates",
-                    )
-                  }
-                >
-                  <span>
-                    Duplicates
-                    <span className="visually-hidden"> (merged posts)</span>
-                  </span>
-                  <span className="review-choice-note" aria-hidden="true">
-                    Staff
-                  </span>
-                </button>
-              )}
-            </FilterSection>
-            <FilterSection
-              name="Sort by"
-              summary={SORT_LABELS[sort]}
-              open={openSections.sort}
-              onToggle={() => toggleSection("sort")}
-            >
-              <ChoiceGroup
-                name="Sort by"
-                value={sort}
-                disabled={postView === "duplicates"}
-                choices={(query ? SORTS : SORTS.slice(1)).map((value) => ({
-                  value,
-                  label: SORT_LABELS[value],
-                }))}
-                onChange={(value) => {
-                  if (!onFiltersChange) setLocalSortQuery(query);
-                  changeFilters({ ...activeFilters, sort: value as PostSort });
-                }}
-              />
-            </FilterSection>
-            <FilterSection
-              name="Folders"
-              summary={
-                !activeFilters.folders?.length
-                  ? "All posts"
-                  : activeFilters.folders.includes("unfiled")
-                    ? "No folder"
-                    : `${activeFilters.folders.length} selected`
-              }
-              open={openSections.folders}
-              onToggle={() => toggleSection("folders")}
-            >
-              <fieldset
-                className="folder-filter-label"
-                disabled={postView === "duplicates"}
+            <div className="filter-overlay-heading">
+              <strong>Filters</strong>
+              <button
+                type="button"
+                className="text-button"
+                aria-label="Close filters"
+                onClick={() => filterOverlay.close(true)}
               >
-                <legend>Filter by folder</legend>
-                <label className="folder-filter-choice">
-                  <input
-                    type="checkbox"
-                    checked={!activeFilters.folders?.length}
-                    onChange={(event) => {
-                      const next = { ...activeFilters };
-                      if (event.target.checked) delete next.folders;
-                      else next.folders = ["unfiled"];
-                      changeFilters(next);
-                    }}
-                  />
-                  All posts
-                </label>
-                {folders.map((folder) => (
-                  <label key={folder.id} className="folder-filter-choice">
+                Close
+              </button>
+            </div>
+            <aside
+              className="discussion-sidebar filter-overlay-body"
+              aria-label="Filter choices"
+              inert={!filterOverlay.open}
+            >
+              <FilterSection
+                name="Show"
+                summary={
+                  activeFilter?.ariaLabel ?? activeFilter?.label ?? "All posts"
+                }
+                open={openSections.show}
+                onToggle={() => toggleSection("show")}
+              >
+                <ChoiceGroup
+                  name="Show"
+                  value={postView === "duplicates" ? "" : filter}
+                  choices={filterOptions.map((item) => ({
+                    value: item.key,
+                    label: item.ariaLabel ?? item.label,
+                    nested: item.nested,
+                  }))}
+                  onChange={async (key) => {
+                    if (!(await switchPostView("posts"))) return;
+                    const next = { ...activeFilters };
+                    if (key === "all") delete next.filter;
+                    else next.filter = key;
+                    changeFilters(next);
+                  }}
+                />
+                {staff && (
+                  <button
+                    type="button"
+                    className={`filter-choice review-choice${postView === "duplicates" ? " active" : ""}`}
+                    aria-pressed={postView === "duplicates"}
+                    onClick={() =>
+                      switchPostView(
+                        postView === "duplicates" ? "posts" : "duplicates",
+                      )
+                    }
+                  >
+                    <span>
+                      Duplicates
+                      <span className="visually-hidden"> (merged posts)</span>
+                    </span>
+                    <span className="review-choice-note" aria-hidden="true">
+                      Staff
+                    </span>
+                  </button>
+                )}
+              </FilterSection>
+              <FilterSection
+                name="Sort by"
+                summary={SORT_LABELS[sort]}
+                open={openSections.sort}
+                onToggle={() => toggleSection("sort")}
+              >
+                <ChoiceGroup
+                  name="Sort by"
+                  value={sort}
+                  disabled={postView === "duplicates"}
+                  choices={(query ? SORTS : SORTS.slice(1)).map((value) => ({
+                    value,
+                    label: SORT_LABELS[value],
+                  }))}
+                  onChange={(value) => {
+                    if (!onFiltersChange) setLocalSortQuery(query);
+                    changeFilters({
+                      ...activeFilters,
+                      sort: value as PostSort,
+                    });
+                  }}
+                />
+              </FilterSection>
+              <FilterSection
+                name="Folders"
+                summary={
+                  !activeFilters.folders?.length
+                    ? "All posts"
+                    : activeFilters.folders.includes("unfiled")
+                      ? "No folder"
+                      : `${activeFilters.folders.length} selected`
+                }
+                open={openSections.folders}
+                onToggle={() => toggleSection("folders")}
+              >
+                <fieldset
+                  className="folder-filter-label"
+                  disabled={postView === "duplicates"}
+                >
+                  <legend>Filter by folder</legend>
+                  <label className="folder-filter-choice">
                     <input
                       type="checkbox"
-                      checked={
-                        activeFilters.folders?.includes(folder.id) ?? false
-                      }
-                      disabled={
-                        !(
-                          activeFilters.folders?.includes(folder.id) ?? false
-                        ) &&
-                        (activeFilters.folders?.filter((id) => id !== "unfiled")
-                          .length ?? 0) >= MAX_FEED_FOLDERS
-                      }
+                      checked={!activeFilters.folders?.length}
                       onChange={(event) => {
-                        const selected = (activeFilters.folders ?? []).filter(
-                          (id) => id !== "unfiled",
-                        );
-                        const nextFolders = event.target.checked
-                          ? [...selected, folder.id]
-                          : selected.filter((id) => id !== folder.id);
                         const next = { ...activeFilters };
-                        next.folders = nextFolders.length
-                          ? nextFolders
-                          : ["unfiled"];
+                        if (event.target.checked) delete next.folders;
+                        else next.folders = ["unfiled"];
                         changeFilters(next);
                       }}
                     />
-                    <span className="folder-filter-name">{folder.name}</span>
+                    All posts
                   </label>
-                ))}
-                {activeFilters.folders?.includes("unfiled") && (
-                  <p className="folder-filter-hint" role="status">
-                    Showing posts with no folder.
+                  {folders.map((folder) => (
+                    <label key={folder.id} className="folder-filter-choice">
+                      <input
+                        type="checkbox"
+                        checked={
+                          activeFilters.folders?.includes(folder.id) ?? false
+                        }
+                        disabled={
+                          !(
+                            activeFilters.folders?.includes(folder.id) ?? false
+                          ) &&
+                          (activeFilters.folders?.filter(
+                            (id) => id !== "unfiled",
+                          ).length ?? 0) >= MAX_FEED_FOLDERS
+                        }
+                        onChange={(event) => {
+                          const selected = (activeFilters.folders ?? []).filter(
+                            (id) => id !== "unfiled",
+                          );
+                          const nextFolders = event.target.checked
+                            ? [...selected, folder.id]
+                            : selected.filter((id) => id !== folder.id);
+                          const next = { ...activeFilters };
+                          next.folders = nextFolders.length
+                            ? nextFolders
+                            : ["unfiled"];
+                          changeFilters(next);
+                        }}
+                      />
+                      <span className="folder-filter-name">{folder.name}</span>
+                    </label>
+                  ))}
+                  {activeFilters.folders?.includes("unfiled") && (
+                    <p className="folder-filter-hint" role="status">
+                      Showing posts with no folder.
+                    </p>
+                  )}
+                </fieldset>
+                {folderError && (
+                  <p role="alert">
+                    Could not load folders: {folderError}{" "}
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setFolderCycle((value) => value + 1)}
+                    >
+                      Retry
+                    </button>
                   </p>
                 )}
-              </fieldset>
-              {folderError && (
-                <p role="alert">
-                  Could not load folders: {folderError}{" "}
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => setFolderCycle((value) => value + 1)}
-                  >
-                    Retry
-                  </button>
-                </p>
-              )}
-              {staff && (
-                <FolderManager
-                  courseId={courseId}
-                  csrfToken={csrfToken}
-                  folders={folders}
-                  onChanged={(deletedFolderId) => {
-                    const currentFilters = activeFiltersRef.current;
-                    const remainingFolders = currentFilters.folders?.filter(
-                      (id) => id !== deletedFolderId,
-                    );
-                    if (deletedFolderId) {
-                      setFolders((current) =>
-                        current.filter(
-                          (folder) => folder.id !== deletedFolderId,
-                        ),
+                {staff && (
+                  <FolderManager
+                    courseId={courseId}
+                    csrfToken={csrfToken}
+                    folders={folders}
+                    onChanged={(deletedFolderId) => {
+                      const currentFilters = activeFiltersRef.current;
+                      const remainingFolders = currentFilters.folders?.filter(
+                        (id) => id !== deletedFolderId,
                       );
-                      setDetail((current) =>
-                        current &&
-                        !current.deleted &&
-                        current.folder?.id === deletedFolderId
-                          ? {
-                              ...current,
-                              folder: null,
-                              version: current.version + 1,
-                            }
-                          : current,
-                      );
-                    }
-                    if (
-                      deletedFolderId &&
-                      currentFilters.folders?.includes(deletedFolderId)
-                    )
-                      changeFilters({
-                        ...currentFilters,
-                        folders: remainingFolders?.length
-                          ? remainingFolders
-                          : ["unfiled"],
-                      });
-                    else setFeedCycle((value) => value + 1);
-                    setFolderCycle((value) => value + 1);
-                  }}
-                />
-              )}
-            </FilterSection>
-            {tags.length > 0 && (
-              <FilterSection
-                name="Tags"
-                summary={String(tags.length)}
-                open={openSections.tags}
-                onToggle={() => toggleSection("tags")}
-              >
-                <ul className="active-tags" aria-label="Active tags">
-                  {tags.map((tag) => (
-                    <li key={tag}>
-                      <button
-                        type="button"
-                        className="tag-chip active"
-                        aria-label={`Remove tag filter ${tag}`}
-                        disabled={postView === "duplicates"}
-                        onClick={() =>
-                          changeTags(tags.filter((item) => item !== tag))
-                        }
-                      >
-                        #{tag}
-                        <span aria-hidden="true"> ×</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                {tags.length > 1 && (
-                  <ChoiceGroup
-                    name="Match"
-                    showLegend
-                    className="tag-match"
-                    value={tagMatch ?? "all"}
-                    disabled={postView === "duplicates"}
-                    choices={[
-                      { value: "any", label: "Any" },
-                      { value: "all", label: "All" },
-                    ]}
-                    onChange={(value) => {
-                      const next = { ...activeFilters };
-                      if (value === "any") next.tagMatch = "any";
-                      else delete next.tagMatch;
-                      changeFilters(next);
+                      if (deletedFolderId) {
+                        setFolders((current) =>
+                          current.filter(
+                            (folder) => folder.id !== deletedFolderId,
+                          ),
+                        );
+                        setDetail((current) =>
+                          current &&
+                          !current.deleted &&
+                          current.folder?.id === deletedFolderId
+                            ? {
+                                ...current,
+                                folder: null,
+                                version: current.version + 1,
+                              }
+                            : current,
+                        );
+                      }
+                      if (
+                        deletedFolderId &&
+                        currentFilters.folders?.includes(deletedFolderId)
+                      )
+                        changeFilters({
+                          ...currentFilters,
+                          folders: remainingFolders?.length
+                            ? remainingFolders
+                            : ["unfiled"],
+                        });
+                      else setFeedCycle((value) => value + 1);
+                      setFolderCycle((value) => value + 1);
                     }}
                   />
                 )}
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={postView === "duplicates"}
-                  onClick={() => changeTags([])}
-                >
-                  Clear all
-                </button>
               </FilterSection>
-            )}
-            <p role="status" className="tag-limit">
-              {tagLimitReached
-                ? `At most ${MAX_FEED_TAGS} tags can be combined.`
-                : ""}
-            </p>
-          </aside>
-          {desktopFilters && (
-            <button
-              type="button"
-              className="filter-collapse-toggle"
-              aria-label={
-                filtersCollapsed ? "Expand filters" : "Collapse filters"
-              }
-              aria-controls="post-filters"
-              aria-expanded={!filtersCollapsed}
-              onClick={() => setFiltersCollapsed((collapsed) => !collapsed)}
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="m12 7-5 5 5 5" />
-                <path d="m18 7-5 5 5 5" />
-              </svg>
-            </button>
-          )}
-          <section className="discussion-feed" aria-label="Posts">
-            <div className="discussion-toolbar">
-              <div role="search" className="search-field">
-                <label className="visually-hidden" htmlFor="post-search">
-                  Search posts
-                </label>
-                <input
-                  ref={searchInput}
-                  id="post-search"
-                  type="search"
-                  aria-describedby="post-search-help"
-                  value={draftQuery}
-                  maxLength={500}
-                  onChange={(event) => {
-                    const next = event.target.value.slice(0, 500);
-                    setDraftQuery(next);
-                    if (!next.trim() && query) {
-                      lastRequestedQuery.current = "";
-                      onQueryChange?.("");
-                    }
-                  }}
-                  placeholder="Search posts"
-                />
-                {draftQuery && (
+              {tags.length > 0 && (
+                <FilterSection
+                  name="Tags"
+                  summary={String(tags.length)}
+                  open={openSections.tags}
+                  onToggle={() => toggleSection("tags")}
+                >
+                  <ul className="active-tags" aria-label="Active tags">
+                    {tags.map((tag) => (
+                      <li key={tag}>
+                        <button
+                          type="button"
+                          className="tag-chip active"
+                          aria-label={`Remove tag filter ${tag}`}
+                          disabled={postView === "duplicates"}
+                          onClick={() =>
+                            changeTags(tags.filter((item) => item !== tag))
+                          }
+                        >
+                          #{tag}
+                          <span aria-hidden="true"> ×</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {tags.length > 1 && (
+                    <ChoiceGroup
+                      name="Match"
+                      showLegend
+                      className="tag-match"
+                      value={tagMatch ?? "all"}
+                      disabled={postView === "duplicates"}
+                      choices={[
+                        { value: "any", label: "Any" },
+                        { value: "all", label: "All" },
+                      ]}
+                      onChange={(value) => {
+                        const next = { ...activeFilters };
+                        if (value === "any") next.tagMatch = "any";
+                        else delete next.tagMatch;
+                        changeFilters(next);
+                      }}
+                    />
+                  )}
                   <button
                     type="button"
-                    className="search-clear"
-                    aria-label="Clear search"
-                    onClick={clearSearch}
+                    className="text-button"
+                    disabled={postView === "duplicates"}
+                    onClick={() => changeTags([])}
                   >
-                    <span aria-hidden="true">×</span>
+                    Clear all
                   </button>
-                )}
-              </div>
-              <button
-                type="button"
-                className="button primary create-post"
-                disabled={!course || course.status === "deleting"}
-                onClick={() => openComposer()}
-                aria-label={
-                  course?.status === "archived"
-                    ? "View saved draft"
-                    : "Create post"
-                }
-              >
-                {course?.status === "archived"
-                  ? "View saved draft"
-                  : "+ New post"}
-              </button>
+                </FilterSection>
+              )}
+              <p role="status" className="tag-limit">
+                {tagLimitReached
+                  ? `At most ${MAX_FEED_TAGS} tags can be combined.`
+                  : ""}
+              </p>
+            </aside>
+          </div>
+          <section className="discussion-feed" aria-label="Posts">
+            <div
+              className={`discussion-toolbar${desktopTools ? "" : " mobile-tools"}`}
+            >
+              {desktopTools
+                ? [
+                    toolControls.search,
+                    toolControls.filters,
+                    toolControls.create,
+                  ]
+                : [
+                    toolControls.toggle,
+                    toolControls.create,
+                    toolControls.filters,
+                    toolControls.search,
+                  ]}
             </div>
             <p id="post-search-help" className="visually-hidden">
               Search words, "quoted phrases", OR, or -excluded terms.
@@ -4122,6 +4273,7 @@ function DiscussionContent({
             className="discussion-detail"
             aria-label="Post detail"
             tabIndex={0}
+            ref={detailRegion}
           >
             <div className="discussion-detail-content">
               {composerOpen ? (

@@ -290,7 +290,9 @@ test("staff sees aggregates and can close, release, export and clone", async ({
 test("staff composer exposes poll configuration", async ({ page }) => {
   const calls = await mockApi(page, { staff: true });
   await page.goto(`${origin}/attachments-fixture.html?post=`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page.getByRole("combobox", { name: "Post type" }).selectOption("poll");
   const release = page.getByRole("combobox", { name: "Results release" });
   await expect(release).toHaveValue("live");

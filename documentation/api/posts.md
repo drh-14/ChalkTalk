@@ -429,7 +429,7 @@ Lists or searches the posts in a course. Ordinary search text combines English f
 
 `tag` (list of string, optional; at most 10 values, each 1–40 characters): Filter by one or more tags. Tags are trimmed and compared case-insensitively, and repeated values count once. More than 10 values return `400 invalid_request`.
 
-`folder` (repeated UUID or `unfiled`, optional): Select posts in any selected folder or without a folder (OR), up to 100 values. Omitting the parameter shows all posts; the browser instead requests `folder=unfiled` when all sidebar choices are cleared. Selection combines with other filters before pagination; changing the selection invalidates an existing cursor.
+`folder` (repeated UUID or `unfiled`, optional): Select posts in any selected folder or without a folder (OR), up to 100 values. Omitting the parameter shows all posts; the browser instead requests `folder=unfiled` when all folder choices are cleared. Selection combines with other filters before pagination; changing the selection invalidates an existing cursor.
 
 `tagMatch` (enum: any, all, optional; values any, all): How repeated `tag` values combine. `any`, the default, returns posts carrying at least one requested tag; `all` returns only posts carrying every requested tag. With fewer than two distinct tags both values return the same results. Any other value returns `400 invalid_request`.
 

@@ -28,7 +28,9 @@ test("a student asks staff privately, a classmate cannot find it, and a TA answe
 
   // The student posts privately and anonymously.
   await student.page.goto(`${BASE}/courses/${courseId}`);
-  await student.page.getByRole("button", { name: "Create post" }).click();
+  await student.page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await student.page
     .getByRole("combobox", { name: "Visibility" })
     .selectOption("staff");

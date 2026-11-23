@@ -74,7 +74,9 @@ test("Public and Private creation stay explicit, and polls cannot be private", a
     });
   });
   await page.goto(`${origin}/attachments-fixture.html`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   const visibility = page.getByRole("combobox", { name: "Visibility" });
   await expect(visibility).toHaveValue("course");
   await visibility.scrollIntoViewIfNeeded();
@@ -110,7 +112,9 @@ test("Public and Private creation stay explicit, and polls cannot be private", a
     fullPage: true,
   });
 
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await expect(page.getByRole("combobox", { name: "Visibility" })).toHaveValue(
     "course",
   );
@@ -131,7 +135,9 @@ test("Public and Private creation stay explicit, and polls cannot be private", a
     fullPage: true,
   });
 
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page.getByRole("combobox", { name: "Post type" }).selectOption("poll");
   await expect(page.getByRole("combobox", { name: "Visibility" })).toHaveCount(
     0,

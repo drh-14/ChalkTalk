@@ -10,7 +10,7 @@ In a course's Resources tab, use **Search resources** just below the introductio
 
 A passive new-post count shows how many matching posts arrived since the feed loaded without interrupting the current post or an unsent draft. A browser refresh loads the latest posts.
 
-Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags and managed folders, manage course resources, and identify unanswered questions. Each post can have one optional folder, distinct from tags and course-resource sections; members can file their own posts, while staff manage folder names and can organize any post. Readers can select multiple folders in the feed sidebar, clear all selections to see posts with no folder, or explicitly choose All posts.
+Teaching assistants and instructors can collaboratively maintain staff answers, endorse correct responses, moderate discussions, organize posts with tags and managed folders, manage course resources, and identify unanswered questions. Each post can have one optional folder, distinct from tags and course-resource sections; members can file their own posts, while staff manage folder names and can organize any post. Readers can open Filters from the discussion toolbar, select multiple folders, clear all selections to see posts with no folder, or explicitly choose All posts.
 
 Shared answer edits save explicitly with version checks so one person's changes cannot silently overwrite another's.
 

@@ -322,7 +322,9 @@ test.describe("rendered discussion attachments", () => {
       return route.fallback();
     });
     await page.goto(`${origin}/attachments-fixture.html?post=p1`);
-    await page.getByRole("button", { name: "Create post" }).click();
+    await page
+      .getByRole("button", { name: /^(?:Create post|New post)$/ })
+      .click();
     await page
       .getByRole("combobox", { name: "Post type" })
       .selectOption("note");

@@ -1,14 +1,18 @@
 import {
+  Fragment,
   Suspense,
   lazy,
   useCallback,
   useEffect,
   useLayoutEffect,
+  useId,
   useRef,
   useState,
   type FormEvent,
+  type Dispatch,
   type MouseEvent,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import {
   ApiError,
@@ -22,6 +26,7 @@ import {
   type Session,
   type User,
 } from "../auth/client.js";
+import { useCourseHeaderLayout } from "./useCourseHeaderLayout.js";
 import { AccountPage } from "../account/AccountPage.js";
 import { ConfirmProvider } from "./ConfirmDialog.js";
 import { createPageEntrance } from "./pageEntrance.js";
@@ -725,20 +730,25 @@ const postPath = (courseId: string, postId: string) =>
 
 function AccountControls({
   session,
-  onSignOut,
+  onSignOutRequest,
   onAccountClick,
   onNavigate,
   canLeave = async () => true,
+  menuOpen,
+  setMenuOpen,
+  signOutPending,
+  signOutError,
 }: {
   session: Session;
-  onSignOut: () => Promise<void>;
+  onSignOutRequest: () => Promise<void>;
   onAccountClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   onNavigate: (path: string) => void;
   canLeave?: () => Promise<boolean>;
+  menuOpen: boolean;
+  setMenuOpen: Dispatch<SetStateAction<boolean>>;
+  signOutPending: boolean;
+  signOutError?: string;
 }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
-  const [menuOpen, setMenuOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
   // The account menu closes on Escape or a click anywhere outside it.
   useEffect(() => {
@@ -757,18 +767,7 @@ function AccountControls({
       document.removeEventListener("pointerdown", close);
       document.removeEventListener("keydown", close);
     };
-  }, [menuOpen]);
-  async function signOut() {
-    if (pending || !(await canLeave())) return;
-    setPending(true);
-    setError(undefined);
-    try {
-      await onSignOut();
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setPending(false);
-    }
-  }
+  }, [menuOpen, setMenuOpen]);
   return (
     <div className="account-controls">
       <NotificationBell
@@ -827,17 +826,17 @@ function AccountControls({
             </a>
             <button
               className="text-button"
-              onClick={signOut}
-              disabled={pending}
+              onClick={onSignOutRequest}
+              disabled={signOutPending}
             >
-              {pending ? "Signing out…" : "Sign out"}
+              {signOutPending ? "Signing out…" : "Sign out"}
             </button>
           </div>
         )}
       </div>
-      {error && (
+      {signOutError && (
         <p className="form-message error" role="alert">
-          {error}
+          {signOutError}
         </p>
       )}
     </div>
@@ -865,48 +864,80 @@ function AppBar({
   tabs?: ReactNode;
   children?: ReactNode;
 }) {
-  const inner = useRef<HTMLDivElement>(null);
-  const [tabsStacked, setTabsStacked] = useState(false);
-  // Tabs leave the one-row layout only when that row's natural width no longer fits the bar.
-  const measure = useRef(() => {});
-  measure.current = () => {
-    const row = inner.current;
-    const bar = row?.parentElement;
-    if (!tabs || !row || !bar) return;
-    row.classList.add("measuring");
-    const needed = row.scrollWidth;
-    row.classList.remove("measuring");
-    setTabsStacked(needed > bar.clientWidth);
-  };
-  // Course names and fonts change the row's width, so measure after every render too.
-  useLayoutEffect(() => measure.current());
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [signOutPending, setSignOutPending] = useState(false);
+  const [signOutError, setSignOutError] = useState<string>();
+  const [mobile, setMobile] = useState(
+    () =>
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(max-width: 850px)").matches,
+  );
+  const header = useRef<HTMLElement>(null);
+  useCourseHeaderLayout(header, variant === "course" && !mobile);
+  const focusedControl = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    const bar = inner.current?.parentElement;
-    if (!bar || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => measure.current());
-    observer.observe(bar);
-    void document.fonts?.ready.then(() => measure.current());
-    return () => observer.disconnect();
-  }, []);
+    if (variant !== "course" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(max-width: 850px)");
+    const update = () => {
+      const active = document.activeElement;
+      focusedControl.current =
+        active instanceof HTMLElement &&
+        (header.current?.querySelector(".account-controls")?.contains(active) ||
+          header.current?.querySelector(".app-bar-course")?.contains(active))
+          ? active
+          : null;
+      setMobile(media.matches);
+    };
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [variant]);
+  useLayoutEffect(() => {
+    if (focusedControl.current?.isConnected) focusedControl.current.focus();
+    focusedControl.current = null;
+  }, [mobile]);
+  async function requestSignOut() {
+    if (signOutPending || !(await (canLeave?.() ?? true))) return;
+    setSignOutPending(true);
+    setSignOutError(undefined);
+    try {
+      await onSignOut();
+    } catch (caught) {
+      setSignOutError(errorMessage(caught));
+      setSignOutPending(false);
+    }
+  }
+  const controls = (
+    <AccountControls
+      key="controls"
+      session={session}
+      menuOpen={accountMenuOpen}
+      setMenuOpen={setAccountMenuOpen}
+      onSignOutRequest={requestSignOut}
+      signOutPending={signOutPending}
+      signOutError={signOutError}
+      onAccountClick={onAccountClick}
+      onNavigate={onNavigate}
+      canLeave={canLeave}
+    />
+  );
+  const courseContent = <Fragment key="course-content">{children}</Fragment>;
+  const courseTabs = <Fragment key="course-tabs">{tabs}</Fragment>;
   return (
-    <header
-      className={`app-bar ${variant}${tabsStacked ? " tabs-stacked" : ""}`}
-    >
-      <div className="app-bar-inner" ref={inner}>
+    <header className={`app-bar ${variant}`} ref={header}>
+      {variant === "course" && (
+        <span className="course-split-boundary" aria-hidden="true" />
+      )}
+      <div className="app-bar-inner">
         <div className="app-bar-start">
           <a className="wordmark" href="/home" onClick={onHomeClick}>
             Chalk<span>Talk</span>
           </a>
-          {children}
         </div>
-        {tabs}
-        <AccountControls
-          session={session}
-          onSignOut={onSignOut}
-          onAccountClick={onAccountClick}
-          onNavigate={onNavigate}
-          canLeave={canLeave}
-        />
+        {variant === "course"
+          ? mobile
+            ? [controls, courseContent, courseTabs]
+            : [courseContent, courseTabs, controls]
+          : [children, tabs, controls]}
       </div>
     </header>
   );
@@ -1149,6 +1180,148 @@ function CourseSwitcher({
   );
 }
 
+function CourseNavigation({
+  tabs,
+  section,
+  threadsUnread,
+  pending,
+  follow,
+}: {
+  tabs: { key: string; label: string; path: string }[];
+  section: string;
+  threadsUnread: number;
+  pending: boolean;
+  follow: (event: MouseEvent<HTMLAnchorElement>, path: string) => Promise<void>;
+}) {
+  const [mobile, setMobile] = useState(
+    () =>
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(max-width: 850px)").matches,
+  );
+  const collapsed = mobile;
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const nav = useRef<HTMLElement>(null);
+  const lastFocused = useRef<HTMLElement | null>(null);
+  const previousCollapsed = useRef(collapsed);
+  const id = useId();
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(max-width: 850px)");
+    const update = () => setMobile(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  useLayoutEffect(() => {
+    if (previousCollapsed.current === collapsed) return;
+    previousCollapsed.current = collapsed;
+    const active =
+      document.activeElement === document.body
+        ? lastFocused.current
+        : document.activeElement;
+    if (collapsed && !open && active && nav.current?.contains(active))
+      trigger.current?.focus();
+    else if (!collapsed && active === trigger.current)
+      nav.current
+        ?.querySelector<HTMLElement>('a[aria-current="page"]')
+        ?.focus();
+  }, [collapsed, open]);
+  useEffect(() => {
+    setOpen(false);
+  }, [section]);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target))
+        setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  return (
+    <div
+      ref={root}
+      onFocusCapture={(event) => {
+        lastFocused.current = event.target;
+      }}
+      onBlurCapture={(event) => {
+        if (
+          event.relatedTarget instanceof Node &&
+          root.current?.contains(event.relatedTarget)
+        )
+          return;
+        if (!(event.target as HTMLElement).closest("[hidden]"))
+          lastFocused.current = null;
+      }}
+      className={`course-navigation${collapsed ? " compact" : ""}${pending ? " pending" : ""}`}
+    >
+      <button
+        hidden={!collapsed}
+        type="button"
+        ref={trigger}
+        className="section-trigger"
+        aria-label={`Current section: ${tabs.find((tab) => tab.key === section)?.label ?? "Discussion"}`}
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {tabs.find((tab) => tab.key === section)?.label ?? "Discussion"}{" "}
+        <span aria-hidden="true">⌄</span>
+      </button>
+      <nav
+        ref={nav}
+        id={id}
+        className="course-tabs"
+        aria-label="Course navigation"
+        hidden={collapsed && !open}
+      >
+        {tabs.map((tab) => (
+          <a
+            key={tab.key}
+            href={tab.path}
+            aria-current={section === tab.key ? "page" : undefined}
+            onClick={(event) => {
+              const ordinaryClick =
+                event.button === 0 &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !event.shiftKey &&
+                !event.altKey;
+              if (ordinaryClick && collapsed) {
+                trigger.current?.focus();
+                setOpen(false);
+              }
+              void follow(event, tab.path);
+            }}
+          >
+            {tab.label}
+            {tab.key === "threads" && threadsUnread > 0 && (
+              <span
+                className="threads-unread"
+                aria-label={`${threadsUnread} unread Thread messages`}
+              >
+                {threadsUnread}
+              </span>
+            )}
+          </a>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
 function CourseFrame({
   route,
   session,
@@ -1276,9 +1449,10 @@ function CourseFrame({
       active = false;
     };
   }, [courseId]);
+  const courseVisible = Boolean(visibleCourse);
   useEffect(() => {
-    if (visibleCourse) headingRef.current?.focus();
-  }, [route.name, visibleCourse]);
+    if (courseVisible) headingRef.current?.focus();
+  }, [route.name, courseId, courseVisible]);
   const section =
     route.name === "course-settings"
       ? "settings"
@@ -1348,43 +1522,15 @@ function CourseFrame({
         canLeave={() => beforeLeave.current()}
         onHomeClick={(event) => follow(event, "/home")}
         tabs={
-          <nav
-            className={`course-tabs${visibleCourse && staff !== undefined ? "" : " pending"}`}
-            aria-label="Course navigation"
-          >
-            {tabs.map((tab) => (
-              <a
-                key={tab.key}
-                href={tab.path}
-                aria-current={
-                  section === tab.key ||
-                  (section === "session" && tab.key === "collaboration")
-                    ? "page"
-                    : undefined
-                }
-                onClick={(event) => follow(event, tab.path)}
-              >
-                {tab.label}
-                {tab.key === "threads" && threadsUnread > 0 && (
-                  <span
-                    className="threads-unread"
-                    aria-label={`${threadsUnread} unread Thread messages`}
-                  >
-                    {threadsUnread}
-                  </span>
-                )}
-              </a>
-            ))}
-          </nav>
+          <CourseNavigation
+            tabs={tabs}
+            section={section === "session" ? "collaboration" : section}
+            threadsUnread={threadsUnread}
+            pending={!visibleCourse || staff === undefined}
+            follow={follow}
+          />
         }
       >
-        <a
-          className="app-bar-back"
-          href="/home"
-          onClick={(event) => follow(event, "/home")}
-        >
-          All courses
-        </a>
         <div className="app-bar-course">
           <h1 id="course-title-heading" ref={headingRef} tabIndex={-1}>
             {visibleCourse?.data.name ??

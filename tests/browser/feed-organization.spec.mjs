@@ -186,7 +186,9 @@ test("nonmatching posts do not show status and an unsent composer survives count
   await page.screenshot({
     path: resolve(screenshots, "nonmatching-no-status.png"),
   });
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page
     .getByRole("textbox", { name: "Post title" })
     .fill("Unsent draft title");

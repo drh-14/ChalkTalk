@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { ConfirmProvider } from "../app/ConfirmDialog.js";
+import { ProgressWatcher } from "../course-files/progress-watcher.js";
 
 const render = (ui: ReactElement) =>
   testingRender(ui, { wrapper: ConfirmProvider });
@@ -300,6 +301,7 @@ it("closes asking in an archived course but keeps the slides readable", async ()
 
 it("refreshes pending embedded text when extraction completes", async () => {
   let completed = false;
+  const subscribed = vi.spyOn(ProgressWatcher.prototype, "subscribe");
   const fetchMock = stub({
     "/resources/r1": () =>
       json({
@@ -329,6 +331,7 @@ it("refreshes pending embedded text when extraction completes", async () => {
   );
   render(<SlideViewer {...props} initialPanel="text" />);
   await screen.findByText("Queued for extraction");
+  await waitFor(() => expect(subscribed).toHaveBeenCalled());
   completed = true;
   fireEvent(document, new Event("visibilitychange"));
   expect(await screen.findByText("Completed lecture")).toBeTruthy();
@@ -473,6 +476,7 @@ it.each([
       await waitFor(() => expect(loadPdfUrl).toHaveBeenCalled());
       await screen.findByRole("group", { name: "Page 2" });
     }
+    await waitFor(() => expect(observerCallback).toBeTypeOf("function"));
     act(() =>
       observerCallback!(
         [
@@ -690,7 +694,8 @@ function trackNearPages() {
       disconnect() {}
     },
   );
-  return (name: string) =>
+  return async (name: string) => {
+    await waitFor(() => expect(notify).toBeTypeOf("function"));
     act(() =>
       notify(
         [
@@ -702,6 +707,7 @@ function trackNearPages() {
         {} as IntersectionObserver,
       ),
     );
+  };
 }
 
 it("reloads replaced slides without reporting the released document's cancelled renders", async () => {
@@ -732,9 +738,21 @@ it("reloads replaced slides without reporting the released document's cancelled 
     "/resources/r1/questions": () =>
       json({ ...questions, fileId: "f2", data: [] }),
   });
+  // DOM readiness can precede the passive effect that registers visibility.
+  const signaled = new Promise<void>((resolve, reject) => {
+    const attached = new MutationObserver(() => {
+      if (!screen.queryByRole("group", { name: "Page 2" })) return;
+      attached.disconnect();
+      try {
+        Promise.resolve(show("Page 2")).then(resolve, reject);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    attached.observe(document.body, { childList: true, subtree: true });
+  });
   render(<SlideViewer {...props} initialPage={2} />);
-  await screen.findByRole("group", { name: "Page 2" });
-  show("Page 2");
+  await signaled;
   await waitFor(() => expect(staleDraw).toHaveBeenCalled());
   current = "f2";
   const reload = await screen.findByRole("button", {
@@ -749,7 +767,7 @@ it("reloads replaced slides without reporting the released document's cancelled 
     environment.IS_REACT_ACT_ENVIRONMENT = true;
   }
   await screen.findByRole("group", { name: "Page 2" });
-  show("Page 2");
+  await show("Page 2");
   await waitFor(() => expect(freshDraw).toHaveBeenCalled());
   expect(screen.queryByText(/Rendering cancelled/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
@@ -784,13 +802,13 @@ it("leaves and reopens the searchable copy without reporting its released docume
   await user.selectOptions(version, "searchable");
   await waitFor(() => expect(loadPdfUrl).toHaveBeenCalledTimes(1));
   await screen.findByRole("group", { name: "Page 2" });
-  show("Page 2");
+  await show("Page 2");
   await waitFor(() => expect(copyDraw).toHaveBeenCalled());
   await user.selectOptions(version, "original");
   await user.selectOptions(version, "searchable");
   await waitFor(() => expect(loadPdfUrl).toHaveBeenCalledTimes(2));
   await screen.findByRole("group", { name: "Page 2" });
-  show("Page 2");
+  await show("Page 2");
   await waitFor(() => expect(copyDraw).toHaveBeenCalledTimes(2));
   expect(
     screen.queryByText(/Rendering cancelled|Transport destroyed/),

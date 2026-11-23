@@ -224,7 +224,9 @@ test("student sees disabled policy, restricted composers, and preserved resoluti
     path: resolve(screenshots, "student-readonly-settings.png"),
   });
   await page.goto(`${origin}/courses/course-1`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await expect(
     page.getByRole("checkbox", { name: "Post anonymously" }),
   ).toHaveCount(0);
@@ -259,7 +261,9 @@ test("a stale composer shows the server policy rejection without publishing", as
 }) => {
   await mockApi(page, { rejectPost: true });
   await page.goto(`${origin}/courses/course-1`);
-  await page.getByRole("button", { name: "Create post" }).click();
+  await page
+    .getByRole("button", { name: /^(?:Create post|New post)$/ })
+    .click();
   await page
     .getByRole("textbox", { name: "Post title" })
     .fill("A new question");
