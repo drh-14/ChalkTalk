@@ -1,3 +1,4 @@
+import { retryFreshTicket } from "./ticket-retry.js";
 import { useConfirm } from "../app/useConfirm.js";
 import {
   Suspense,
@@ -122,6 +123,7 @@ export function SessionView({
   const [document, setDocument] = useState(() => new Y.Doc());
   const connection = useRef<SessionConnection | null>(null);
   const finalState = useRef(false);
+  const ticketRetry = useRef<AbortController | null>(null);
   const text = useMemo(() => document.getText("content"), [document]);
   const board = useMemo(() => document.getMap("whiteboard"), [document]);
   const [tab, setTab] = useState<Tab>("code");
@@ -170,6 +172,7 @@ export function SessionView({
     async (reason: "ended" | "removed") => {
       if (finalState.current) return;
       finalState.current = true;
+      ticketRetry.current?.abort();
       connection.current?.destroy();
       connection.current = null;
       setAwareness(null);
@@ -183,6 +186,8 @@ export function SessionView({
 
   useEffect(() => {
     let active = true;
+    const retries = new AbortController();
+    ticketRetry.current = retries;
     finalState.current = false;
     setSession(undefined);
     setUnavailable(false);
@@ -225,8 +230,17 @@ export function SessionView({
               return ticket;
             }
             try {
-              return (await createTicket(sessionId, csrfToken)).ticket;
+              return (
+                await retryFreshTicket(
+                  () => createTicket(sessionId, csrfToken, retries.signal),
+                  retries.signal,
+                  () => {
+                    if (active && !finalState.current) setState("reconnecting");
+                  },
+                )
+              ).ticket;
             } catch (caught) {
+              if (!active || retries.signal.aborted) throw caught;
               if (caught instanceof ApiError)
                 void showFinalText(
                   caught.code === "session_ended" ? "ended" : "removed",
@@ -280,6 +294,7 @@ export function SessionView({
       });
     return () => {
       active = false;
+      retries.abort();
       connection.current?.destroy();
       connection.current = null;
     };

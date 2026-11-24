@@ -20,6 +20,7 @@ const schema = `digest_process_${process.pid}_${Date.now()}`;
 const apiPath = fileURLToPath(new URL("../server.ts", import.meta.url));
 const workerPath = fileURLToPath(new URL("../jobs/main.ts", import.meta.url));
 let port: number;
+let workerPort: number;
 const courseId = uuidv7();
 const recipientId = uuidv7();
 let admin: Pool;
@@ -51,7 +52,7 @@ function start(path: string): ChildProcess {
       ...process.env,
       DATABASE_URL: `${databaseUrl}?options=-csearch_path%3D${schema}`,
       AUTH_TOKEN_SECRET: "test-secret-with-at-least-32-characters",
-      PORT: String(port),
+      PORT: String(path === workerPath ? workerPort : port),
       S3_ENDPOINT: `http://127.0.0.1:${storagePort}`,
       S3_BUCKET: "digest-test",
       S3_REGION: "us-east-1",
@@ -79,6 +80,7 @@ async function waitFor(condition: () => Promise<boolean>): Promise<void> {
 integration("daily digest process separation", () => {
   beforeAll(async () => {
     port = await freePort();
+    workerPort = await freePort();
     storage = createHttpServer((request, response) => {
       if (request.method === "HEAD" && request.url === "/digest-test/")
         response.writeHead(200).end();
@@ -174,7 +176,7 @@ integration("daily digest process separation", () => {
     await waitFor(async () => {
       if (api.exitCode !== null) throw new Error("API process exited");
       try {
-        return (await fetch(`http://127.0.0.1:${port}/health`)).ok;
+        return (await fetch(`http://127.0.0.1:${port}/ready`)).ok;
       } catch {
         return false;
       }

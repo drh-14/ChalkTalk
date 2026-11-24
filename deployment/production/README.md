@@ -25,6 +25,13 @@ Caddy serves the SPA and proxies `/api/*` to Express and `/collaboration` to Hoc
 
 ## Prepare a pinned release
 
+The lifecycle-enabled images cannot be started by the automatic or manual steps
+below until the security-owned bootstrap/deploy callsites provision the private
+mounts and supply inspected, immutable per-role image identity before container
+creation. Do not activate this configuration with sample identity values. See
+[lifecycle host integration](LIFECYCLE.md) for that prerequisite; these existing
+deployment steps do not yet implement it.
+
 After the VM bootstrap and production environment are prepared, a successful
 `main` push CI run automatically starts the [production deploy
 workflow](../../.github/workflows/deploy-production.yml). It accepts only the

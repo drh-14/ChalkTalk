@@ -354,6 +354,110 @@ integration("daily course email digest", () => {
     auth = new AuthService(pool, environment, sender);
   });
 
+  it("reports accepted-send uncertain final commit even when retry remains", async () => {
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    let accepted = false;
+    let uncertain = false;
+    const fakeSender: EmailSender = {
+      send: async () => {
+        accepted = true;
+      },
+    };
+    const faulty = {
+      query: pool.query.bind(pool),
+      connect: async () => {
+        const client = await pool.connect();
+        return new Proxy(client, {
+          get(target, key) {
+            if (key === "query")
+              return async (...args: unknown[]) => {
+                if (args[0] === "COMMIT" && accepted)
+                  throw new Error("unknown final commit");
+                return (
+                  target.query as (...values: unknown[]) => Promise<unknown>
+                ).apply(target, args);
+              };
+            const value = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    } as unknown as Pool;
+    const owned = new DigestService(
+      faulty,
+      fakeSender,
+      environment.frontendBaseUrl,
+      "uncertain-digest",
+      undefined,
+      undefined,
+      () => {
+        uncertain = true;
+      },
+    );
+    await owned.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(accepted).toBe(true);
+    expect(uncertain).toBe(true);
+    expect((await pool.query("SELECT status FROM digest_outbox")).rows).toEqual(
+      [{ status: "queued" }],
+    );
+  });
+
+  it("accepts a confirmed known retry without claiming an uncertain send", async () => {
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    let uncertain = false;
+    const rejecting: EmailSender = {
+      send: async () => {
+        throw new EmailQuotaError("known rejection");
+      },
+    };
+    const owned = new DigestService(
+      pool,
+      rejecting,
+      environment.frontendBaseUrl,
+      "known-digest",
+      undefined,
+      undefined,
+      () => {
+        uncertain = true;
+      },
+    );
+    await owned.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(uncertain).toBe(false);
+    expect((await pool.query("SELECT status FROM digest_outbox")).rows).toEqual(
+      [{ status: "queued" }],
+    );
+  });
+  it("settles a failed preparation without uncertain delivery", async () => {
+    await addQuestion(ids.physics, ids.bob, "2026-10-14T12:00:00Z", "Question");
+    await digest.schedule(new Date("2026-10-15T00:00:00Z"));
+    let uncertain = false;
+    const rejecting: EmailSender = {
+      prepare: async () => {
+        throw new Error("invalid prepared payload");
+      },
+      send: async () => {
+        throw new Error("unexpected send");
+      },
+    };
+    const owned = new DigestService(
+      pool,
+      rejecting,
+      environment.frontendBaseUrl,
+      "prepare-digest",
+      undefined,
+      undefined,
+      () => {
+        uncertain = true;
+      },
+    );
+    await owned.deliverOnce(new Date("2026-10-15T00:00:01Z"));
+    expect(uncertain).toBe(false);
+    expect((await pool.query("SELECT status FROM digest_outbox")).rows).toEqual(
+      [{ status: "queued" }],
+    );
+  });
   afterAll(async () => {
     await pool?.end();
     await admin?.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);

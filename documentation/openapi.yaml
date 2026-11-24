@@ -7,6 +7,12 @@ info:
   summary: HTTP contract for ChalkTalk clients.
   description: >-
     ChalkTalk course discussion, content, collaboration, and administration API.
+    During process drain every new business request, including OPTIONS and requests
+    on existing keep-alive connections, can return 503 service_unavailable in the
+    Error envelope before parsing or authentication, with Retry-After: 1,
+    Connection: close and Cache-Control: no-store. Configured-origin credentialed
+    CORS remains valid. Root /health and /ready are read-only process probes,
+    not lifecycle controls or replacement evidence.
     Browser requests use the `__Host-chalktalk_session` cookie. The frontend and
     API use same-site HTTPS custom domains, such as app.example.edu and
     api.example.edu, so the session can retain SameSite=Lax. Credentialed CORS
@@ -60,6 +66,56 @@ tags:
   - name: Notifications
     description: Notifications operations.
 paths:
+  "/health":
+    servers: [{ url: / }]
+    get:
+      operationId: applicationLiveness
+      summary: Read process liveness without database or storage access
+      security: []
+      responses:
+        "200":
+          description: Process HTTP listener is alive, including during drain.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+  "/ready":
+    servers: [{ url: / }]
+    get:
+      operationId: applicationReadiness
+      summary: Read identifier-free process readiness; does not trigger drain
+      security: []
+      responses:
+        "200":
+          description: RUNNING and accepting new business work.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ready]
+                properties:
+                  ready: { type: boolean, const: true }
+        "503":
+          description: STARTING, DRAINING or FAILED; not replacement proof.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [ready]
+                properties:
+                  ready: { type: boolean, const: false }
   "/courses/{courseId}/files":
     get:
       tags: [Resources]

@@ -232,7 +232,7 @@ export class SemanticIndex {
     return false;
   }
 
-  async indexPost(postId: string): Promise<boolean> {
+  async indexPost(postId: string, effect?: () => void): Promise<boolean> {
     if (!(await this.available())) return false;
     const source = await this.pool.query<{
       title: string;
@@ -248,8 +248,10 @@ export class SemanticIndex {
     if (!post) return false;
     const inputs = chunks(post.title, post.body_markdown);
     const vectors: number[][] = [];
-    for (let i = 0; i < inputs.length; i += 8)
+    for (let i = 0; i < inputs.length; i += 8) {
+      effect?.();
       vectors.push(...(await this.provider.embedMany(inputs.slice(i, i + 8))));
+    }
     if (
       vectors.length !== inputs.length ||
       vectors.some((vector) => vector.length !== vectors[0]!.length)
@@ -290,6 +292,7 @@ export class SemanticIndex {
         "DELETE FROM semantic_post_catchup WHERE post_id=$1 AND generation=$2",
         [postId, this.config.generation],
       );
+      effect?.();
       await client.query("COMMIT");
       return true;
     } catch (error) {

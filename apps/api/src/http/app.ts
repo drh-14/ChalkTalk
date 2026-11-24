@@ -1,3 +1,6 @@
+import { pipeline } from "node:stream/promises";
+import { createHttpOwnership } from "../lifecycle/http.js";
+import type { Lifecycle } from "../lifecycle/runtime.js";
 import {
   CourseInformationService,
   informationEtag,
@@ -65,6 +68,7 @@ import {
 
 export interface AppDependencies {
   environment: Environment;
+  lifecycle?: Lifecycle;
   authService?: AuthService;
   courseService?: CourseService;
   postService?: PostService;
@@ -1111,6 +1115,10 @@ export function createApp(
     notificationService,
     threadService,
   } = dependencies;
+  const ownership = createHttpOwnership(
+    dependencies.lifecycle,
+    environment.frontendOrigins,
+  );
   const app = express();
   app.disable("x-powered-by");
   if (environment.trustProxyHops === 1) app.set("trust proxy", 1);
@@ -1119,6 +1127,7 @@ export function createApp(
     response.set("X-Request-Id", response.locals.requestId);
     next();
   });
+  app.use(ownership.admission);
   if (observability) app.use(observability.requestMiddleware);
   if (observability) {
     app.post(
@@ -1147,7 +1156,7 @@ export function createApp(
           : next(),
     );
   }
-  app.use(express.json({ limit: "128kb" }));
+  app.use(ownership.parser(express.json({ limit: "128kb" })));
   if (observability) app.get("/metrics", observability.metricsHandler);
   app.get("/health", (_request, response) =>
     response.status(200).json({ status: "ok" }),
@@ -1205,14 +1214,16 @@ export function createApp(
   };
   const authenticatedUnsafe = [
     publicOrigin,
-    async (request: Request, response: Response, next: NextFunction) => {
-      try {
-        response.locals.auth = await requireSession(request, true);
-        next();
-      } catch (error) {
-        next(error);
-      }
-    },
+    ownership.handler(
+      async (request: Request, response: Response, next: NextFunction) => {
+        try {
+          response.locals.auth = await requireSession(request, true);
+          next();
+        } catch (error) {
+          next(error);
+        }
+      },
+    ),
   ];
   const auth = (response: Response) => response.locals.auth as AuthContext;
   const param = (value: string | string[], join = false) => {
@@ -1280,7 +1291,7 @@ export function createApp(
   app.get(
     "/api/v1/courses/:courseId/statistics",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const period = StatisticsService.period(request.query.period);
@@ -1293,12 +1304,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/statistics/pulse",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const data = await statistics().pulse(
@@ -1310,12 +1321,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/statistics/students",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const period = StatisticsService.period(request.query.period);
@@ -1331,13 +1342,13 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   for (const kind of ["daily", "students"] as const) {
     app.get(
       `/api/v1/courses/:courseId/statistics/export/${kind}`,
       optionalReadOrigin,
-      async (request, response, next) => {
+      ownership.handler(async (request, response, next) => {
         try {
           const current = await requireSession(request);
           const period = StatisticsService.period(request.query.period);
@@ -1366,13 +1377,13 @@ export function createApp(
         } catch (error) {
           next(error);
         }
-      },
+      }),
     );
   }
   app.get(
     "/api/v1/courses/:courseId/post-folders",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         response.json({
@@ -1384,12 +1395,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/post-folders",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const courseId = param(request.params.courseId);
@@ -1408,12 +1419,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId/post-folders/:folderId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const data = await posts().renameFolder(
@@ -1426,12 +1437,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/post-folders/:folderId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await posts().deleteFolder(
           param(request.params.courseId),
@@ -1442,12 +1453,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/account-verification-requests",
     publicOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const body = verificationRequestBody(request.body);
         const key = request.header("idempotency-key");
@@ -1462,31 +1473,35 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
-  app.post("/api/v1/users", publicOrigin, async (request, response, next) => {
-    try {
-      const body = accountCreationBody(request.body);
-      const key = request.header("idempotency-key");
-      const result = await service().createUserIdempotently(
-        body,
-        key,
-        body,
-        sourceIp(request),
-      );
-      profileResponse(
-        response.set("Location", "/api/v1/users/me"),
-        result.user,
-        result.status,
-      );
-    } catch (error) {
-      next(error);
-    }
-  });
+  app.post(
+    "/api/v1/users",
+    publicOrigin,
+    ownership.handler(async (request, response, next) => {
+      try {
+        const body = accountCreationBody(request.body);
+        const key = request.header("idempotency-key");
+        const result = await service().createUserIdempotently(
+          body,
+          key,
+          body,
+          sourceIp(request),
+        );
+        profileResponse(
+          response.set("Location", "/api/v1/users/me"),
+          result.user,
+          result.status,
+        );
+      } catch (error) {
+        next(error);
+      }
+    }),
+  );
   app.post(
     "/api/v1/sessions",
     publicOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const body = sessionCreationBody(request.body);
         const email = normalizeEmail(body.email);
@@ -1502,12 +1517,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/sessions/current",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         response
@@ -1516,36 +1531,36 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/sessions/current",
     ...authenticatedUnsafe,
-    async (_request, response, next) => {
+    ownership.handler(async (_request, response, next) => {
       try {
         await service().logout(auth(response).session.id);
         response.status(204).set("Set-Cookie", sessionCookie("", 0)).send();
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/users/me",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         profileResponse(response, await service().profile(current.credential));
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/users/me",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const body = profileUpdateBody(request.body);
         profileResponse(
@@ -1559,12 +1574,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/users/me/password",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const body = passwordChangeBody(request.body);
         await service().changePassword(
@@ -1577,12 +1592,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/password-reset-requests",
     publicOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const body = passwordResetRequestBody(request.body);
         const email = normalizeEmail(body.email);
@@ -1592,12 +1607,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/password-resets",
     publicOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const body = passwordResetBody(request.body);
         await service().resetPassword(body.token, body.newPassword);
@@ -1605,12 +1620,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/users/me",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const body = accountDeletionBody(request.body);
         await service().deleteAccount(
@@ -1622,12 +1637,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/organizations",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const options = listQuery(request.query);
@@ -1650,12 +1665,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const options = listQuery(request.query, {
@@ -1675,12 +1690,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/organizations/:organizationId/courses",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = courseCreateBody(request.body);
@@ -1703,12 +1718,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/organizations/:organizationId/courses",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const options = listQuery(request.query, {
@@ -1729,12 +1744,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await courses().get(
@@ -1745,12 +1760,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = courseUpdateBody(request.body);
@@ -1764,12 +1779,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const value = await courses().delete(
           param(request.params.courseId),
@@ -1786,12 +1801,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/members",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = joinCourseBody(request.body);
@@ -1814,12 +1829,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/members",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const options = listQuery(request.query, {
@@ -1837,12 +1852,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/members/me/email-preferences",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await courses().getEmailPreferences(
@@ -1853,12 +1868,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId/members/me/email-preferences",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = emailPreferencesBody(request.body);
@@ -1872,12 +1887,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/members/:userId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const result = await courses().getMember(
@@ -1889,12 +1904,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId/members/:userId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = memberUpdateBody(request.body);
@@ -1909,12 +1924,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/members/me",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await courses().removeMember(
           param(request.params.courseId),
@@ -1927,12 +1942,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/members/:userId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const requestedUserId = param(request.params.userId);
         const isSelfLeave = requestedUserId === "me";
@@ -1947,7 +1962,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   const courseFiles = (): CourseFileService => {
     if (!courseFileService)
@@ -1972,40 +1987,44 @@ export function createApp(
     ["answer", "/api/v1/answers/:answerId/attachments", "answerId"],
     ["followup", "/api/v1/followups/:followupId/attachments", "followupId"],
   ] as const) {
-    app.post(route, ...authenticatedUnsafe, async (request, response, next) => {
-      let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
-      try {
-        const parentId = param(request.params[parameter]);
-        const userId = auth(response).session.user.id;
-        await contentAttachments().authorizeUpload(
-          kind as ParentKind,
-          parentId,
-          userId,
-          request.header("idempotency-key"),
-        );
-        upload = await readMultipart(request);
-        const value = await contentAttachments().create(
-          kind as ParentKind,
-          parentId,
-          userId,
-          upload,
-          request.header("idempotency-key"),
-        );
-        response
-          .status(201)
-          .set({ Location: value.downloadUrl })
-          .json({ data: value });
-      } catch (error) {
-        next(error);
-      } finally {
-        await upload?.cleanup();
-      }
-    });
+    app.post(
+      route,
+      ...authenticatedUnsafe,
+      ownership.handler(async (request, response, next) => {
+        let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
+        try {
+          const parentId = param(request.params[parameter]);
+          const userId = auth(response).session.user.id;
+          await contentAttachments().authorizeUpload(
+            kind as ParentKind,
+            parentId,
+            userId,
+            request.header("idempotency-key"),
+          );
+          upload = await readMultipart(request);
+          const value = await contentAttachments().create(
+            kind as ParentKind,
+            parentId,
+            userId,
+            upload,
+            request.header("idempotency-key"),
+          );
+          response
+            .status(201)
+            .set({ Location: value.downloadUrl })
+            .json({ data: value });
+        } catch (error) {
+          next(error);
+        } finally {
+          await upload?.cleanup();
+        }
+      }),
+    );
   }
   app.get(
     "/api/v1/attachments/:attachmentId/download",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const file = await contentAttachments().download(
@@ -2021,20 +2040,16 @@ export function createApp(
           "Cache-Control": "private, no-store",
         });
         const body = file.body as NodeJS.ReadableStream;
-        body.on("error", (error) => {
-          if (!response.headersSent) next(error);
-          else response.destroy(error);
-        });
-        body.pipe(response);
+        await pipeline(body, response);
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/attachments/:attachmentId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await contentAttachments().delete(
           param(request.params.attachmentId),
@@ -2044,7 +2059,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   const information = () => {
     if (!courseInformationService)
@@ -2058,7 +2073,7 @@ export function createApp(
   app.get(
     "/api/v1/courses/:courseId/staff",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         response.set("Cache-Control", "private, no-store").json({
@@ -2070,12 +2085,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId/staff/:userId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -2103,7 +2118,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   const threads = () => {
     if (!threadService)
@@ -2117,7 +2132,7 @@ export function createApp(
   app.get(
     "/api/v1/courses/:courseId/threads",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         if (
@@ -2137,12 +2152,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/threads",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(request.body, ["title"], ["title"]);
@@ -2163,12 +2178,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/threads/changes",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         if (
@@ -2192,12 +2207,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/threads/unread-count",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         response.json({
@@ -2209,12 +2224,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/threads/:threadId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const data = await threads().getBoard(
@@ -2228,12 +2243,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId/threads/:threadId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(request.body, ["title"], ["title"]);
@@ -2253,12 +2268,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/threads/:threadId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await threads().changeBoard(
           param(request.params.courseId),
@@ -2270,12 +2285,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/threads/:threadId/conversations",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -2300,12 +2315,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/threads/:threadId/conversations",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         if (
@@ -2326,12 +2341,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const data = await threads().getConversation(
@@ -2346,12 +2361,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await threads().deleteConversation(
           param(request.params.courseId),
@@ -2364,12 +2379,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         if (
@@ -2391,12 +2406,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -2423,12 +2438,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages/:messageId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const data = await threads().getMessage(
@@ -2444,12 +2459,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages/:messageId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -2475,12 +2490,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/messages/:messageId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await threads().changeMessage(
           param(request.params.courseId),
@@ -2494,12 +2509,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.put(
     "/api/v1/courses/:courseId/information/syllabus",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
       try {
         const courseId = param(request.params.courseId),
@@ -2528,12 +2543,12 @@ export function createApp(
       } finally {
         await upload?.cleanup();
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/information/syllabus",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const value = await information().removeSyllabus(
           param(request.params.courseId),
@@ -2549,12 +2564,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/information",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await information().read(
@@ -2570,12 +2585,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId/information",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -2601,7 +2616,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   const catalog = () => {
     if (!courseResourceService)
@@ -2615,7 +2630,7 @@ export function createApp(
   app.patch(
     "/api/v1/courses/:courseId/resource-sections/:sectionId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(request.body, ["title", "visibility"], []);
@@ -2630,12 +2645,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/resource-sections/:sectionId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await catalog().deleteSection(
           param(request.params.courseId),
@@ -2647,12 +2662,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.put(
     "/api/v1/courses/:courseId/resource-sections/order",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(request.body, ["ids"], ["ids"]);
@@ -2666,12 +2681,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.put(
     "/api/v1/courses/:courseId/resources/order",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -2690,12 +2705,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/courses/:courseId/resources/:resourceId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -2714,12 +2729,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/resources/:resourceId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await catalog().delete(
           param(request.params.courseId),
@@ -2731,7 +2746,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   for (const replace of [false, true])
     app[replace ? "put" : "post"](
@@ -2739,7 +2754,7 @@ export function createApp(
         ? "/api/v1/courses/:courseId/resources/:resourceId/file"
         : "/api/v1/courses/:courseId/resources/files",
       ...authenticatedUnsafe,
-      async (request, response, next) => {
+      ownership.handler(async (request, response, next) => {
         let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
         try {
           const courseId = param(request.params.courseId),
@@ -2776,12 +2791,12 @@ export function createApp(
         } finally {
           await upload?.cleanup();
         }
-      },
+      }),
     );
   app.get(
     "/api/v1/courses/:courseId/resource-sections",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await catalog().sections(
@@ -2797,12 +2812,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/resource-sections",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -2825,12 +2840,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/resources/search",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const { q, limit, cursor } = request.query;
@@ -2866,12 +2881,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/resources/:resourceId/questions",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         if (Object.keys(request.query).length)
@@ -2885,12 +2900,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/resources/:resourceId/searchable-pdf",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await catalog().searchablePdf(
@@ -2904,12 +2919,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/resources/:resourceId/searchable-pdf",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         strictBody(request.body, [], []);
@@ -2931,13 +2946,13 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   for (const mode of ["view", "download"] as const)
     app.get(
       `/api/v1/courses/:courseId/resources/:resourceId/searchable-pdf/:fileId/${mode}`,
       optionalReadOrigin,
-      async (request, response, next) => {
+      ownership.handler(async (request, response, next) => {
         try {
           const current = await requireSession(request);
           const value = await catalog().searchablePdfContent(
@@ -2957,20 +2972,16 @@ export function createApp(
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "private, no-store",
           });
-          body.on("error", (error) => {
-            if (!response.headersSent) next(error);
-            else response.destroy(error);
-          });
-          body.pipe(response);
+          await pipeline(body, response);
         } catch (error) {
           next(error);
         }
-      },
+      }),
     );
   app.get(
     "/api/v1/courses/:courseId/resources/:resourceId/text",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await catalog().extractedText(
@@ -2984,12 +2995,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/resources/:resourceId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await catalog().read(
@@ -3006,12 +3017,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/resources",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         if (
@@ -3055,12 +3066,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/resources",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -3097,12 +3108,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/files",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         if (
@@ -3128,12 +3139,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/files",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
       try {
         await courseFiles().authorizeUpload(
@@ -3159,12 +3170,12 @@ export function createApp(
       } finally {
         await upload?.cleanup();
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/files/:fileId/download",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const file = await courseFiles().download(
@@ -3181,20 +3192,16 @@ export function createApp(
           "Cache-Control": "private, no-store",
         });
         const body = file.body as NodeJS.ReadableStream;
-        body.on("error", (error) => {
-          if (!response.headersSent) next(error);
-          else response.destroy(error);
-        });
-        body.pipe(response);
+        await pipeline(body, response);
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/files/:fileId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await courseFiles().delete(
           param(request.params.courseId),
@@ -3205,12 +3212,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/post-draft",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const data = await posts().getDraft(
@@ -3223,12 +3230,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.put(
     "/api/v1/courses/:courseId/post-draft",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const data = await posts().updateDraft(
@@ -3246,12 +3253,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/courses/:courseId/post-draft",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const data = await posts().deleteDraft(
           param(request.params.courseId),
@@ -3264,12 +3271,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/posts",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = postCreateBody(request.body);
@@ -3290,12 +3297,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/posts",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const options = postListQuery(request.query);
@@ -3318,12 +3325,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/posts/new-count",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const options = postListQuery(request.query);
@@ -3348,12 +3355,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/posts/:postId/duplicate-review",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await posts().getDuplicateReview(
@@ -3366,12 +3373,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/posts/:postId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await posts().get(
@@ -3395,12 +3402,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/posts/:postId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = postUpdateBody(request.body);
@@ -3414,12 +3421,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.put(
     "/api/v1/posts/:postId/discussion-lock",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(request.body, ["locked"], ["locked"]);
@@ -3439,12 +3446,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/posts/:postId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await posts().delete(
           param(request.params.postId),
@@ -3455,7 +3462,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   for (const [method, following] of [
     ["put", true],
@@ -3464,7 +3471,7 @@ export function createApp(
     app[method](
       "/api/v1/posts/:postId/follow",
       ...authenticatedUnsafe,
-      async (request, response, next) => {
+      ownership.handler(async (request, response, next) => {
         try {
           const value = await posts().setFollowing(
             param(request.params.postId),
@@ -3475,12 +3482,12 @@ export function createApp(
         } catch (error) {
           next(error);
         }
-      },
+      }),
     );
   app.get(
     "/api/v1/courses/:courseId/mention-suggestions",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const { q = "", postId, ...rest } = request.query;
@@ -3502,12 +3509,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/read-marks",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await posts().markCourseRead(
           param(request.params.courseId),
@@ -3517,12 +3524,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.put(
     "/api/v1/posts/:postId/vote",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(request.body, ["optionId", "optionIds"]);
@@ -3550,12 +3557,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/posts/:postId/vote",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await posts().unvote(
           param(request.params.postId),
@@ -3565,13 +3572,13 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   for (const action of ["close", "reopen", "release"] as const)
     app.post(
       `/api/v1/posts/:postId/${action}`,
       ...authenticatedUnsafe,
-      async (request, response, next) => {
+      ownership.handler(async (request, response, next) => {
         try {
           const value = await posts().transitionPoll(
             param(request.params.postId),
@@ -3588,12 +3595,12 @@ export function createApp(
         } catch (error) {
           next(error);
         }
-      },
+      }),
     );
   app.get(
     "/api/v1/posts/:postId/poll-results.csv",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const csv = await posts().pollCsv(
@@ -3611,12 +3618,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/posts/:postId/clone",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const value = await posts().clonePoll(
           param(request.params.postId),
@@ -3633,12 +3640,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/posts/:postId/answers",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = answerCreateBody(request.body);
@@ -3658,12 +3665,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/posts/:postId/answers",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const data = await answers().list(
@@ -3674,12 +3681,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/answers/:answerId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await answers().get(
@@ -3690,12 +3697,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/answers/:answerId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -3715,13 +3722,13 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   for (const method of ["put", "delete"] as const) {
     app[method](
       "/api/v1/answers/:answerId/upvote",
       ...authenticatedUnsafe,
-      async (request, response, next) => {
+      ownership.handler(async (request, response, next) => {
         try {
           const value = await answers().upvote(
             param(request.params.answerId),
@@ -3732,13 +3739,13 @@ export function createApp(
         } catch (error) {
           next(error);
         }
-      },
+      }),
     );
   }
   app.get(
     "/api/v1/posts/:postId/followups",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const { cursor, limit } = followupListQuery(request.query);
@@ -3753,12 +3760,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/posts/:postId/followups",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = answerCreateBody(request.body);
@@ -3779,12 +3786,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/followups/:followupId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await followups().get(
@@ -3795,12 +3802,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/followups/:followupId/replies",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const { cursor, limit } = followupListQuery(request.query);
@@ -3819,12 +3826,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/followups/:followupId/replies",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const parent = await followups().get(
@@ -3849,12 +3856,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/followups/:followupId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -3874,12 +3881,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/followups/:followupId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await followups().delete(
           param(request.params.followupId),
@@ -3890,13 +3897,13 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   for (const method of ["put", "delete"] as const) {
     app[method](
       "/api/v1/followups/:followupId/upvote",
       ...authenticatedUnsafe,
-      async (request, response, next) => {
+      ownership.handler(async (request, response, next) => {
         try {
           const value = await followups().upvote(
             param(request.params.followupId),
@@ -3907,7 +3914,7 @@ export function createApp(
         } catch (error) {
           next(error);
         }
-      },
+      }),
     );
   }
   for (const [method, resolved] of [
@@ -3917,7 +3924,7 @@ export function createApp(
     app[method](
       "/api/v1/followups/:followupId/resolution",
       ...authenticatedUnsafe,
-      async (request, response, next) => {
+      ownership.handler(async (request, response, next) => {
         try {
           const value = await followups().setResolved(
             param(request.params.followupId),
@@ -3928,12 +3935,12 @@ export function createApp(
         } catch (error) {
           next(error);
         }
-      },
+      }),
     );
   app.put(
     "/api/v1/answers/:answerId/endorsement",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const value = await answers().endorse(
           param(request.params.answerId),
@@ -3944,12 +3951,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/answers/:answerId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await answers().delete(
           param(request.params.answerId),
@@ -3960,7 +3967,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   const threadWatches = (): ThreadWatchService => {
     if (!threadWatchService)
@@ -3974,7 +3981,7 @@ export function createApp(
   app.get(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/watch",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         response.json({
@@ -3988,12 +3995,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.put(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/watch",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -4013,12 +4020,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/courses/:courseId/threads/:threadId/conversations/:conversationId/read",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(request.body, ["messageIds"], ["messageIds"]);
@@ -4033,7 +4040,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   const notifications = (): NotificationService => {
     if (!notificationService)
@@ -4047,7 +4054,7 @@ export function createApp(
   app.get(
     "/api/v1/users/me/notifications/unread-count",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         response.json({
@@ -4056,12 +4063,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/users/me/notifications",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const { limit, cursor } = listQuery(request.query);
@@ -4084,12 +4091,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/users/me/notifications/read",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const empty =
           request.body === undefined ||
@@ -4112,7 +4119,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   const collaboration = (): CollaborationSessionService => {
     if (!collaborationSessionService)
@@ -4126,7 +4133,7 @@ export function createApp(
   app.post(
     "/api/v1/courses/:courseId/collaboration-sessions",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = collaborationCreateBody(request.body);
@@ -4146,12 +4153,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/courses/:courseId/collaboration-sessions",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const result = await collaboration().list(
@@ -4163,12 +4170,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/users/me/collaboration-sessions",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const { limit, cursor, filter } = listQuery(request.query, {
@@ -4183,12 +4190,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/collaboration-sessions/:sessionId",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const value = await collaboration().get(
@@ -4199,12 +4206,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.patch(
     "/api/v1/collaboration-sessions/:sessionId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = collaborationUpdateBody(request.body);
@@ -4218,12 +4225,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/collaboration-sessions/:sessionId/participants",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         requireJsonRequest(request);
         const body = strictBody(
@@ -4251,12 +4258,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/collaboration-sessions/:sessionId/participants/:userId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await collaboration().remove(
           param(request.params.sessionId),
@@ -4267,12 +4274,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.post(
     "/api/v1/collaboration-sessions/:sessionId/connection-tickets",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = auth(response).session;
         const data = await collaboration().ticket(
@@ -4284,12 +4291,12 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/collaboration-sessions/:sessionId/snapshot",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const data = await collaboration().snapshot(
@@ -4300,7 +4307,7 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   const threadAttachments = (): ThreadAttachmentService => {
     if (!threadAttachmentService)
@@ -4314,7 +4321,7 @@ export function createApp(
   app.post(
     "/api/v1/thread-messages/:messageId/attachments",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       let upload: Awaited<ReturnType<typeof readMultipart>> | undefined;
       try {
         const messageId = param(request.params.messageId);
@@ -4337,12 +4344,12 @@ export function createApp(
       } finally {
         await upload?.cleanup();
       }
-    },
+    }),
   );
   app.get(
     "/api/v1/thread-attachments/:attachmentId/download",
     optionalReadOrigin,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         const current = await requireSession(request);
         const file = await threadAttachments().download(
@@ -4358,20 +4365,16 @@ export function createApp(
           "Cache-Control": "private, no-store",
         });
         const body = file.body as NodeJS.ReadableStream;
-        body.on("error", (error) => {
-          if (!response.headersSent) next(error);
-          else response.destroy(error);
-        });
-        body.pipe(response);
+        await pipeline(body, response);
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.delete(
     "/api/v1/thread-attachments/:attachmentId",
     ...authenticatedUnsafe,
-    async (request, response, next) => {
+    ownership.handler(async (request, response, next) => {
       try {
         await threadAttachments().delete(
           param(request.params.attachmentId),
@@ -4381,16 +4384,25 @@ export function createApp(
       } catch (error) {
         next(error);
       }
-    },
+    }),
   );
   app.use(
     (
       error: unknown,
-      _request: Request,
+      request: Request,
       response: Response,
       next: NextFunction,
     ) => {
       void next;
+      const readOnly = ["GET", "HEAD", "OPTIONS"].includes(request.method);
+      if (response.headersSent) {
+        if (!readOnly) {
+          dependencies.lifecycle?.fail("owner_failed");
+          void dependencies.lifecycle?.shutdown("fatal");
+        }
+        response.destroy();
+        return;
+      }
       const authError =
         error instanceof AuthError
           ? error
@@ -4410,8 +4422,13 @@ export function createApp(
           String((authError as AuthError & { retryAfter: number }).retryAfter),
         );
       response.locals.errorCode = authError.code;
-      if (authError.code === "internal_error")
+      if (authError.code === "internal_error") {
+        if (!readOnly) {
+          dependencies.lifecycle?.fail("owner_failed");
+          void dependencies.lifecycle?.shutdown("fatal");
+        }
         logUnexpectedError(observability, authError.code);
+      }
       response.status(authError.status).json({
         error: {
           code: authError.code,

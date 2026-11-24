@@ -91,9 +91,11 @@ function write(
   csrfToken: string,
   body?: unknown,
   headers: Record<string, string> = {},
+  signal?: AbortSignal,
 ) {
   return fetch(path, {
     method,
+    signal,
     credentials: "include",
     headers: {
       Accept: "application/json",
@@ -221,12 +223,16 @@ export async function removeParticipant(
 export async function createTicket(
   sessionId: string,
   csrfToken: string,
+  signal?: AbortSignal,
 ): Promise<ConnectionTicket> {
   const payload = await receive<{ data: ConnectionTicket }>(
     await write(
       "POST",
       `${sessionPath(sessionId)}/connection-tickets`,
       csrfToken,
+      undefined,
+      {},
+      signal,
     ),
   );
   return payload.data;

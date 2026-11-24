@@ -7,7 +7,7 @@ export function renderEquation(
 ): Promise<Buffer | undefined> {
   if (!source.trim() || Buffer.byteLength(source) > 2048)
     return Promise.resolve(undefined);
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const path = new URL(
       import.meta.url.endsWith(".ts") ? "./math.worker.ts" : "./math.worker.js",
       import.meta.url,
@@ -28,8 +28,9 @@ export function renderEquation(
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
-      void worker.terminate();
-      resolve(value ? Buffer.from(value) : undefined);
+      void worker
+        .terminate()
+        .then(() => resolve(value ? Buffer.from(value) : undefined), reject);
     };
     const timeout = setTimeout(() => finish(), 2000);
     worker.once("message", (value: Uint8Array | null) =>

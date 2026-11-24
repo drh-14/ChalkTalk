@@ -114,19 +114,35 @@ export class DigestService {
     private readonly workerId = `digest-worker-${process.pid}`,
     private readonly observability?: Observability,
     private readonly readImage?: DigestImageReader,
+    private readonly onUncertain?: () => void,
   ) {}
+
+  private requireOwned<T extends { rowCount: number | null }>(result: T): T {
+    if (result.rowCount !== 1) {
+      this.onUncertain?.();
+      throw new Error("Digest ownership lost");
+    }
+    return result;
+  }
 
   private async transaction<T>(
     work: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
     const client = await this.pool.connect();
+    let committing = false;
     try {
       await client.query("BEGIN");
       const result = await work(client);
+      committing = true;
       await client.query("COMMIT");
       return result;
     } catch (error) {
-      await client.query("ROLLBACK");
+      if (committing) this.onUncertain?.();
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        this.onUncertain?.();
+      }
       throw error;
     } finally {
       client.release();
@@ -186,21 +202,25 @@ export class DigestService {
       );
       const row = result.rows[0];
       if (!row) return undefined;
-      const claimed = await client.query<{ attempts: number }>(
-        `UPDATE digest_outbox SET status='running',attempts=attempts+1,
+      const claimed = this.requireOwned(
+        await client.query<{ attempts: number }>(
+          `UPDATE digest_outbox SET status='running',attempts=attempts+1,
                 locked_by=$2,locked_until=$1::timestamptz+interval '2 minutes',updated_at=$1
           WHERE id=$3 RETURNING attempts`,
-        [now, this.workerId, row.id],
+          [now, this.workerId, row.id],
+        ),
       );
       return { ...row, attempts: claimed.rows[0]!.attempts };
     });
   }
 
   private async cancel(client: PoolClient, row: OutboxRow): Promise<void> {
-    await client.query(
-      `UPDATE digest_outbox SET status='canceled',frozen_email=NULL,locked_by=NULL,locked_until=NULL,updated_at=clock_timestamp()
+    this.requireOwned(
+      await client.query(
+        `UPDATE digest_outbox SET status='canceled',frozen_email=NULL,locked_by=NULL,locked_until=NULL,updated_at=clock_timestamp()
         WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-      [row.id, this.workerId, row.attempts],
+        [row.id, this.workerId, row.attempts],
+      ),
     );
   }
 
@@ -370,10 +390,12 @@ export class DigestService {
           })),
         imageIds: rendered.imageIds,
       };
-      await client.query(
-        `UPDATE digest_outbox SET frozen_email=$4::jsonb,updated_at=clock_timestamp()
+      this.requireOwned(
+        await client.query(
+          `UPDATE digest_outbox SET frozen_email=$4::jsonb,updated_at=clock_timestamp()
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-        [row.id, this.workerId, row.attempts, JSON.stringify(snapshot)],
+          [row.id, this.workerId, row.attempts, JSON.stringify(snapshot)],
+        ),
       );
     });
   }
@@ -391,7 +413,10 @@ export class DigestService {
           AND locked_by=$2 AND attempts=$3 FOR UPDATE`,
         [row.id, this.workerId, row.attempts],
       );
-      if (!claimed.rows[0]) return "canceled";
+      if (!claimed.rows[0]) {
+        this.onUncertain?.();
+        return "canceled";
+      }
       const snapshot = claimed.rows[0].frozen_email;
       if (!snapshot) {
         await this.cancel(client, row);
@@ -461,28 +486,45 @@ export class DigestService {
         }
       }
       const { attachments, ...message } = snapshot.message;
-      await this.sender.send(
-        {
-          ...message,
-          attachments: attachments?.map((attachment) => ({
-            filename: attachment.filename,
-            content: Buffer.from(attachment.contentBase64, "base64"),
-            contentType: attachment.contentType,
-            cid: attachment.cid,
-            contentDisposition: attachment.contentDisposition,
-          })),
-        },
-        {
-          signal: AbortSignal.timeout(30_000),
-          idempotencyKey: `digest-${row.id}`,
-        },
-      );
-      await client.query(
-        `UPDATE digest_outbox SET status='sent',sent_at=clock_timestamp(),frozen_email=NULL,
+      try {
+        await this.sender.send(
+          {
+            ...message,
+            attachments: attachments?.map((attachment) => ({
+              filename: attachment.filename,
+              content: Buffer.from(attachment.contentBase64, "base64"),
+              contentType: attachment.contentType,
+              cid: attachment.cid,
+              contentDisposition: attachment.contentDisposition,
+            })),
+          },
+          {
+            signal: AbortSignal.timeout(30_000),
+            idempotencyKey: `digest-${row.id}`,
+          },
+        );
+      } catch (error) {
+        if (!(
+          error instanceof PermanentEmailDeliveryError ||
+          error instanceof EmailConfigurationError ||
+          error instanceof EmailQuotaError
+        ))
+          this.onUncertain?.();
+        throw error;
+      }
+      try {
+        this.requireOwned(
+          await client.query(
+            `UPDATE digest_outbox SET status='sent',sent_at=clock_timestamp(),frozen_email=NULL,
                 locked_by=NULL,locked_until=NULL,last_error=NULL,updated_at=clock_timestamp()
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-        [row.id, this.workerId, row.attempts],
-      );
+            [row.id, this.workerId, row.attempts],
+          ),
+        );
+      } catch (error) {
+        this.onUncertain?.();
+        throw error;
+      }
       return "sent";
     });
   }
@@ -507,30 +549,39 @@ export class DigestService {
         error instanceof Error
           ? error.message
           : "Unknown email delivery failure";
-      if (error instanceof PermanentEmailDeliveryError) {
-        await this.pool.query(
-          `UPDATE digest_outbox SET status='canceled',frozen_email=NULL,locked_by=NULL,locked_until=NULL,
+      try {
+        if (error instanceof PermanentEmailDeliveryError) {
+          this.requireOwned(
+            await this.pool.query(
+              `UPDATE digest_outbox SET status='canceled',frozen_email=NULL,locked_by=NULL,locked_until=NULL,
                   last_error=$4,updated_at=clock_timestamp()
             WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-          [row.id, this.workerId, row.attempts, message.slice(0, 4000)],
-        );
-        return true;
-      }
-      const configuration =
-        error instanceof EmailConfigurationError ||
-        error instanceof EmailQuotaError;
-      await this.pool.query(
-        `UPDATE digest_outbox SET status='queued',available_at=clock_timestamp() + CASE WHEN $5 THEN interval '15 minutes' ELSE make_interval(secs => LEAST(3600, (2 ^ LEAST($3,10))::integer)) END,
+              [row.id, this.workerId, row.attempts, message.slice(0, 4000)],
+            ),
+          );
+          return true;
+        }
+        const configuration =
+          error instanceof EmailConfigurationError ||
+          error instanceof EmailQuotaError;
+        this.requireOwned(
+          await this.pool.query(
+            `UPDATE digest_outbox SET status='queued',available_at=clock_timestamp() + CASE WHEN $5 THEN interval '15 minutes' ELSE make_interval(secs => LEAST(3600, (2 ^ LEAST($3,10))::integer)) END,
                 locked_by=NULL,locked_until=NULL,last_error=$4,updated_at=clock_timestamp()
           WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3`,
-        [
-          row.id,
-          this.workerId,
-          row.attempts,
-          message.slice(0, 4000),
-          configuration,
-        ],
-      );
+            [
+              row.id,
+              this.workerId,
+              row.attempts,
+              message.slice(0, 4000),
+              configuration,
+            ],
+          ),
+        );
+      } catch (failure) {
+        this.onUncertain?.();
+        throw failure;
+      }
     }
     return true;
   }

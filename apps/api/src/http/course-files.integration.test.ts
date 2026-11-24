@@ -991,9 +991,15 @@ integration("course file upload and byte download", () => {
       },
       query: pool.query.bind(pool),
     } as unknown as Pool;
+    let uncertain = false;
     await expect(
-      createStaged(new CourseFileService(ambiguousPool, s3, bucket)),
+      createStaged(
+        new CourseFileService(ambiguousPool, s3, bucket, () => {
+          uncertain = true;
+        }),
+      ),
     ).rejects.toMatchObject({ status: 503 });
+    expect(uncertain).toBe(true);
     const persisted = await pool.query<{ id: string; object_key: string }>(
       "SELECT id,object_key FROM course_files ORDER BY created_at DESC LIMIT 1",
     );

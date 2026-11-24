@@ -30,6 +30,9 @@ jobs:
       - name: Verify private production VM and host-network topology
         run: node --test deployment/production/tests/observability.test.mjs deployment/production/tests/vm-metrics.test.mjs deployment/production/tests/load-test.test.mjs deployment/load-test/preflight.test.mjs deployment/load-test/profile.test.mjs deployment/load-test/coverage.test.mjs deployment/load-test/verify-inventory.test.mjs deployment/load-test/sanitize-artifacts.test.mjs
 
+      - name: Verify lifecycle Compose and private Linux evidence mounts
+        run: node --test deployment/production/tests/lifecycle.test.mjs
+
       - name: Verify bounded k6 smoke against a local mock API
         env:
           RUN_K6_INTEGRATION: "1"

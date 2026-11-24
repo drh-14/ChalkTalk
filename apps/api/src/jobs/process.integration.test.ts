@@ -23,6 +23,7 @@ const fileObjectKey = `course-files/${courseId}/deleted.txt`;
 const serverPath = fileURLToPath(new URL("../server.ts", import.meta.url));
 const workerPath = fileURLToPath(new URL("./main.ts", import.meta.url));
 let port: number;
+let workerPort: number;
 let admin: Pool;
 let pool: Pool;
 let s3: Server;
@@ -50,7 +51,7 @@ const start = (path: string): ChildProcess => {
       ...process.env,
       DATABASE_URL: `${url}?options=-csearch_path%3D${schema}`,
       AUTH_TOKEN_SECRET: "test-secret-with-at-least-32-characters",
-      PORT: String(port),
+      PORT: String(path === workerPath ? workerPort : port),
       S3_BUCKET: "test-course-files",
       S3_REGION: "us-east-1",
       S3_ENDPOINT: s3Endpoint,
@@ -76,6 +77,7 @@ const waitFor = async (condition: () => Promise<boolean>): Promise<void> => {
 integration("separate HTTP and job worker processes", () => {
   beforeAll(async () => {
     port = await freePort();
+    workerPort = await freePort();
     s3 = createServer((request, response) => {
       const path = new URL(request.url ?? "/", "http://localhost").pathname;
       if (path === "/test-course-files/" && request.method === "HEAD") {
@@ -157,7 +159,7 @@ integration("separate HTTP and job worker processes", () => {
     await waitFor(async () => {
       if (api.exitCode !== null) throw new Error("API process exited");
       try {
-        return (await fetch(`http://127.0.0.1:${port}/health`)).ok;
+        return (await fetch(`http://127.0.0.1:${port}/ready`)).ok;
       } catch {
         return false;
       }

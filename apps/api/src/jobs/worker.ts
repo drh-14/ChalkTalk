@@ -120,13 +120,23 @@ export class JobWorker {
     private readonly observability?: Observability,
     private readonly semantic?: SemanticIndex,
     private readonly resourceText?: ResourceTextWorkerOptions,
+    private readonly onUncertain?: () => void,
   ) {}
+
+  private requireOwned<T extends { rowCount: number | null }>(result: T): T {
+    if (result.rowCount !== 1) {
+      this.onUncertain?.();
+      throw new Error("Job ownership lost");
+    }
+    return result;
+  }
 
   private async transaction<T>(
     work: (client: PoolClient) => Promise<T>,
     extractionJob?: Job,
   ): Promise<T> {
     const client = await this.pool.connect();
+    let committing = false;
     try {
       await client.query("BEGIN");
       let leaseUntil: string | undefined;
@@ -147,10 +157,16 @@ export class JobWorker {
         if (!valid.rows[0]!.valid)
           throw new ExtractionFailure("lease_lost", false);
       }
+      committing = true;
       await client.query("COMMIT");
       return value;
     } catch (error) {
-      await client.query("ROLLBACK");
+      if (committing) this.onUncertain?.();
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        this.onUncertain?.();
+      }
       throw error;
     } finally {
       client.release();
@@ -185,12 +201,14 @@ export class JobWorker {
       );
       const job = claimed.rows[0];
       if (!job) return undefined;
-      const updated = await client.query<{
-        attempts: number;
-        max_attempts: number;
-      }>(
-        "UPDATE jobs SET status='running',attempts=attempts+1,locked_by=$1,locked_until=now()+CASE WHEN kind='index_post' THEN interval '5 minutes' WHEN kind IN ('extract_file_text','generate_searchable_pdf') THEN interval '2 minutes' ELSE interval '1 minute' END,updated_at=now() WHERE id=$2 RETURNING attempts,max_attempts",
-        [this.workerId, job.id],
+      const updated = this.requireOwned(
+        await client.query<{
+          attempts: number;
+          max_attempts: number;
+        }>(
+          "UPDATE jobs SET status='running',attempts=attempts+1,locked_by=$1,locked_until=now()+CASE WHEN kind='index_post' THEN interval '5 minutes' WHEN kind IN ('extract_file_text','generate_searchable_pdf') THEN interval '2 minutes' ELSE interval '1 minute' END,updated_at=now() WHERE id=$2 RETURNING attempts,max_attempts",
+          [this.workerId, job.id],
+        ),
       );
       return {
         id: job.id,
@@ -224,7 +242,10 @@ export class JobWorker {
       );
     const prepared = await this.transaction(async (client) => {
       const row = (await claim(client)).rows[0];
-      if (!row) return false;
+      if (!row) {
+        this.onUncertain?.();
+        return false;
+      }
       if (row.frozen_email) return true;
       const current = await candidate(client, false);
       if (!current) {
@@ -255,7 +276,10 @@ export class JobWorker {
     return this.transaction(async (client): Promise<EmailOutcome> => {
       const row = (await claim(client)).rows[0];
       const frozen = row?.frozen_email;
-      if (!row) return "canceled";
+      if (!row) {
+        this.onUncertain?.();
+        return "canceled";
+      }
       if (!frozen) {
         await cancel(client, "email snapshot unavailable");
         return "canceled";
@@ -273,11 +297,26 @@ export class JobWorker {
         await cancel(client, "email eligibility or provider changed");
         return "canceled";
       }
-      await this.emailSender!.send(frozen.message, {
-        signal: AbortSignal.timeout(30_000),
-        idempotencyKey: `job-${job.id}`,
-      });
-      await this.succeed(job, client);
+      try {
+        await this.emailSender!.send(frozen.message, {
+          signal: AbortSignal.timeout(30_000),
+          idempotencyKey: `job-${job.id}`,
+        });
+      } catch (error) {
+        if (!(
+          error instanceof PermanentEmailDeliveryError ||
+          error instanceof EmailConfigurationError ||
+          error instanceof EmailQuotaError
+        ))
+          this.onUncertain?.();
+        throw error;
+      }
+      try {
+        await this.succeed(job, client);
+      } catch (error) {
+        this.onUncertain?.();
+        throw error;
+      }
       return "sent";
     });
   }
@@ -654,7 +693,10 @@ export class JobWorker {
     });
   }
 
-  private async deleteCourse(courseId: string): Promise<void> {
+  private async deleteCourse(
+    courseId: string,
+    effect: () => void,
+  ): Promise<void> {
     await this.transaction(async (client) => {
       await client.query("SELECT id FROM courses WHERE id=$1 FOR UPDATE", [
         courseId,
@@ -674,13 +716,15 @@ export class JobWorker {
       );
       if (attachments.rows.length && !this.objectStore)
         throw new Error("Object storage is required to delete attachments");
-      for (const attachment of attachments.rows)
+      for (const attachment of attachments.rows) {
+        effect();
         await this.objectStore!.client.send(
           new DeleteObjectCommand({
             Bucket: this.objectStore!.bucket,
             Key: attachment.object_key,
           }),
         );
+      }
       const answers = "SELECT id FROM answers WHERE course_id=$1";
       await client.query(
         "DELETE FROM question_creation_daily_counts WHERE course_id=$1",
@@ -724,13 +768,15 @@ export class JobWorker {
       );
       if (objects.rows.length && !this.objectStore)
         throw new Error("Object storage is required to delete course files");
-      for (const object of objects.rows)
+      for (const object of objects.rows) {
+        effect();
         await this.objectStore!.client.send(
           new DeleteObjectCommand({
             Bucket: this.objectStore!.bucket,
             Key: object.object_key,
           }),
         );
+      }
       await client.query("DELETE FROM course_memberships WHERE course_id=$1", [
         courseId,
       ]);
@@ -742,10 +788,17 @@ export class JobWorker {
     job: Job,
     client: Pool | PoolClient = this.pool,
   ): Promise<void> {
-    await client.query(
-      "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,frozen_email=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
-      [job.id, this.workerId, job.attempts],
-    );
+    try {
+      this.requireOwned(
+        await client.query(
+          "UPDATE jobs SET status='succeeded',finished_at=now(),locked_by=NULL,locked_until=NULL,last_error=NULL,frozen_email=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
+          [job.id, this.workerId, job.attempts],
+        ),
+      );
+    } catch (error) {
+      if (client === this.pool) this.onUncertain?.();
+      throw error;
+    }
   }
 
   private async fail(job: Job, error: unknown): Promise<void> {
@@ -755,47 +808,52 @@ export class JobWorker {
     const configuration =
       error instanceof EmailConfigurationError ||
       error instanceof EmailQuotaError;
-    if (error instanceof ExtractionFailure && error.code === "lease_lost")
-      return;
-    if (error instanceof ExtractionFailure && error.code === "shutdown") {
-      await this.pool.query(
-        `WITH requeued AS (UPDATE jobs SET status='queued',attempts=attempts-1,available_at=now(),locked_by=NULL,locked_until=NULL,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 RETURNING kind,payload)
-          UPDATE course_file_texts SET ${clearTextProgress}
-          WHERE status='pending' AND file_id IN (
-            SELECT (payload->>'fileId')::uuid FROM requeued WHERE kind='extract_file_text'
-          )`,
-        [job.id, this.workerId, job.attempts],
-      );
+    if (
+      error instanceof ExtractionFailure &&
+      ["lease_lost", "shutdown"].includes(error.code)
+    ) {
+      this.onUncertain?.();
       return;
     }
     if (
       error instanceof ExtractionFailure &&
       error.code === "object_store_unavailable"
     ) {
-      await this.pool.query(
-        `WITH requeued AS (UPDATE jobs SET status='queued',attempts=attempts-1,available_at=now()+interval '60 seconds',locked_by=NULL,locked_until=NULL,last_error=$4,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 RETURNING kind,payload)
-          UPDATE course_file_texts SET ${clearTextProgress}
-          WHERE status='pending' AND file_id IN (
-            SELECT (payload->>'fileId')::uuid FROM requeued WHERE kind='extract_file_text'
-          )`,
-        [job.id, this.workerId, job.attempts, error.code],
-      );
+      await this.transaction(async (client) => {
+        const requeued = this.requireOwned(
+          await client.query<{ payload: Job["payload"] }>(
+            "UPDATE jobs SET status='queued',attempts=attempts-1,available_at=now()+interval '60 seconds',locked_by=NULL,locked_until=NULL,last_error=$4,updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 RETURNING payload",
+            [job.id, this.workerId, job.attempts, error.code],
+          ),
+        );
+        if (
+          job.kind === "extract_file_text" &&
+          requeued.rows[0]?.payload.fileId
+        )
+          await client.query(
+            `UPDATE course_file_texts SET ${clearTextProgress} WHERE file_id=$1 AND status='pending'`,
+            [requeued.rows[0].payload.fileId],
+          );
+      }, job);
       return;
     }
     try {
       await this.transaction(
         async (client) => {
-          const updated = await client.query(
-            "UPDATE jobs SET status=CASE WHEN NOT $6 AND ($5 OR attempts >= max_attempts) THEN 'dead' ELSE 'queued' END, available_at=CASE WHEN $6 THEN now()+interval '15 minutes' WHEN $5 OR attempts >= max_attempts THEN available_at ELSE now()+make_interval(secs => LEAST(300, (2 ^ attempts)::integer)) END, locked_by=NULL,locked_until=NULL,last_error=$1,finished_at=CASE WHEN NOT $6 AND ($5 OR attempts >= max_attempts) THEN now() ELSE NULL END,frozen_email=CASE WHEN NOT $6 AND ($5 OR attempts >= max_attempts) THEN NULL ELSE frozen_email END,updated_at=now() WHERE id=$2 AND status='running' AND locked_by=$3 AND attempts=$4",
-            [
-              errorMessage(error).slice(0, 4000),
-              job.id,
-              this.workerId,
-              job.attempts,
-              permanent,
-              configuration,
-            ],
+          const updated = this.requireOwned(
+            await client.query(
+              "UPDATE jobs SET status=CASE WHEN NOT $6 AND ($5 OR attempts >= max_attempts) THEN 'dead' ELSE 'queued' END, available_at=CASE WHEN $6 THEN now()+interval '15 minutes' WHEN $5 OR attempts >= max_attempts THEN available_at ELSE now()+make_interval(secs => LEAST(300, (2 ^ attempts)::integer)) END, locked_by=NULL,locked_until=NULL,last_error=$1,finished_at=CASE WHEN NOT $6 AND ($5 OR attempts >= max_attempts) THEN now() ELSE NULL END,frozen_email=CASE WHEN NOT $6 AND ($5 OR attempts >= max_attempts) THEN NULL ELSE frozen_email END,updated_at=now() WHERE id=$2 AND status='running' AND locked_by=$3 AND attempts=$4",
+              [
+                errorMessage(error).slice(0, 4000),
+                job.id,
+                this.workerId,
+                job.attempts,
+                permanent,
+                configuration,
+              ],
+            ),
           );
+          this.requireOwned(updated);
           if (
             updated.rowCount === 1 &&
             job.kind === "extract_file_text" &&
@@ -858,19 +916,29 @@ export class JobWorker {
       controller.abort(new ExtractionFailure("shutdown", false));
     if (shutdown?.aborted) stop();
     else shutdown?.addEventListener("abort", stop, { once: true });
+    let heartbeatPending: Promise<void> | undefined;
     const heartbeat = setInterval(() => {
-      this.pool
+      if (heartbeatPending) return;
+      heartbeatPending = this.pool
         .query(
-          "UPDATE jobs SET locked_until=now()+interval '2 minutes',updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3",
+          "UPDATE jobs SET locked_until=now()+interval '2 minutes',updated_at=now() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 AND locked_until>clock_timestamp()",
           [job.id, this.workerId, job.attempts],
         )
         .then(
           (result) => {
-            if (result.rowCount !== 1)
+            if (result.rowCount !== 1) {
+              this.onUncertain?.();
               controller.abort(new ExtractionFailure("lease_lost", false));
+            }
           },
-          () => controller.abort(new ExtractionFailure("lease_lost", false)),
-        );
+          () => {
+            this.onUncertain?.();
+            controller.abort(new ExtractionFailure("lease_lost", false));
+          },
+        )
+        .finally(() => {
+          heartbeatPending = undefined;
+        });
     }, options.heartbeatMs ?? 30_000);
     const limit = setTimeout(
       () =>
@@ -882,37 +950,40 @@ export class JobWorker {
         ),
       options.hardLimitMs ?? 15 * 60_000,
     );
+    let failure: unknown;
+    let rejected = false;
     try {
       await work(
         controller.signal,
         job.attempts >= job.maxAttempts ? started + 12 * 60_000 : undefined,
       );
-      if (controller.signal.aborted) throw controller.signal.reason;
     } catch (error) {
-      if (
-        controller.signal.reason instanceof ExtractionFailure &&
-        controller.signal.reason.code === "extraction_timeout" &&
-        error instanceof ExtractionFailure &&
-        error.code === "object_store_unavailable"
-      )
-        throw error;
-      throw controller.signal.aborted ? controller.signal.reason : error;
+      failure = error;
+      rejected = true;
     } finally {
       clearInterval(heartbeat);
       clearTimeout(limit);
       shutdown?.removeEventListener("abort", stop);
+      await heartbeatPending;
     }
+    if (controller.signal.aborted) {
+      if (
+        controller.signal.reason instanceof ExtractionFailure &&
+        controller.signal.reason.code === "extraction_timeout" &&
+        failure instanceof ExtractionFailure &&
+        failure.code === "object_store_unavailable"
+      )
+        throw failure;
+      throw controller.signal.reason;
+    }
+    if (rejected) throw failure;
   }
 
   private async extractFileText(
     job: Job,
     shutdown?: AbortSignal,
   ): Promise<void> {
-    const fileId = job.payload.fileId;
-    if (!this.objectStore || !this.resourceText || !fileId)
-      throw new Error(
-        "Object storage, extraction settings and a file are required to extract text",
-      );
+    const fileId = job.payload.fileId!;
     const found = await this.pool.query<{
       object_key: string;
       media_type: string;
@@ -922,8 +993,8 @@ export class JobWorker {
     );
     const file = found.rows[0];
     if (!file) return;
-    const store = this.objectStore,
-      options = this.resourceText;
+    const store = this.objectStore!,
+      options = this.resourceText!;
     // Distinguish a retired resource from an actual job-lease loss by identity.
     const obsolete = new ExtractionFailure("lease_lost", false);
     try {
@@ -999,10 +1070,10 @@ export class JobWorker {
   private async generateSearchablePdf(
     job: Job,
     shutdown?: AbortSignal,
+    effect?: () => void,
   ): Promise<void> {
-    const { fileId, generation } = job.payload;
-    if (!this.objectStore || !this.resourceText || !fileId || !generation)
-      throw new Error("PDF generation configuration missing");
+    const fileId = job.payload.fileId!;
+    const generation = job.payload.generation!;
     const found = await this.pool.query<{
       object_key: string;
       course_id: string;
@@ -1012,8 +1083,8 @@ export class JobWorker {
     );
     const source = found.rows[0];
     if (!source) return;
-    const store = this.objectStore,
-      options = this.resourceText;
+    const store = this.objectStore!,
+      options = this.resourceText!;
     let uploadedKey: string | undefined,
       published = false;
     try {
@@ -1029,6 +1100,7 @@ export class JobWorker {
             signal,
           });
           uploadedKey = `courses/${source.course_id}/searchable-pdfs/${fileId}/${generation}/${randomUUID()}.pdf`;
+          effect?.();
           await store.client.send(
             new PutObjectCommand({
               Bucket: store.bucket,
@@ -1109,12 +1181,15 @@ export class JobWorker {
     const started = process.hrtime.bigint();
     this.observability?.recordJobStart(job.kind);
     const duration = () => Number(process.hrtime.bigint() - started) / 1e9;
+    let effectMayBeAmbiguous = false;
     try {
       let emailOutcome: EmailOutcome | undefined;
       if (job.kind === "delete_course") {
         if (!job.payload.courseId)
           throw new Error("Course deletion job payload is invalid");
-        await this.deleteCourse(job.payload.courseId);
+        await this.deleteCourse(job.payload.courseId, () => {
+          effectMayBeAmbiguous = true;
+        });
       } else if (job.kind === "delete_searchable_pdf") {
         if (!this.objectStore || !job.payload.objectKey)
           throw Error("Derived cleanup configuration missing");
@@ -1134,6 +1209,7 @@ export class JobWorker {
             [job.payload.objectKey],
           );
           if (active.rowCount) return;
+          effectMayBeAmbiguous = true;
           await this.objectStore!.client.send(
             new DeleteObjectCommand({
               Bucket: this.objectStore!.bucket,
@@ -1163,6 +1239,7 @@ export class JobWorker {
           if (refs.rowCount)
             throw new Error("File is still referenced by a current resource");
         }
+        effectMayBeAmbiguous = true;
         await this.objectStore.client.send(
           new DeleteObjectCommand({
             Bucket: this.objectStore.bucket,
@@ -1181,10 +1258,25 @@ export class JobWorker {
           job.payload.generation !== this.semantic.config.generation
         )
           throw new Error("Semantic indexing job payload is invalid");
-        await this.semantic.indexPost(job.payload.postId);
+        await this.semantic.indexPost(job.payload.postId, () => {
+          effectMayBeAmbiguous = true;
+        });
       } else if (job.kind === "generate_searchable_pdf") {
-        await this.generateSearchablePdf(job, shutdown);
+        if (
+          !this.objectStore ||
+          !this.resourceText ||
+          !job.payload.fileId ||
+          !job.payload.generation
+        )
+          throw new Error("PDF generation configuration missing");
+        await this.generateSearchablePdf(job, shutdown, () => {
+          effectMayBeAmbiguous = true;
+        });
       } else if (job.kind === "extract_file_text") {
+        if (!this.objectStore || !this.resourceText || !job.payload.fileId)
+          throw new Error(
+            "Object storage, extraction settings and a file are required to extract text",
+          );
         await this.extractFileText(job, shutdown);
       } else if (job.kind === "publish_scheduled_announcement") {
         await this.publishScheduledAnnouncement(job);
@@ -1204,8 +1296,21 @@ export class JobWorker {
         duration(),
       );
     } catch (error) {
+      if (
+        effectMayBeAmbiguous &&
+        !(
+          error instanceof PermanentEmailDeliveryError ||
+          error instanceof EmailConfigurationError ||
+          error instanceof EmailQuotaError ||
+          (error instanceof ExtractionFailure && error.permanent)
+        )
+      )
+        this.onUncertain?.();
       try {
         await this.fail(job, error);
+      } catch (failure) {
+        this.onUncertain?.();
+        throw failure;
       } finally {
         this.observability?.recordJob(job.kind, "failed", duration());
       }

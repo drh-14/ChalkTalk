@@ -15,7 +15,10 @@ import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
 import type { ExtractionOptions } from "../resource-text/extract.js";
 import { queueFileTextExtraction } from "../resource-text/queue.js";
 import type { ExtractedText } from "../resource-text/store.js";
-import { ExtractionFailure } from "../resource-text/tools.js";
+import { ExtractionFailure, runTool } from "../resource-text/tools.js";
+import { createLifecycle } from "../lifecycle/runtime.js";
+import { ownedJob } from "./lifecycle.js";
+import { runJobLoop } from "./runner.js";
 import { JobWorker, type ResourceTextWorkerOptions } from "./worker.js";
 
 const url = process.env.TEST_DATABASE_URL,
@@ -43,6 +46,7 @@ const worker = (
   id = `extraction-${randomUUID()}`,
   database: Pool = pool,
   store: S3Client = s3,
+  onUncertain?: () => void,
 ) =>
   new JobWorker(
     database,
@@ -53,6 +57,7 @@ const worker = (
     undefined,
     undefined,
     { maxOcrPages: 200, ocrLanguages: "eng", ...overrides },
+    onUncertain,
   );
 
 async function seedCourse() {
@@ -298,8 +303,34 @@ suite("resource text extraction jobs", () => {
         progress_total_pages: null,
       });
     });
-    it.each(["shutdown", "object_store_unavailable"])(
-      "clears progress when %s requeues without consuming an attempt",
+    it("fails closed when a known storage retry no longer owns the claim", async () => {
+      await clearQueue();
+      const { fileId } = await seedFile();
+      let uncertain = false;
+      const attempt = worker(
+        {
+          extract: async () => {
+            const stolen = await pool.query(
+              "UPDATE jobs SET locked_by='another-worker' WHERE payload->>'fileId'=$1",
+              [fileId],
+            );
+            expect(stolen.rowCount).toBe(1);
+            throw new ExtractionFailure("object_store_unavailable", false);
+          },
+        },
+        undefined,
+        pool,
+        s3,
+        () => {
+          uncertain = true;
+        },
+      );
+      await expect(attempt.runOnce("extraction")).rejects.toThrow();
+      expect(uncertain).toBe(true);
+      expect((await job(fileId)).status).toBe("running");
+    });
+    it.each(["object_store_unavailable"])(
+      "clears progress when known %s retry requeues without consuming an attempt",
       async (reason) => {
         await clearQueue();
         const { fileId } = await seedFile();
@@ -413,6 +444,134 @@ suite("resource text extraction jobs", () => {
       });
     });
 
+    it("owns an in-flight heartbeat query until it settles before completing extraction", async () => {
+      await clearQueue();
+      const extractGate = gate();
+      const heartbeatGate = gate();
+      const { fileId } = await seedFile();
+      let heartbeating = false;
+      const delayed = new Proxy(pool, {
+        get(target, key) {
+          if (key === "query")
+            return async (...args: unknown[]) => {
+              if (String(args[0]).startsWith("UPDATE jobs SET locked_until=")) {
+                heartbeating = true;
+                await heartbeatGate.opened;
+              }
+              return (
+                target.query as (...values: unknown[]) => Promise<unknown>
+              ).apply(target, args);
+            };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      const subject = worker(
+        {
+          heartbeatMs: 10,
+          extract: async () => {
+            await extractGate.opened;
+            return { text: "confirmed heartbeat", truncated: false };
+          },
+        },
+        "owned-heartbeat",
+        delayed,
+      );
+      let completed = false;
+      const executing = subject.runOnce("extraction").then(() => {
+        completed = true;
+      });
+      try {
+        await waitFor(async () => heartbeating);
+        extractGate.open();
+        await new Promise((done) => setTimeout(done, 60));
+        expect(completed).toBe(false);
+      } finally {
+        heartbeatGate.open();
+        extractGate.open();
+        await executing;
+      }
+      expect((await job(fileId)).status).toBe("succeeded");
+    });
+
+    it("graceful drain keeps the actual extraction child and heartbeat alive without claiming the next file", async () => {
+      await clearQueue();
+      const first = await seedFile("first");
+      const second = await seedFile("second");
+      let entered = false;
+      const lifecycle = createLifecycle({
+        publish: async () => {},
+        exit: () => {},
+      });
+      lifecycle.markRunning();
+      const subject = worker({
+        heartbeatMs: 20,
+        extract: async (_path, _type, _dir, options) => {
+          entered = true;
+          const child = await runTool(
+            process.execPath,
+            [
+              "-e",
+              "setTimeout(()=>process.stdout.write('child survived graceful cutoff'),250)",
+            ],
+            { signal: options.signal },
+          );
+          return { text: child.stdout.toString(), truncated: false };
+        },
+      });
+      const loop = runJobLoop(
+        ownedJob(lifecycle, () =>
+          subject.runOnce("extraction", lifecycle.forceCancel),
+        ),
+        lifecycle.stopAdmission,
+        1,
+      );
+      await waitFor(async () => entered);
+      const before = (await job(first.fileId)).locked_until!.getTime();
+      const drain = lifecycle.shutdown("SIGTERM");
+      await waitFor(
+        async () => (await job(first.fileId)).locked_until!.getTime() > before,
+      );
+      expect(lifecycle.forceCancel.aborted).toBe(false);
+      await loop;
+      expect((await drain).exitCode).toBe(0);
+      expect(await text(first.fileId)).toMatchObject({
+        status: "ready",
+        text: "child survived graceful cutoff",
+      });
+      expect((await job(second.fileId)).status).toBe("queued");
+    });
+
+    it("application deadline kills the actual extraction child without fabricating a successful retry", async () => {
+      await clearQueue();
+      const { fileId } = await seedFile();
+      let entered = false;
+      const lifecycle = createLifecycle({
+        deadlineMs: 50,
+        publish: async () => {},
+        exit: () => {},
+      });
+      lifecycle.markRunning();
+      const subject = worker({
+        heartbeatMs: 10,
+        extract: async (_path, _type, _dir, options) => {
+          entered = true;
+          await runTool(process.execPath, ["-e", "setTimeout(()=>{},10000)"], {
+            signal: options.signal,
+          });
+          return { text: "must not persist", truncated: false };
+        },
+      });
+      const execution = ownedJob(lifecycle, () =>
+        subject.runOnce("extraction", lifecycle.forceCancel),
+      )();
+      await waitFor(async () => entered);
+      expect((await lifecycle.shutdown("SIGTERM")).exitCode).toBe(2);
+      await execution;
+      expect((await job(fileId)).status).toBe("running");
+      expect((await text(fileId))!.status).toBe("pending");
+      expect(lifecycle.state).toBe("FAILED");
+    });
     it("extends the lease while extraction runs", async () => {
       await clearQueue();
       const release = gate();
@@ -708,7 +867,7 @@ suite("resource text extraction jobs", () => {
       });
     });
 
-    it("requeues a running extraction on shutdown without using an attempt", async () => {
+    it("force cancellation retains the fenced running attempt until ordinary lease expiry", async () => {
       await clearQueue();
       const { fileId } = await seedFile();
       const shutdown = new AbortController();
@@ -730,20 +889,25 @@ suite("resource text extraction jobs", () => {
       await extracting;
       expect(aborted).toBe(true);
       expect(await job(fileId)).toMatchObject({
-        status: "queued",
-        attempts: 0,
-        locked_until: null,
+        status: "running",
+        attempts: 1,
+        locked_until: expect.any(Date),
       });
       expect((await text(fileId))!.status).toBe("pending");
 
+      expect(await worker().runOnce("extraction")).toBe(false);
+      await pool.query(
+        "UPDATE jobs SET locked_until=now()-interval '1 second' WHERE id=$1",
+        [(await job(fileId)).id],
+      );
       await worker().runOnce("extraction");
       expect(await job(fileId)).toMatchObject({
         status: "succeeded",
-        attempts: 1,
+        attempts: 2,
       });
     });
 
-    it("does not record a failure when shutdown interrupts the final attempt", async () => {
+    it("does not fabricate a clean retry when forced cancellation interrupts the final attempt", async () => {
       await clearQueue();
       const { fileId } = await seedFile("Finished later");
       await pool.query("UPDATE jobs SET attempts=2 WHERE id=$1", [
@@ -764,16 +928,11 @@ suite("resource text extraction jobs", () => {
       shutdown.abort();
       await interrupted;
       expect(await job(fileId)).toMatchObject({
-        status: "queued",
-        attempts: 2,
+        status: "running",
+        attempts: 3,
       });
       expect((await text(fileId))!.status).toBe("pending");
-
-      await worker().runOnce("extraction");
-      expect(await text(fileId)).toMatchObject({
-        status: "ready",
-        text: "Finished later",
-      });
+      expect(await worker().runOnce("extraction")).toBe(false);
     });
   });
 
@@ -987,8 +1146,8 @@ suite("resource text extraction jobs", () => {
             },
           );
           expect(await job(fileId)).toMatchObject({
-            status: interruption === "shutdown" ? "queued" : "running",
-            attempts: interruption === "shutdown" ? 2 : 3,
+            status: "running",
+            attempts: 3,
             last_error: null,
           });
           expect(await text(fileId)).toEqual({

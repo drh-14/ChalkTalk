@@ -1,3 +1,4 @@
+import { boundedQuery as queryWithBudget } from "./query.js";
 import { Hocuspocus, type Connection, type Document } from "@hocuspocus/server";
 import pg, { type Pool, type PoolClient } from "pg";
 import {
@@ -66,6 +67,7 @@ export type CollaborationServerOptions = {
   idleEndMinutes?: number;
   /** Serves /metrics behind this bearer token when set. */
   metricsToken?: string;
+  ready?: () => boolean;
 };
 
 export const colorFor = (userId: string) => {
@@ -78,28 +80,6 @@ export const colorFor = (userId: string) => {
 const sessionIdOf = (name: string) => DOCUMENT_PATTERN.exec(name)?.[1];
 
 class Rejection extends Error {}
-
-async function boundedQuery<Row extends pg.QueryResultRow = pg.QueryResultRow>(
-  db: Pool | PoolClient,
-  text: string,
-  values: unknown[] = [],
-  timeout = 2000,
-) {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      db.query<Row>({ text, values, query_timeout: timeout } as pg.QueryConfig),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("Database query timed out")),
-          timeout,
-        );
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
 
 /**
  * Hocuspocus server for live code sessions. PostgreSQL is the only store and
@@ -127,6 +107,42 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
   let sweepTimer: NodeJS.Timeout | undefined;
   let retryTimer: NodeJS.Timeout | undefined;
   let stopped = false;
+  let stopping: Promise<void> | undefined;
+  let callbackFailed = false;
+  const pending = new Set<Promise<unknown>>();
+  function own<T>(work: () => Promise<T>, recoverable = false): Promise<T> {
+    const promise = Promise.resolve().then(work);
+    pending.add(promise);
+    void promise.then(
+      () => pending.delete(promise),
+      (error) => {
+        if (!recoverable && !(error instanceof Rejection))
+          callbackFailed = true;
+        pending.delete(promise);
+      },
+    );
+    return promise;
+  }
+  function boundedQuery<Row extends pg.QueryResultRow = pg.QueryResultRow>(
+    db: Pool | PoolClient,
+    text: string,
+    values: unknown[] = [],
+    timeout = 2000,
+  ) {
+    return queryWithBudget<Row>(db, text, values, timeout, (query) => {
+      void own(() => query, true).catch(() => {});
+    });
+  }
+
+  async function settlePending() {
+    while (pending.size) await Promise.allSettled([...pending]);
+  }
+  function cutoff() {
+    stopped = true;
+    if (sweepTimer) clearInterval(sweepTimer);
+    if (retryTimer) clearTimeout(retryTimer);
+    server.cutoff();
+  }
 
   /** Rechecks current membership, participation, and ticket permission. */
   async function stillAuthorized(context: ConnectionContext): Promise<boolean> {
@@ -165,6 +181,7 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       await boundedQuery(lease.client, "ROLLBACK", [], 1000);
       lease.client.release();
     } catch {
+      callbackFailed = true;
       lease.client.release(true);
     }
   }
@@ -237,6 +254,10 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
               );
               if (row.rows[0] && row.rows[0].lifecycle_state !== "ended")
                 await store(client);
+              else if (row.rows[0] && failedStores.has(sessionId))
+                throw new Error(
+                  "Ended document persistence remains unconfirmed",
+                );
               await client.query("COMMIT");
             } catch (error) {
               await client.query("ROLLBACK");
@@ -437,11 +458,10 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     const retry = () => {
       if (stopped || listener !== client) return;
       listener = undefined;
-      void client.end().catch(() => undefined);
-      retryTimer = setTimeout(
-        () => void startListener(),
-        options.listenerRetryMs ?? 1000,
-      );
+      void own(() => client.end()).catch(() => undefined);
+      retryTimer = setTimeout(() => {
+        if (!stopped) void own(startListener).catch(() => undefined);
+      }, options.listenerRetryMs ?? 1000);
     };
     client.on("error", retry);
     client.on("end", retry);
@@ -454,16 +474,18 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
       } catch {
         return;
       }
-      void handleEvent(event).catch(() => undefined);
+      if (!stopped) void own(() => handleEvent(event)).catch(() => undefined);
     });
     try {
       listener = client;
       await client.connect();
+      if (stopped) return;
       await client.query(`LISTEN ${COLLABORATION_EVENTS_CHANNEL}`);
       // Anything missed while disconnected is caught by an immediate sweep.
-      await sweep();
-    } catch {
+      if (!stopped) await sweep();
+    } catch (error) {
       retry();
+      throw error;
     }
   }
 
@@ -472,257 +494,329 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     debounce: options.debounce ?? 2000,
     maxDebounce: options.maxDebounce ?? 5000,
 
-    async onConnect({ requestHeaders, documentName: name, request }) {
-      const origin = requestHeaders.get("origin");
-      if (!origin || !options.frontendOrigins.has(origin)) {
-        server.socketFor(request)?.reject("Origin is not allowed");
-        throw new Rejection("Origin is not allowed");
-      }
-      if (!sessionIdOf(name)) {
-        server.socketFor(request)?.reject("Unknown document");
-        throw new Rejection("Unknown document");
-      }
-    },
-
-    async onAuthenticate({
-      token,
-      documentName: name,
-      connectionConfig,
-      request,
-      socketId,
-    }) {
-      const sessionId = sessionIdOf(name);
-      if (!sessionId || typeof token !== "string" || !token) {
-        server.socketFor(request)?.reject("Not authorized");
-        throw new Rejection("Not authorized");
-      }
-      const socket = server.socketFor(request);
-      if (!socket || socket.readyState !== 1)
-        throw new Rejection("Not authorized");
-      const client = await pool.connect().catch((error) => {
-        socket.reject("Not authorized");
-        throw error;
-      });
-      try {
-        if (socket.readyState !== 1) throw new Rejection("Not authorized");
-        await boundedQuery(client, "BEGIN");
-        const pending = await boundedQuery<{
-          user_id: string;
-          auth_session_id: string;
-          collaboration_session_id: string;
-          permission: "read" | "write";
-        }>(
-          client,
-          "SELECT user_id,auth_session_id,collaboration_session_id,permission FROM collaboration_connection_tickets WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()",
-          [hashTicket(token)],
-        );
-        const ticket = pending.rows[0];
-        if (!ticket || ticket.collaboration_session_id !== sessionId)
-          throw new Rejection("Not authorized");
-        const session = await boundedQuery<{
-          course_id: string;
-          lifecycle_state: string;
-        }>(
-          client,
-          "SELECT course_id,lifecycle_state FROM collaboration_sessions WHERE id=$1 FOR SHARE",
-          [sessionId],
-        );
-        if (session.rows[0]?.lifecycle_state !== "active")
-          throw new Rejection("Not authorized");
-        const courseId = session.rows[0].course_id;
-        const course = await boundedQuery<{ status: string }>(
-          client,
-          "SELECT status FROM courses WHERE id=$1",
-          [courseId],
-        );
-        if (course.rows[0]?.status !== "active")
-          throw new Rejection("Not authorized");
-        const membership = await boundedQuery(
-          client,
-          "SELECT 1 FROM course_memberships WHERE course_id=$1 AND user_id=$2 FOR SHARE",
-          [courseId, ticket.user_id],
-        );
-        if (!membership.rowCount) throw new Rejection("Not authorized");
-        const participant = await boundedQuery<{ permission: string }>(
-          client,
-          "SELECT permission FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2 FOR SHARE",
-          [sessionId, ticket.user_id],
-        );
-        if (
-          !participant.rowCount ||
-          (ticket.permission === "write" &&
-            participant.rows[0]?.permission !== "edit")
-        )
-          throw new Rejection("Not authorized");
-        const authSession = await boundedQuery(
-          client,
-          "SELECT 1 FROM sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>now() FOR SHARE",
-          [ticket.auth_session_id, ticket.user_id],
-        );
-        if (!authSession.rowCount) throw new Rejection("Not authorized");
-        const user = await boundedQuery<{ display_name: string }>(
-          client,
-          "SELECT display_name FROM users WHERE id=$1 AND deleted_at IS NULL",
-          [ticket.user_id],
-        );
-        if (!user.rowCount) throw new Rejection("Not authorized");
-        const consumed = await boundedQuery(
-          client,
-          "UPDATE collaboration_connection_tickets SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()",
-          [hashTicket(token)],
-        );
-        if (!consumed.rowCount || socket.readyState !== 1)
-          throw new Rejection("Not authorized");
-        const context: ConnectionContext = {
-          userId: ticket.user_id,
-          authSessionId: ticket.auth_session_id,
-          sessionId,
-          displayName: user.rows[0]?.display_name ?? "Participant",
-          color: colorFor(ticket.user_id),
-          permission: ticket.permission,
-        };
-        // Hocuspocus neither applies nor broadcasts a read-only connection's updates.
-        connectionConfig.readOnly = ticket.permission === "read";
-        if (socket.readyState !== 1) throw new Rejection("Not authorized");
-        admissions.set(request, { client, phase: "active", socketId });
-        admissionSockets.set(socketId, request);
-        return context;
-      } catch (error) {
-        socket.reject("Not authorized");
-        try {
-          await boundedQuery(client, "ROLLBACK", [], 1000);
-          client.release();
-        } catch {
-          client.release(true);
+    onConnect: (
+      ...args: Parameters<
+        NonNullable<import("@hocuspocus/server").Configuration["onConnect"]>
+      >
+    ) =>
+      own(async () => {
+        const [{ requestHeaders, documentName: name, request }] = args;
+        if (stopped) throw new Rejection("Service restarting");
+        const origin = requestHeaders.get("origin");
+        if (!origin || !options.frontendOrigins.has(origin)) {
+          server.socketFor(request)?.reject("Origin is not allowed");
+          throw new Rejection("Origin is not allowed");
         }
-        throw error;
-      }
-    },
+        if (!sessionIdOf(name)) {
+          server.socketFor(request)?.reject("Unknown document");
+          throw new Rejection("Unknown document");
+        }
+      }, true),
 
-    async onLoadDocument({ document, documentName: name, socketId }) {
-      const sessionId = sessionIdOf(name)!;
-      let saved;
-      try {
-        saved = await boundedQuery<{ yjs_state: Buffer }>(
-          pool,
-          "SELECT yjs_state FROM collaboration_documents WHERE collaboration_session_id=$1",
-          [sessionId],
-        );
-      } catch (error) {
-        const request = admissionSockets.get(socketId);
-        if (request) server.socketFor(request)?.abort();
-        throw error;
-      }
-      if (saved.rows[0])
-        Y.applyUpdate(document, new Uint8Array(saved.rows[0].yjs_state));
-      return document;
-    },
+    onAuthenticate: (
+      ...args: Parameters<
+        NonNullable<
+          import("@hocuspocus/server").Configuration["onAuthenticate"]
+        >
+      >
+    ) =>
+      own(async () => {
+        const [
+          { token, documentName: name, connectionConfig, request, socketId },
+        ] = args;
+        if (stopped) throw new Rejection("Service restarting");
+        const sessionId = sessionIdOf(name);
+        if (!sessionId || typeof token !== "string" || !token) {
+          server.socketFor(request)?.reject("Not authorized");
+          throw new Rejection("Not authorized");
+        }
+        const socket = server.socketFor(request);
+        if (!socket || socket.readyState !== 1)
+          throw new Rejection("Not authorized");
+        const client = await pool.connect().catch((error) => {
+          socket.reject("Not authorized");
+          throw error;
+        });
+        try {
+          if (socket.readyState !== 1) throw new Rejection("Not authorized");
+          await boundedQuery(client, "BEGIN");
+          const pending = await boundedQuery<{
+            user_id: string;
+            auth_session_id: string;
+            collaboration_session_id: string;
+            permission: "read" | "write";
+          }>(
+            client,
+            "SELECT user_id,auth_session_id,collaboration_session_id,permission FROM collaboration_connection_tickets WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()",
+            [hashTicket(token)],
+          );
+          const ticket = pending.rows[0];
+          if (!ticket || ticket.collaboration_session_id !== sessionId)
+            throw new Rejection("Not authorized");
+          const session = await boundedQuery<{
+            course_id: string;
+            lifecycle_state: string;
+          }>(
+            client,
+            "SELECT course_id,lifecycle_state FROM collaboration_sessions WHERE id=$1 FOR SHARE",
+            [sessionId],
+          );
+          if (session.rows[0]?.lifecycle_state !== "active")
+            throw new Rejection("Not authorized");
+          const courseId = session.rows[0].course_id;
+          const course = await boundedQuery<{ status: string }>(
+            client,
+            "SELECT status FROM courses WHERE id=$1",
+            [courseId],
+          );
+          if (course.rows[0]?.status !== "active")
+            throw new Rejection("Not authorized");
+          const membership = await boundedQuery(
+            client,
+            "SELECT 1 FROM course_memberships WHERE course_id=$1 AND user_id=$2 FOR SHARE",
+            [courseId, ticket.user_id],
+          );
+          if (!membership.rowCount) throw new Rejection("Not authorized");
+          const participant = await boundedQuery<{ permission: string }>(
+            client,
+            "SELECT permission FROM collaboration_participants WHERE collaboration_session_id=$1 AND user_id=$2 FOR SHARE",
+            [sessionId, ticket.user_id],
+          );
+          if (
+            !participant.rowCount ||
+            (ticket.permission === "write" &&
+              participant.rows[0]?.permission !== "edit")
+          )
+            throw new Rejection("Not authorized");
+          const authSession = await boundedQuery(
+            client,
+            "SELECT 1 FROM sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL AND expires_at>now() FOR SHARE",
+            [ticket.auth_session_id, ticket.user_id],
+          );
+          if (!authSession.rowCount) throw new Rejection("Not authorized");
+          const user = await boundedQuery<{ display_name: string }>(
+            client,
+            "SELECT display_name FROM users WHERE id=$1 AND deleted_at IS NULL",
+            [ticket.user_id],
+          );
+          if (!user.rowCount) throw new Rejection("Not authorized");
+          const consumed = await boundedQuery(
+            client,
+            "UPDATE collaboration_connection_tickets SET consumed_at=now() WHERE token_hash=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>now()",
+            [hashTicket(token)],
+          );
+          if (!consumed.rowCount || socket.readyState !== 1)
+            throw new Rejection("Not authorized");
+          const context: ConnectionContext = {
+            userId: ticket.user_id,
+            authSessionId: ticket.auth_session_id,
+            sessionId,
+            displayName: user.rows[0]?.display_name ?? "Participant",
+            color: colorFor(ticket.user_id),
+            permission: ticket.permission,
+          };
+          // Hocuspocus neither applies nor broadcasts a read-only connection's updates.
+          connectionConfig.readOnly = ticket.permission === "read";
+          if (stopped || socket.readyState !== 1)
+            throw new Rejection("Service restarting");
+          admissions.set(request, { client, phase: "active", socketId });
+          admissionSockets.set(socketId, request);
+          return context;
+        } catch (error) {
+          socket.reject("Not authorized");
+          try {
+            await boundedQuery(client, "ROLLBACK", [], 1000);
+            client.release();
+          } catch {
+            callbackFailed = true;
+            client.release(true);
+          }
+          throw error;
+        }
+      }, true),
 
-    async onDisconnect({ documentName: name, clientsCount, socketId }) {
-      // The idle period starts when the last participant leaves.
-      const sessionId = sessionIdOf(name);
-      if (sessionId) {
-        const tracked = processingConnections.get(sessionId);
-        tracked?.delete(socketId);
-        if (tracked?.size === 0) processingConnections.delete(sessionId);
-      }
-      if (sessionId && clientsCount === 0) await touch([sessionId]);
-    },
+    onLoadDocument: (
+      ...args: Parameters<
+        NonNullable<
+          import("@hocuspocus/server").Configuration["onLoadDocument"]
+        >
+      >
+    ) =>
+      own(async () => {
+        const [{ document, documentName: name, socketId }] = args;
+        const sessionId = sessionIdOf(name)!;
+        let saved;
+        try {
+          saved = await boundedQuery<{ yjs_state: Buffer }>(
+            pool,
+            "SELECT yjs_state FROM collaboration_documents WHERE collaboration_session_id=$1",
+            [sessionId],
+          );
+        } catch (error) {
+          const request = admissionSockets.get(socketId);
+          if (request) server.socketFor(request)?.abort();
+          throw error;
+        }
+        if (saved.rows[0])
+          Y.applyUpdate(document, new Uint8Array(saved.rows[0].yjs_state));
+        return document;
+      }, true),
 
-    async onStoreDocument({ document, documentName: name }) {
-      await persist(sessionIdOf(name)!, document);
-    },
+    onDisconnect: (
+      ...args: Parameters<
+        NonNullable<import("@hocuspocus/server").Configuration["onDisconnect"]>
+      >
+    ) =>
+      own(async () => {
+        const [{ documentName: name, clientsCount, socketId }] = args;
+        // The idle period starts when the last participant leaves.
+        const sessionId = sessionIdOf(name);
+        if (sessionId) {
+          const tracked = processingConnections.get(sessionId);
+          tracked?.delete(socketId);
+          if (tracked?.size === 0) processingConnections.delete(sessionId);
+        }
+        if (sessionId && clientsCount === 0) await touch([sessionId]);
+      }, false),
 
-    async beforeHandleMessage({ context, connection }) {
-      if (
-        admissions.has(connection.request) ||
-        !context?.userId ||
-        !(await stillAuthorized(context))
-      ) {
-        close(connection, CLOSE_REASONS.removed);
-        throw new Rejection("Not authorized");
-      }
-    },
+    onStoreDocument: (
+      ...args: Parameters<
+        NonNullable<
+          import("@hocuspocus/server").Configuration["onStoreDocument"]
+        >
+      >
+    ) =>
+      own(async () => {
+        const [{ document, documentName: name }] = args;
+        await persist(sessionIdOf(name)!, document);
+      }, true),
 
-    async beforeSync({ type, payload, document, connection }) {
-      const context = connection.context as ConnectionContext;
-      // SyncStep2 (1) and Update (2) carry document changes.
-      if (type !== 1 && type !== 2) return;
-      // A viewer's updates are dropped unapplied, so they are not validated.
-      if (context.permission === "read") return;
-      if (!acceptsUpdate(document, payload, MAX_DOCUMENT_CHARACTERS)) {
-        metrics.rejectedUpdates.inc();
-        close(connection, CLOSE_REASONS.invalid);
-        throw new Rejection("Invalid update");
-      }
-    },
+    beforeHandleMessage: (
+      ...args: Parameters<
+        NonNullable<
+          import("@hocuspocus/server").Configuration["beforeHandleMessage"]
+        >
+      >
+    ) =>
+      own(async () => {
+        const [{ context, connection }] = args;
+        if (stopped) {
+          connection.close({ code: 1012, reason: "service-restart" });
+          server.socketFor(connection.request)?.close(1012, "service-restart");
+          throw new Rejection("Service restarting");
+        }
+        if (
+          admissions.has(connection.request) ||
+          !context?.userId ||
+          !(await stillAuthorized(context))
+        ) {
+          close(connection, CLOSE_REASONS.removed);
+          throw new Rejection("Not authorized");
+        }
+      }, true),
 
-    async connected({ connection, context, request, socketId }) {
-      const lease = admissions.get(request);
-      const socket = server.socketFor(request);
-      if (
-        !lease ||
-        lease.phase !== "active" ||
-        !socket ||
-        socket.readyState !== 1
-      ) {
-        socket?.abort();
-        throw new Rejection("Not authorized");
-      }
-      lease.phase = "committing";
-      const tracked =
-        processingConnections.get(context.sessionId) ??
-        new Map<string, Connection>();
-      tracked.set(socketId, connection);
-      processingConnections.set(context.sessionId, tracked);
-      try {
-        await boundedQuery(lease.client, "COMMIT");
-        lease.client.release();
-        lease.phase = "finished";
-        admissions.delete(request);
-        admissionSockets.delete(socketId);
-        if (!socket.confirm()) throw new Rejection("Not authorized");
-        socket.finish();
-      } catch (error) {
-        tracked.delete(socketId);
-        if (tracked.size === 0) processingConnections.delete(context.sessionId);
-        socket.abort();
-        if (lease.phase !== "finished") {
+    beforeSync: (
+      ...args: Parameters<
+        NonNullable<import("@hocuspocus/server").Configuration["beforeSync"]>
+      >
+    ) =>
+      own(async () => {
+        const [{ type, payload, document, connection }] = args;
+        const context = connection.context as ConnectionContext;
+        // SyncStep2 (1) and Update (2) carry document changes.
+        if (type !== 1 && type !== 2) return;
+        // A viewer's updates are dropped unapplied, so they are not validated.
+        if (context.permission === "read") return;
+        if (!acceptsUpdate(document, payload, MAX_DOCUMENT_CHARACTERS)) {
+          metrics.rejectedUpdates.inc();
+          close(connection, CLOSE_REASONS.invalid);
+          throw new Rejection("Invalid update");
+        }
+      }, true),
+
+    connected: (
+      ...args: Parameters<
+        NonNullable<import("@hocuspocus/server").Configuration["connected"]>
+      >
+    ) =>
+      own(async () => {
+        const [{ connection, context, request, socketId }] = args;
+        const lease = admissions.get(request);
+        const socket = server.socketFor(request);
+        if (
+          stopped ||
+          !lease ||
+          lease.phase !== "active" ||
+          !socket ||
+          socket.readyState !== 1
+        ) {
+          socket?.abort();
+          throw new Rejection("Not authorized");
+        }
+        lease.phase = "committing";
+        const tracked =
+          processingConnections.get(context.sessionId) ??
+          new Map<string, Connection>();
+        tracked.set(socketId, connection);
+        processingConnections.set(context.sessionId, tracked);
+        try {
+          await boundedQuery(lease.client, "COMMIT");
+          lease.client.release();
           lease.phase = "finished";
           admissions.delete(request);
           admissionSockets.delete(socketId);
-          try {
-            await boundedQuery(lease.client, "ROLLBACK", [], 1000);
-            lease.client.release();
-          } catch {
-            lease.client.release(true);
+          if (!socket.confirm()) throw new Rejection("Not authorized");
+          socket.finish();
+        } catch (error) {
+          tracked.delete(socketId);
+          if (tracked.size === 0)
+            processingConnections.delete(context.sessionId);
+          socket.abort();
+          if (lease.phase !== "finished") {
+            lease.phase = "finished";
+            admissions.delete(request);
+            admissionSockets.delete(socketId);
+            try {
+              await boundedQuery(lease.client, "ROLLBACK", [], 1000);
+              lease.client.release();
+            } catch {
+              callbackFailed = true;
+              lease.client.release(true);
+            }
           }
+          throw error;
         }
-        throw error;
-      }
-      // Awareness relays the server-stamped identity only to other clients,
-      // so each client learns its own name and color here.
-      connection.sendStateless(
-        JSON.stringify({
-          type: "presence",
-          user: {
+        // Awareness relays the server-stamped identity only to other clients,
+        // so each client learns its own name and color here.
+        connection.sendStateless(
+          JSON.stringify({
+            type: "presence",
+            user: {
+              userId: context.userId,
+              name: context.displayName,
+              color: context.color,
+            },
+          }),
+        );
+      }, false),
+
+    beforeHandleAwareness: (
+      ...args: Parameters<
+        NonNullable<
+          import("@hocuspocus/server").Configuration["beforeHandleAwareness"]
+        >
+      >
+    ) =>
+      own(async () => {
+        const [{ states, context }] = args;
+        if (!context) return;
+        for (const state of states.values())
+          state.user = {
             userId: context.userId,
             name: context.displayName,
             color: context.color,
-          },
-        }),
-      );
-    },
-
-    async beforeHandleAwareness({ states, context }) {
-      if (!context) return;
-      for (const state of states.values())
-        state.user = {
-          userId: context.userId,
-          name: context.displayName,
-          color: context.color,
-        };
-    },
+          };
+      }, true),
   });
 
   const server = createCollaborationTransport({
@@ -732,11 +826,29 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     maxPayload: MAX_MESSAGE_BYTES,
     admissionTimeoutMs: options.admissionTimeoutMs ?? 5000,
     onAbort(request) {
-      const work = abortAdmission(request);
+      const work = own(() => abortAdmission(request));
       aborting.add(work);
-      void work.finally(() => aborting.delete(work));
+      void work.then(
+        () => aborting.delete(work),
+        () => aborting.delete(work),
+      );
     },
     async onRequest(request, response) {
+      const path = request.url?.split("?")[0];
+      if (
+        request.method === "GET" &&
+        (path === "/health" || path === "/ready")
+      ) {
+        const ready = !stopped && (options.ready?.() ?? true);
+        response.writeHead(path === "/ready" && !ready ? 503 : 200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        });
+        response.end(
+          JSON.stringify(path === "/health" ? { status: "ok" } : { ready }),
+        );
+        return;
+      }
       if (!options.metricsToken || request.url?.split("?")[0] !== "/metrics") {
         response.writeHead(200, { "Content-Type": "text/plain" });
         response.end("Welcome to Hocuspocus!");
@@ -763,66 +875,86 @@ export function createCollaborationServer(options: CollaborationServerOptions) {
     sweep,
     endIdle,
     persist,
+    cutoff,
     async start() {
-      stopped = false;
+      if (stopped) return;
       await server.listen();
-      await startListener();
-      sweepTimer = setInterval(
-        () => void sweep().catch(() => undefined),
-        options.sweepIntervalMs ?? 15_000,
-      );
+      if (stopped) return;
+      await own(startListener);
+      if (stopped) return;
+      sweepTimer = setInterval(() => {
+        if (!stopped) void own(sweep).catch(() => undefined);
+      }, options.sweepIntervalMs ?? 15_000);
     },
     /** Drops the LISTEN connection, as if the database link failed. */
     async dropListener() {
       await listener?.end();
     },
-    async stop() {
-      stopped = true;
-      const deadline = Date.now() + 5000;
-      const bounded = async <T>(work: Promise<T>): Promise<T> => {
-        let timeout: NodeJS.Timeout | undefined;
+    stop(): Promise<void> {
+      if (stopping) return stopping;
+      cutoff();
+      stopping = (async () => {
         try {
-          return await Promise.race([
-            work,
-            new Promise<never>((_, reject) => {
-              timeout = setTimeout(
-                () =>
-                  reject(
-                    new Error(
-                      "Collaboration shutdown timed out; unsaved document state may remain",
-                    ),
-                  ),
-                Math.max(1, deadline - Date.now()),
-              );
-            }),
+          await settlePending();
+          // The message hook gates admission; connection completion includes apply()
+          // and afterHandleMessage, not merely the authorization promise.
+          const connections = [...processingConnections.values()].flatMap(
+            (map) => [...map.values()],
+          );
+          await Promise.all(
+            connections.map((connection) =>
+              connection.waitForPendingMessages(),
+            ),
+          );
+          await settlePending();
+          for (const request of [...admissions.keys()])
+            await abortAdmission(request);
+          server.hocuspocus.flushPendingStores();
+          await settlePending();
+          const oldStores = await Promise.allSettled([...persisting.values()]);
+          // Recoverable store errors are superseded ONLY by exact final-state saves below.
+          void oldStores;
+          for (const [name, document] of server.hocuspocus.documents) {
+            const sessionId = sessionIdOf(name);
+            if (sessionId) await persist(sessionId, document);
+          }
+          if (failedStores.size)
+            throw new Error("Unconfirmed collaboration persistence");
+          const current = listener;
+          listener = undefined;
+          if (current) await current.end();
+          await server.destroy();
+          await settlePending();
+          const stores = await Promise.allSettled([
+            ...persisting.values(),
+            ...aborting,
           ]);
-        } finally {
-          if (timeout) clearTimeout(timeout);
-        }
-      };
-      if (sweepTimer) clearInterval(sweepTimer);
-      if (retryTimer) clearTimeout(retryTimer);
-      const current = listener;
-      listener = undefined;
-      if (current) await bounded(current.end().catch(() => undefined));
-      server.hocuspocus.flushPendingStores();
-      await bounded(Promise.allSettled([...persisting.values()]));
-      // Hocuspocus keeps a document in memory after a failed store. Retry it
-      // once on clean shutdown, then unload disconnected documents so a
-      // recovered database does not leave destroy() waiting indefinitely.
-      for (const [name, document] of server.hocuspocus.documents) {
-        const sessionId = sessionIdOf(name);
-        if (!sessionId || document.getConnectionsCount() > 0) continue;
-        try {
-          await bounded(persist(sessionId, document));
+          if (
+            stores.some((outcome) => outcome.status === "rejected") ||
+            callbackFailed ||
+            failedStores.size
+          )
+            throw new Error("Collaboration callbacks did not settle cleanly");
         } catch (error) {
-          console.error("Collaboration document is not durably stored", error);
+          const current = listener;
+          listener = undefined;
+          const cleanup = await Promise.allSettled([
+            current ? current.end() : Promise.resolve(),
+            server.closeTransports(),
+          ]);
+          await settlePending();
+          const failures = cleanup
+            .filter((outcome) => outcome.status === "rejected")
+            .map((outcome) => outcome.reason);
+          if (failures.length)
+            throw new AggregateError(
+              [error, ...failures],
+              "Collaboration drain and cleanup failed",
+            );
+          throw error;
         }
-        await bounded(server.hocuspocus.unloadDocument(document));
-      }
-      await bounded(server.destroy());
-      await bounded(Promise.allSettled([...aborting]));
-      await bounded(Promise.allSettled([...persisting.values()]));
+      })();
+      return stopping;
     },
   };
 }

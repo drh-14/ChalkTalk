@@ -1293,3 +1293,7 @@ curl --request GET '/api/v1/collaboration-sessions/collab_123/snapshot' \
 ##### `500 Internal Server Error`
 
 `internal_error`: The server could not complete the request.
+
+## Process shutdown is not session ending
+
+Graceful process shutdown preserves active session lifecycle and final_snapshot_confirmed. Only the established explicit user-ending flow changes these fields. See the WebSocket drain contract and [application lifecycle](application-lifecycle.md) for confirmed frozen persistence, fresh tickets and failure-aware restart semantics.

@@ -1217,6 +1217,12 @@ integration("collaboration server", () => {
         headers: { Origin: ORIGIN },
       });
       const originalQuery = pool.query.bind(pool);
+      let settleQuery!: () => void;
+      const stalledQuery = new Promise<{ rows: unknown[]; rowCount: number }>(
+        (done) => {
+          settleQuery = () => done({ rows: [], rowCount: 0 });
+        },
+      );
       try {
         await new Promise<void>((resolve) => raw.once("open", resolve));
         const encoding = await import("lib0/encoding");
@@ -1233,7 +1239,7 @@ integration("collaboration server", () => {
         ) => {
           const text = typeof sql === "string" ? sql : sql.text;
           if (text.includes("JOIN collaboration_participants cp"))
-            return new Promise(() => undefined);
+            return stalledQuery;
           return typeof sql === "string"
             ? originalQuery(sql, values)
             : originalQuery(sql);
@@ -1246,6 +1252,7 @@ integration("collaboration server", () => {
         await until(() => raw.readyState === WebSocket.CLOSED);
         expect(Date.now() - started).toBeLessThan(4000);
       } finally {
+        settleQuery();
         pool.query = originalQuery;
         raw.terminate();
       }
@@ -1677,7 +1684,7 @@ integration("collaboration server", () => {
           8000,
         );
         const shutdownStarted = Date.now();
-        await collaboration.stop();
+        await expect(collaboration.stop()).rejects.toThrow();
         expect(Date.now() - shutdownStarted).toBeLessThan(5000);
       } finally {
         if (!blockerReleased)
@@ -1687,6 +1694,9 @@ integration("collaboration server", () => {
           "DROP TRIGGER reject_collaboration_store ON collaboration_documents",
         );
         await pool.query("DROP FUNCTION reject_collaboration_store()");
+        // Failed drain retains the document; do not claim it was saved. The
+        // isolated test can dispose it only after removing the injected outage.
+        collaboration.server.forceClose();
         await startServer();
       }
     }, 20_000);
@@ -1698,4 +1708,38 @@ integration("collaboration server", () => {
       expect(client.provider.isSynced).toBe(false);
     });
   });
+  it("process drain persists the frozen accepted state without ending the session", async () => {
+    const sessionId = await newSession();
+    const alice = join("alice", sessionId);
+    await until(() => alice.provider.isSynced);
+    alice.text.insert(0, "accepted before cutoff");
+    await until(
+      () =>
+        collaboration.hocuspocus.documents
+          .get(documentName(sessionId))
+          ?.getText("content")
+          .toString() === "accepted before cutoff",
+    );
+    collaboration.cutoff();
+    alice.text.insert(alice.text.length, " late excluded");
+    await collaboration.stop();
+    const row = await pool.query(
+      "SELECT d.text_projection,s.lifecycle_state,s.final_snapshot_confirmed FROM collaboration_sessions s JOIN collaboration_documents d ON d.collaboration_session_id=s.id WHERE s.id=$1",
+      [sessionId],
+    );
+    expect(row.rows[0]).toMatchObject({
+      text_projection: "accepted before cutoff",
+      lifecycle_state: "active",
+      final_snapshot_confirmed: false,
+    });
+    expect(
+      alice.state.stateless.some((message) =>
+        message.includes("session-ended"),
+      ),
+    ).toBe(false);
+    await startServer();
+    const reconnected = join("bob", sessionId);
+    await until(() => reconnected.provider.isSynced);
+    expect(reconnected.text.toString()).toBe("accepted before cutoff");
+  }, 15000);
 });
