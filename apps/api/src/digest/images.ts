@@ -91,7 +91,11 @@ export async function renderAttachedImage(
     }
   };
   try {
-    return await Promise.race([convert(), deadline]);
+    const conversion = convert();
+    const value = await Promise.race([conversion, deadline]);
+    // Cancellation starts cleanup; it does not settle the owned IO by itself.
+    await conversion;
+    return value;
   } finally {
     clearTimeout(timer!);
   }

@@ -31,6 +31,7 @@ type LiveOptions = {
   pool: Pool;
   authService: AuthService;
   frontendOrigins: ReadonlySet<string>;
+  accepting?: () => boolean;
 };
 
 function sessionCookie(request: IncomingMessage): string | undefined {
@@ -55,9 +56,15 @@ function reject(socket: Duplex, status: number): void {
         ? "Forbidden"
         : "Service Unavailable";
   socket.write(
-    `HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+    `HTTP/1.1 ${status} ${reason}\r\n${status === 503 ? "Retry-After: 1\r\nCache-Control: no-store\r\n" : ""}Connection: close\r\nContent-Length: 0\r\n\r\n`,
   );
   socket.destroy();
+}
+
+async function settleCallbacks(work: Promise<unknown>[]): Promise<void> {
+  const outcomes = await Promise.allSettled(work);
+  const failure = outcomes.find((outcome) => outcome.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
 }
 
 export function createThreadLiveServer({
@@ -65,6 +72,7 @@ export function createThreadLiveServer({
   pool,
   authService,
   frontendOrigins,
+  accepting = () => true,
 }: LiveOptions) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE });
   const clients = new Set<Client>();
@@ -72,6 +80,32 @@ export function createThreadLiveServer({
   let timer: ReturnType<typeof setInterval> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
+  let failed = false;
+  const pending = new Set<Promise<unknown>>();
+  function own<T>(work: () => Promise<T>, expectedFailure = false): Promise<T> {
+    const promise = Promise.resolve().then(work);
+    pending.add(promise);
+    void promise.then(
+      () => pending.delete(promise),
+      () => {
+        if (!expectedFailure) failed = true;
+        pending.delete(promise);
+      },
+    );
+    return promise;
+  }
+  function cutoff() {
+    stopped = true;
+    if (timer) clearInterval(timer);
+    if (retry) clearTimeout(retry);
+  }
+  async function settlePending() {
+    while (pending.size) {
+      const outcomes = await Promise.allSettled([...pending]);
+      // own() classifies expected authorization failures separately.
+      void outcomes;
+    }
+  }
 
   function disconnectClients(): void {
     for (const client of clients)
@@ -82,7 +116,7 @@ export function createThreadLiveServer({
     if (stopped || retry) return;
     retry = setTimeout(() => {
       retry = undefined;
-      void connectListener();
+      void own(connectListener).catch(() => {});
     }, 1000);
     retry.unref();
   }
@@ -97,23 +131,26 @@ export function createThreadLiveServer({
       }
       listener = connection;
       connection.on("notification", (notification) => {
-        void onNotification(notification).catch(() => {});
+        if (!stopped)
+          void own(() => onNotification(notification)).catch(() => {});
       });
       connection.on("error", () => {
-        if (listener === connection) listener = undefined;
+        if (listener !== connection) return;
+        listener = undefined;
         disconnectClients();
         connection.release();
         scheduleReconnect();
       });
       await connection.query("LISTEN thread_changes");
       await connection.query("LISTEN thread_typing");
-    } catch {
+    } catch (error) {
       if (listener) {
         listener.release();
         listener = undefined;
       }
       disconnectClients();
       scheduleReconnect();
+      throw error;
     }
   }
 
@@ -269,7 +306,7 @@ export function createThreadLiveServer({
         !Number.isSafeInteger(event.sequence)
       )
         return;
-      await Promise.all(
+      await settleCallbacks(
         [...clients]
           .filter((client) => client.courses.has(event.courseId as string))
           .map(async (client) => {
@@ -291,7 +328,7 @@ export function createThreadLiveServer({
         typeof event.active !== "boolean"
       )
         return;
-      await Promise.all(
+      await settleCallbacks(
         [...clients]
           .filter(
             (client) =>
@@ -320,63 +357,88 @@ export function createThreadLiveServer({
   const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     if (new URL(request.url ?? "", "http://localhost").pathname !== PATH)
       return;
+    if (stopped || !accepting()) return reject(socket, 503);
     const origin = request.headers.origin;
     const credential = sessionCookie(request);
     if (!origin || !frontendOrigins.has(origin)) return reject(socket, 403);
     if (!credential) return reject(socket, 401);
     if (!listener) return reject(socket, 503);
-    void authService
-      .session(credential)
-      .then((session) => {
-        if (stopped || socket.destroyed) return;
-        wss.handleUpgrade(request, socket, head, (webSocket) => {
-          const client: Client = {
-            id: randomUUID(),
-            sessionId: session.id,
-            socket: webSocket,
-            credential,
-            userId: session.user.id,
-            displayName: session.user.displayName,
-            courses: new Set(),
-            viewVersion: 0,
-            lastTypingAt: 0,
-          };
-          clients.add(client);
-          webSocket.on("message", (data) => {
-            void handle(client, Buffer.from(data.toString())).catch(() =>
-              send(client, { type: "error", code: "service_unavailable" }),
-            );
-          });
-          webSocket.on("close", () => {
-            clients.delete(client);
-          });
+    void own(async () => {
+      const session = await authService.session(credential);
+      if (stopped) {
+        reject(socket, 503);
+        return;
+      }
+      if (socket.destroyed) return;
+      wss.handleUpgrade(request, socket, head, (webSocket) => {
+        const client: Client = {
+          id: randomUUID(),
+          sessionId: session.id,
+          socket: webSocket,
+          credential,
+          userId: session.user.id,
+          displayName: session.user.displayName,
+          courses: new Set(),
+          viewVersion: 0,
+          lastTypingAt: 0,
+        };
+        clients.add(client);
+        webSocket.on("message", (data) => {
+          if (stopped) return;
+          void own(() => handle(client, Buffer.from(data.toString()))).catch(
+            () => send(client, { type: "error", code: "service_unavailable" }),
+          );
         });
-      })
-      .catch(() => reject(socket, 401));
+        webSocket.on("close", () => {
+          clients.delete(client);
+        });
+      });
+    }, true).catch(() => reject(socket, 401));
   };
   server.on("upgrade", upgrade);
 
   return {
+    cutoff,
     async start() {
-      await connectListener();
+      await own(connectListener);
+      if (stopped) return;
       timer = setInterval(() => {
-        for (const client of clients) void current(client);
+        for (const client of clients)
+          if (!stopped) void own(() => current(client));
       }, SESSION_RECHECK_MS);
       timer.unref();
     },
     async stop() {
-      stopped = true;
+      cutoff();
+      await settlePending();
       server.off("upgrade", upgrade);
       if (timer) clearInterval(timer);
       if (retry) clearTimeout(retry);
       for (const client of clients) client.socket.terminate();
       clients.clear();
-      if (listener) {
-        await listener.query("UNLISTEN *");
-        listener.release();
-        listener = undefined;
-      }
-      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      const connection = listener;
+      listener = undefined;
+      const outcomes = await Promise.allSettled([
+        (async () => {
+          if (!connection) return;
+          try {
+            await connection.query("UNLISTEN *");
+          } catch (error) {
+            connection.release(error instanceof Error ? error : true);
+            throw error;
+          }
+          connection.release();
+        })(),
+        new Promise<void>((resolve, reject) =>
+          wss.close((error) => (error ? reject(error) : resolve())),
+        ),
+      ]);
+      await settlePending();
+      const closureFailure = outcomes.find(
+        (outcome) => outcome.status === "rejected",
+      );
+      if (closureFailure?.status === "rejected") throw closureFailure.reason;
+      if (failed) throw new Error("Thread live work did not settle cleanly");
     },
   };
 }

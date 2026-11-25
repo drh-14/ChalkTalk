@@ -21,6 +21,7 @@ class Listener extends EventEmitter {
 
 function fixture(
   conversationCheck?: (conversationId: string) => Promise<void>,
+  membershipCheck?: (userId: string) => Promise<void>,
 ) {
   const server = createServer((_request, response) => response.end());
   const listener = new Listener();
@@ -28,8 +29,10 @@ function fixture(
   const pool = {
     connect: async () => listener,
     query: async (sql: string, params?: unknown[]) => {
-      if (sql.includes("course_memberships"))
+      if (sql.includes("course_memberships")) {
+        await membershipCheck?.(String(params?.[1]));
         return { rows: members.has(String(params?.[1])) ? [{ ok: 1 }] : [] };
+      }
       if (sql.includes("thread_conversations")) {
         await conversationCheck?.(String(params?.[0]));
         return { rows: [{ course_id: COURSE }] };
@@ -307,4 +310,66 @@ describe("Thread live WebSocket", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(afterLeaving).toEqual([]);
   });
+});
+
+it("drain awaits every notification authorization even when a sibling fails", async () => {
+  let notifying = false;
+  let release!: () => void;
+  let entered!: () => void;
+  const blocked = new Promise<void>((done) => {
+    release = done;
+  });
+  const started = new Promise<void>((done) => {
+    entered = done;
+  });
+  const { server, live, listener } = fixture(undefined, async (user) => {
+    if (!notifying) return;
+    if (user === "alice") throw new Error("database unavailable");
+    entered();
+    await blocked;
+  });
+  await live.start();
+  await new Promise<void>((done) => server.listen(0, done));
+  const alice = await connect(server, "alice");
+  const bob = await connect(server, "bob");
+  try {
+    for (const socket of [alice, bob]) {
+      socket.send(JSON.stringify({ type: "subscribe", courseId: COURSE }));
+      await next(socket);
+    }
+    notifying = true;
+    listener.emit("notification", {
+      channel: "thread_changes",
+      payload: JSON.stringify({
+        courseId: COURSE,
+        boardId: COURSE,
+        sequence: 1,
+      }),
+    });
+    await started;
+    await new Promise((done) => setImmediate(done));
+    let stopped = false;
+    const stopping = live.stop();
+    const observed = stopping.then(
+      () => {
+        stopped = true;
+      },
+      () => {
+        stopped = true;
+      },
+    );
+    await new Promise((done) => setTimeout(done, 20));
+    expect(stopped).toBe(false);
+    release();
+    await expect(stopping).rejects.toThrow(
+      "Thread live work did not settle cleanly",
+    );
+    await observed;
+  } finally {
+    release();
+    alice.terminate();
+    bob.terminate();
+    await live.stop().catch(() => {});
+    await new Promise<void>((done) => server.close(() => done()));
+  }
 });

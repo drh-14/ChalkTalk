@@ -25,6 +25,7 @@ class AdmissionSocket implements WebSocketLike {
   private client?: ReturnType<Hocuspocus["handleConnection"]>;
   private admitted = false;
   private closed = false;
+  private frozen = false;
   private timeout: NodeJS.Timeout;
   documentKey?: string;
 
@@ -44,8 +45,14 @@ class AdmissionSocket implements WebSocketLike {
     this.client = client;
   }
 
+  freeze() {
+    this.frozen = true;
+    this.pendingInbound = [];
+    this.pendingInboundBytes = 0;
+  }
+
   receive(frame: Uint8Array) {
-    if (this.closed) return;
+    if (this.closed || this.frozen) return;
     const message = new HocuspocusIncomingMessage(frame);
     const key = message.readVarString();
     if (this.documentKey && this.documentKey !== key) {
@@ -100,7 +107,8 @@ class AdmissionSocket implements WebSocketLike {
   }
 
   confirm() {
-    if (this.closed || this.raw.readyState !== WebSocket.OPEN) return false;
+    if (this.closed || this.frozen || this.raw.readyState !== WebSocket.OPEN)
+      return false;
     try {
       for (const frame of this.buffered) this.raw.send(frame);
       this.admitted = true;
@@ -181,6 +189,7 @@ export function createCollaborationTransport<Context>(options: {
     response: ServerResponse,
   ) => Promise<void>;
 }) {
+  let stopped = false;
   const sockets = new Set<AdmissionSocket>();
   const byRequest = new WeakMap<Request, AdmissionSocket>();
   const wsServer = new WebSocketServer({
@@ -193,7 +202,39 @@ export function createCollaborationTransport<Context>(options: {
       response.end();
     });
   });
+  let closingTransports: Promise<void> | undefined;
+  function closeTransports(): Promise<void> {
+    if (closingTransports) return closingTransports;
+    closingTransports = (async () => {
+      for (const socket of sockets) socket.close(1012, "service-restart");
+      const outcomes = await Promise.allSettled([
+        new Promise<void>((resolve, reject) =>
+          wsServer.close((error) => (error ? reject(error) : resolve())),
+        ),
+        httpServer.listening
+          ? new Promise<void>((resolve, reject) =>
+              httpServer.close((error) => (error ? reject(error) : resolve())),
+            )
+          : Promise.resolve(),
+      ]);
+      const failures = outcomes
+        .filter((outcome) => outcome.status === "rejected")
+        .map((outcome) => outcome.reason);
+      if (failures.length)
+        throw new AggregateError(
+          failures,
+          "Collaboration transport closure failed",
+        );
+    })();
+    return closingTransports;
+  }
   httpServer.on("upgrade", (incoming, socket, head) => {
+    if (stopped) {
+      socket.end(
+        "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+      return;
+    }
     wsServer.handleUpgrade(incoming, socket, head, (raw) => {
       const url = new URL(
         incoming.url ?? "/",
@@ -244,7 +285,17 @@ export function createCollaborationTransport<Context>(options: {
       const address = httpServer.address() as AddressInfo;
       return `ws://${options.address ?? "0.0.0.0"}:${address?.port ?? options.port}`;
     },
+    cutoff() {
+      stopped = true;
+      for (const socket of sockets) socket.freeze();
+      httpServer.closeIdleConnections();
+    },
+    forceClose() {
+      for (const socket of sockets) socket.abort();
+      httpServer.closeAllConnections();
+    },
     async listen() {
+      if (stopped) return;
       await new Promise<void>((resolve, reject) => {
         httpServer.once("error", reject);
         httpServer.listen(options.port, options.address, () => {
@@ -258,8 +309,9 @@ export function createCollaborationTransport<Context>(options: {
         port: (httpServer.address() as AddressInfo).port,
       });
     },
+    closeTransports,
     async destroy() {
-      for (const socket of sockets) socket.abort();
+      for (const socket of sockets) socket.close(1012, "service-restart");
       const unloaded = new Promise<void>((resolve) => {
         if (options.hocuspocus.documents.size === 0) {
           resolve();
@@ -274,8 +326,7 @@ export function createCollaborationTransport<Context>(options: {
       options.hocuspocus.closeConnections();
       options.hocuspocus.flushPendingStores();
       await unloaded;
-      await new Promise<void>((resolve) => wsServer.close(() => resolve()));
-      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      await closeTransports();
       await options.hocuspocus.hooks("onDestroy", {
         instance: options.hocuspocus,
       });

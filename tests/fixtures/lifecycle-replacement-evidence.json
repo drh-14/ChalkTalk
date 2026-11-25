@@ -1,0 +1,669 @@
+{
+  "fixtureVersion": 1,
+  "notice": "SYNTHETIC contract fixtures only; never production replacement proof. Negative cases must be constructed and checked by the dependent consumer before replacement is unpaused.",
+  "operationId": "00000000-0000-4000-8000-000000000001",
+  "requestNonce": "00000000-0000-4000-8000-000000000002",
+  "externalWritersFenced": true,
+  "instances": [
+    {
+      "containerId": "synthetic-container-3",
+      "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedRestartCount": 0,
+      "observedExitCode": 0,
+      "observedOOMKilled": false,
+      "boot": {
+        "schemaVersion": 1,
+        "role": "api",
+        "bootId": "00000000-0000-4000-8000-000000000003",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bootStartedAt": "2026-11-23T00:00:00.000Z"
+      },
+      "request": {
+        "schemaVersion": 1,
+        "role": "api",
+        "bootId": "00000000-0000-4000-8000-000000000003",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "requestNonce": "00000000-0000-4000-8000-000000000002"
+      },
+      "terminal": {
+        "schemaVersion": 1,
+        "role": "api",
+        "bootId": "00000000-0000-4000-8000-000000000003",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bootStartedAt": "2026-11-23T00:00:00.000Z",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "requestNonce": "00000000-0000-4000-8000-000000000002",
+        "trigger": "SIGTERM",
+        "cutoffAt": "2026-11-23T00:00:00.000Z",
+        "completedAt": "2026-11-23T00:00:01.000Z",
+        "deadlineMs": 120000,
+        "elapsedMs": 1000,
+        "result": "success",
+        "exitCode": 0,
+        "remaining": {
+          "activeAdmissions": 0,
+          "handlers": 0,
+          "stores": 0,
+          "jobs": 0,
+          "heartbeats": 0,
+          "children": 0,
+          "listeners": 0,
+          "unresolved": 0
+        },
+        "failures": []
+      }
+    },
+    {
+      "containerId": "synthetic-container-4",
+      "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedRestartCount": 0,
+      "observedExitCode": 0,
+      "observedOOMKilled": false,
+      "boot": {
+        "schemaVersion": 1,
+        "role": "api",
+        "bootId": "00000000-0000-4000-8000-000000000004",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bootStartedAt": "2026-11-23T00:00:00.000Z"
+      },
+      "request": {
+        "schemaVersion": 1,
+        "role": "api",
+        "bootId": "00000000-0000-4000-8000-000000000004",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "requestNonce": "00000000-0000-4000-8000-000000000002"
+      },
+      "terminal": {
+        "schemaVersion": 1,
+        "role": "api",
+        "bootId": "00000000-0000-4000-8000-000000000004",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bootStartedAt": "2026-11-23T00:00:00.000Z",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "requestNonce": "00000000-0000-4000-8000-000000000002",
+        "trigger": "SIGTERM",
+        "cutoffAt": "2026-11-23T00:00:00.000Z",
+        "completedAt": "2026-11-23T00:00:01.000Z",
+        "deadlineMs": 120000,
+        "elapsedMs": 1000,
+        "result": "success",
+        "exitCode": 0,
+        "remaining": {
+          "activeAdmissions": 0,
+          "handlers": 0,
+          "stores": 0,
+          "jobs": 0,
+          "heartbeats": 0,
+          "children": 0,
+          "listeners": 0,
+          "unresolved": 0
+        },
+        "failures": []
+      }
+    },
+    {
+      "containerId": "synthetic-container-5",
+      "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedRestartCount": 0,
+      "observedExitCode": 0,
+      "observedOOMKilled": false,
+      "boot": {
+        "schemaVersion": 1,
+        "role": "collaboration",
+        "bootId": "00000000-0000-4000-8000-000000000005",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bootStartedAt": "2026-11-23T00:00:00.000Z"
+      },
+      "request": {
+        "schemaVersion": 1,
+        "role": "collaboration",
+        "bootId": "00000000-0000-4000-8000-000000000005",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "requestNonce": "00000000-0000-4000-8000-000000000002"
+      },
+      "terminal": {
+        "schemaVersion": 1,
+        "role": "collaboration",
+        "bootId": "00000000-0000-4000-8000-000000000005",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bootStartedAt": "2026-11-23T00:00:00.000Z",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "requestNonce": "00000000-0000-4000-8000-000000000002",
+        "trigger": "SIGTERM",
+        "cutoffAt": "2026-11-23T00:00:00.000Z",
+        "completedAt": "2026-11-23T00:00:01.000Z",
+        "deadlineMs": 120000,
+        "elapsedMs": 1000,
+        "result": "success",
+        "exitCode": 0,
+        "remaining": {
+          "activeAdmissions": 0,
+          "handlers": 0,
+          "stores": 0,
+          "jobs": 0,
+          "heartbeats": 0,
+          "children": 0,
+          "listeners": 0,
+          "unresolved": 0
+        },
+        "failures": []
+      }
+    },
+    {
+      "containerId": "synthetic-container-6",
+      "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedRestartCount": 0,
+      "observedExitCode": 0,
+      "observedOOMKilled": false,
+      "boot": {
+        "schemaVersion": 1,
+        "role": "worker",
+        "bootId": "00000000-0000-4000-8000-000000000006",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bootStartedAt": "2026-11-23T00:00:00.000Z"
+      },
+      "request": {
+        "schemaVersion": 1,
+        "role": "worker",
+        "bootId": "00000000-0000-4000-8000-000000000006",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "requestNonce": "00000000-0000-4000-8000-000000000002"
+      },
+      "terminal": {
+        "schemaVersion": 1,
+        "role": "worker",
+        "bootId": "00000000-0000-4000-8000-000000000006",
+        "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bootStartedAt": "2026-11-23T00:00:00.000Z",
+        "operationId": "00000000-0000-4000-8000-000000000001",
+        "requestNonce": "00000000-0000-4000-8000-000000000002",
+        "trigger": "SIGTERM",
+        "cutoffAt": "2026-11-23T00:00:00.000Z",
+        "completedAt": "2026-11-23T00:00:01.000Z",
+        "deadlineMs": 120000,
+        "elapsedMs": 1000,
+        "result": "success",
+        "exitCode": 0,
+        "remaining": {
+          "activeAdmissions": 0,
+          "handlers": 0,
+          "stores": 0,
+          "jobs": 0,
+          "heartbeats": 0,
+          "children": 0,
+          "listeners": 0,
+          "unresolved": 0
+        },
+        "failures": []
+      }
+    }
+  ],
+  "requiredNegativeCases": [
+    {
+      "name": "missing-instance",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/instances/0"
+        }
+      ]
+    },
+    {
+      "name": "missing-role",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/instances/3"
+        }
+      ]
+    },
+    {
+      "name": "missing-boot-file",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/instances/0/boot"
+        }
+      ]
+    },
+    {
+      "name": "missing-terminal-file",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/instances/0/terminal"
+        }
+      ]
+    },
+    {
+      "name": "missing-observed-exit",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/instances/0/observedExitCode"
+        }
+      ]
+    },
+    {
+      "name": "stale-boot",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/bootId",
+          "value": "00000000-0000-4000-8000-999999999999"
+        }
+      ]
+    },
+    {
+      "name": "stale-operation",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/operationId",
+          "value": "00000000-0000-4000-8000-999999999999"
+        }
+      ]
+    },
+    {
+      "name": "stale-nonce",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/requestNonce",
+          "value": "00000000-0000-4000-8000-999999999999"
+        }
+      ]
+    },
+    {
+      "name": "stale-image",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/imageDigest",
+          "value": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ]
+    },
+    {
+      "name": "stale-release",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/releaseId",
+          "value": "cccccccccccccccccccccccccccccccccccccccc"
+        }
+      ]
+    },
+    {
+      "name": "duplicate-instance",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/instances/-",
+          "value": {
+            "containerId": "synthetic-container-3",
+            "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "observedRestartCount": 0,
+            "observedExitCode": 0,
+            "observedOOMKilled": false,
+            "boot": {
+              "schemaVersion": 1,
+              "role": "api",
+              "bootId": "00000000-0000-4000-8000-000000000003",
+              "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "bootStartedAt": "2026-11-23T00:00:00.000Z"
+            },
+            "request": {
+              "schemaVersion": 1,
+              "role": "api",
+              "bootId": "00000000-0000-4000-8000-000000000003",
+              "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "operationId": "00000000-0000-4000-8000-000000000001",
+              "requestNonce": "00000000-0000-4000-8000-000000000002"
+            },
+            "terminal": {
+              "schemaVersion": 1,
+              "role": "api",
+              "bootId": "00000000-0000-4000-8000-000000000003",
+              "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "bootStartedAt": "2026-11-23T00:00:00.000Z",
+              "operationId": "00000000-0000-4000-8000-000000000001",
+              "requestNonce": "00000000-0000-4000-8000-000000000002",
+              "trigger": "SIGTERM",
+              "cutoffAt": "2026-11-23T00:00:00.000Z",
+              "completedAt": "2026-11-23T00:00:01.000Z",
+              "deadlineMs": 120000,
+              "elapsedMs": 1000,
+              "result": "success",
+              "exitCode": 0,
+              "remaining": {
+                "activeAdmissions": 0,
+                "handlers": 0,
+                "stores": 0,
+                "jobs": 0,
+                "heartbeats": 0,
+                "children": 0,
+                "listeners": 0,
+                "unresolved": 0
+              },
+              "failures": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate-terminal",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/instances/0/duplicateTerminal",
+          "value": {
+            "schemaVersion": 1,
+            "role": "api",
+            "bootId": "00000000-0000-4000-8000-000000000003",
+            "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "bootStartedAt": "2026-11-23T00:00:00.000Z",
+            "operationId": "00000000-0000-4000-8000-000000000001",
+            "requestNonce": "00000000-0000-4000-8000-000000000002",
+            "trigger": "SIGTERM",
+            "cutoffAt": "2026-11-23T00:00:00.000Z",
+            "completedAt": "2026-11-23T00:00:01.000Z",
+            "deadlineMs": 120000,
+            "elapsedMs": 1000,
+            "result": "success",
+            "exitCode": 0,
+            "remaining": {
+              "activeAdmissions": 0,
+              "handlers": 0,
+              "stores": 0,
+              "jobs": 0,
+              "heartbeats": 0,
+              "children": 0,
+              "listeners": 0,
+              "unresolved": 0
+            },
+            "failures": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "malformed-json",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal",
+          "value": "{\"schemaVersion\":"
+        }
+      ]
+    },
+    {
+      "name": "partial-terminal",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/instances/0/terminal/completedAt"
+        }
+      ]
+    },
+    {
+      "name": "wrong-container",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/containerId",
+          "value": "wrong-container"
+        }
+      ]
+    },
+    {
+      "name": "restart-count-changed",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/observedRestartCount",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "oom-killed",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/observedOOMKilled",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "sigkill-exit-137",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/observedExitCode",
+          "value": 137
+        }
+      ]
+    },
+    {
+      "name": "nonzero-exit-1",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/observedExitCode",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "timeout-exit-2",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/observedExitCode",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "name": "visible-success-after-directory-fsync-failure-exit-1",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/observedExitCode",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "ordinary-unbound-operation",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/instances/0/request"
+        },
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/operationId",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/requestNonce",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "remaining-work",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/remaining/handlers",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "unresolved-failure",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/remaining/unresolved",
+          "value": 1
+        },
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/failures",
+          "value": ["uncertain_effect"]
+        }
+      ]
+    },
+    {
+      "name": "unfenced-external-writer",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/externalWritersFenced",
+          "value": false
+        }
+      ]
+    },
+    {
+      "name": "zero-exit-no-receipt",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/instances/0/terminal"
+        }
+      ]
+    },
+    {
+      "name": "invalid-schema-version",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/schemaVersion",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "name": "invalid-count-type",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/remaining/handlers",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "name": "invalid-timing",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/instances/0/terminal/elapsedMs",
+          "value": 120000
+        }
+      ]
+    },
+    {
+      "name": "changed-inventory",
+      "expected": "reject",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/inventory/0/bootId",
+          "value": "00000000-0000-4000-8000-999999999999"
+        }
+      ]
+    }
+  ],
+  "inventory": [
+    {
+      "containerId": "synthetic-container-3",
+      "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedRestartCount": 0,
+      "bootId": "00000000-0000-4000-8000-000000000003",
+      "role": "api",
+      "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "containerId": "synthetic-container-4",
+      "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedRestartCount": 0,
+      "bootId": "00000000-0000-4000-8000-000000000004",
+      "role": "api",
+      "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "containerId": "synthetic-container-5",
+      "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedRestartCount": 0,
+      "bootId": "00000000-0000-4000-8000-000000000005",
+      "role": "collaboration",
+      "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "containerId": "synthetic-container-6",
+      "observedImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "observedRestartCount": 0,
+      "bootId": "00000000-0000-4000-8000-000000000006",
+      "role": "worker",
+      "releaseId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "mutationFormat": "RFC6902 JSON Patch against this document. Malformed-json terminal represents raw unreadable terminal bytes. duplicateTerminal represents a second conflicting candidate file, not a valid terminal field. Inventory remains fixed independently of observed instances."
+}

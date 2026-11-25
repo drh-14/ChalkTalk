@@ -1,3 +1,7 @@
+import express from "express";
+import { createProcessLifecycle } from "../lifecycle/process.js";
+import { createHttpOwnership } from "../lifecycle/http.js";
+import { ownedJob } from "./lifecycle.js";
 import { ensureStorageBucket } from "../course-files/bucket.js";
 import { S3Client } from "@aws-sdk/client-s3";
 import { join } from "node:path";
@@ -14,7 +18,6 @@ import { DigestService } from "../digest/service.js";
 import { runDigestScheduleLoop } from "../digest/runner.js";
 import {
   createObservability,
-  createWorkerMetricsApp,
   logApiEvent,
   logUnexpectedError,
   observeBackgroundOperation,
@@ -28,118 +31,147 @@ import {
 import { SemanticIndex } from "../semantic/index.js";
 import { missingExtractionTools } from "../resource-text/probe.js";
 
-const environment = loadEnvironment();
-const observability = environment.observability.enabled
-  ? createObservability({
-      token: environment.observability.metricsToken!,
-      spool: {
-        directory: join(environment.observability.spoolDirectory!, "worker"),
-      },
-    })
-  : undefined;
-const pool = createPool(
-  requireDatabaseUrl(environment),
-  observability?.databaseObserver,
-);
-const embeddingConfig = readEmbeddingConfig();
-const semantic = embeddingConfig
-  ? new SemanticIndex(
-      pool,
-      embeddingConfig,
-      new EmbeddingProvider(embeddingConfig),
-    )
-  : undefined;
-pool.on("error", () => logApiEvent(observability, "database_pool_error"));
-const resourceText = RESOURCE_TEXT_OCR_CONFIG;
-const { bucket, client } = loadObjectStorageConfig();
-const s3 = new S3Client(client);
-await ensureStorageBucket(s3, bucket, false);
-const worker = new JobWorker(
-  pool,
-  undefined,
-  createEmailSender(environment),
-  environment.frontendBaseUrl,
-  { client: s3, bucket },
-  observability,
-  semantic,
-  resourceText,
-);
-const digest = new DigestService(
-  pool,
-  createEmailSender(environment),
-  environment.frontendBaseUrl,
-  undefined,
-  observability,
-  s3DigestImageReader(s3, bucket),
-);
-const controller = new AbortController();
-process.once("SIGINT", () => controller.abort());
-process.once("SIGTERM", () => controller.abort());
-const metricsServer = observability
-  ? createWorkerMetricsApp(observability).listen(environment.port)
-  : undefined;
-
-logApiEvent(observability, "worker_started");
-// Without the OCR toolchain, extraction jobs stay pending until a fixed deployment runs them.
-const extractionReady =
-  (await missingExtractionTools(resourceText.ocrLanguages)).length === 0;
-if (!extractionReady)
-  logApiEvent(observability, "resource_text_tools_unavailable");
-try {
-  await Promise.all([
+const application = createProcessLifecycle("worker");
+const lifecycle = application.runtime;
+const uncertain = () => {
+  lifecycle.fail("uncertain_effect");
+  void lifecycle.shutdown("fatal");
+};
+await application.start(async () => {
+  const environment = loadEnvironment();
+  const observability = environment.observability.enabled
+    ? createObservability({
+        token: environment.observability.metricsToken!,
+        spool: {
+          directory: join(environment.observability.spoolDirectory!, "worker"),
+        },
+      })
+    : undefined;
+  lifecycle.closeResource("observability", async () => {
+    await observability?.close();
+  });
+  const pool = createPool(
+    requireDatabaseUrl(environment),
+    observability?.databaseObserver,
+  );
+  lifecycle.closeResource("dependency", () => pool.end());
+  const embeddingConfig = readEmbeddingConfig();
+  const semantic = embeddingConfig
+    ? new SemanticIndex(
+        pool,
+        embeddingConfig,
+        new EmbeddingProvider(embeddingConfig),
+      )
+    : undefined;
+  pool.on("error", () => logApiEvent(observability, "database_pool_error"));
+  const resourceText = RESOURCE_TEXT_OCR_CONFIG;
+  const { bucket, client } = loadObjectStorageConfig();
+  const s3 = new S3Client(client);
+  lifecycle.closeResource("dependency", async () => {
+    s3.destroy();
+  });
+  await ensureStorageBucket(s3, bucket, false);
+  if (lifecycle.stopAdmission.aborted) return;
+  const worker = new JobWorker(
+    pool,
+    undefined,
+    createEmailSender(environment),
+    environment.frontendBaseUrl,
+    { client: s3, bucket },
+    observability,
+    semantic,
+    resourceText,
+    uncertain,
+  );
+  const digest = new DigestService(
+    pool,
+    createEmailSender(environment),
+    environment.frontendBaseUrl,
+    undefined,
+    observability,
+    s3DigestImageReader(s3, bucket),
+    uncertain,
+  );
+  const probes = express();
+  probes.use(
+    createHttpOwnership(lifecycle, environment.frontendOrigins).admission,
+  );
+  if (observability) probes.get("/metrics", observability.metricsHandler);
+  const metricsServer = probes.listen(environment.port);
+  lifecycle.closeResource("transport", async () => {
+    await new Promise<void>((resolve, reject) =>
+      metricsServer.close((error) => (error ? reject(error) : resolve())),
+    );
+  });
+  lifecycle.onCutoff(() => metricsServer.closeIdleConnections());
+  lifecycle.forceCancel.addEventListener("abort", () =>
+    metricsServer.closeAllConnections(),
+  );
+  // Without the OCR toolchain, extraction jobs stay pending until a fixed deployment runs them.
+  const extractionReady =
+    (await missingExtractionTools(resourceText.ocrLanguages)).length === 0;
+  if (lifecycle.stopAdmission.aborted) return;
+  if (!extractionReady)
+    logApiEvent(observability, "resource_text_tools_unavailable");
+  if (!lifecycle.markRunning()) return;
+  const onError = (event: Parameters<typeof logUnexpectedError>[1]) => {
+    logUnexpectedError(observability, event);
+    lifecycle.fail("owner_failed");
+    void lifecycle.shutdown("fatal");
+  };
+  const loops = [
     runJobLoop(
-      () => worker.runOnce(),
-      controller.signal,
+      ownedJob(lifecycle, () => worker.runOnce()),
+      lifecycle.stopAdmission,
       1_000,
-      () => logUnexpectedError(observability, "job_worker_failure"),
+      () => onError("job_worker_failure"),
     ),
     ...(extractionReady
       ? [
           runJobLoop(
-            () => worker.runOnce("extraction", controller.signal),
-            controller.signal,
+            ownedJob(lifecycle, () =>
+              worker.runOnce("extraction", lifecycle.forceCancel),
+            ),
+            lifecycle.stopAdmission,
             1_000,
-            () =>
-              logUnexpectedError(observability, "resource_text_job_failure"),
+            () => onError("resource_text_job_failure"),
           ),
         ]
       : []),
     ...(semantic
       ? [
           runJobLoop(
-            async () => {
+            ownedJob(lifecycle, async () => {
               await semantic.queueBackfillOne();
               return false;
-            },
-            controller.signal,
+            }),
+            lifecycle.stopAdmission,
             5_000,
-            () =>
-              logUnexpectedError(observability, "semantic_backfill_failure"),
+            () => onError("semantic_backfill_failure"),
           ),
         ]
       : []),
     runJobLoop(
-      () => digest.deliverOnce(),
-      controller.signal,
+      ownedJob(lifecycle, () => digest.deliverOnce()),
+      lifecycle.stopAdmission,
       1_000,
-      () => logUnexpectedError(observability, "digest_delivery_failure"),
+      () => onError("digest_delivery_failure"),
     ),
     runDigestScheduleLoop(
-      () =>
-        observeBackgroundOperation(observability, "digest_schedule", () =>
+      ownedJob(lifecycle, async () => {
+        await observeBackgroundOperation(observability, "digest_schedule", () =>
           digest.schedule(),
-        ),
-      controller.signal,
-      () => logUnexpectedError(observability, "digest_schedule_failure"),
+        );
+        return false;
+      }),
+      lifecycle.stopAdmission,
+      () => onError("digest_schedule_failure"),
     ),
-  ]);
-} finally {
-  if (metricsServer)
-    await new Promise<void>((resolve, reject) =>
-      metricsServer.close((error) => (error ? reject(error) : resolve())),
-    );
-  s3.destroy();
-  await pool.end();
-  logApiEvent(observability, "worker_stopped");
-  await observability?.close();
-}
+  ];
+  lifecycle.closeResource("transport", async () => {
+    const outcomes = await Promise.allSettled(loops);
+    if (outcomes.some((outcome) => outcome.status === "rejected"))
+      throw new Error("Worker loop failed");
+  });
+  logApiEvent(observability, "worker_started");
+});

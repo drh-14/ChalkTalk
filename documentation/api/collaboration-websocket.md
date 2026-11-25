@@ -71,3 +71,7 @@ An authentication failure is reported through the provider's authentication-fail
 Tickets are single-use. After any disconnect that is not one of the final reasons above, request a new ticket before reconnecting. Local edits made while disconnected merge into the document on reconnect if the user is still authorized and the session is still active.
 
 Collaboration sessions belong to courses rather than posts or Thread conversations. Post edits, merges, and deletion do not end or delete them.
+
+## Process restart and drain
+
+Process drain freezes new edits and admissions, awaits pre-cutoff authorized handlers and confirms the exact final frozen Yjs state/projection before destruction. Late buffered frames are excluded; pending stores are serialized against the final save. Unconfirmed persistence/closure fails drain. Shutdown does not end the user session or set final_snapshot_confirmed. Transient close 1012/service-restart is distinct from session-ended/access-removed; clients retain local edits and obtain fresh tickets. This adds no per-edit durable acknowledgement or guarantee for unsent browser edits.

@@ -89,11 +89,20 @@ async function waitFor(condition: () => Promise<boolean>) {
   }
   throw new Error("Timed out waiting for attachment smoke process");
 }
+let workerPort: number;
 function start(relative: string) {
   const child = spawn(
     process.execPath,
     ["--import", "tsx", fileURLToPath(new URL(relative, import.meta.url))],
-    { env: environment, stdio: "ignore" },
+    {
+      env: {
+        ...environment,
+        PORT: relative.includes("jobs/main")
+          ? String(workerPort)
+          : environment.PORT,
+      },
+      stdio: "ignore",
+    },
   );
   children.push(child);
   return child;
@@ -140,6 +149,15 @@ integration("authenticated attachment API and separate cleanup process", () => {
       throw new Error("Test listener has no port");
     const port = address.port;
     await new Promise<void>((resolve) => listener.close(() => resolve()));
+    const workerListener = createServer();
+    await new Promise<void>((resolve) =>
+      workerListener.listen(0, "127.0.0.1", resolve),
+    );
+    const workerAddress = workerListener.address();
+    if (!workerAddress || typeof workerAddress === "string")
+      throw new Error("Missing worker port");
+    workerPort = workerAddress.port;
+    await new Promise<void>((resolve) => workerListener.close(() => resolve()));
     apiBase = `http://127.0.0.1:${port}`;
     const database = new URL(url!);
     database.searchParams.set("options", `-csearch_path=${schema}`);
@@ -162,7 +180,7 @@ integration("authenticated attachment API and separate cleanup process", () => {
     await waitFor(async () => {
       if (api.exitCode !== null) throw new Error("Attachment API exited");
       try {
-        return (await fetch(`${apiBase}/health`)).ok;
+        return (await fetch(`${apiBase}/ready`)).ok;
       } catch {
         return false;
       }

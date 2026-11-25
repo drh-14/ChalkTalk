@@ -114,6 +114,7 @@ export class ThreadAttachmentService {
     private readonly pool: Pool,
     private readonly s3: S3Client,
     private readonly bucket: string,
+    private readonly onUncertain?: () => void,
   ) {}
 
   private async parent(
@@ -348,6 +349,7 @@ export class ThreadAttachmentService {
         () => true,
         () => false,
       );
+      if (!rolledBack || commitAttempted) this.onUncertain?.();
       let deleteObject = !commitAttempted;
       if (commitAttempted && rolledBack && createdId) {
         try {
@@ -365,7 +367,9 @@ export class ThreadAttachmentService {
           .send(
             new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey }),
           )
-          .catch(() => {});
+          .catch(() => {
+            this.onUncertain?.();
+          });
       if (error instanceof AuthError) throw error;
       throw new AuthError(
         503,

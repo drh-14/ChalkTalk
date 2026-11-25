@@ -57,6 +57,7 @@ export class CourseFileService {
     private readonly pool: Pool,
     private readonly s3: S3Client,
     private readonly bucket: string,
+    private readonly onUncertain?: () => void,
   ) {}
 
   private async authorize(
@@ -348,6 +349,7 @@ export class CourseFileService {
         () => true,
         () => false,
       );
+      if (!rolledBack || commitAttempted) this.onUncertain?.();
       let deleteObject = !commitAttempted;
       if (commitAttempted && rolledBack && createdId) {
         try {
@@ -365,7 +367,9 @@ export class CourseFileService {
           .send(
             new DeleteObjectCommand({ Bucket: this.bucket, Key: storedObject }),
           )
-          .catch(() => {});
+          .catch(() => {
+            this.onUncertain?.();
+          });
       if (error instanceof AuthError) throw error;
       throw new AuthError(
         503,

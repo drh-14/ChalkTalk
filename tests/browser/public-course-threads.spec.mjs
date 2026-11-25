@@ -380,6 +380,7 @@ async function app(
     reads,
     messages,
     socketMessages,
+    restart: () => channel?.close({ code: 1012, reason: "service-restart" }),
     emit: (value) => channel?.send(JSON.stringify(value)),
     makeNextDeleteStale: () => {
       staleConversationDelete = true;
@@ -1132,6 +1133,10 @@ test("failed exact-message lookup can retry without clearing its notice", async 
   await expect(page.getByRole("alert")).toContainText(
     "Message temporarily unavailable",
   );
+  await page.screenshot({
+    path: resolve(evidence, "lifecycle-recoverable-503.png"),
+    fullPage: true,
+  });
   await expect(
     page.getByRole("button", { name: "Notifications, 1 unread" }),
   ).toBeVisible();
@@ -1573,4 +1578,48 @@ test("Threads action buttons use compact dimensions and retain focus", async ({
     path: resolve(evidence, "compact-actions.png"),
     fullPage: true,
   });
+});
+
+test("lifecycle restart reconnects thread-live once without duplicate subscriptions", async ({
+  page,
+}) => {
+  const live = await app(page);
+  await page.goto(
+    `${origin}/courses/course-1/threads/board-1/conversations/conversation-1`,
+  );
+  await expect
+    .poll(
+      () =>
+        live.socketMessages.filter((message) => message.type === "subscribe")
+          .length,
+    )
+    .toBeGreaterThan(0);
+  // The fixture's first navigation also opens a socket. Measure a stable baseline
+  // for the currently mounted conversation rather than counting earlier views.
+  const before = live.socketMessages.filter(
+    (message) => message.type === "subscribe",
+  ).length;
+  live.restart();
+  await expect
+    .poll(
+      () =>
+        live.socketMessages.filter((message) => message.type === "subscribe")
+          .length,
+    )
+    .toBe(before + 1);
+  await expect(
+    page.getByRole("heading", { name: "Conversation", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: resolve(evidence, "lifecycle-thread-reconnected.png"),
+    fullPage: true,
+  });
+  live.emit({
+    type: "typing",
+    conversationId: "conversation-1",
+    userId: "user-2",
+    displayName: "Sam",
+    active: true,
+  });
+  await expect(page.getByText("Sam is typing…")).toBeVisible();
 });

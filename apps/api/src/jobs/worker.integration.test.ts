@@ -15,8 +15,10 @@ import {
   createWorkerMetricsApp,
 } from "../observability/index.js";
 import { v7 as uuidv7 } from "uuid";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getMigrationDirectory, runMigrations } from "../database/migrate.js";
+import { runSemanticMigration } from "../database/migrate-semantic.js";
+import { SemanticIndex } from "../semantic/index.js";
 import { JobWorker } from "./worker.js";
 import {
   createEmailSender,
@@ -71,6 +73,120 @@ const emailSender: EmailSender = {
 type Seeded = { courseId: string; jobId: string };
 
 integration("JobWorker PostgreSQL lifecycle", () => {
+  it("settles an invalid index payload without uncertain effects", async () => {
+    await pool.query("DELETE FROM jobs WHERE status='queued'");
+    const id = uuidv7();
+    await pool.query(
+      "INSERT INTO jobs (id,kind,payload,max_attempts) VALUES ($1,'index_post',$2,1)",
+      [id, { generation: "current" }],
+    );
+    let uncertain = false;
+    const semantic = {
+      config: { generation: "current" },
+      indexPost: async () => {
+        throw new Error("unexpected indexing");
+      },
+    } as unknown as NonNullable<ConstructorParameters<typeof JobWorker>[6]>;
+    const owned = new JobWorker(
+      pool,
+      "invalid-index",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      semantic,
+      undefined,
+      () => {
+        uncertain = true;
+      },
+    );
+    expect(await owned.runOnce()).toBe(true);
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [id])).rows[0],
+    ).toEqual({ status: "dead" });
+    expect(uncertain).toBe(false);
+  });
+  it("retries a failed index read but reports an ambiguous provider attempt", async () => {
+    await runSemanticMigration(pool);
+    await pool.query("DELETE FROM jobs WHERE status='queued'");
+    const courseId = uuidv7();
+    const postId = uuidv7();
+    await pool.query(
+      "INSERT INTO courses(id,organization_id,created_by_user_id,name,join_code) VALUES($1,$2,$3,'Index lifecycle','ABCDEFGH')",
+      [courseId, organizationId, ownerId],
+    );
+    await pool.query(
+      "INSERT INTO posts(id,course_id,author_user_id,type,title,body_markdown) VALUES($1,$2,$3,'note','Index lifecycle','Provider attempt')",
+      [postId, courseId, ownerId],
+    );
+    const provider = {
+      embedMany: vi.fn(async () => {
+        throw new Error("provider response unknown");
+      }),
+    };
+    const semantic = new SemanticIndex(
+      pool,
+      {
+        key: "test-key",
+        endpoint: "http://127.0.0.1/embeddings",
+        model: "test-model",
+        generation: "index-lifecycle",
+      },
+      provider,
+    );
+    const sourceId = uuidv7();
+    await pool.query(
+      "INSERT INTO jobs (id,kind,payload,max_attempts) VALUES ($1,'index_post',$2,2)",
+      [sourceId, { postId, generation: semantic.config.generation }],
+    );
+    let uncertain = false;
+    const owned = new JobWorker(
+      pool,
+      "source-read-failure",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      semantic,
+      undefined,
+      () => {
+        uncertain = true;
+      },
+    );
+    const originalQuery = pool.query.bind(pool);
+    const sourceRead = vi.spyOn(pool, "query").mockImplementation(((
+      query: string,
+      values?: unknown[],
+    ) => {
+      if (query.includes("SELECT p.title,p.body_markdown"))
+        return Promise.reject(new Error("source read unavailable"));
+      return originalQuery(query, values);
+    }) as typeof pool.query);
+    try {
+      expect(await owned.runOnce()).toBe(true);
+    } finally {
+      sourceRead.mockRestore();
+    }
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [sourceId]))
+        .rows[0],
+    ).toEqual({ status: "queued" });
+    expect(provider.embedMany).not.toHaveBeenCalled();
+    expect(uncertain).toBe(false);
+
+    const providerId = uuidv7();
+    await pool.query(
+      "INSERT INTO jobs (id,kind,payload,max_attempts) VALUES ($1,'index_post',$2,2)",
+      [providerId, { postId, generation: semantic.config.generation }],
+    );
+    expect(await owned.runOnce()).toBe(true);
+    expect(
+      (await pool.query("SELECT status FROM jobs WHERE id=$1", [providerId]))
+        .rows[0],
+    ).toEqual({ status: "queued" });
+    expect(provider.embedMany).toHaveBeenCalledOnce();
+    expect(uncertain).toBe(true);
+  });
   beforeAll(async () => {
     admin = new Pool({ connectionString: url });
     await admin.query(`CREATE SCHEMA "${schema}"`);

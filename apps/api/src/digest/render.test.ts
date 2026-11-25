@@ -568,7 +568,12 @@ describe("digest email rendering", () => {
               filename: "slow.png",
               url: "https://app.example.edu/image/slow",
               sizeBytes: 100,
-              read: async () => new Promise(() => {}),
+              read: async (signal) =>
+                new Promise((resolve) => {
+                  signal.addEventListener("abort", () => resolve(undefined), {
+                    once: true,
+                  });
+                }),
             },
           ],
         },

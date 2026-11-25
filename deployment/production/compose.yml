@@ -6,7 +6,10 @@ x-api-build: &api-build
 
 x-app-environment: &app-environment
   env_file: ${COMPOSE_ENV_FILE:-.env}
-  environment:
+  environment: &runtime-environment
+    LIFECYCLE_EVIDENCE_DIRECTORY: /var/lib/chalktalk-lifecycle/evidence
+    LIFECYCLE_REQUEST_DIRECTORY: /run/chalktalk-lifecycle/requests
+    LIFECYCLE_RELEASE_ID: ${LIFECYCLE_RELEASE_ID:?Set the immutable deployed Git release ID}
     COLLABORATION_PORT: "3100"
     NODE_ENV: production
     DATABASE_URL: ${DATABASE_URL:?Set the Supabase DATABASE_URL in /srv/chalktalk/shared/production.env}
@@ -43,11 +46,24 @@ services:
     image: chalktalk-api:local
     build: *api-build
     <<: *app-environment
+    environment:
+      <<: *runtime-environment
+      LIFECYCLE_IMAGE_DIGEST: ${LIFECYCLE_API_IMAGE_DIGEST:?Set the inspected immutable api image ID}
+    stop_grace_period: 150s
     restart: unless-stopped
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [edge]
     volumes:
+      - type: bind
+        source: ${LIFECYCLE_HOST_ROOT:-/srv/chalktalk/shared/lifecycle}/api/requests
+        target: /run/chalktalk-lifecycle/requests
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${LIFECYCLE_HOST_ROOT:-/srv/chalktalk/shared/lifecycle}/api/evidence
+        target: /var/lib/chalktalk-lifecycle/evidence
+        bind: { create_host_path: false }
       - api-log-spool:/var/log/chalktalk
     healthcheck:
       test:
@@ -68,11 +84,24 @@ services:
       context: ../..
       dockerfile: deployment/production/Dockerfile.worker
     <<: *app-environment
+    environment:
+      <<: *runtime-environment
+      LIFECYCLE_IMAGE_DIGEST: ${LIFECYCLE_WORKER_IMAGE_DIGEST:?Set the inspected immutable worker image ID}
+    stop_grace_period: 150s
     restart: unless-stopped
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [edge]
     volumes:
+      - type: bind
+        source: ${LIFECYCLE_HOST_ROOT:-/srv/chalktalk/shared/lifecycle}/worker/requests
+        target: /run/chalktalk-lifecycle/requests
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${LIFECYCLE_HOST_ROOT:-/srv/chalktalk/shared/lifecycle}/worker/evidence
+        target: /var/lib/chalktalk-lifecycle/evidence
+        bind: { create_host_path: false }
       - worker-log-spool:/var/log/chalktalk
     logging: *bounded-logs
 
@@ -81,10 +110,24 @@ services:
       context: ../..
       dockerfile: deployment/production/Dockerfile.collaboration
     <<: *app-environment
+    environment:
+      <<: *runtime-environment
+      LIFECYCLE_IMAGE_DIGEST: ${LIFECYCLE_COLLABORATION_IMAGE_DIGEST:?Set the inspected immutable collaboration image ID}
+    stop_grace_period: 150s
     restart: unless-stopped
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [edge]
+    volumes:
+      - type: bind
+        source: ${LIFECYCLE_HOST_ROOT:-/srv/chalktalk/shared/lifecycle}/collaboration/requests
+        target: /run/chalktalk-lifecycle/requests
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${LIFECYCLE_HOST_ROOT:-/srv/chalktalk/shared/lifecycle}/collaboration/evidence
+        target: /var/lib/chalktalk-lifecycle/evidence
+        bind: { create_host_path: false }
     logging: *bounded-logs
 
   web:
