@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 """Run the distro daily entry point under the shell parent's host lock."""
 import json
-import math
 import os
 from pathlib import Path
 import subprocess
@@ -10,25 +9,21 @@ import tempfile
 import time
 
 import policy
+import status
 import timer
 
 
 def record(state, mode, disposition, started, success=None):
     destination = state / (mode + '.json')
-    previous = {}
+    previous = None
     if destination.exists() and not destination.is_symlink():
         try:
             previous = json.loads(destination.read_text())
         except (ValueError, OSError):
             pass
-    saved = previous.get('last_success')
-    if type(saved) not in (int, float) or not math.isfinite(saved) or not 0 <= saved <= started:
-        saved = None
-    failure = previous.get('last_failure')
-    if previous.get('disposition') == 'failed' and failure is None:
-        failure = previous.get('attempt')
-    if type(failure) not in (int, float) or not math.isfinite(failure) or not 0 <= failure <= started:
-        failure = None
+    valid = status.valid_operation(previous, started)
+    saved = previous['last_success'] if valid else None
+    failure = previous['last_failure'] if valid else None
     data = {'version': 1, 'attempt': started, 'disposition': disposition,
             'last_success': success if success is not None else saved,
             'last_failure': None if disposition == 'success' else started if disposition == 'failed' else failure}

@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -9,12 +10,14 @@ import tempfile
 import unittest
 
 STATUS = Path(__file__).resolve().parents[1] / 'maintenance/status.py'
+MAINTENANCE = STATUS.parent
 NOW = 2000000000
 
 
 def healthy():
     return {'version': 1, 'operations': {mode: {'version': 1, 'attempt': NOW - 48 * 3600 - 20,
-                                                'disposition': 'success', 'last_success': NOW - 10}
+                                                'disposition': 'success', 'last_success': NOW - 10,
+                                                'last_failure': None}
                                         for mode in ('update', 'install')},
             'holds': [], 'policy_issues': [], 'timers_healthy': True, 'dpkg_audit_clean': True,
             'reboot_required': False, 'runtime_restarts': [], 'pending_security': [],
@@ -46,9 +49,11 @@ class MaintenanceStatusTest(unittest.TestCase):
 
     def test_all_actionable_reasons_are_preserved(self):
         snapshot = healthy()
+        snapshot['operations']['update']['attempt'] = NOW - 48 * 3600 - 100
         snapshot['operations']['update']['last_success'] = NOW - 48 * 3600 - 1
         snapshot['operations']['install']['disposition'] = 'failed'
         snapshot['operations']['install']['attempt'] = NOW - 1
+        snapshot['operations']['install']['last_failure'] = NOW - 1
         snapshot.update(holds=['update'], reboot_required=True, runtime_restarts=['docker.service'],
                         pending_security=['example-package'], excluded_security=['containerd'],
                         timers_healthy=False, dpkg_audit_clean=False)
@@ -88,10 +93,64 @@ class MaintenanceStatusTest(unittest.TestCase):
     def test_hold_running_or_error_never_masks_stale_previous_success(self):
         for disposition in ('held', 'running', 'failed'):
             snapshot = healthy()
-            snapshot['operations']['install'].update(disposition=disposition, last_success=NOW - 200000)
+            snapshot['operations']['install'].update(disposition=disposition, attempt=NOW - 1,
+                                                     last_success=NOW - 200000,
+                                                     last_failure=NOW - 1 if disposition == 'failed' else None)
             code, result = self.assess(snapshot)
             self.assertNotEqual(code, 0)
             self.assertIn('install: stale', result['issues'])
+
+    def test_corrupt_prior_evidence_never_becomes_success_during_hold_or_run(self):
+        prior = {'version': 1, 'attempt': NOW - 100, 'disposition': 'success',
+                 'last_success': NOW - 99, 'last_failure': None}
+        bad_records = []
+        for field in prior:
+            record = dict(prior)
+            del record[field]
+            bad_records.append(record)
+        bad_records.extend(([], {**prior, 'last_failure': NOW - 50},
+                            {**prior, 'attempt': NOW + 1},
+                            {**prior, 'last_success': 'SECRET_MUST_NOT_ESCAPE'}))
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            destination = state / 'install.json'
+            for prior_record in bad_records:
+                with self.subTest(prior_record=prior_record):
+                    destination.write_text(json.dumps(prior_record))
+                    for disposition, started in (('held', NOW - 2), ('running', NOW - 1)):
+                        process = subprocess.run(
+                            [sys.executable, '-c', 'import run, pathlib, sys; run.record(pathlib.Path(sys.argv[1]), "install", sys.argv[2], float(sys.argv[3]))',
+                             str(state), disposition, str(started)],
+                            env={**os.environ, 'PYTHONPATH': str(MAINTENANCE)}, capture_output=True, text=True)
+                        self.assertEqual(process.returncode, 0, process.stderr)
+                        evidence = json.loads(destination.read_text())
+                        self.assertEqual(evidence['disposition'], disposition)
+                        self.assertIsNone(evidence['last_success'])
+                        self.assertIsNone(evidence['last_failure'])
+                        snapshot = healthy()
+                        snapshot['operations']['install'] = evidence
+                        code, assessment = self.assess(snapshot)
+                        self.assertNotEqual(code, 0)
+                        self.assertIn('install: unknown success time', assessment['issues'])
+
+    def test_valid_prior_failure_survives_hold_and_running_until_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            destination = state / 'install.json'
+            destination.write_text(json.dumps({'version': 1, 'attempt': NOW - 50,
+                'disposition': 'failed', 'last_success': NOW - 100, 'last_failure': NOW - 50}))
+            for disposition, started in (('held', NOW - 2), ('running', NOW - 1)):
+                process = subprocess.run(
+                    [sys.executable, '-c', 'import run, pathlib, sys; run.record(pathlib.Path(sys.argv[1]), "install", sys.argv[2], float(sys.argv[3]))',
+                     str(state), disposition, str(started)],
+                    env={**os.environ, 'PYTHONPATH': str(MAINTENANCE)}, capture_output=True, text=True)
+                self.assertEqual(process.returncode, 0, process.stderr)
+                evidence = json.loads(destination.read_text())
+                self.assertEqual(evidence['last_success'], NOW - 100)
+                self.assertEqual(evidence['last_failure'], NOW - 50)
+                snapshot = healthy()
+                snapshot['operations']['install'] = evidence
+                self.assertIn('install: failed', self.assess(snapshot)[1]['issues'])
 
     def test_running_or_held_preserves_prior_failure_with_recent_success(self):
         for disposition in ('running', 'held'):

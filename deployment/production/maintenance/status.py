@@ -19,6 +19,26 @@ def number(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
+def valid_operation(data, now):
+    if not isinstance(data, dict) or not {'version', 'attempt', 'disposition', 'last_success', 'last_failure'} <= data.keys():
+        return False
+    attempt = data['attempt']
+    disposition = data['disposition']
+    success = data['last_success']
+    failure = data['last_failure']
+    if (type(data['version']) is not int or data['version'] != 1
+            or not number(attempt) or not 0 <= attempt <= now
+            or disposition not in ('success', 'running', 'held', 'failed')
+            or success is not None and (not number(success) or not 0 <= success <= now)
+            or failure is not None and (not number(failure) or not 0 <= failure <= attempt)):
+        return False
+    if disposition == 'success':
+        return success is not None and attempt <= success and failure is None
+    if disposition == 'failed':
+        return failure == attempt and (success is None or success <= attempt)
+    return success is None or success <= attempt
+
+
 def evaluate(snapshot, now):
     issues = []
     required = ('operations', 'holds', 'policy_issues', 'timers_healthy', 'dpkg_audit_clean',
@@ -33,19 +53,10 @@ def evaluate(snapshot, now):
         data = operations.get(mode, {}) if isinstance(operations, dict) else {}
         if not isinstance(data, dict):
             data = {}
-        attempt = data.get('attempt')
         disposition = data.get('disposition')
         success = data.get('last_success')
         failure = data.get('last_failure')
-        valid = (type(data.get('version')) is int and data['version'] == 1
-                 and number(attempt) and 0 <= attempt <= now
-                 and disposition in ('success', 'running', 'held', 'failed')
-                 and (success is None or number(success) and 0 <= success <= now)
-                 and (failure is None or number(failure) and 0 <= failure <= attempt)
-                 and (disposition != 'success' or failure is None))
-        if valid:
-            valid = (number(success) and attempt <= success if disposition == 'success'
-                     else success is None or success <= attempt)
+        valid = valid_operation(data, now)
         if not valid:
             issues.append(mode + ': unknown evidence')
             success = None
