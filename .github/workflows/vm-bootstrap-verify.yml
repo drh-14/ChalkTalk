@@ -6,6 +6,13 @@ on:
       - .github/workflows/vm-bootstrap.yml
       - .github/workflows/vm-bootstrap-verify.yml
       - deployment/production/ansible/**
+      - deployment/production/maintenance/**
+      - deployment/production/deploy.sh
+      - deployment/production/tests/test_maintenance*.py
+      - deployment/production/tests/test_deploy.py
+      - .github/workflows/vm-maintenance-check.yml
+      - openspec/changes/automate-production-vm-security-updates/**
+      - openspec/specs/production-vm-maintenance/**
       - openspec/changes/actions-ansible-vm-bootstrap/**
 
 permissions:
@@ -40,8 +47,47 @@ jobs:
       - name: Validate declarative files and offline behavior
         run: |
           set -euo pipefail
-          actionlint .github/workflows/vm-bootstrap.yml .github/workflows/vm-bootstrap-verify.yml
+          actionlint .github/workflows/vm-bootstrap.yml .github/workflows/vm-bootstrap-verify.yml .github/workflows/vm-maintenance-check.yml
           ansible-playbook -i 'chalktalk,' deployment/production/ansible/bootstrap.yml --syntax-check
-          ansible-lint deployment/production/ansible/bootstrap.yml deployment/production/ansible/tests/render-env.yml
+          ansible-lint deployment/production/ansible/bootstrap.yml deployment/production/ansible/tests/render-env.yml deployment/production/ansible/tasks/maintenance*.yml deployment/production/ansible/tests/maintenance-acceptance.yml
           docker compose version
           python -m unittest discover -s deployment/production/ansible/tests -v
+
+          python -m unittest discover -s deployment/production/tests -p 'test_*.py' -v
+          bash -n deployment/production/deploy.sh deployment/production/maintenance/*.sh deployment/production/ansible/tests/maintenance-*.sh
+
+  maintenance-acceptance:
+    name: Maintenance Ubuntu ${{ matrix.ubuntu }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["22.04", "24.04", "26.04"]
+    steps:
+      - name: Check out pull request without production credentials
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up pinned-controller Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install project-pinned controller tools
+        run: |
+          python -m pip install -r deployment/production/ansible/requirements-dev.txt
+          ansible-galaxy collection install -r deployment/production/ansible/collections/requirements.yml
+      - name: Execute disposable real-systemd acceptance
+        env:
+          UBUNTU_RELEASE: ${{ matrix.ubuntu }}
+        run: |
+          set -euo pipefail
+          bash deployment/production/ansible/tests/maintenance-acceptance.sh "$UBUNTU_RELEASE" 2>&1 | tee "$RUNNER_TEMP/maintenance-acceptance.log"
+      - name: Retain secret-free acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: maintenance-ubuntu-${{ matrix.ubuntu }}
+          path: ${{ runner.temp }}/maintenance-acceptance.log
+          if-no-files-found: error
+          retention-days: 14

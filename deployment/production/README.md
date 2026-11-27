@@ -38,8 +38,10 @@ workflow](../../.github/workflows/deploy-production.yml). It accepts only the
 repository's current `main` SHA, checks that SHA again before changing the VM,
 and checks it out detached under `/srv/chalktalk/releases/<sha>`. Bootstrap and
 deploy share a GitHub Actions concurrency group; the VM also uses
-`/srv/chalktalk/shared/deploy.lock`. Production secrets stay in the bootstrap-
-managed `/srv/chalktalk/shared/production.env` file, which Compose uses as both
+`/srv/chalktalk/shared/deploy.lock`. [VM security maintenance](maintenance/README.md)
+also uses this lock and defines the deployment hold that blocks new stage work.
+Production secrets stay in the bootstrap-managed
+`/srv/chalktalk/shared/production.env` file, which Compose uses as both
 its interpolation `--env-file` and service `COMPOSE_ENV_FILE`. Do not put a
 secret `.env` inside a release checkout.
 

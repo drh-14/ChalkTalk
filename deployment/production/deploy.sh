@@ -13,9 +13,22 @@ releases="$root/releases"
 env_file="$shared/production.env"
 repository='https://github.com/drh-14/ChalkTalk.git'
 [[ -f "$env_file" && -s "$env_file" ]] || { echo 'Missing shared production.env' >&2; exit 1; }
-mkdir -p "$releases"
-exec 9>"$shared/deploy.lock"
-flock -x 9
+maintenance_state="${CHALKTALK_MAINTENANCE_STATE:-/var/lib/chalktalk-maintenance}"
+assert_stage_not_held() {
+  if [[ "$phase" == stage && ( -e "$maintenance_state/deployment.hold" || -L "$maintenance_state/deployment.hold" ) ]]; then
+    echo 'Deployment hold blocks new stage work' >&2
+    exit 1
+  fi
+}
+assert_stage_not_held
+lock_wait="${CHALKTALK_DEPLOY_LOCK_WAIT:-600}"
+[[ "$lock_wait" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v wait="$lock_wait" 'BEGIN { exit !(wait <= 600) }' || {
+  echo 'Invalid deployment lock wait' >&2; exit 2;
+}
+exec 9>>"$shared/deploy.lock"
+flock -x -w "$lock_wait" 9 || { echo 'Timed out waiting for host lock; active work was not interrupted' >&2; exit 1; }
+assert_stage_not_held
+if [[ "$phase" == stage ]]; then mkdir -p "$releases"; fi
 
 assert_current_main() {
   local current

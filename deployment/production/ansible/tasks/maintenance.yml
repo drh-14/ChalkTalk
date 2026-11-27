@@ -1,0 +1,34 @@
+---
+- name: Install distro maintenance tools without upgrading runtime packages
+  ansible.builtin.apt:
+    name:
+      - unattended-upgrades
+      - needrestart
+    state: present
+    lock_timeout: 300
+
+- name: Install managed policy and helpers
+  ansible.builtin.import_tasks: maintenance-policy.yml
+
+- name: Verify effective policy before enabling timers
+  ansible.builtin.command:
+    argv:
+      - python3
+      - /usr/local/lib/chalktalk-maintenance/policy.py
+  changed_when: false
+
+- name: Verify effective timer schedule before enabling timers
+  ansible.builtin.command:
+    argv:
+      - python3
+      - /usr/local/lib/chalktalk-maintenance/timer.py
+  changed_when: false
+
+- name: Enable persistent maintenance timers after policy verification
+  ansible.builtin.systemd_service:
+    name: "{{ item }}.timer"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily
+    - apt-daily-upgrade

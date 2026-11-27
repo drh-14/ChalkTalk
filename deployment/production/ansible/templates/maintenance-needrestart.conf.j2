@@ -1,0 +1,5 @@
+# Permit ordinary host service restarts; do not hide runtime processes.
+$nrconf{restart} = 'a';
+$nrconf{override_rc}->{qr(^docker(?:\.service)?$)} = 0;
+$nrconf{override_rc}->{qr(^containerd(?:\.service)?$)} = 0;
+1;
