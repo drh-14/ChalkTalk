@@ -161,28 +161,22 @@ class WrappedStockServiceTest(unittest.TestCase):
                 return b'apt-run.sh' in Path('/proc/' + str(pid) + '/cmdline').read_bytes()
             except FileNotFoundError:
                 return False
-        with lock.open('a+') as descriptor:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        for service, mode in zip(services, ('update', 'install')):
             try:
-                for service in services:
+                with lock.open('a+') as descriptor:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                    hold.write_text('disposable-bootstrap-fixture\n')
+                    hold.chmod(0o644)
                     subprocess.run(['systemctl', '--no-block', 'start', service], check=True)
-                deadline = time.monotonic() + 10
-                while time.monotonic() < deadline:
-                    if all(wrapper_waiting(service) for service in services):
-                        break
-                    time.sleep(0.05)
-                for service in services:
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline and not wrapper_waiting(service):
+                        time.sleep(0.05)
                     self.assertTrue(wrapper_waiting(service), service)
-                waited = subprocess.run(['python3', '/usr/local/lib/chalktalk-maintenance/wait-apt.py'],
-                                        env={**os.environ, 'CHALKTALK_LOCK_WAIT': '2'},
-                                        capture_output=True, text=True, timeout=5)
-                self.assertEqual(waited.returncode, 0, waited.stderr)
-            finally:
-                hold.write_text('disposable-bootstrap-fixture\n')
-                hold.chmod(0o644)
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
-        try:
-            for service, mode in zip(services, ('update', 'install')):
+                    waited = subprocess.run(['python3', '/usr/local/lib/chalktalk-maintenance/wait-apt.py'],
+                                            env={**os.environ, 'CHALKTALK_LOCK_WAIT': '2'},
+                                            capture_output=True, text=True, timeout=5)
+                    self.assertEqual(waited.returncode, 0, waited.stderr)
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
                 deadline = time.monotonic() + 10
                 while time.monotonic() < deadline:
                     if subprocess.check_output(['systemctl', 'show', service, '-p', 'ActiveState', '--value'],
@@ -190,11 +184,13 @@ class WrappedStockServiceTest(unittest.TestCase):
                         break
                     time.sleep(0.05)
                 self.assertEqual(subprocess.check_output(
+                    ['systemctl', 'show', service, '-p', 'ActiveState', '--value'], text=True).strip(), 'inactive')
+                self.assertEqual(subprocess.check_output(
                     ['systemctl', 'show', service, '-p', 'Result', '--value'], text=True).strip(), 'success')
                 self.assertEqual(json.loads(Path('/var/lib/chalktalk-maintenance/' + mode + '.json').read_text())
                                  ['disposition'], 'held')
-        finally:
-            hold.unlink()
+            finally:
+                hold.unlink(missing_ok=True)
 
 
 class RealResolverSelectionTest(unittest.TestCase):

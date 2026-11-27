@@ -39,8 +39,10 @@ class MaintenanceWorkflowTest(unittest.TestCase):
         self.assertEqual(secrets, {'VM_HOST', 'VM_KNOWN_HOSTS', 'SSH_PRIVATE_KEY'})
 
     def test_missing_and_false_opt_in_do_not_attempt_ssh_or_require_secrets(self):
-        for enabled in ('', 'false', 'TRUE', '1'):
-            env = {**os.environ, 'MAINTENANCE_ENABLED': enabled, 'GITHUB_REF': 'refs/heads/main'}
+        for enabled, ref in (('', 'refs/heads/main'), ('false', 'refs/heads/main'),
+                             ('TRUE', 'refs/heads/main'), ('1', 'refs/heads/main'),
+                             ('true', 'refs/heads/other')):
+            env = {**os.environ, 'MAINTENANCE_ENABLED': enabled, 'GITHUB_REF': ref}
             for name in ('SSH_PRIVATE_KEY', 'VM_HOST', 'VM_KNOWN_HOSTS'):
                 env.pop(name, None)
             result = subprocess.run(['bash', str(CHECK)], env=env, capture_output=True, text=True)
@@ -61,12 +63,20 @@ class MaintenanceWorkflowTest(unittest.TestCase):
                    'VM_KNOWN_HOSTS': 'vm.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureOnly\n',
                    'GITHUB_STEP_SUMMARY': str(summary), 'CALLS': str(calls), 'SSH_RESULT': '1',
                    'REPORT': json.dumps({'version': 1, 'healthy': False, 'issues': ['reboot required', 'update: stale']})}
-            for report in (env['REPORT'], 'SECRET_MUST_NOT_ESCAPE',
+            for report in ('SECRET_MUST_NOT_ESCAPE',
                            json.dumps({'version': 1, 'healthy': False, 'issues': ['SECRET_MUST_NOT_ESCAPE']})):
                 result = subprocess.run(['bash', str(CHECK)], env={**env, 'REPORT': report}, capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)
                 output = result.stdout + result.stderr + (summary.read_text() if summary.exists() else '')
                 self.assertNotIn('SECRET_MUST_NOT_ESCAPE', output)
+            summary.unlink()
+            unhealthy = subprocess.run(['bash', str(CHECK)], env=env, capture_output=True, text=True)
+            self.assertEqual(unhealthy.returncode, 1)
+            written = summary.read_text()
+            self.assertIn('VM maintenance: action required', written)
+            self.assertIn('reboot required', written)
+            self.assertIn('update: stale', written)
+            self.assertNotIn('Maintenance status unavailable', written)
             summary.unlink()
             healthy_report = json.dumps({'version': 1, 'healthy': True, 'issues': []})
             failed_transport = subprocess.run(['bash', str(CHECK)], env={**env, 'REPORT': healthy_report},
@@ -96,7 +106,7 @@ class MaintenanceWorkflowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             ssh = root / 'ssh'
-            ssh.write_text('#!/bin/sh\nprintf "%s" "$REPORT"\n')
+            ssh.write_text('#!/bin/sh\nprintf "%s" "$REPORT"\nexit 1\n')
             ssh.chmod(0o755)
             summary = root / 'summary'
             reasons = ['update: unknown evidence', 'install: unknown evidence',

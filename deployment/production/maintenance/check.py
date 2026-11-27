@@ -50,9 +50,6 @@ def summarize(issues, healthy, report=None):
 
 
 def main():
-    if os.environ.get('MAINTENANCE_ENABLED') != 'true' or os.environ.get('GITHUB_REF') != 'refs/heads/main':
-        print('Production maintenance check disabled')
-        return 0
     try:
         host = os.environ['VM_HOST']
         if len(host) > 253 or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9.-]*', host):
@@ -79,8 +76,6 @@ def main():
                     'ubuntu@' + host, 'sudo -n python3 /usr/local/lib/chalktalk-maintenance/status.py'],
                     stdin=subprocess.DEVNULL, stdout=response, stderr=subprocess.DEVNULL,
                     timeout=180, check=False)
-                if checked.returncode:
-                    raise ValueError('ssh failed')
                 if response.tell() > 262144:
                     raise ValueError('oversized report')
                 response.seek(0)
@@ -94,6 +89,8 @@ def main():
                 raise ValueError('untrusted report')
             if report['healthy'] != (not issues):
                 raise ValueError('inconsistent report')
+            if checked.returncode != int(not report['healthy']):
+                raise ValueError('ssh result inconsistent with report')
             summarize(issues, report['healthy'], report)
             return int(not report['healthy'])
     except Exception:
