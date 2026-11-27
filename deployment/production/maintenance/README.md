@@ -59,7 +59,7 @@ Markers in root-owned `/var/lib/chalktalk-maintenance/` persist across reboots:
 - `deployment.hold`: refuse new stage work before mutation and after lock waiting;
   already-staged finish bookkeeping remains permitted. Does not suppress updates.
 - `bootstrap.hold`: invocation-token owned; suppress automatic work during bootstrap.
-  Failed bootstrap leaves it for explicit inspection/recovery. Rerun refuses to
+  A failure after its creation leaves it for explicit inspection/recovery. Rerun refuses to
   take over a previous marker. Clear only the appropriate token-owned marker
   after assessing the original failure; never clear operator holds automatically.
 
